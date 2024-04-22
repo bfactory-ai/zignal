@@ -296,11 +296,11 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             } else {
                 var result: T = 0;
                 for (self.items) |row| {
-                    for (row) | col| {
+                    for (row) |col| {
                         result += std.math.pow(T, @abs(col), p);
                     }
                 }
-                result = std.math.pow(T, result, (1/p));
+                result = std.math.pow(T, result, (1 / p));
                 return result;
             }
         }
@@ -319,7 +319,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
         pub fn maxNorm(self: Self) T {
             var result: T = -std.math.inf(T);
             for (self.items) |row| {
-                for (row) | col| {
+                for (row) |col| {
                     const val = @abs(col);
                     if (val > result) {
                         result = val;
@@ -333,7 +333,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
         pub fn minNorm(self: Self) T {
             var result: T = std.math.inf(T);
             for (self.items) |row| {
-                for (row) | col| {
+                for (row) |col| {
                     const val = @abs(col);
                     if (val < result) {
                         result = val;
