@@ -290,16 +290,9 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
         pub fn norm(self: Self, p: T) T {
             assert(p >= 1);
             if (p == std.math.inf(T)) {
-                var result: T = -std.math.inf(T);
-                for (self.items) |row| {
-                    for (row) | col| {
-                        const val = @abs(col);
-                        if (val > result) {
-                            result = val;
-                        }
-                    }
-                }
-                return result;
+                return self.maxNorm();
+            } else if (p == -std.math.inf(T)) {
+                return self.minNorm();
             } else {
                 var result: T = 0;
                 for (self.items) |row| {
@@ -324,7 +317,30 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
 
         /// Computes the Max norm of the matrix as the maximum absolute value.
         pub fn maxNorm(self: Self) T {
-            return self.norm(std.math.inf(T));
+            var result: T = -std.math.inf(T);
+            for (self.items) |row| {
+                for (row) | col| {
+                    const val = @abs(col);
+                    if (val > result) {
+                        result = val;
+                    }
+                }
+            }
+            return result;
+        }
+
+        /// Computes the Min norm of the matrix as the maximum absolute value.
+        pub fn minNorm(self: Self) T {
+            var result: T = std.math.inf(T);
+            for (self.items) |row| {
+                for (row) | col| {
+                    const val = @abs(col);
+                    if (val < result) {
+                        result = val;
+                    }
+                }
+            }
+            return result;
         }
     };
 }
@@ -401,6 +417,10 @@ test "norm" {
 
     matrix.set(2, 3, 1000000);
     try expectEqual(matrix.maxNorm(), 1000000);
+
+    matrix = matrix.offset(10);
+    matrix.set(2, 3, -5);
+    try expectEqual(matrix.minNorm(), 5);
 }
 
 test "sum" {
