@@ -329,7 +329,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             return result;
         }
 
-        /// Computes the Min norm of the matrix as the maximum absolute value.
+        /// Computes the Min norm of the matrix as the minimum absolute value.
         pub fn minNorm(self: Self) T {
             var result: T = std.math.inf(T);
             for (self.items) |row| {
