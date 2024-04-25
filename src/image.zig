@@ -109,7 +109,6 @@ pub fn Image(comptime T: type) type {
             }
         }
 
-        /// Rotates the image by angle (in radians) from the given center.  It must be freed on the caller side.
         pub fn rotateFrom(self: Self, allocator: Allocator, center: Point2d, angle: f32, rotated: *Self) !void {
             var array = std.ArrayList(T).init(allocator);
             try array.resize(self.rows * self.cols);
@@ -149,6 +148,53 @@ pub fn Image(comptime T: type) type {
                     else
                         std.mem.zeroes(T);
                 }
+            }
+        }
+
+        /// Computes the integral image of self.
+        pub fn integralImage(self: Self, allocator: Allocator) !(if (isScalar(T)) Image(f32) else if (isStruct(T)) Image([std.meta.fields(T).len]f32) else @compileError("Can't compute the integral image of " ++ @typeName(T) ++ ".")) {
+            switch (@typeInfo(T)) {
+                .ComptimeInt, .Int, .ComptimeFloat, .Float => {
+                    var integral = try Image(f32).initAlloc(allocator, self.rows, self.cols);
+                    var tmp: f32 = 0;
+                    for (0..self.cols) |c| {
+                        tmp += as(f32, (self.data[c]));
+                        integral.data[c] = tmp;
+                    }
+                    for (1..self.rows) |r| {
+                        tmp = 0;
+                        for (0..self.cols) |c| {
+                            const curr_pos = r * self.cols + c;
+                            const prev_pos = (r - 1) * self.cols + c;
+                            tmp += as(f32, self.data[curr_pos]);
+                            integral.data[curr_pos] = tmp + integral.data[prev_pos];
+                        }
+                    }
+                    return integral;
+                },
+                .Struct => {
+                    var integral = try Image([std.meta.fields(T).len]f32).initAlloc(allocator, self.rows, self.cols);
+                    var tmp: f32 = 0;
+                    for (0..self.cols) |c| {
+                        inline for (std.meta.fields(T), 0..) |f, i| {
+                            tmp += as(f32, @field(self.data[c], f.name));
+                            integral.data[c][i] = tmp;
+                        }
+                    }
+                    for (1..self.rows) |r| {
+                        tmp = 0;
+                        for (0..self.cols) |c| {
+                            const curr_pos = r * self.cols + c;
+                            const prev_pos = (r - 1) * self.cols + c;
+                            inline for (std.meta.fields(T), 0..) |f, i| {
+                                tmp += as(f32, @field(self.data[curr_pos], f.name));
+                                integral.data[curr_pos][i] = tmp + integral.data[prev_pos][i];
+                            }
+                        }
+                    }
+                    return integral;
+                },
+                else => @compileError("Can't compute the integral image of " ++ @typeName(T) ++ "."),
             }
         }
     };
