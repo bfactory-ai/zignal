@@ -1,4 +1,5 @@
 const std = @import("std");
+const expectEqual = std.testing.expectEqual;
 const Allocator = std.mem.Allocator;
 const Rgba = @import("color.zig").Rgba;
 const as = @import("meta.zig").as;
@@ -154,10 +155,14 @@ pub fn Image(comptime T: type) type {
         }
 
         /// Computes the integral image of self.
-        pub fn integralImage(self: Self, allocator: Allocator) !(if (isScalar(T)) Image(f32) else if (isStruct(T)) Image([std.meta.fields(T).len]f32) else @compileError("Can't compute the integral image of " ++ @typeName(T) ++ ".")) {
+        pub fn integralImage(
+            self: Self,
+            allocator: Allocator,
+            integral: *Image(if (isScalar(T)) f32 else if (isStruct(T)) [std.meta.fields(T).len]f32 else @compileError("Can't compute the integral image of " ++ @typeName(T) ++ ".")),
+        ) !void {
             switch (@typeInfo(T)) {
                 .ComptimeInt, .Int, .ComptimeFloat, .Float => {
-                    var integral = try Image(f32).initAlloc(allocator, self.rows, self.cols);
+                    integral.* = try Image(f32).initAlloc(allocator, self.rows, self.cols);
                     var tmp: f32 = 0;
                     for (0..self.cols) |c| {
                         tmp += as(f32, (self.data[c]));
@@ -172,32 +177,74 @@ pub fn Image(comptime T: type) type {
                             integral.data[curr_pos] = tmp + integral.data[prev_pos];
                         }
                     }
-                    return integral;
                 },
                 .Struct => {
-                    var integral = try Image([std.meta.fields(T).len]f32).initAlloc(allocator, self.rows, self.cols);
-                    var tmp: f32 = 0;
+                    const num_fields = std.meta.fields(T).len;
+                    integral.* = try Image([num_fields]f32).initAlloc(allocator, self.rows, self.cols);
+                    var tmp = [_]f32{0} ** num_fields;
                     for (0..self.cols) |c| {
                         inline for (std.meta.fields(T), 0..) |f, i| {
-                            tmp += as(f32, @field(self.data[c], f.name));
-                            integral.data[c][i] = tmp;
+                            if (c < 1) {
+                                std.log.debug("{s}: {d}", .{ f.name, @field(self.data[c], f.name) });
+                            }
+                            tmp[i] += as(f32, @field(self.data[c], f.name));
+                            integral.data[c][i] = tmp[i];
                         }
                     }
                     for (1..self.rows) |r| {
-                        tmp = 0;
+                        tmp = [_]f32{0} ** num_fields;
                         for (0..self.cols) |c| {
                             const curr_pos = r * self.cols + c;
                             const prev_pos = (r - 1) * self.cols + c;
                             inline for (std.meta.fields(T), 0..) |f, i| {
-                                tmp += as(f32, @field(self.data[curr_pos], f.name));
-                                integral.data[curr_pos][i] = tmp + integral.data[prev_pos][i];
+                                tmp[i] += as(f32, @field(self.data[curr_pos], f.name));
+                                integral.data[curr_pos][i] = tmp[i] + integral.data[prev_pos][i];
                             }
                         }
                     }
-                    return integral;
                 },
                 else => @compileError("Can't compute the integral image of " ++ @typeName(T) ++ "."),
             }
         }
     };
+}
+
+test "integral image scalar" {
+    var image = try Image(u8).initAlloc(std.testing.allocator, 21, 13);
+    defer image.deinit(std.testing.allocator);
+    for (image.data) |*i| i.* = 1;
+    var integral: Image(f32) = undefined;
+    try image.integralImage(std.testing.allocator, &integral);
+    defer integral.deinit(std.testing.allocator);
+    try expectEqual(image.rows, integral.rows);
+    try expectEqual(image.cols, integral.cols);
+    try expectEqual(image.data.len, integral.data.len);
+    for (0..image.rows) |r| {
+        for (0..image.cols) |c| {
+            const pos = r * image.cols + c;
+            const area_at_pos: f32 = @floatFromInt((r + 1) * (c + 1));
+            try expectEqual(area_at_pos, integral.data[pos]);
+        }
+    }
+}
+
+test "integral image struct" {
+    var image = try Image(Rgba).initAlloc(std.testing.allocator, 21, 13);
+    defer image.deinit(std.testing.allocator);
+    for (image.data) |*i| i.* = .{ .r = 1, .g = 1, .b = 1, .a = 1 };
+    var integral: Image([4]f32) = undefined;
+    try image.integralImage(std.testing.allocator, &integral);
+    defer integral.deinit(std.testing.allocator);
+    try expectEqual(image.rows, integral.rows);
+    try expectEqual(image.cols, integral.cols);
+    try expectEqual(image.data.len, integral.data.len);
+    for (0..image.rows) |r| {
+        for (0..image.cols) |c| {
+            const pos = r * image.cols + c;
+            const area_at_pos: f32 = @floatFromInt((r + 1) * (c + 1));
+            for (0..4) |i| {
+                try expectEqual(area_at_pos, integral.data[pos][i]);
+            }
+        }
+    }
 }
