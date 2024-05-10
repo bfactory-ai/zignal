@@ -36,8 +36,5 @@ pub inline fn isScalar(comptime T: type) bool {
 
 /// Returns true if and only if T represents a struct type.
 pub inline fn isStruct(comptime T: type) bool {
-    return switch (@typeInfo(T)) {
-        .Struct => true,
-        else => false,
-    };
+    return @typeInfo(T) == .Struct;
 }
