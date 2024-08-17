@@ -1,0 +1,36 @@
+name: Web Docs - Zignal
+
+on:
+  push:
+    paths:
+      - ".github/workflows/webdocs.yml"
+      - "**.zig"
+      - "**.zon"
+  pull_request:
+    paths:
+      - ".github/workflows/webdocs.yml"
+      - "**.zig"
+      - "**.zon"
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Grab Zig
+        uses: mlugg/setup-zig@v1
+
+      - name: Build docs
+        run: zig build
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v1
+        with:
+          path: 'zig-out/docs'
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v1
