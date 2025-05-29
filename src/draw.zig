@@ -1,3 +1,5 @@
+//! This module provides functions for drawing various shapes and lines on images,
+//! including anti-aliased line drawing, shape rendering, and polygon filling.
 const std = @import("std");
 const assert = std.debug.assert;
 
@@ -9,9 +11,17 @@ const Rgba = @import("colorspace.zig").Rgba;
 const Point2d = @import("point.zig").Point2d;
 const Rectangle = @import("geometry.zig").Rectangle;
 
-/// Draws a colored straight of a custom width between p1 and p2 on image.  It uses Xialin
-/// Wu's line algorithm to perform antialiasing along the diagonal.  Moreover, if color is of
-/// Rgba type, it alpha-blends it on top of the image.
+/// Draws a colored straight line of a custom width between p1 and p2 on an image.
+/// It uses Xiaolin Wu's line algorithm to perform anti-aliasing for diagonal lines.
+/// If the `color` is of Rgba type, it alpha-blends it onto the image.
+///
+/// Parameters:
+/// - `T`: The color type of the image.
+/// - `image`: The image on which to draw the line.
+/// - `p1`: The starting point of the line (Point2d(f32)).
+/// - `p2`: The ending point of the line (Point2d(f32)).
+/// - `width`: The width (thickness) of the line in pixels.
+/// - `color`: The color of the line. Can be any type convertible to Rgba.
 pub fn drawLine(
     comptime T: type,
     image: Image(T),
@@ -73,46 +83,59 @@ pub fn drawLine(
         const max_alpha: Float = @floatFromInt(c2.a);
         const rise = y2 - y1;
         const run = x2 - x1;
-        if (@abs(rise) < @abs(run)) {
+        // Determine if the line is more horizontal or vertical to decide the iteration direction.
+        if (@abs(rise) < @abs(run)) { // Gentle slope: Iterate over x-coordinates
             const slope = rise / run;
             const first = if (x1 > x2) @max(x2, 0) else @max(x1, 0);
             const last = if (x1 > x2) @min(x1, cols - 1) else @min(x2, cols - 1);
-            var i = first;
+            var i = first; // Current x-coordinate
             while (i <= last) : (i += 1) {
+                // Calculate the ideal y-coordinate on the line for the current x.
                 const dy = slope * (i - x1) + y1;
-                const dx = i;
-                const y = @floor(dy);
-                const x = @floor(dx);
-                if (y >= 0 and y <= rows - 1) {
-                    var j = -half_width;
+                const dx = i; // Current x-coordinate, used for clarity.
+                const y = @floor(dy); // Integer part of the y-coordinate.
+                // The fractional part (dy - y) determines the alpha for anti-aliasing.
+
+                // Draw pixels for the line width, handling anti-aliasing at the edges.
+                // This block handles the primary pixel row (pixels at floor(dy)).
+                if (y >= 0 and y <= rows - 1) { // Check if y is within image bounds.
+                    var j = -half_width; // Iterate across the width of the line.
                     while (j <= half_width) : (j += 1) {
-                        const py = @max(0, y + j);
+                        const py = @max(0, y + j); // Actual y-coordinate for the current strip of the line.
                         const pos = as(usize, py) * image.cols + as(usize, x);
-                        if (py >= 0 and py < rows) {
+                        if (py >= 0 and py < rows) { // Check if py is within image bounds.
                             var c1: Rgba = colorspace.convert(Rgba, image.data[pos]);
-                            if (j == -half_width or j == half_width) {
+                            // Adjust alpha for anti-aliasing at the top/bottom edges of the line's width.
+                            // (1 - (dy - y)) is the coverage for the pixel at floor(dy).
+                            if (j == -half_width or j == half_width) { // Edge pixels of the line width
                                 c2.a = @intFromFloat((1 - (dy - y)) * max_alpha);
                                 c1.blend(c2);
                                 image.data[pos] = colorspace.convert(T, c1);
-                            } else {
+                            } else { // Center pixels of the line width
+                                c2.a = @intFromFloat(max_alpha); // Restore full alpha for center part
                                 c1.blend(c2);
                                 image.data[pos] = colorspace.convert(T, c1);
                             }
                         }
                     }
                 }
-                if (y + 1 >= 0 and y + 1 <= rows - 1) {
-                    var j = -half_width;
+                // This block handles the secondary pixel row (pixels at floor(dy) + 1) for anti-aliasing.
+                // These pixels get an alpha proportional to (dy - y).
+                if (y + 1 >= 0 and y + 1 <= rows - 1) { // Check if y+1 is within image bounds.
+                    var j = -half_width; // Iterate across the width of the line.
                     while (j <= half_width) : (j += 1) {
-                        const py = @max(0, y + 1 + j);
-                        if (py >= 0 and py < rows) {
+                        const py = @max(0, y + 1 + j); // Actual y-coordinate for the current strip of the line.
+                        if (py >= 0 and py < rows) { // Check if py is within image bounds.
                             const pos = as(usize, py) * image.cols + as(usize, x);
                             var c1: Rgba = colorspace.convert(Rgba, image.data[pos]);
-                            if (j == -half_width or j == half_width) {
+                            // Adjust alpha for anti-aliasing at the top/bottom edges of the line's width.
+                            // (dy - y) is the coverage for the pixel at floor(dy) + 1.
+                            if (j == -half_width or j == half_width) { // Edge pixels of the line width
                                 c2.a = @intFromFloat((dy - y) * max_alpha);
                                 c1.blend(c2);
                                 image.data[pos] = colorspace.convert(T, c1);
-                            } else {
+                            } else { // Center pixels of the line width
+                                c2.a = @intFromFloat(max_alpha); // Restore full alpha for center part
                                 c1.blend(c2);
                                 image.data[pos] = colorspace.convert(T, c1);
                             }
@@ -120,46 +143,59 @@ pub fn drawLine(
                     }
                 }
             }
-        } else {
+        } else { // Steep slope: Iterate over y-coordinates
             const slope = run / rise;
             const first = if (y1 > y2) @max(y2, 0) else @max(y1, 0);
             const last = if (y1 > y2) @min(y1, rows - 1) else @min(y2, rows - 1);
-            var i = first;
+            var i = first; // Current y-coordinate
             while (i <= last) : (i += 1) {
+                // Calculate the ideal x-coordinate on the line for the current y.
                 const dx = slope * (i - y1) + x1;
-                const dy = i;
-                const y = @floor(dy);
-                const x = @floor(dx);
-                if (x >= 0 and x <= cols - 1) {
-                    var j = -half_width;
+                const dy = i; // Current y-coordinate, used for clarity.
+                const y = @floor(dy); // Integer part of the y-coordinate (same as i).
+                const x = @floor(dx); // Integer part of the x-coordinate.
+                // The fractional part (dx - x) determines the alpha for anti-aliasing.
+
+                // Draw pixels for the line width, handling anti-aliasing at the edges.
+                // This block handles the primary pixel column (pixels at floor(dx)).
+                if (x >= 0 and x <= cols - 1) { // Check if x is within image bounds.
+                    var j = -half_width; // Iterate across the width of the line.
                     while (j <= half_width) : (j += 1) {
-                        const px = @max(0, x + j);
+                        const px = @max(0, x + j); // Actual x-coordinate for the current strip of the line.
                         const pos = as(usize, y) * image.cols + as(usize, px);
-                        if (px >= 0 and px < cols) {
+                        if (px >= 0 and px < cols) { // Check if px is within image bounds.
                             var c1: Rgba = colorspace.convert(Rgba, image.data[pos]);
-                            if (j == -half_width or j == half_width) {
+                            // Adjust alpha for anti-aliasing at the left/right edges of the line's width.
+                            // (1 - (dx - x)) is the coverage for the pixel at floor(dx).
+                            if (j == -half_width or j == half_width) { // Edge pixels of the line width
                                 c2.a = @intFromFloat((1 - (dx - x)) * max_alpha);
                                 c1.blend(c2);
                                 image.data[pos] = colorspace.convert(T, c1);
-                            } else {
+                            } else { // Center pixels of the line width
+                                c2.a = @intFromFloat(max_alpha); // Restore full alpha
                                 c1.blend(c2);
                                 image.data[pos] = colorspace.convert(T, c1);
                             }
                         }
                     }
                 }
-                if (x + 1 >= 0 and x + 1 <= cols - 1) {
-                    c2.a = @intFromFloat((dx - x) * max_alpha);
-                    var j = -half_width;
+                // This block handles the secondary pixel column (pixels at floor(dx) + 1) for anti-aliasing.
+                // These pixels get an alpha proportional to (dx - x).
+                if (x + 1 >= 0 and x + 1 <= cols - 1) { // Check if x+1 is within image bounds.
+                    var j = -half_width; // Iterate across the width of the line.
                     while (j <= half_width) : (j += 1) {
-                        const px = @max(0, x + 1 + j);
-                        const pos = as(usize, y) * image.cols + as(usize, px);
-                        if (px >= 0 and px < cols) {
+                        const px = @max(0, x + 1 + j); // Actual x-coordinate for the current strip of the line.
+                        if (px >= 0 and px < cols) { // Check if px is within image bounds.
+                            const pos = as(usize, y) * image.cols + as(usize, px);
                             var c1: Rgba = colorspace.convert(Rgba, image.data[pos]);
-                            if (j == -half_width or j == half_width) {
+                             // Adjust alpha for anti-aliasing at the left/right edges of the line's width.
+                             // (dx - x) is the coverage for the pixel at floor(dx) + 1.
+                            if (j == -half_width or j == half_width) { // Edge pixels of the line width
+                                c2.a = @intFromFloat((dx - x) * max_alpha);
                                 c1.blend(c2);
                                 image.data[pos] = colorspace.convert(T, c1);
-                            } else {
+                            } else { // Center pixels of the line width
+                                c2.a = @intFromFloat(max_alpha); // Restore full alpha
                                 c1.blend(c2);
                                 image.data[pos] = colorspace.convert(T, c1);
                             }
@@ -170,7 +206,17 @@ pub fn drawLine(
         }
     }
 }
-/// Draws a colored straight line of a custom width between p1 and p2 on image, using Bresenham's line algorithm.
+
+/// Draws a colored straight line of a custom width between `p1` and `p2` on `image` using Bresenham's line algorithm.
+/// This function is faster than `drawLine` because it does not perform anti-aliasing.
+///
+/// Parameters:
+/// - `T`: The color type of the image. Must be a color type as asserted by `colorspace.isColor(T)`.
+/// - `image`: The `Image(T)` on which to draw the line.
+/// - `p1`: The starting `Point2d(f32)` of the line.
+/// - `p2`: The ending `Point2d(f32)` of the line.
+/// - `width`: The width (thickness) of the line in pixels.
+/// - `color`: The color of the line, of type `T`.
 pub fn drawLineFast(
     comptime T: type,
     image: Image(T),
@@ -217,16 +263,17 @@ pub fn drawLineFast(
 
 /// Draws a cubic Bézier curve on the given image.
 ///
-/// - **T**: The type of color used in the image, must be a color type.
-/// - **image**: The `Image` object where the curve will be drawn.
-/// - **points**: An array of 4 `Point2d` representing the control points of the Bézier curve.
-///   The order is [start, first control, second control, end].
-/// - **step**: The step size for t in the range [0, 1] for drawing the curve.
-/// - **color**: The color to use for drawing the curve, of type `T`.
+/// Parameters:
+/// - `T`: The color type of the image. Must be a color type.
+/// - `image`: The `Image(T)` object where the curve will be drawn.
+/// - `points`: An array of 4 `Point2d(f32)` representing the control points of the Bézier curve.
+///   The order is [start_point, control_point_1, control_point_2, end_point].
+/// - `step`: The step size for the parameter `t` (ranging from 0 to 1) used for drawing the curve.
+///   Smaller steps result in a smoother curve but require more computation.
+/// - `color`: The color to use for drawing the curve, of type `T`.
 ///
-/// The function calculates points along the Bézier curve using the given control points and
-/// draws them on the image. The curve's resolution is determined by the `step` parameter,
-/// where smaller steps result in a smoother but more computationally intensive curve.
+/// The function calculates points along the Bézier curve using the de Casteljau algorithm (implicitly)
+/// by iterating `t` from 0 to 1 with the given `step`.
 pub fn drawBezierCurve(
     comptime T: type,
     image: Image(T),
@@ -255,14 +302,18 @@ pub fn drawBezierCurve(
     }
 }
 
-/// Tessellates a cubic Bézier curve into a series of points.
+/// Tessellates a cubic Bézier curve into a series of line segments (points).
 ///
-/// - **allocator**: An allocator for memory management.
-/// - **points**: An array of 4 `Point2d` representing the control points of the Bézier curve.
-///   The order is [start, first control, second control, end].
-/// - **segments**: Number of segments to divide the curve into, affecting the resolution of the tessellation.
+/// Parameters:
+/// - `allocator`: An `std.mem.Allocator` for memory management of the returned slice.
+/// - `p`: An array of 4 `Point2d(f32)` representing the control points of the Bézier curve.
+///   The order is [start_point, control_point_1, control_point_2, end_point].
+/// - `segments`: The number of line segments to divide the curve into. This determines the resolution
+///   of the tessellation. More segments result in a smoother approximation of the curve.
 ///
-/// The caller owns the resulting slice.
+/// Returns:
+///   A slice of `Point2d(f32)` representing the points of the tessellated curve. The caller owns this slice.
+///   Can return `error.OutOfMemory` if allocation fails.
 fn tessellateCurve(
     allocator: std.mem.Allocator,
     p: [4]Point2d(f32),
@@ -284,15 +335,20 @@ fn tessellateCurve(
     return try polygon.toOwnedSlice();
 }
 
-/// Draws a smooth polygon on the given image, using Bézier curves to connect points for a curved effect.
+/// Draws a smooth polygon on the given image.
+/// The polygon's edges are rendered as cubic Bézier curves connecting the vertices,
+/// allowing for a curved and smooth appearance.
 ///
-/// - **T**: The pixel type used in the image, must be a color type.
-/// - **image**: The `Image` object where the polygon will be drawn.
-/// - **polygon**: A slice of `Point2d` representing the vertices of the polygon.
-/// - **color**: The color to use for drawing the polygon's edges, of type `T`.
-/// - **tension**: A float value [0, 1] that controls how much the curve 'tenses' or straightens between vertices.
-///   - 0 results in straight lines between points.
-///   - 1 results in the maximum curve smoothness.
+/// Parameters:
+/// - `T`: The color type of the image. Must be a color type.
+/// - `image`: The `Image(T)` object where the polygon will be drawn.
+/// - `polygon`: A slice of `Point2d(f32)` representing the vertices of the polygon.
+/// - `color`: The color to use for drawing the polygon's edges, of type `T`.
+/// - `tension`: A `f32` value between 0 and 1 (inclusive) that controls the "tension" or curvature
+///   of the Bézier curves connecting the vertices.
+///   - A tension of 0 results in straight lines between points (effectively `drawPolygon`).
+///   - A tension of 1 results in maximum curve smoothness, where control points are derived further
+///     along the lines extending from the vertices.
 pub fn drawSmoothPolygon(
     comptime T: type,
     image: Image(T),
@@ -318,16 +374,23 @@ pub fn drawSmoothPolygon(
     }
 }
 
-/// Fills a smooth polygon on the given image, using tessellated Bézier curves to create a curved outline before filling.
+/// Fills a smooth polygon on the given image.
+/// The polygon's outline is defined by Bézier curves connecting the vertices (similar to `drawSmoothPolygon`),
+/// and the resulting shape is then filled with the specified color using a scanline algorithm.
 ///
-/// - **allocator**: An allocator for memory management.
-/// - **T**: The pixel type used in the image, must be a color type.
-/// - **image**: The `Image` object where the polygon will be filled.
-/// - **polygon**: A slice of `Point2d` representing the vertices of the polygon to be filled.
-/// - **color**: The color to use for filling the polygon, of type `T`.
-/// - **tension**: A float value [0, 1] that controls the curvature of the polygon's edges:
-///   - 0 results in straight lines between points.
-///   - 1 results in the maximum curve smoothness.
+/// Parameters:
+/// - `allocator`: An `std.mem.Allocator` for temporary memory allocations needed by the fill algorithm
+///   (specifically for tessellating the curves and for the scanline intersections).
+/// - `T`: The color type of the image. Must be a color type.
+/// - `image`: The `Image(T)` object where the polygon will be filled.
+/// - `polygon`: A slice of `Point2d(f32)` representing the vertices of the polygon to be filled.
+/// - `color`: The color to use for filling the polygon, of type `T`.
+/// - `tension`: A `f32` value between 0 and 1 (inclusive) that controls the curvature of the
+///   polygon's edges before filling:
+///   - A tension of 0 results in filling a polygon with straight edges.
+///   - A tension of 1 results in maximum curve smoothness for the outline.
+///
+/// Can return `error.OutOfMemory` if allocation fails during tessellation or filling.
 pub fn fillSmoothPolygon(
     allocator: std.mem.Allocator,
     comptime T: type,
@@ -355,7 +418,16 @@ pub fn fillSmoothPolygon(
     fillPolygon(allocator, T, image, points.items, color);
 }
 
-/// Draws the given rectangle with the specified width and color.
+/// Draws the outline of a rectangle on the given image.
+///
+/// Parameters:
+/// - `T`: The color type of the image. Must be a color type.
+/// - `image`: The `Image(T)` on which to draw the rectangle.
+/// - `rect`: The `Rectangle(f32)` to draw, defined by its top-left (l, t) and
+///   bottom-right (r, b) coordinates.
+/// - `width`: The width (thickness) of the rectangle's border in pixels.
+/// - `color`: The color of the rectangle's border. Can be any type convertible to Rgba
+///   if `drawLine` (which this function uses) needs to perform blending.
 pub fn drawRectangle(
     comptime T: type,
     image: Image(T),
@@ -373,13 +445,15 @@ pub fn drawRectangle(
     drawPolygon(T, image, points, width, color);
 }
 
-/// Draws a cross shape on the given image at a specified center point.
+/// Draws a cross shape (plus sign) on the given image at a specified center point.
 ///
-/// - **T**: The pixel type used in the image, must be a color type.
-/// - **image**: The `Image` object where the cross will be drawn.
-/// - **center**: A `Point2d` which defines the center of the cross.
-/// - **size**: The length of each arm of the cross measured in pixels.
-/// - **color**: The color to use for drawing the cross.
+/// Parameters:
+/// - `T`: The color type of the image. Must be a color type.
+/// - `image`: The `Image(T)` object where the cross will be drawn.
+/// - `center`: A `Point2d(f32)` which defines the center of the cross. Coordinates will be rounded.
+/// - `size`: The length of each arm of the cross, extending from the center.
+///   A size of 0 will not draw anything. A size of 1 will draw a 3x3 cross centered at `center`.
+/// - `color`: The color to use for drawing the cross, of type `T`.
 pub fn drawCross(
     comptime T: type,
     image: Image(T),
@@ -399,7 +473,17 @@ pub fn drawCross(
     }
 }
 
-/// Draws the given polygon defined as an array of points.
+/// Draws the outline of a polygon on the given image.
+/// The polygon is defined by a sequence of vertices. Lines are drawn between consecutive
+/// vertices, and a final line is drawn from the last vertex to the first to close the shape.
+///
+/// Parameters:
+/// - `T`: The color type of the image. Must be a color type.
+/// - `image`: The `Image(T)` on which to draw the polygon.
+/// - `polygon`: A slice of `Point2d(f32)` representing the vertices of the polygon.
+/// - `width`: The width (thickness) of the polygon's border lines in pixels.
+/// - `color`: The color of the polygon's border. Can be any type convertible to Rgba
+///   if `drawLine` (which this function uses) needs to perform blending.
 pub fn drawPolygon(
     comptime T: type,
     image: Image(T),
@@ -414,7 +498,15 @@ pub fn drawPolygon(
     }
 }
 
-/// Draws the circle defined by its center and radius.
+/// Draws the outline of a circle on the given image.
+/// This function attempts to draw a fairly accurate circle outline.
+///
+/// Parameters:
+/// - `T`: The color type of the image. Must be a color type.
+/// - `image`: The `Image(T)` on which to draw the circle.
+/// - `center`: The `Point2d(f32)` representing the center of the circle.
+/// - `radius`: The radius of the circle in pixels.
+/// - `color`: The color of the circle's outline, of type `T`.
 pub fn drawCircle(
     comptime T: type,
     image: Image(T),
@@ -477,7 +569,15 @@ pub fn drawCircle(
     }
 }
 
-/// Draws the circle defined by its center and radius using a fast, but less accurate algorithm.
+/// Fills a circle on the given image using a fast, but less accurate, algorithm.
+/// This function effectively fills the circle rather than just drawing its outline.
+///
+/// Parameters:
+/// - `T`: The color type of the image. Must be a color type.
+/// - `image`: The `Image(T)` on which to fill the circle.
+/// - `center`: The `Point2d(f32)` representing the center of the circle.
+/// - `radius`: The radius of the circle in pixels.
+/// - `color`: The color to fill the circle with, of type `T`.
 pub fn drawCircleFast(
     comptime T: type,
     image: Image(T),
@@ -503,7 +603,19 @@ pub fn drawCircleFast(
     }
 }
 
-/// Fills the given polygon defined as an array of points on image using the scanline algorithm.
+/// Fills the given polygon on an image using the scanline algorithm.
+/// The polygon is defined by an array of points (vertices).
+///
+/// Parameters:
+/// - `allocator`: An `std.mem.Allocator` for temporary memory allocations required by the
+///   scanline algorithm (e.g., for storing intersection points).
+/// - `T`: The color type of the image. Must be a color type.
+/// - `image`: The `Image(T)` on which to fill the polygon.
+/// - `polygon`: A slice of `Point2d(f32)` representing the vertices of the polygon.
+/// - `color`: The color to fill the polygon with. If `T` is `Rgba`, the color will be blended;
+///   otherwise, it will overwrite the existing pixel values.
+///
+/// Can return `error.OutOfMemory` if allocation for intersection points fails.
 pub fn fillPolygon(
     allocator: std.mem.Allocator,
     comptime T: type,
