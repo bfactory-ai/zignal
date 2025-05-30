@@ -83,59 +83,46 @@ pub fn drawLine(
         const max_alpha: Float = @floatFromInt(c2.a);
         const rise = y2 - y1;
         const run = x2 - x1;
-        // Determine if the line is more horizontal or vertical to decide the iteration direction.
         if (@abs(rise) < @abs(run)) { // Gentle slope: Iterate over x-coordinates
             const slope = rise / run;
             const first = if (x1 > x2) @max(x2, 0) else @max(x1, 0);
             const last = if (x1 > x2) @min(x1, cols - 1) else @min(x2, cols - 1);
-            var i = first; // Current x-coordinate
+            var i = first;
             while (i <= last) : (i += 1) {
-                // Calculate the ideal y-coordinate on the line for the current x.
                 const dy = slope * (i - x1) + y1;
-                const dx = i; // Current x-coordinate, used for clarity.
-                const y = @floor(dy); // Integer part of the y-coordinate.
-                // The fractional part (dy - y) determines the alpha for anti-aliasing.
-
-                // Draw pixels for the line width, handling anti-aliasing at the edges.
-                // This block handles the primary pixel row (pixels at floor(dy)).
-                if (y >= 0 and y <= rows - 1) { // Check if y is within image bounds.
-                    var j = -half_width; // Iterate across the width of the line.
+                const dx = i;
+                const y = @floor(dy);
+                const x = @floor(dx);
+                if (y >= 0 and y <= rows - 1) {
+                    var j = -half_width;
                     while (j <= half_width) : (j += 1) {
-                        const py = @max(0, y + j); // Actual y-coordinate for the current strip of the line.
+                        const py = @max(0, y + j);
                         const pos = as(usize, py) * image.cols + as(usize, x);
-                        if (py >= 0 and py < rows) { // Check if py is within image bounds.
+                        if (py >= 0 and py < rows) {
                             var c1: Rgba = colorspace.convert(Rgba, image.data[pos]);
-                            // Adjust alpha for anti-aliasing at the top/bottom edges of the line's width.
-                            // (1 - (dy - y)) is the coverage for the pixel at floor(dy).
-                            if (j == -half_width or j == half_width) { // Edge pixels of the line width
+                            if (j == -half_width or j == half_width) {
                                 c2.a = @intFromFloat((1 - (dy - y)) * max_alpha);
                                 c1.blend(c2);
                                 image.data[pos] = colorspace.convert(T, c1);
-                            } else { // Center pixels of the line width
-                                c2.a = @intFromFloat(max_alpha); // Restore full alpha for center part
+                            } else {
                                 c1.blend(c2);
                                 image.data[pos] = colorspace.convert(T, c1);
                             }
                         }
                     }
                 }
-                // This block handles the secondary pixel row (pixels at floor(dy) + 1) for anti-aliasing.
-                // These pixels get an alpha proportional to (dy - y).
-                if (y + 1 >= 0 and y + 1 <= rows - 1) { // Check if y+1 is within image bounds.
-                    var j = -half_width; // Iterate across the width of the line.
+                if (y + 1 >= 0 and y + 1 <= rows - 1) {
+                    var j = -half_width;
                     while (j <= half_width) : (j += 1) {
-                        const py = @max(0, y + 1 + j); // Actual y-coordinate for the current strip of the line.
-                        if (py >= 0 and py < rows) { // Check if py is within image bounds.
+                        const py = @max(0, y + 1 + j);
+                        if (py >= 0 and py < rows) {
                             const pos = as(usize, py) * image.cols + as(usize, x);
                             var c1: Rgba = colorspace.convert(Rgba, image.data[pos]);
-                            // Adjust alpha for anti-aliasing at the top/bottom edges of the line's width.
-                            // (dy - y) is the coverage for the pixel at floor(dy) + 1.
-                            if (j == -half_width or j == half_width) { // Edge pixels of the line width
+                            if (j == -half_width or j == half_width) {
                                 c2.a = @intFromFloat((dy - y) * max_alpha);
                                 c1.blend(c2);
                                 image.data[pos] = colorspace.convert(T, c1);
-                            } else { // Center pixels of the line width
-                                c2.a = @intFromFloat(max_alpha); // Restore full alpha for center part
+                            } else {
                                 c1.blend(c2);
                                 image.data[pos] = colorspace.convert(T, c1);
                             }
@@ -147,55 +134,42 @@ pub fn drawLine(
             const slope = run / rise;
             const first = if (y1 > y2) @max(y2, 0) else @max(y1, 0);
             const last = if (y1 > y2) @min(y1, rows - 1) else @min(y2, rows - 1);
-            var i = first; // Current y-coordinate
+            var i = first;
             while (i <= last) : (i += 1) {
-                // Calculate the ideal x-coordinate on the line for the current y.
                 const dx = slope * (i - y1) + x1;
-                const dy = i; // Current y-coordinate, used for clarity.
-                const y = @floor(dy); // Integer part of the y-coordinate (same as i).
-                const x = @floor(dx); // Integer part of the x-coordinate.
-                // The fractional part (dx - x) determines the alpha for anti-aliasing.
-
-                // Draw pixels for the line width, handling anti-aliasing at the edges.
-                // This block handles the primary pixel column (pixels at floor(dx)).
-                if (x >= 0 and x <= cols - 1) { // Check if x is within image bounds.
-                    var j = -half_width; // Iterate across the width of the line.
+                const dy = i;
+                const y = @floor(dy);
+                const x = @floor(dx);
+                if (x >= 0 and x <= cols - 1) {
+                    var j = -half_width;
                     while (j <= half_width) : (j += 1) {
-                        const px = @max(0, x_base + j); // Actual x-coordinate for the current strip of the line.
-                        const pos = as(usize, y_coord) * image.cols + as(usize, px); // Corrected: use px
-                        if (px >= 0 and px < cols) { // Check if px is within image bounds.
+                        const px = @max(0, x + j);
+                        const pos = as(usize, y) * image.cols + as(usize, px);
+                        if (px >= 0 and px < cols) {
                             var c1: Rgba = colorspace.convert(Rgba, image.data[pos]);
-                            // Adjust alpha for anti-aliasing at the left/right edges of the line's width.
-                            // (1 - (dx - x_base)) is the coverage for the pixel at floor(dx).
-                            if (j == -half_width or j == half_width) { // Edge pixels of the line width
-                                c2.a = @intFromFloat((1 - (dx - x_base)) * max_alpha);
+                            if (j == -half_width or j == half_width) {
+                                c2.a = @intFromFloat((1 - (dx - x)) * max_alpha);
                                 c1.blend(c2);
                                 image.data[pos] = colorspace.convert(T, c1);
-                            } else { // Center pixels of the line width
-                                c2.a = @intFromFloat(max_alpha); // Restore full alpha
+                            } else {
                                 c1.blend(c2);
                                 image.data[pos] = colorspace.convert(T, c1);
                             }
                         }
                     }
                 }
-                // This block handles the secondary pixel column (pixels at floor(dx) + 1) for anti-aliasing.
-                // These pixels get an alpha proportional to (dx - x).
-                if (x + 1 >= 0 and x + 1 <= cols - 1) { // Check if x+1 is within image bounds.
-                    var j = -half_width; // Iterate across the width of the line.
+                if (x + 1 >= 0 and x + 1 <= cols - 1) {
+                    c2.a = @intFromFloat((dx - x) * max_alpha);
+                    var j = -half_width;
                     while (j <= half_width) : (j += 1) {
-                        const px = @max(0, next_x_base + j); // Actual x-coordinate for the current strip of the line.
-                        if (px >= 0 and px < cols) { // Check if px is within image bounds.
-                            const pos = as(usize, y_coord) * image.cols + as(usize, px); // Corrected: use px
+                        const px = @max(0, x + 1 + j);
+                        const pos = as(usize, y) * image.cols + as(usize, px);
+                        if (px >= 0 and px < cols) {
                             var c1: Rgba = colorspace.convert(Rgba, image.data[pos]);
-                             // Adjust alpha for anti-aliasing at the left/right edges of the line's width.
-                             // (dx - x_base) is the coverage for the pixel at floor(dx) + 1.
-                            if (j == -half_width or j == half_width) { // Edge pixels of the line width
-                                c2.a = @intFromFloat((dx - x_base) * max_alpha); // Corrected alpha for secondary column
+                            if (j == -half_width or j == half_width) {
                                 c1.blend(c2);
                                 image.data[pos] = colorspace.convert(T, c1);
-                            } else { // Center pixels of the line width
-                                c2.a = @intFromFloat(max_alpha); // Restore full alpha
+                            } else {
                                 c1.blend(c2);
                                 image.data[pos] = colorspace.convert(T, c1);
                             }
