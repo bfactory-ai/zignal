@@ -161,14 +161,14 @@ pub fn drawLine(
                 if (x >= 0 and x <= cols - 1) { // Check if x is within image bounds.
                     var j = -half_width; // Iterate across the width of the line.
                     while (j <= half_width) : (j += 1) {
-                        const px = @max(0, x + j); // Actual x-coordinate for the current strip of the line.
-                        const pos = as(usize, y) * image.cols + as(usize, px);
+                        const px = @max(0, x_base + j); // Actual x-coordinate for the current strip of the line.
+                        const pos = as(usize, y_coord) * image.cols + as(usize, px); // Corrected: use px
                         if (px >= 0 and px < cols) { // Check if px is within image bounds.
                             var c1: Rgba = colorspace.convert(Rgba, image.data[pos]);
                             // Adjust alpha for anti-aliasing at the left/right edges of the line's width.
-                            // (1 - (dx - x)) is the coverage for the pixel at floor(dx).
+                            // (1 - (dx - x_base)) is the coverage for the pixel at floor(dx).
                             if (j == -half_width or j == half_width) { // Edge pixels of the line width
-                                c2.a = @intFromFloat((1 - (dx - x)) * max_alpha);
+                                c2.a = @intFromFloat((1 - (dx - x_base)) * max_alpha);
                                 c1.blend(c2);
                                 image.data[pos] = colorspace.convert(T, c1);
                             } else { // Center pixels of the line width
@@ -184,14 +184,14 @@ pub fn drawLine(
                 if (x + 1 >= 0 and x + 1 <= cols - 1) { // Check if x+1 is within image bounds.
                     var j = -half_width; // Iterate across the width of the line.
                     while (j <= half_width) : (j += 1) {
-                        const px = @max(0, x + 1 + j); // Actual x-coordinate for the current strip of the line.
+                        const px = @max(0, next_x_base + j); // Actual x-coordinate for the current strip of the line.
                         if (px >= 0 and px < cols) { // Check if px is within image bounds.
-                            const pos = as(usize, y) * image.cols + as(usize, px);
+                            const pos = as(usize, y_coord) * image.cols + as(usize, px); // Corrected: use px
                             var c1: Rgba = colorspace.convert(Rgba, image.data[pos]);
                              // Adjust alpha for anti-aliasing at the left/right edges of the line's width.
-                             // (dx - x) is the coverage for the pixel at floor(dx) + 1.
+                             // (dx - x_base) is the coverage for the pixel at floor(dx) + 1.
                             if (j == -half_width or j == half_width) { // Edge pixels of the line width
-                                c2.a = @intFromFloat((dx - x) * max_alpha);
+                                c2.a = @intFromFloat((dx - x_base) * max_alpha); // Corrected alpha for secondary column
                                 c1.blend(c2);
                                 image.data[pos] = colorspace.convert(T, c1);
                             } else { // Center pixels of the line width
