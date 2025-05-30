@@ -363,15 +363,15 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             return count;
         }
 
+        /// Computes the nuclear norm of the matrix as sum of the absolute values of all elements.
+        /// This is equivalent to `self.norm(1)`.
+        pub fn nuclearNorm(self: Self) T {
+            return self.norm(1);
+        }
+
         /// Computes the Frobenius norm of the matrix as the square root of the sum of its squared values.
         pub fn frobeniusNorm(self: Self) T {
             return self.norm(2);
-        }
-
-        /// Computes the element-wise L1 norm of the matrix (sum of the absolute values of all elements).
-        /// This is equivalent to `self.norm(1)`.
-        pub fn elementwiseL1Norm(self: Self) T {
-            return self.norm(1);
         }
 
         /// Computes the L-infinity norm (maximum absolute value among all elements) of the matrix.
@@ -526,7 +526,7 @@ test "norm" {
             return @abs(x);
         }
     }.f;
-    try expectEqual(matrix.elementwiseL1Norm(), matrix.apply(f).sum());
+    try expectEqual(matrix.nuclearNorm(), matrix.apply(f).sum());
 
     matrix.set(2, 3, 1000000);
     try expectEqual(matrix.maxNorm(), 1000000);
