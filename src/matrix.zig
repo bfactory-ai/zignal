@@ -334,7 +334,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
         /// `p` must be non-negative. Supports `std.math.inf(T)` for the L-infinity norm (max absolute element)
         /// and `-std.math.inf(T)` for the minimum absolute element value.
         pub fn norm(self: Self, p: T) T {
-            assert(p >= 0);
+            assert(p >= 0 or p == -std.math.inf(T));
             if (p == std.math.inf(T)) {
                 return self.maxNorm();
             } else if (p == -std.math.inf(T)) {
