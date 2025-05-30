@@ -239,6 +239,7 @@ pub fn SimilarityTransform(comptime T: type) type {
         bias: Matrix(T, 2, 1),
         pub const identity: Self = .{ .matrix = .identity(), .bias = .initAll(0) };
 
+        /// Finds the best similarity transform that maps between the two given sets of points.
         pub fn init(from_points: []const Point2d(T), to_points: []const Point2d(T)) Self {
             var transform: SimilarityTransform(T) = .identity;
             transform.find(from_points, to_points);
@@ -630,7 +631,7 @@ pub fn ConvexHull(comptime T: type) type {
                 try self.hull.append(p);
             }
 
-        // Handle the case where all input points were collinear.
+            // Handle the case where all input points were collinear.
             if (self.hull.items.len < 3) {
                 return null;
             }
