@@ -357,9 +357,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             var count: T = 0;
             for (self.items) |row| {
                 for (row) |col| {
-                    if (col != 0) {
-                        count += 1;
-                    }
+                    count += if (col != 0) 1 else 0;
                 }
             }
             return count;
