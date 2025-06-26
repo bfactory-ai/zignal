@@ -263,54 +263,8 @@ pub fn Image(comptime T: type) type {
         /// Computes the integral image (also known as a summed-area table) of `self`.
         /// For multi-channel images (e.g., structs like `Rgba`), it computes a per-channel
         /// integral image, storing the result as an array of floats per pixel in the output `integral` image.
+        /// Uses SIMD optimizations for improved performance with a two-pass approach.
         pub fn integralImage(
-            self: Self,
-            allocator: Allocator,
-            integral: *Image(if (isScalar(T)) f32 else [Self.channels()]f32),
-        ) !void {
-            if (!self.hasSameShape(integral.*)) {
-                integral.* = try .initAlloc(allocator, self.rows, self.cols);
-            }
-            switch (@typeInfo(T)) {
-                .int, .float => {
-                    var tmp: f32 = 0;
-                    for (0..self.cols) |c| {
-                        tmp += as(f32, (self.at(0, c).*));
-                        integral.at(0, c).* = tmp;
-                    }
-                    for (1..self.rows) |r| {
-                        tmp = 0;
-                        for (0..self.cols) |c| {
-                            tmp += as(f32, self.at(r, c).*);
-                            integral.at(r, c).* = tmp + integral.at(r - 1, c).*;
-                        }
-                    }
-                },
-                .@"struct" => {
-                    var tmp = [_]f32{0} ** Self.channels();
-                    for (0..self.cols) |c| {
-                        inline for (std.meta.fields(T), 0..) |f, i| {
-                            tmp[i] += as(f32, @field(self.at(0, c).*, f.name));
-                            integral.at(0, c)[i] = tmp[i];
-                        }
-                    }
-                    for (1..self.rows) |r| {
-                        tmp = [_]f32{0} ** Self.channels();
-                        for (0..self.cols) |c| {
-                            inline for (std.meta.fields(T), 0..) |f, i| {
-                                tmp[i] += as(f32, @field(self.at(r, c).*, f.name));
-                                integral.at(r, c)[i] = tmp[i] + integral.at(r - 1, c)[i];
-                            }
-                        }
-                    }
-                },
-                else => @compileError("Can't compute the integral image of " ++ @typeName(T) ++ "."),
-            }
-        }
-
-        /// Computes the integral image using SIMD optimizations where possible.
-        /// Uses a two-pass approach: first computing row-wise sums, then adding column-wise.
-        pub fn integralImageSimd(
             self: Self,
             allocator: Allocator,
             integral: *Image(if (isScalar(T)) f32 else [Self.channels()]f32),
@@ -698,7 +652,7 @@ test "integral image struct" {
     }
 }
 
-test "integral image SIMD performance" {
+test "integral image performance" {
     const Timer = std.time.Timer;
     const print = std.debug.print;
 
@@ -711,90 +665,15 @@ test "integral image SIMD performance" {
         pixel.* = @intCast((i * 17 + 23) % 256);
     }
 
-    var integral_regular: Image(f32) = undefined;
-    var integral_simd: Image(f32) = undefined;
+    var integral: Image(f32) = undefined;
 
-    // Benchmark regular implementation
+    // Benchmark implementation
     var timer = try Timer.start();
-    try image.integralImage(std.testing.allocator, &integral_regular);
-    const regular_time = timer.read();
-    defer integral_regular.deinit(std.testing.allocator);
+    try image.integralImage(std.testing.allocator, &integral);
+    const time = timer.read();
+    defer integral.deinit(std.testing.allocator);
 
-    // Benchmark SIMD implementation
-    timer.reset();
-    try image.integralImageSimd(std.testing.allocator, &integral_simd);
-    const simd_time = timer.read();
-    defer integral_simd.deinit(std.testing.allocator);
-
-    // Verify results are identical
-    for (0..image.rows) |r| {
-        for (0..image.cols) |c| {
-            try expectEqual(integral_regular.at(r, c).*, integral_simd.at(r, c).*);
-        }
-    }
-
-    print("\nIntegral Image Benchmark (1024x1024 u8):\n", .{});
-    print("Regular: {d:.2}ms\n", .{@as(f64, @floatFromInt(regular_time)) / 1e6});
-    print("SIMD:    {d:.2}ms\n", .{@as(f64, @floatFromInt(simd_time)) / 1e6});
-    print("Speedup: {d:.2}x\n", .{@as(f64, @floatFromInt(regular_time)) / @as(f64, @floatFromInt(simd_time))});
-}
-
-test "integral image SIMD vs regular" {
-    // Test scalar type
-    var image_scalar: Image(u8) = try .initAlloc(std.testing.allocator, 47, 33);
-    defer image_scalar.deinit(std.testing.allocator);
-
-    // Fill with random-ish data
-    for (image_scalar.data, 0..) |*pixel, i| {
-        pixel.* = @intCast((i * 17 + 23) % 256);
-    }
-
-    var integral_regular: Image(f32) = undefined;
-    var integral_simd: Image(f32) = undefined;
-
-    try image_scalar.integralImage(std.testing.allocator, &integral_regular);
-    defer integral_regular.deinit(std.testing.allocator);
-
-    try image_scalar.integralImageSimd(std.testing.allocator, &integral_simd);
-    defer integral_simd.deinit(std.testing.allocator);
-
-    // Verify both produce identical results
-    for (0..image_scalar.rows) |r| {
-        for (0..image_scalar.cols) |c| {
-            try expectEqual(integral_regular.at(r, c).*, integral_simd.at(r, c).*);
-        }
-    }
-
-    // Test struct type
-    var image_struct: Image(Rgba) = try .initAlloc(std.testing.allocator, 31, 29);
-    defer image_struct.deinit(std.testing.allocator);
-
-    for (image_struct.data, 0..) |*pixel, i| {
-        pixel.* = .{
-            .r = @intCast((i * 7 + 11) % 256),
-            .g = @intCast((i * 13 + 17) % 256),
-            .b = @intCast((i * 19 + 23) % 256),
-            .a = @intCast((i * 29 + 31) % 256),
-        };
-    }
-
-    var integral_struct_regular: Image([4]f32) = undefined;
-    var integral_struct_simd: Image([4]f32) = undefined;
-
-    try image_struct.integralImage(std.testing.allocator, &integral_struct_regular);
-    defer integral_struct_regular.deinit(std.testing.allocator);
-
-    try image_struct.integralImageSimd(std.testing.allocator, &integral_struct_simd);
-    defer integral_struct_simd.deinit(std.testing.allocator);
-
-    // Verify both produce identical results for all channels
-    for (0..image_struct.rows) |r| {
-        for (0..image_struct.cols) |c| {
-            for (0..4) |ch| {
-                try expectEqual(integral_struct_regular.at(r, c)[ch], integral_struct_simd.at(r, c)[ch]);
-            }
-        }
-    }
+    print("\nIntegral Image Benchmark (1024x1024 u8): {d:.2}ms\n", .{@as(f64, @floatFromInt(time)) / 1e6});
 }
 
 test "getRectangle" {
