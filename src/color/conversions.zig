@@ -1,5 +1,5 @@
 //! Color space conversion utilities and functions.
-//! 
+//!
 //! This module provides comprehensive conversion functions between all supported color spaces,
 //! a generic `convert()` function, and color type validation utilities.
 
@@ -19,7 +19,7 @@ pub fn convert(comptime T: type, color: anytype) T {
     const ColorType: type = @TypeOf(color);
     comptime assert(isColor(T));
     comptime assert(isColor(ColorType));
-    
+
     const Rgb = @import("Rgb.zig");
     const Rgba = @import("Rgba.zig");
     const Hsl = @import("Hsl.zig");
@@ -29,7 +29,7 @@ pub fn convert(comptime T: type, color: anytype) T {
     const Lms = @import("Lms.zig");
     const Oklab = @import("Oklab.zig");
     const Xyb = @import("Xyb.zig");
-    
+
     return switch (T) {
         u8 => switch (ColorType) {
             u8 => color,
@@ -124,7 +124,7 @@ pub fn rgbToHsl(rgb: @import("Rgb.zig")) @import("Hsl.zig") {
     const min = @min(rgb_float.r, @min(rgb_float.g, rgb_float.b));
     const max = @max(rgb_float.r, @max(rgb_float.g, rgb_float.b));
     const delta = max - min;
-    
+
     const hue = if (delta == 0) 0 else blk: {
         if (max == rgb_float.r) {
             break :blk (rgb_float.g - rgb_float.b) / delta;
@@ -134,10 +134,10 @@ pub fn rgbToHsl(rgb: @import("Rgb.zig")) @import("Hsl.zig") {
             break :blk 4 + (rgb_float.r - rgb_float.g) / delta;
         }
     };
-    
+
     const l = (max + min) / 2.0;
     const s = if (delta == 0) 0 else if (l < 0.5) delta / (2 * l) else delta / (2 - 2 * l);
-    
+
     return .{
         .h = @mod(hue * 60.0, 360.0),
         .s = @max(0, @min(1, s)) * 100.0,
@@ -149,11 +149,11 @@ pub fn hslToRgb(hsl: @import("Hsl.zig")) @import("Rgb.zig") {
     const h = @max(0, @min(360, hsl.h));
     const s = @max(0, @min(1, hsl.s / 100));
     const l = @max(0, @min(1, hsl.l / 100));
-    
+
     const hue_sector = h / 60.0;
     const sector: usize = @intFromFloat(hue_sector);
     const fractional = hue_sector - @as(f64, @floatFromInt(sector));
-    
+
     const hue_factors = [_][3]f64{
         .{ 1, fractional, 0 },
         .{ 1 - fractional, 1, 0 },
@@ -162,12 +162,12 @@ pub fn hslToRgb(hsl: @import("Hsl.zig")) @import("Rgb.zig") {
         .{ fractional, 0, 1 },
         .{ 1, 0, 1 - fractional },
     };
-    
+
     const index = @mod(sector, 6);
     const r = lerp(1, 2 * hue_factors[index][0], s);
     const g = lerp(1, 2 * hue_factors[index][1], s);
     const b = lerp(1, 2 * hue_factors[index][2], s);
-    
+
     const rgb_float = if (l < 0.5)
         RgbFloat{
             .r = r * l,
@@ -180,45 +180,45 @@ pub fn hslToRgb(hsl: @import("Hsl.zig")) @import("Rgb.zig") {
             .g = lerp(g, 2, l) - 1,
             .b = lerp(b, 2, l) - 1,
         };
-    
+
     return rgb_float.toRgb();
 }
 
 pub fn rgbToLab(rgb: @import("Rgb.zig")) @import("Lab.zig") {
     const rgb_float = RgbFloat.fromRgb(rgb.r, rgb.g, rgb.b);
-    
+
     // Convert to XYZ first
     const r = gammaToLinear(rgb_float.r);
     const g = gammaToLinear(rgb_float.g);
     const b = gammaToLinear(rgb_float.b);
-    
+
     const x = (r * 0.4124 + g * 0.3576 + b * 0.1805) * 100;
     const y = (r * 0.2126 + g * 0.7152 + b * 0.0722) * 100;
     const z = (r * 0.0193 + g * 0.1192 + b * 0.9505) * 100;
-    
+
     // Convert XYZ to Lab
     var xn = x / 95.047;
     var yn = y / 100.000;
     var zn = z / 108.883;
-    
+
     if (xn > 0.008856) {
         xn = pow(f64, xn, 1.0 / 3.0);
     } else {
         xn = (7.787 * xn) + (16.0 / 116.0);
     }
-    
+
     if (yn > 0.008856) {
         yn = pow(f64, yn, 1.0 / 3.0);
     } else {
         yn = (7.787 * yn) + (16.0 / 116.0);
     }
-    
+
     if (zn > 0.008856) {
         zn = pow(f64, zn, 1.0 / 3.0);
     } else {
         zn = (7.787 * zn) + (16.0 / 116.0);
     }
-    
+
     return .{
         .l = @max(0, @min(100, (116.0 * yn) - 16.0)),
         .a = @max(-128, @min(127, 500.0 * (xn - yn))),
@@ -231,41 +231,41 @@ pub fn labToRgb(lab: @import("Lab.zig")) @import("Rgb.zig") {
     var y: f64 = (@max(0, @min(100, lab.l)) + 16.0) / 116.0;
     var x: f64 = (@max(-128, @min(127, lab.a)) / 500.0) + y;
     var z: f64 = y - (@max(-128, @min(127, lab.b)) / 200.0);
-    
+
     if (pow(f64, y, 3.0) > 0.008856) {
         y = pow(f64, y, 3.0);
     } else {
         y = (y - 16.0 / 116.0) / 7.787;
     }
-    
+
     if (pow(f64, x, 3.0) > 0.008856) {
         x = pow(f64, x, 3.0);
     } else {
         x = (x - 16.0 / 116.0) / 7.787;
     }
-    
+
     if (pow(f64, z, 3.0) > 0.008856) {
         z = pow(f64, z, 3.0);
     } else {
         z = (z - 16.0 / 116.0) / 7.787;
     }
-    
+
     // Observer. = 2°, illuminant = D65.
     x *= 95.047;
     y *= 100.000;
     z *= 108.883;
-    
+
     // Convert XYZ to RGB
     const r = (x * 3.2406 + y * -1.5372 + z * -0.4986) / 100;
     const g = (x * -0.9689 + y * 1.8758 + z * 0.0415) / 100;
     const b = (x * 0.0557 + y * -0.2040 + z * 1.0570) / 100;
-    
+
     const rgb_float = RgbFloat{
         .r = @max(0, @min(1, linearToGamma(r))),
         .g = @max(0, @min(1, linearToGamma(g))),
         .b = @max(0, @min(1, linearToGamma(b))),
     };
-    
+
     return rgb_float.toRgb();
 }
 
@@ -283,7 +283,7 @@ pub fn rgbToHsv(rgb: @import("Rgb.zig")) @import("Hsv.zig") {
     const min = @min(rgb_float.r, @min(rgb_float.g, rgb_float.b));
     const max = @max(rgb_float.r, @max(rgb_float.g, rgb_float.b));
     const delta = max - min;
-    
+
     return .{
         .h = if (delta == 0) 0 else blk: {
             if (max == rgb_float.r) {
@@ -308,7 +308,7 @@ pub fn hsvToRgb(hsv: @import("Hsv.zig")) @import("Rgb.zig") {
         const gray: u8 = @intFromFloat(@round(255 * val));
         return .{ .r = gray, .g = gray, .b = gray };
     }
-    
+
     const sector = hue * 6;
     const index: i32 = @intFromFloat(sector);
     const fractional = sector - @as(f64, @floatFromInt(index));
@@ -324,13 +324,13 @@ pub fn hsvToRgb(hsv: @import("Hsv.zig")) @import("Rgb.zig") {
         .{ val, p, q },
     };
     const idx: usize = @intCast(@mod(index, 6));
-    
+
     const rgb_float = RgbFloat{
         .r = colors[idx][0],
         .g = colors[idx][1],
         .b = colors[idx][2],
     };
-    
+
     return rgb_float.toRgb();
 }
 
@@ -348,7 +348,7 @@ pub fn rgbToXyz(rgb: @import("Rgb.zig")) @import("Xyz.zig") {
     const r = gammaToLinear(rgb_float.r);
     const g = gammaToLinear(rgb_float.g);
     const b = gammaToLinear(rgb_float.b);
-    
+
     return .{
         .x = (r * 0.4124 + g * 0.3576 + b * 0.1805) * 100,
         .y = (r * 0.2126 + g * 0.7152 + b * 0.0722) * 100,
@@ -366,7 +366,7 @@ pub fn xyzToRgb(xyz: @import("Xyz.zig")) @import("Rgb.zig") {
         .g = @max(0, @min(1, linearToGamma(g))),
         .b = @max(0, @min(1, linearToGamma(b))),
     };
-    
+
     return rgb_float.toRgb();
 }
 

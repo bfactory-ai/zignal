@@ -5,6 +5,7 @@
 //! - b: Blue-yellow axis (negative values towards blue, positive towards yellow, typically around -0.4 to 0.4).
 
 const std = @import("std");
+
 const conversions = @import("conversions.zig");
 const formatting = @import("formatting.zig");
 

@@ -6,6 +6,7 @@
 //! Ranges can vary based on transformations, but often centered around 0 for x and b, and positive for y.
 
 const std = @import("std");
+
 const conversions = @import("conversions.zig");
 const formatting = @import("formatting.zig");
 

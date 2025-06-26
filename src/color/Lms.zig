@@ -3,6 +3,7 @@
 //! Values are typically positive and represent the stimulus for each cone type.
 
 const std = @import("std");
+
 const conversions = @import("conversions.zig");
 const formatting = @import("formatting.zig");
 

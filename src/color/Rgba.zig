@@ -2,6 +2,7 @@
 //! Each component (r, g, b, a) is an unsigned 8-bit integer (0-255).
 
 const std = @import("std");
+
 const formatting = @import("formatting.zig");
 
 r: u8,
@@ -57,7 +58,7 @@ pub fn toRgb(self: Self) @import("Rgb.zig") {
 
 pub fn blend(self: *Self, color: Self) void {
     if (color.a == 0) return;
-    
+
     const a = @as(f32, @floatFromInt(color.a)) / 255;
     self.r = @intFromFloat(std.math.lerp(@as(f32, @floatFromInt(self.r)), @as(f32, @floatFromInt(color.r)), a));
     self.g = @intFromFloat(std.math.lerp(@as(f32, @floatFromInt(self.g)), @as(f32, @floatFromInt(color.g)), a));

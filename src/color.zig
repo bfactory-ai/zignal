@@ -1,32 +1,28 @@
 //! Color module - All color types and utilities
-//! 
+//!
 //! This module provides a unified interface to all color types in the system.
 //! Each color type is implemented as a separate file using Zig's file-as-struct pattern.
 
 const std = @import("std");
+const expectEqual = std.testing.expectEqual;
+const expectEqualDeep = std.testing.expectEqualDeep;
 
-// Re-export all color types directly from individual files
-pub const Rgb = @import("color/Rgb.zig");
-pub const Rgba = @import("color/Rgba.zig");
-pub const Hsl = @import("color/Hsl.zig");
-pub const Hsv = @import("color/Hsv.zig");
-pub const Lab = @import("color/Lab.zig");
-pub const Xyz = @import("color/Xyz.zig");
-pub const Lms = @import("color/Lms.zig");
-pub const Oklab = @import("color/Oklab.zig");
-pub const Xyb = @import("color/Xyb.zig");
-
-// Re-export conversion utilities
 const conversions = @import("color/conversions.zig");
 pub const convert = conversions.convert;
 pub const isColor = conversions.isColor;
+pub const Hsl = @import("color/Hsl.zig");
+pub const Hsv = @import("color/Hsv.zig");
+pub const Lab = @import("color/Lab.zig");
+pub const Lms = @import("color/Lms.zig");
+pub const Oklab = @import("color/Oklab.zig");
+pub const Rgb = @import("color/Rgb.zig");
+pub const Rgba = @import("color/Rgba.zig");
+pub const Xyb = @import("color/Xyb.zig");
+pub const Xyz = @import("color/Xyz.zig");
 
 // ============================================================================
 // TESTS
 // ============================================================================
-
-const expectEqual = std.testing.expectEqual;
-const expectEqualDeep = std.testing.expectEqualDeep;
 
 // Helper function for testing round-trip conversions
 fn testColorConversion(from: Rgb, to: anytype) !void {
@@ -54,14 +50,14 @@ test "blend methods for all color types" {
     // Test data: blend red (255,0,0) with 50% alpha onto black background
     const red_rgba = Rgba{ .r = 255, .g = 0, .b = 0, .a = 128 };
     const expected_rgb = Rgb{ .r = 128, .g = 0, .b = 0 }; // 50% blend of red on black
-    
+
     // Test Rgba.blend
     {
         var rgba_color = Rgba{ .r = 0, .g = 0, .b = 0, .a = 255 };
         rgba_color.blend(red_rgba);
         try expectEqualDeep(rgba_color.toRgb(), expected_rgb);
     }
-    
+
     // Test Hsl.blend
     {
         var hsl_color = Hsl{ .h = 0, .s = 0, .l = 0 }; // black
@@ -69,7 +65,7 @@ test "blend methods for all color types" {
         const result_rgb = hsl_color.toRgb();
         try expectEqualDeep(result_rgb, expected_rgb);
     }
-    
+
     // Test Hsv.blend
     {
         var hsv_color = Hsv{ .h = 0, .s = 0, .v = 0 }; // black
@@ -77,7 +73,7 @@ test "blend methods for all color types" {
         const result_rgb = hsv_color.toRgb();
         try expectEqualDeep(result_rgb, expected_rgb);
     }
-    
+
     // Test Lab.blend
     {
         var lab_color = Lab{ .l = 0, .a = 0, .b = 0 }; // black
@@ -85,7 +81,7 @@ test "blend methods for all color types" {
         const result_rgb = lab_color.toRgb();
         try expectEqualDeep(result_rgb, expected_rgb);
     }
-    
+
     // Test Oklab.blend
     {
         var oklab_color = Oklab{ .l = 0, .a = 0, .b = 0 }; // black
@@ -93,7 +89,7 @@ test "blend methods for all color types" {
         const result_rgb = oklab_color.toRgb();
         try expectEqualDeep(result_rgb, expected_rgb);
     }
-    
+
     // Test Lms.blend
     {
         var lms_color = Lms{ .l = 0, .m = 0, .s = 0 }; // black
@@ -101,25 +97,25 @@ test "blend methods for all color types" {
         const result_rgb = lms_color.toRgb();
         try expectEqualDeep(result_rgb, expected_rgb);
     }
-    
+
     // Test Xyb.blend
     {
         var xyb_color = Xyb{ .x = 0, .y = 0, .b = 0 }; // black
         xyb_color.blend(red_rgba);
         const result_rgb = xyb_color.toRgb();
-        try expectEqualDeep(result_rgb, expected_rgb);          
+        try expectEqualDeep(result_rgb, expected_rgb);
     }
 }
 
 test "blend with zero alpha should not change color" {
     const transparent_red = Rgba{ .r = 255, .g = 0, .b = 0, .a = 0 };
     const original_blue = Rgb{ .r = 0, .g = 0, .b = 255 };
-    
+
     // Test that blending with zero alpha doesn't change the original color
     var test_rgb = original_blue;
     test_rgb.blend(transparent_red);
     try expectEqualDeep(test_rgb, original_blue);
-    
+
     var test_hsl = original_blue.toHsl();
     const original_hsl = test_hsl;
     test_hsl.blend(transparent_red);
@@ -272,30 +268,30 @@ test "color type validation" {
 
 test "generic convert function" {
     const red = Rgb{ .r = 255, .g = 0, .b = 0 };
-    
+
     // Test conversion to all color types
     const red_rgba = convert(Rgba, red);
     try expectEqualDeep(red_rgba, Rgba{ .r = 255, .g = 0, .b = 0, .a = 255 });
-    
+
     const red_hsl = convert(Hsl, red);
     try expectEqualDeep(red_hsl, Hsl{ .h = 0, .s = 100, .l = 50 });
-    
+
     const red_hsv = convert(Hsv, red);
     try expectEqualDeep(red_hsv, Hsv{ .h = 0, .s = 100, .v = 100 });
-    
+
     const gray = convert(u8, red);
     try expectEqual(gray, 54); // Luma-based grayscale of red
 }
 
 test "extended color space round trips" {
     const colors = [_]Rgb{
-        .{ .r = 255, .g = 0, .b = 0 },     // Red
-        .{ .r = 0, .g = 255, .b = 0 },     // Green
-        .{ .r = 0, .g = 0, .b = 255 },     // Blue
+        .{ .r = 255, .g = 0, .b = 0 }, // Red
+        .{ .r = 0, .g = 255, .b = 0 }, // Green
+        .{ .r = 0, .g = 0, .b = 255 }, // Blue
         .{ .r = 255, .g = 255, .b = 255 }, // White
         .{ .r = 128, .g = 128, .b = 128 }, // Gray
     };
-    
+
     for (colors) |original| {
         // Test all round-trip conversions
         try expectEqualDeep(original, original.toXyz().toRgb());

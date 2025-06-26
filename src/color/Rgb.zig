@@ -2,6 +2,7 @@
 //! within the range 0-255.
 
 const std = @import("std");
+
 const conversions = @import("conversions.zig");
 const formatting = @import("formatting.zig");
 
@@ -86,7 +87,7 @@ pub fn toXyb(self: Self) @import("Xyb.zig") {
 
 pub fn blend(self: *Self, color: @import("Rgba.zig")) void {
     if (color.a == 0) return;
-    
+
     const a = @as(f32, @floatFromInt(color.a)) / 255;
     self.r = @intFromFloat(std.math.lerp(@as(f32, @floatFromInt(self.r)), @as(f32, @floatFromInt(color.r)), a));
     self.g = @intFromFloat(std.math.lerp(@as(f32, @floatFromInt(self.g)), @as(f32, @floatFromInt(color.g)), a));
