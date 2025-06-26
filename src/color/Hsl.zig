@@ -33,8 +33,12 @@ pub fn toRgb(self: Self) @import("Rgb.zig") {
     return conversions.hslToRgb(self);
 }
 
+pub fn toRgba(self: Self, alpha: u8) @import("Rgba.zig") {
+    return self.toRgb().toRgba(alpha);
+}
+
 pub fn toHsv(self: Self) @import("Hsv.zig") {
-    return conversions.hsvToHsl(self.toRgb().toHsv());
+    return self.toRgb().toHsv();
 }
 
 pub fn toXyz(self: Self) @import("Xyz.zig") {

@@ -34,6 +34,10 @@ pub fn toRgb(self: Self) @import("Rgb.zig") {
     return conversions.labToRgb(self);
 }
 
+pub fn toRgba(self: Self, alpha: u8) @import("Rgba.zig") {
+    return self.toRgb().toRgba(alpha);
+}
+
 pub fn toHsl(self: Self) @import("Hsl.zig") {
     return conversions.labToHsl(self);
 }

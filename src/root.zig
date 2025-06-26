@@ -1,7 +1,7 @@
 //! Zignal is an image processing library inspired by [dlib](http://dlib.net).
 //! Source code available on [GitHub](https://github.com/bfactory-ai/zignal).
 
-pub const color = @import("color");
+pub const color = @import("color.zig");
 pub const Rgb = color.Rgb;
 pub const Rgba = color.Rgba;
 pub const Hsl = color.Hsl;
