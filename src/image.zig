@@ -308,6 +308,80 @@ pub fn Image(comptime T: type) type {
             }
         }
 
+        /// Computes the integral image using SIMD optimizations where possible.
+        /// Uses a two-pass approach: first computing row-wise sums, then adding column-wise.
+        pub fn integralImageSimd(
+            self: Self,
+            allocator: Allocator,
+            integral: *Image(if (isScalar(T)) f32 else [Self.channels()]f32),
+        ) !void {
+            if (!self.hasSameShape(integral.*)) {
+                integral.* = try .initAlloc(allocator, self.rows, self.cols);
+            }
+            switch (@typeInfo(T)) {
+                .int, .float => {
+                    // First pass: compute row-wise cumulative sums
+                    for (0..self.rows) |r| {
+                        var tmp: f32 = 0;
+                        const row_offset = r * self.stride;
+                        const out_offset = r * integral.cols;
+                        for (0..self.cols) |c| {
+                            tmp += as(f32, self.data[row_offset + c]);
+                            integral.data[out_offset + c] = tmp;
+                        }
+                    }
+
+                    // Second pass: add column-wise cumulative sums using SIMD
+                    const simd_len = std.simd.suggestVectorLength(f32) orelse 1;
+                    for (1..self.rows) |r| {
+                        const prev_row_offset = (r - 1) * integral.cols;
+                        const curr_row_offset = r * integral.cols;
+                        var c: usize = 0;
+
+                        // Process SIMD-width chunks
+                        while (c + simd_len <= self.cols) : (c += simd_len) {
+                            const prev_vals: @Vector(simd_len, f32) = integral.data[prev_row_offset + c ..][0..simd_len].*;
+                            const curr_vals: @Vector(simd_len, f32) = integral.data[curr_row_offset + c ..][0..simd_len].*;
+                            integral.data[curr_row_offset + c ..][0..simd_len].* = prev_vals + curr_vals;
+                        }
+
+                        // Handle remaining columns
+                        while (c < self.cols) : (c += 1) {
+                            integral.data[curr_row_offset + c] += integral.data[prev_row_offset + c];
+                        }
+                    }
+                },
+                .@"struct" => {
+                    const num_channels = comptime Self.channels();
+
+                    // First pass: compute row-wise cumulative sums for all channels
+                    for (0..self.rows) |r| {
+                        var tmp = [_]f32{0} ** num_channels;
+                        const row_offset = r * self.stride;
+                        const out_offset = r * integral.cols;
+                        for (0..self.cols) |c| {
+                            inline for (std.meta.fields(T), 0..) |f, i| {
+                                tmp[i] += as(f32, @field(self.data[row_offset + c], f.name));
+                                integral.data[out_offset + c][i] = tmp[i];
+                            }
+                        }
+                    }
+
+                    // Second pass: add column-wise cumulative sums
+                    for (1..self.rows) |r| {
+                        const prev_row_offset = (r - 1) * integral.cols;
+                        const curr_row_offset = r * integral.cols;
+                        for (0..self.cols) |c| {
+                            inline for (0..num_channels) |i| {
+                                integral.data[curr_row_offset + c][i] += integral.data[prev_row_offset + c][i];
+                            }
+                        }
+                    }
+                },
+                else => @compileError("Can't compute the integral image of " ++ @typeName(T) ++ "."),
+            }
+        }
+
         /// Computes a blurred version of `self` using a box blur algorithm, efficiently implemented
         /// using an integral image. The `radius` parameter determines the size of the box window.
         /// This function is optimized using SIMD instructions for performance where applicable.
@@ -619,6 +693,105 @@ test "integral image struct" {
             const area_at_pos: f32 = @floatFromInt((r + 1) * (c + 1));
             for (0..4) |i| {
                 try expectEqual(area_at_pos, integral.at(r, c)[i]);
+            }
+        }
+    }
+}
+
+test "integral image SIMD performance" {
+    const Timer = std.time.Timer;
+    const print = std.debug.print;
+
+    // Create a larger image for meaningful timing
+    var image: Image(u8) = try .initAlloc(std.testing.allocator, 1024, 1024);
+    defer image.deinit(std.testing.allocator);
+
+    // Fill with random-ish data
+    for (image.data, 0..) |*pixel, i| {
+        pixel.* = @intCast((i * 17 + 23) % 256);
+    }
+
+    var integral_regular: Image(f32) = undefined;
+    var integral_simd: Image(f32) = undefined;
+
+    // Benchmark regular implementation
+    var timer = try Timer.start();
+    try image.integralImage(std.testing.allocator, &integral_regular);
+    const regular_time = timer.read();
+    defer integral_regular.deinit(std.testing.allocator);
+
+    // Benchmark SIMD implementation
+    timer.reset();
+    try image.integralImageSimd(std.testing.allocator, &integral_simd);
+    const simd_time = timer.read();
+    defer integral_simd.deinit(std.testing.allocator);
+
+    // Verify results are identical
+    for (0..image.rows) |r| {
+        for (0..image.cols) |c| {
+            try expectEqual(integral_regular.at(r, c).*, integral_simd.at(r, c).*);
+        }
+    }
+
+    print("\nIntegral Image Benchmark (1024x1024 u8):\n", .{});
+    print("Regular: {d:.2}ms\n", .{@as(f64, @floatFromInt(regular_time)) / 1e6});
+    print("SIMD:    {d:.2}ms\n", .{@as(f64, @floatFromInt(simd_time)) / 1e6});
+    print("Speedup: {d:.2}x\n", .{@as(f64, @floatFromInt(regular_time)) / @as(f64, @floatFromInt(simd_time))});
+}
+
+test "integral image SIMD vs regular" {
+    // Test scalar type
+    var image_scalar: Image(u8) = try .initAlloc(std.testing.allocator, 47, 33);
+    defer image_scalar.deinit(std.testing.allocator);
+
+    // Fill with random-ish data
+    for (image_scalar.data, 0..) |*pixel, i| {
+        pixel.* = @intCast((i * 17 + 23) % 256);
+    }
+
+    var integral_regular: Image(f32) = undefined;
+    var integral_simd: Image(f32) = undefined;
+
+    try image_scalar.integralImage(std.testing.allocator, &integral_regular);
+    defer integral_regular.deinit(std.testing.allocator);
+
+    try image_scalar.integralImageSimd(std.testing.allocator, &integral_simd);
+    defer integral_simd.deinit(std.testing.allocator);
+
+    // Verify both produce identical results
+    for (0..image_scalar.rows) |r| {
+        for (0..image_scalar.cols) |c| {
+            try expectEqual(integral_regular.at(r, c).*, integral_simd.at(r, c).*);
+        }
+    }
+
+    // Test struct type
+    var image_struct: Image(Rgba) = try .initAlloc(std.testing.allocator, 31, 29);
+    defer image_struct.deinit(std.testing.allocator);
+
+    for (image_struct.data, 0..) |*pixel, i| {
+        pixel.* = .{
+            .r = @intCast((i * 7 + 11) % 256),
+            .g = @intCast((i * 13 + 17) % 256),
+            .b = @intCast((i * 19 + 23) % 256),
+            .a = @intCast((i * 29 + 31) % 256),
+        };
+    }
+
+    var integral_struct_regular: Image([4]f32) = undefined;
+    var integral_struct_simd: Image([4]f32) = undefined;
+
+    try image_struct.integralImage(std.testing.allocator, &integral_struct_regular);
+    defer integral_struct_regular.deinit(std.testing.allocator);
+
+    try image_struct.integralImageSimd(std.testing.allocator, &integral_struct_simd);
+    defer integral_struct_simd.deinit(std.testing.allocator);
+
+    // Verify both produce identical results for all channels
+    for (0..image_struct.rows) |r| {
+        for (0..image_struct.cols) |c| {
+            for (0..4) |ch| {
+                try expectEqual(integral_struct_regular.at(r, c)[ch], integral_struct_simd.at(r, c)[ch]);
             }
         }
     }
