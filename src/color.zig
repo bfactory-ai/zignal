@@ -304,7 +304,7 @@ test "extended color space round trips" {
 test "comprehensive color conversion paths" {
     // Test color: bright red-orange to ensure all conversion methods compile and work
     const test_rgb = Rgb{ .r = 255, .g = 64, .b = 32 };
-    
+
     // Convert to all color types to ensure all conversion methods work
     const rgba = test_rgb.toRgba(200);
     const hsl = test_rgb.toHsl();
@@ -314,30 +314,30 @@ test "comprehensive color conversion paths" {
     const lms = test_rgb.toLms();
     const oklab = test_rgb.toOklab();
     const xyb = test_rgb.toXyb();
-    
+
     // Test all conversions FROM each color type to ensure no compilation errors
     // and that all conversion methods exist and work correctly
-    
+
     // From Rgba - only has toRgb() method, other conversions go through RGB
     _ = rgba.toRgb();
-    _ = rgba.toRgb().toHsl();
-    _ = rgba.toRgb().toHsv();
-    _ = rgba.toRgb().toLab();
-    _ = rgba.toRgb().toXyz();
-    _ = rgba.toRgb().toLms();
-    _ = rgba.toRgb().toOklab();
-    _ = rgba.toRgb().toXyb();
-    
+    _ = rgba.toHsl();
+    _ = rgba.toHsv();
+    _ = rgba.toLab();
+    _ = rgba.toXyz();
+    _ = rgba.toLms();
+    _ = rgba.toOklab();
+    _ = rgba.toXyb();
+
     // From Hsl - test all 8 conversion methods
     _ = hsl.toRgb();
     _ = hsl.toRgba(255);
-    _ = hsl.toHsv();  // This was the buggy method we fixed
+    _ = hsl.toHsv(); // This was the buggy method we fixed
     _ = hsl.toLab();
     _ = hsl.toXyz();
     _ = hsl.toLms();
     _ = hsl.toOklab();
     _ = hsl.toXyb();
-    
+
     // From Hsv - test all 8 conversion methods
     _ = hsv.toRgb();
     _ = hsv.toRgba(255);
@@ -347,7 +347,7 @@ test "comprehensive color conversion paths" {
     _ = hsv.toLms();
     _ = hsv.toOklab();
     _ = hsv.toXyb();
-    
+
     // From Lab - test all 8 conversion methods
     _ = lab.toRgb();
     _ = lab.toRgba(255);
@@ -357,7 +357,7 @@ test "comprehensive color conversion paths" {
     _ = lab.toLms();
     _ = lab.toOklab();
     _ = lab.toXyb();
-    
+
     // From Xyz - test all 8 conversion methods
     _ = xyz.toRgb();
     _ = xyz.toRgba(255);
@@ -367,7 +367,7 @@ test "comprehensive color conversion paths" {
     _ = xyz.toLms();
     _ = xyz.toOklab();
     _ = xyz.toXyb();
-    
+
     // From Lms - test all 8 conversion methods
     _ = lms.toRgb();
     _ = lms.toRgba(255);
@@ -377,7 +377,7 @@ test "comprehensive color conversion paths" {
     _ = lms.toXyz();
     _ = lms.toOklab();
     _ = lms.toXyb();
-    
+
     // From Oklab - test all 8 conversion methods
     _ = oklab.toRgb();
     _ = oklab.toRgba(255);
@@ -387,7 +387,7 @@ test "comprehensive color conversion paths" {
     _ = oklab.toXyz();
     _ = oklab.toLms();
     _ = oklab.toXyb();
-    
+
     // From Xyb - test all 8 conversion methods
     _ = xyb.toRgb();
     _ = xyb.toRgba(255);
@@ -397,4 +397,39 @@ test "comprehensive color conversion paths" {
     _ = xyb.toXyz();
     _ = xyb.toLms();
     _ = xyb.toOklab();
+}
+
+test "color conversion accuracy with reference values" {
+    // Test with well-known reference values to verify conversion accuracy
+
+    // Pure red: RGB(255,0,0) should convert to specific known values
+    try expectEqualDeep(Hsl{ .h = 0, .s = 100, .l = 50 }, (Rgb{ .r = 255, .g = 0, .b = 0 }).toHsl());
+    try expectEqualDeep(Hsv{ .h = 0, .s = 100, .v = 100 }, (Rgb{ .r = 255, .g = 0, .b = 0 }).toHsv());
+
+    // Pure green: RGB(0,255,0) should have hue=120
+    try expectEqualDeep(Hsl{ .h = 120, .s = 100, .l = 50 }, (Rgb{ .r = 0, .g = 255, .b = 0 }).toHsl());
+    try expectEqualDeep(Hsv{ .h = 120, .s = 100, .v = 100 }, (Rgb{ .r = 0, .g = 255, .b = 0 }).toHsv());
+
+    // Pure blue: RGB(0,0,255) should have hue=240
+    try expectEqualDeep(Hsl{ .h = 240, .s = 100, .l = 50 }, (Rgb{ .r = 0, .g = 0, .b = 255 }).toHsl());
+    try expectEqualDeep(Hsv{ .h = 240, .s = 100, .v = 100 }, (Rgb{ .r = 0, .g = 0, .b = 255 }).toHsv());
+
+    // White should have L=100 in Lab space (with small tolerance for floating point)
+    const white_lab = (Rgb{ .r = 255, .g = 255, .b = 255 }).toLab();
+    try expectEqualDeep(Lab{ .l = 100, .a = 0.00526049995830391, .b = -0.010408184525267927 }, white_lab);
+
+    // Black should have L=0 in Lab space
+    try expectEqualDeep(Lab{ .l = 0, .a = 0, .b = 0 }, (Rgb{ .r = 0, .g = 0, .b = 0 }).toLab());
+
+    // Gray should have saturation=0 in HSL
+    try expectEqualDeep(Hsl{ .h = 0, .s = 0, .l = 50.19607843137255 }, (Rgb{ .r = 128, .g = 128, .b = 128 }).toHsl());
+
+    // Cyan: RGB(0,255,255) should have hue=180
+    try expectEqualDeep(Hsl{ .h = 180, .s = 100, .l = 50 }, (Rgb{ .r = 0, .g = 255, .b = 255 }).toHsl());
+
+    // Magenta: RGB(255,0,255) should have hue=300
+    try expectEqualDeep(Hsl{ .h = 300, .s = 100, .l = 50 }, (Rgb{ .r = 255, .g = 0, .b = 255 }).toHsl());
+
+    // Yellow: RGB(255,255,0) should have hue=60
+    try expectEqualDeep(Hsl{ .h = 60, .s = 100, .l = 50 }, (Rgb{ .r = 255, .g = 255, .b = 0 }).toHsl());
 }

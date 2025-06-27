@@ -56,6 +56,34 @@ pub fn toRgb(self: Self) @import("Rgb.zig") {
     return .{ .r = self.r, .g = self.g, .b = self.b };
 }
 
+pub fn toHsl(self: Self) @import("Hsl.zig") {
+    return self.toRgb().toHsl();
+}
+
+pub fn toHsv(self: Self) @import("Hsv.zig") {
+    return self.toRgb().toHsv();
+}
+
+pub fn toLab(self: Self) @import("Lab.zig") {
+    return self.toRgb().toLab();
+}
+
+pub fn toXyz(self: Self) @import("Xyz.zig") {
+    return self.toRgb().toXyz();
+}
+
+pub fn toLms(self: Self) @import("Lms.zig") {
+    return self.toRgb().toLms();
+}
+
+pub fn toOklab(self: Self) @import("Oklab.zig") {
+    return self.toRgb().toOklab();
+}
+
+pub fn toXyb(self: Self) @import("Xyb.zig") {
+    return self.toRgb().toXyb();
+}
+
 pub fn blend(self: *Self, color: Self) void {
     if (color.a == 0) return;
 
