@@ -171,37 +171,144 @@ pub fn Canvas(comptime T: type) type {
         /// This function is faster than `drawLine` because it does not perform anti-aliasing.
         pub fn drawLineFast(self: Self, p1: Point2d(f32), p2: Point2d(f32), width: usize, color: T) void {
             if (width == 0) return;
-            var x1: isize = @intFromFloat(p1.x);
-            var y1: isize = @intFromFloat(p1.y);
-            const x2: isize = @intFromFloat(p2.x);
-            const y2: isize = @intFromFloat(p2.y);
-            const sx: isize = if (x1 < x2) 1 else -1;
-            const sy: isize = if (y1 < y2) 1 else -1;
-            const dx: isize = @intCast(@abs(x2 - x1));
-            const dy: isize = @intCast(@abs(y2 - y1));
-            var err = dx - dy;
-            while (x1 != x2 or y1 != y2) {
-                const half_width: isize = @intCast(width / 2);
-                var i = -half_width;
-                while (i <= half_width) : (i += 1) {
-                    var j = -half_width;
-                    while (j <= half_width) : (j += 1) {
-                        const px = x1 + i;
-                        const py = y1 + j;
-                        if (px >= 0 and px < self.image.cols and py >= 0 and py < self.image.rows) {
-                            const pos = @as(usize, @intCast(py)) * self.image.cols + @as(usize, @intCast(px));
+
+            // For width 1, use simple Bresenham
+            if (width == 1) {
+                var x1: i32 = @intFromFloat(p1.x);
+                var y1: i32 = @intFromFloat(p1.y);
+                const x2: i32 = @intFromFloat(p2.x);
+                const y2: i32 = @intFromFloat(p2.y);
+                
+                const dx: i32 = @intCast(@abs(x2 - x1));
+                const dy: i32 = @intCast(@abs(y2 - y1));
+                const sx: i32 = if (x1 < x2) 1 else -1;
+                const sy: i32 = if (y1 < y2) 1 else -1;
+                var err = dx - dy;
+                
+                while (true) {
+                    if (x1 >= 0 and x1 < self.image.cols and y1 >= 0 and y1 < self.image.rows) {
+                        const pos = @as(usize, @intCast(y1)) * self.image.cols + @as(usize, @intCast(x1));
+                        self.image.data[pos] = color;
+                    }
+                    
+                    if (x1 == x2 and y1 == y2) break;
+                    
+                    const e2 = 2 * err;
+                    if (e2 > -dy) {
+                        err -= dy;
+                        x1 += sx;
+                    }
+                    if (e2 < dx) {
+                        err += dx;
+                        y1 += sy;
+                    }
+                }
+                return;
+            }
+
+            // For thick lines, draw as a filled rectangle
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            const line_length = @sqrt(dx * dx + dy * dy);
+
+            if (line_length == 0) {
+                // Single point - draw a filled circle
+                const half_width = @as(f32, @floatFromInt(width)) / 2.0;
+                const cx = @as(i32, @intFromFloat(p1.x));
+                const cy = @as(i32, @intFromFloat(p1.y));
+
+                var y = cy - @as(i32, @intFromFloat(half_width));
+                while (y <= cy + @as(i32, @intFromFloat(half_width))) : (y += 1) {
+                    var x = cx - @as(i32, @intFromFloat(half_width));
+                    while (x <= cx + @as(i32, @intFromFloat(half_width))) : (x += 1) {
+                        const dist_sq = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+                        const radius_sq = @as(i32, @intFromFloat(half_width * half_width));
+                        if (dist_sq <= radius_sq and x >= 0 and x < self.image.cols and y >= 0 and y < self.image.rows) {
+                            const pos = @as(usize, @intCast(y)) * self.image.cols + @as(usize, @intCast(x));
                             self.image.data[pos] = color;
                         }
                     }
                 }
-                const e2 = err * 2;
-                if (e2 > -dy) {
-                    err -= dy;
-                    x1 += sx;
+                return;
+            }
+
+            // Calculate perpendicular vector for thick line
+            const half_width = @as(f32, @floatFromInt(width)) / 2.0;
+            const perp_x = -dy / line_length * half_width;
+            const perp_y = dx / line_length * half_width;
+
+            // Create rectangle corners
+            const corners = [_]Point2d(f32){
+                .{ .x = p1.x - perp_x, .y = p1.y - perp_y },
+                .{ .x = p1.x + perp_x, .y = p1.y + perp_y },
+                .{ .x = p2.x + perp_x, .y = p2.y + perp_y },
+                .{ .x = p2.x - perp_x, .y = p2.y - perp_y },
+            };
+
+            // Fill rectangle using scanline algorithm (no anti-aliasing)
+            self.fillPolygonFast(&corners, color);
+        }
+
+
+        /// Fast polygon fill without anti-aliasing
+        fn fillPolygonFast(self: Self, polygon: []const Point2d(f32), color: T) void {
+            if (polygon.len < 3) return;
+
+            // Find bounding box
+            var min_y = polygon[0].y;
+            var max_y = polygon[0].y;
+            for (polygon) |p| {
+                min_y = @min(min_y, p.y);
+                max_y = @max(max_y, p.y);
+            }
+
+            const start_y = @max(0, @as(i32, @intFromFloat(@floor(min_y))));
+            const end_y = @min(@as(i32, @intCast(self.image.rows)) - 1, @as(i32, @intFromFloat(@ceil(max_y))));
+
+            // For each scanline
+            var y = start_y;
+            while (y <= end_y) : (y += 1) {
+                const fy = @as(f32, @floatFromInt(y));
+                var intersections: [8]f32 = undefined; // Fixed size for performance
+                var intersection_count: usize = 0;
+
+                // Find intersections with polygon edges
+                for (0..polygon.len) |i| {
+                    const p1 = polygon[i];
+                    const p2 = polygon[(i + 1) % polygon.len];
+
+                    if ((p1.y <= fy and p2.y > fy) or (p2.y <= fy and p1.y > fy)) {
+                        if (intersection_count >= intersections.len) break;
+                        const t = (fy - p1.y) / (p2.y - p1.y);
+                        intersections[intersection_count] = p1.x + t * (p2.x - p1.x);
+                        intersection_count += 1;
+                    }
                 }
-                if (e2 < dx) {
-                    err += dx;
-                    y1 += sy;
+
+                // Sort intersections (simple bubble sort for small arrays)
+                if (intersection_count > 1) {
+                    for (0..intersection_count - 1) |i| {
+                        for (i + 1..intersection_count) |j| {
+                            if (intersections[i] > intersections[j]) {
+                                const temp = intersections[i];
+                                intersections[i] = intersections[j];
+                                intersections[j] = temp;
+                            }
+                        }
+                    }
+                }
+
+                // Fill between pairs of intersections
+                var i: usize = 0;
+                while (i + 1 < intersection_count) : (i += 2) {
+                    const x_start = @max(0, @as(i32, @intFromFloat(@floor(intersections[i]))));
+                    const x_end = @min(@as(i32, @intCast(self.image.cols)) - 1, @as(i32, @intFromFloat(@ceil(intersections[i + 1]))));
+
+                    var x = x_start;
+                    while (x <= x_end) : (x += 1) {
+                        const pos = @as(usize, @intCast(y)) * self.image.cols + @as(usize, @intCast(x));
+                        self.image.data[pos] = color;
+                    }
                 }
             }
         }
