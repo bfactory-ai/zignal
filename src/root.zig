@@ -14,7 +14,6 @@ pub const Xyb = color.Xyb;
 
 pub const Canvas = @import("canvas.zig").Canvas;
 pub const geometry = @import("geometry.zig");
-pub const jxl = @import("jxl.zig");
 pub const point = @import("point.zig");
 pub const Rectangle = geometry.Rectangle;
 pub const AffineTransform = geometry.AffineTransform;
