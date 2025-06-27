@@ -20,12 +20,6 @@ pub const FillMode = enum {
     smooth,
 };
 
-/// Errors that can occur during polygon filling operations
-pub const FillError = error{
-    /// Polygon has too many intersections per scanline (exceeds 256 limit)
-    TooManyIntersections,
-};
-
 /// A drawing context for an image, providing methods to draw shapes and lines.
 pub fn Canvas(comptime T: type) type {
     return struct {
@@ -184,6 +178,7 @@ pub fn Canvas(comptime T: type) type {
         /// Draws a colored straight line of a custom width between `p1` and `p2` on `image` using Bresenham's line algorithm.
         /// This function is faster than `drawLine` because it does not perform anti-aliasing.
         pub fn drawLineFast(self: Self, p1: Point2d(f32), p2: Point2d(f32), width: usize, color: T) void {
+            comptime assert(isColor(@TypeOf(color)));
             if (width == 0) return;
 
             // For width 1, use simple Bresenham
@@ -328,7 +323,7 @@ pub fn Canvas(comptime T: type) type {
         }
 
         /// Draws the outline of a rectangle on the given image.
-        pub fn drawRectangle(self: Self, rect: Rectangle(f32), width: usize, color: anytype) !void {
+        pub fn drawRectangle(self: Self, rect: Rectangle(f32), width: usize, color: anytype) void {
             comptime assert(isColor(@TypeOf(color)));
             const points: []const Point2d(f32) = &.{
                 .{ .x = rect.l, .y = rect.t },
@@ -337,20 +332,6 @@ pub fn Canvas(comptime T: type) type {
                 .{ .x = rect.l, .y = rect.b },
             };
             self.drawPolygon(points, width, color);
-        }
-
-        /// Draws a cross shape (plus sign) on the given image at a specified center point.
-        pub fn drawCross(self: Self, center: Point2d(f32), size: usize, color: T) void {
-            comptime assert(isColor(T));
-            if (size == 0) return;
-            const x: usize = @intFromFloat(@round(@max(0, @min(as(f32, self.image.cols - 1), center.x))));
-            const y: usize = @intFromFloat(@round(@max(0, @min(as(f32, self.image.rows - 1), center.y))));
-            for (0..size) |i| {
-                self.image.data[y * self.image.cols + x -| i] = color;
-                self.image.data[(y -| i) * self.image.cols + x] = color;
-                self.image.data[y * self.image.cols + @min(self.image.cols - 1, x + i)] = color;
-                self.image.data[@min(self.image.rows - 1, y + i) * self.image.cols + x] = color;
-            }
         }
 
         /// Draws the outline of a polygon on the given image.
@@ -501,7 +482,7 @@ pub fn Canvas(comptime T: type) type {
                         const intersection = p1.x + (fy - p1.y) * (p2.x - p1.x) / (p2.y - p1.y);
 
                         if (intersection_count >= max_intersections) {
-                            return FillError.TooManyIntersections;
+                            return error.TooManyIntersections;
                         }
 
                         intersections[intersection_count] = intersection;
