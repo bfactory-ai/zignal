@@ -36,8 +36,7 @@ pub fn Canvas(comptime T: type) type {
             const rows: Float = @floatFromInt(self.image.rows);
             const cols: Float = @floatFromInt(self.image.cols);
             const half_width: Float = @as(Float, @floatFromInt(width)) / 2.0;
-            var c2 = convert(Rgba, color);
-            const max_alpha: Float = @floatFromInt(c2.a);
+            const c2 = convert(Rgba, color);
 
             // Calculate line direction vector
             const dx = p2.x - p1.x;
@@ -120,47 +119,38 @@ pub fn Canvas(comptime T: type) type {
                 return;
             }
 
-            // For diagonal lines, use improved algorithm with perpendicular offsets
-            const steps = @max(@abs(dx), @abs(dy));
-            const step_x = dx / steps;
-            const step_y = dy / steps;
+            // For diagonal lines, use distance-based anti-aliasing
+            // Calculate bounding box of the thick line
+            const min_x = @floor(@min(@min(p1.x - half_width * @abs(perp_x), p1.x + half_width * @abs(perp_x)), @min(p2.x - half_width * @abs(perp_x), p2.x + half_width * @abs(perp_x))));
+            const max_x = @ceil(@max(@max(p1.x - half_width * @abs(perp_x), p1.x + half_width * @abs(perp_x)), @max(p2.x - half_width * @abs(perp_x), p2.x + half_width * @abs(perp_x))));
+            const min_y = @floor(@min(@min(p1.y - half_width * @abs(perp_y), p1.y + half_width * @abs(perp_y)), @min(p2.y - half_width * @abs(perp_y), p2.y + half_width * @abs(perp_y))));
+            const max_y = @ceil(@max(@max(p1.y - half_width * @abs(perp_y), p1.y + half_width * @abs(perp_y)), @max(p2.y - half_width * @abs(perp_y), p2.y + half_width * @abs(perp_y))));
 
-            var t: Float = 0;
-            while (t <= steps) : (t += 1) {
-                const center_x = p1.x + t * step_x;
-                const center_y = p1.y + t * step_y;
+            // Iterate through pixels in bounding box
+            var y = @max(0, @as(i32, @intFromFloat(min_y)));
+            while (y <= @min(@as(i32, @intFromFloat(rows)) - 1, @as(i32, @intFromFloat(max_y)))) : (y += 1) {
+                var x = @max(0, @as(i32, @intFromFloat(min_x)));
+                while (x <= @min(@as(i32, @intFromFloat(cols)) - 1, @as(i32, @intFromFloat(max_x)))) : (x += 1) {
+                    const px = @as(Float, @floatFromInt(x));
+                    const py = @as(Float, @floatFromInt(y));
 
-                // Draw line width using perpendicular offsets with proper spacing
-                const width_samples = @as(usize, @intFromFloat(@ceil(half_width * 2))) + 1;
-                for (0..width_samples) |w_idx| {
-                    const w: Float = -half_width + (@as(Float, @floatFromInt(w_idx)) * (2 * half_width) / @as(Float, @floatFromInt(width_samples - 1)));
-                    const px = center_x + w * perp_x;
-                    const py = center_y + w * perp_y;
+                    // Calculate distance from pixel to line segment
+                    const dist = self.distanceToLineSegment(px, py, p1, p2);
 
-                    // Apply Wu's antialiasing
-                    const x_floor = @floor(px);
-                    const y_floor = @floor(py);
-                    const x_frac = px - x_floor;
-                    const y_frac = py - y_floor;
+                    // Anti-aliased coverage based on distance
+                    if (dist <= half_width + 0.5) {
+                        var alpha: Float = 1.0;
+                        if (dist > half_width - 0.5) {
+                            // Smooth falloff at edges
+                            alpha = (half_width + 0.5 - dist);
+                        }
 
-                    // Calculate edge alpha for smooth width transitions
-                    const dist_from_edge = half_width - @abs(w);
-                    const edge_alpha = @min(1.0, @max(0.0, dist_from_edge + 0.5));
-
-                    // Draw the four pixels with antialiasing
-                    const pixels = [_]struct { x: Float, y: Float, alpha: Float }{
-                        .{ .x = x_floor, .y = y_floor, .alpha = (1 - x_frac) * (1 - y_frac) * edge_alpha },
-                        .{ .x = x_floor + 1, .y = y_floor, .alpha = x_frac * (1 - y_frac) * edge_alpha },
-                        .{ .x = x_floor, .y = y_floor + 1, .alpha = (1 - x_frac) * y_frac * edge_alpha },
-                        .{ .x = x_floor + 1, .y = y_floor + 1, .alpha = x_frac * y_frac * edge_alpha },
-                    };
-
-                    for (pixels) |pixel| {
-                        if (pixel.x >= 0 and pixel.x < cols and pixel.y >= 0 and pixel.y < rows) {
-                            const pos = as(usize, pixel.y) * self.image.cols + as(usize, pixel.x);
+                        if (alpha > 0) {
+                            const pos = @as(usize, @intCast(y)) * self.image.cols + @as(usize, @intCast(x));
                             var c1 = convert(Rgba, self.image.data[pos]);
-                            c2.a = @intFromFloat(pixel.alpha * max_alpha);
-                            c1.blend(c2);
+                            var c_blend = c2;
+                            c_blend.a = @intFromFloat(alpha * @as(Float, @floatFromInt(c2.a)));
+                            c1.blend(c_blend);
                             self.image.data[pos] = convert(T, c1);
                         }
                     }
@@ -168,48 +158,131 @@ pub fn Canvas(comptime T: type) type {
             }
         }
 
-        /// Draws a colored straight line using a filled rectangle approach.
-        /// This creates a line by calculating the four corners of a rectangle and filling it.
-        pub fn drawLineRect(self: Self, p1: Point2d(f32), p2: Point2d(f32), width: usize, color: anytype) !void {
-            comptime assert(isColor(@TypeOf(color)));
-            if (width == 0) return;
-
-            const Float = @TypeOf(p1.x);
-            const half_width: Float = @as(Float, @floatFromInt(width)) / 2.0;
-
-            // Calculate line direction
+        /// Calculate the shortest distance from a point to a line segment
+        fn distanceToLineSegment(self: Self, px: f32, py: f32, p1: Point2d(f32), p2: Point2d(f32)) f32 {
+            _ = self;
             const dx = p2.x - p1.x;
             const dy = p2.y - p1.y;
-            const line_length = @sqrt(dx * dx + dy * dy);
+            const length_sq = dx * dx + dy * dy;
 
-            if (line_length == 0) {
-                // Single point - draw a small circle
-                self.fillCircle(p1, half_width, color);
-                return;
+            if (length_sq == 0) {
+                // Line segment is a point
+                const dpx = px - p1.x;
+                const dpy = py - p1.y;
+                return @sqrt(dpx * dpx + dpy * dpy);
             }
 
-            // Normalize direction vector
-            const dir_x = dx / line_length;
-            const dir_y = dy / line_length;
+            // Calculate parameter t for the closest point on the line segment
+            const t = @max(0, @min(1, ((px - p1.x) * dx + (py - p1.y) * dy) / length_sq));
 
-            // Calculate perpendicular vector
-            const perp_x = -dir_y * half_width;
-            const perp_y = dir_x * half_width;
+            // Find the closest point on the line segment
+            const closest_x = p1.x + t * dx;
+            const closest_y = p1.y + t * dy;
 
-            // Calculate the four corners of the rectangle
-            const corners = [_]Point2d(f32){
-                .{ .x = p1.x + perp_x, .y = p1.y + perp_y },
-                .{ .x = p1.x - perp_x, .y = p1.y - perp_y },
-                .{ .x = p2.x - perp_x, .y = p2.y - perp_y },
-                .{ .x = p2.x + perp_x, .y = p2.y + perp_y },
-            };
+            // Return distance to closest point
+            const dist_x = px - closest_x;
+            const dist_y = py - closest_y;
+            return @sqrt(dist_x * dist_x + dist_y * dist_y);
+        }
 
-            // Fill the rectangle
-            try self.fillPolygon(&corners, color);
+        /// Internal helper to draw a 1-pixel wide anti-aliased line using Wu's algorithm
+        fn drawWuLine(self: Self, p1: Point2d(f32), p2: Point2d(f32), color: anytype) void {
+            const Float = @TypeOf(p1.x);
+            const rows: Float = @floatFromInt(self.image.rows);
+            const cols: Float = @floatFromInt(self.image.cols);
+            const c2 = convert(Rgba, color);
+            const max_alpha: Float = @floatFromInt(c2.a);
 
-            // Add round end caps
-            self.fillCircle(p1, half_width, color);
-            self.fillCircle(p2, half_width, color);
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+
+            if (@abs(dx) > @abs(dy)) {
+                // X-major line
+                var x1 = p1.x;
+                var y1 = p1.y;
+                var x2 = p2.x;
+                var y2 = p2.y;
+
+                if (x1 > x2) {
+                    std.mem.swap(Float, &x1, &x2);
+                    std.mem.swap(Float, &y1, &y2);
+                }
+
+                const gradient = (y2 - y1) / (x2 - x1);
+                var y = y1;
+
+                var x = x1;
+                while (x <= x2) : (x += 1.0) {
+                    if (x >= 0 and x < cols) {
+                        const y_floor = @floor(y);
+                        const y_frac = y - y_floor;
+
+                        // Upper pixel
+                        if (y_floor >= 0 and y_floor < rows) {
+                            const pos1 = @as(usize, @intFromFloat(y_floor)) * self.image.cols + @as(usize, @intFromFloat(x));
+                            var c1 = convert(Rgba, self.image.data[pos1]);
+                            var c_blend = c2;
+                            c_blend.a = @intFromFloat((1.0 - y_frac) * max_alpha);
+                            c1.blend(c_blend);
+                            self.image.data[pos1] = convert(T, c1);
+                        }
+
+                        // Lower pixel
+                        if (y_floor + 1 >= 0 and y_floor + 1 < rows) {
+                            const pos2 = @as(usize, @intFromFloat(y_floor + 1)) * self.image.cols + @as(usize, @intFromFloat(x));
+                            var c1 = convert(Rgba, self.image.data[pos2]);
+                            var c_blend = c2;
+                            c_blend.a = @intFromFloat(y_frac * max_alpha);
+                            c1.blend(c_blend);
+                            self.image.data[pos2] = convert(T, c1);
+                        }
+                    }
+                    y += gradient;
+                }
+            } else {
+                // Y-major line
+                var x1 = p1.x;
+                var y1 = p1.y;
+                var x2 = p2.x;
+                var y2 = p2.y;
+
+                if (y1 > y2) {
+                    std.mem.swap(Float, &x1, &x2);
+                    std.mem.swap(Float, &y1, &y2);
+                }
+
+                const gradient = (x2 - x1) / (y2 - y1);
+                var x = x1;
+
+                var y = y1;
+                while (y <= y2) : (y += 1.0) {
+                    if (y >= 0 and y < rows) {
+                        const x_floor = @floor(x);
+                        const x_frac = x - x_floor;
+
+                        // Left pixel
+                        if (x_floor >= 0 and x_floor < cols) {
+                            const pos1 = @as(usize, @intFromFloat(y)) * self.image.cols + @as(usize, @intFromFloat(x_floor));
+                            var c1 = convert(Rgba, self.image.data[pos1]);
+                            var c_blend = c2;
+                            c_blend.a = @intFromFloat((1.0 - x_frac) * max_alpha);
+                            c1.blend(c_blend);
+                            self.image.data[pos1] = convert(T, c1);
+                        }
+
+                        // Right pixel
+                        if (x_floor + 1 >= 0 and x_floor + 1 < cols) {
+                            const pos2 = @as(usize, @intFromFloat(y)) * self.image.cols + @as(usize, @intFromFloat(x_floor + 1));
+                            var c1 = convert(Rgba, self.image.data[pos2]);
+                            var c_blend = c2;
+                            c_blend.a = @intFromFloat(x_frac * max_alpha);
+                            c1.blend(c_blend);
+                            self.image.data[pos2] = convert(T, c1);
+                        }
+                    }
+                    x += gradient;
+                }
+            }
         }
 
         /// Draws a colored straight line of a custom width between `p1` and `p2` on `image` using Bresenham's line algorithm.
@@ -324,7 +397,7 @@ pub fn Canvas(comptime T: type) type {
                 .{ .x = rect.r, .y = rect.b },
                 .{ .x = rect.l, .y = rect.b },
             };
-            try self.drawPolygon(points, width, color);
+            self.drawPolygon(points, width, color);
         }
 
         /// Draws a cross shape (plus sign) on the given image at a specified center point.
@@ -345,7 +418,7 @@ pub fn Canvas(comptime T: type) type {
         /// The polygon is defined by a sequence of vertices. Lines are drawn between consecutive
         /// vertices, and a final line is drawn from the last vertex to the first to close the shape.
         /// Round joints are added at vertices to ensure smooth connections.
-        pub fn drawPolygon(self: Self, polygon: []const Point2d(f32), width: usize, color: anytype) !void {
+        pub fn drawPolygon(self: Self, polygon: []const Point2d(f32), width: usize, color: anytype) void {
             comptime assert(isColor(@TypeOf(color)));
             if (width == 0) return;
 
@@ -355,7 +428,7 @@ pub fn Canvas(comptime T: type) type {
             }
 
             // Fill vertices with circles to create round joints
-            const radius: f32 = @as(f32, @floatFromInt(width)) / 2.0;
+            const radius: f32 = @floatFromInt((width + 2) / 2);
             for (polygon) |vertex| {
                 self.fillCircle(vertex, radius, color);
             }
