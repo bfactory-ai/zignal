@@ -26,7 +26,7 @@ pub fn build(b: *Build) void {
 
     const lib_check = b.addStaticLibrary(.{
         .name = "zignal",
-        .root_source_file = b.path("src/zignal.zig"),
+        .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
     });
