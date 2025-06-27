@@ -12,6 +12,20 @@ const isColor = @import("color.zig").isColor;
 const Point2d = @import("point.zig").Point2d;
 const Rectangle = @import("geometry.zig").Rectangle;
 
+/// Antialiasing mode for polygon filling operations
+pub const FillMode = enum {
+    /// No antialiasing - hard edges, fastest performance
+    solid,
+    /// Antialiased edges - smooth edges, slower performance
+    smooth,
+};
+
+/// Errors that can occur during polygon filling operations
+pub const FillError = error{
+    /// Polygon has too many intersections per scanline (exceeds 256 limit)
+    TooManyIntersections,
+};
+
 /// A drawing context for an image, providing methods to draw shapes and lines.
 pub fn Canvas(comptime T: type) type {
     return struct {
@@ -178,21 +192,21 @@ pub fn Canvas(comptime T: type) type {
                 var y1: i32 = @intFromFloat(p1.y);
                 const x2: i32 = @intFromFloat(p2.x);
                 const y2: i32 = @intFromFloat(p2.y);
-                
+
                 const dx: i32 = @intCast(@abs(x2 - x1));
                 const dy: i32 = @intCast(@abs(y2 - y1));
                 const sx: i32 = if (x1 < x2) 1 else -1;
                 const sy: i32 = if (y1 < y2) 1 else -1;
                 var err = dx - dy;
-                
+
                 while (true) {
                     if (x1 >= 0 and x1 < self.image.cols and y1 >= 0 and y1 < self.image.rows) {
                         const pos = @as(usize, @intCast(y1)) * self.image.cols + @as(usize, @intCast(x1));
                         self.image.data[pos] = color;
                     }
-                    
+
                     if (x1 == x2 and y1 == y2) break;
-                    
+
                     const e2 = 2 * err;
                     if (e2 > -dy) {
                         err -= dy;
@@ -246,71 +260,7 @@ pub fn Canvas(comptime T: type) type {
             };
 
             // Fill rectangle using scanline algorithm (no anti-aliasing)
-            self.fillPolygonFast(&corners, color);
-        }
-
-
-        /// Fast polygon fill without anti-aliasing
-        fn fillPolygonFast(self: Self, polygon: []const Point2d(f32), color: T) void {
-            if (polygon.len < 3) return;
-
-            // Find bounding box
-            var min_y = polygon[0].y;
-            var max_y = polygon[0].y;
-            for (polygon) |p| {
-                min_y = @min(min_y, p.y);
-                max_y = @max(max_y, p.y);
-            }
-
-            const start_y = @max(0, @as(i32, @intFromFloat(@floor(min_y))));
-            const end_y = @min(@as(i32, @intCast(self.image.rows)) - 1, @as(i32, @intFromFloat(@ceil(max_y))));
-
-            // For each scanline
-            var y = start_y;
-            while (y <= end_y) : (y += 1) {
-                const fy = @as(f32, @floatFromInt(y));
-                var intersections: [8]f32 = undefined; // Fixed size for performance
-                var intersection_count: usize = 0;
-
-                // Find intersections with polygon edges
-                for (0..polygon.len) |i| {
-                    const p1 = polygon[i];
-                    const p2 = polygon[(i + 1) % polygon.len];
-
-                    if ((p1.y <= fy and p2.y > fy) or (p2.y <= fy and p1.y > fy)) {
-                        if (intersection_count >= intersections.len) break;
-                        const t = (fy - p1.y) / (p2.y - p1.y);
-                        intersections[intersection_count] = p1.x + t * (p2.x - p1.x);
-                        intersection_count += 1;
-                    }
-                }
-
-                // Sort intersections (simple bubble sort for small arrays)
-                if (intersection_count > 1) {
-                    for (0..intersection_count - 1) |i| {
-                        for (i + 1..intersection_count) |j| {
-                            if (intersections[i] > intersections[j]) {
-                                const temp = intersections[i];
-                                intersections[i] = intersections[j];
-                                intersections[j] = temp;
-                            }
-                        }
-                    }
-                }
-
-                // Fill between pairs of intersections
-                var i: usize = 0;
-                while (i + 1 < intersection_count) : (i += 2) {
-                    const x_start = @max(0, @as(i32, @intFromFloat(@floor(intersections[i]))));
-                    const x_end = @min(@as(i32, @intCast(self.image.cols)) - 1, @as(i32, @intFromFloat(@ceil(intersections[i + 1]))));
-
-                    var x = x_start;
-                    while (x <= x_end) : (x += 1) {
-                        const pos = @as(usize, @intCast(y)) * self.image.cols + @as(usize, @intCast(x));
-                        self.image.data[pos] = color;
-                    }
-                }
-            }
+            self.fillPolygon(&corners, color, .solid) catch return;
         }
 
         /// Draws a cubic Bézier curve on the given image.
@@ -374,7 +324,7 @@ pub fn Canvas(comptime T: type) type {
                 const segment = try self.tessellateCurve(.{ p0, cp1, cp2, p1 }, 10);
                 try points.appendSlice(segment);
             }
-            try self.fillPolygon(points.items, color);
+            try self.fillPolygon(points.items, color, .smooth);
         }
 
         /// Draws the outline of a rectangle on the given image.
@@ -511,60 +461,96 @@ pub fn Canvas(comptime T: type) type {
 
         /// Fills the given polygon on an image using the scanline algorithm.
         /// The polygon is defined by an array of points (vertices).
-        pub fn fillPolygon(self: Self, polygon: []const Point2d(f32), color: anytype) !void {
+        /// Use FillMode.solid for hard edges (fastest) or FillMode.smooth for antialiased edges.
+        pub fn fillPolygon(self: Self, polygon: []const Point2d(f32), color: anytype, mode: FillMode) !void {
             comptime assert(isColor(@TypeOf(color)));
+            if (polygon.len < 3) return;
+
             const rows = self.image.rows;
             const cols = self.image.cols;
-            var intersections: std.ArrayList(f32) = .init(self.allocator);
-            defer intersections.deinit();
+
+            // Find bounding box for optimization
+            var min_y = polygon[0].y;
+            var max_y = polygon[0].y;
+            for (polygon) |p| {
+                min_y = @min(min_y, p.y);
+                max_y = @max(max_y, p.y);
+            }
+
+            const start_y = @max(0, @as(i32, @intFromFloat(@floor(min_y))));
+            const end_y = @min(@as(i32, @intCast(rows)) - 1, @as(i32, @intFromFloat(@ceil(max_y))));
+
+            // Use fixed array for intersections - 256 should be enough for everyone
+            const max_intersections = 256;
+            var intersections: [max_intersections]f32 = undefined;
 
             var c2 = convert(Rgba, color);
             const max_alpha: f32 = @floatFromInt(c2.a);
 
-            for (0..rows) |r| {
-                const y: f32 = @floatFromInt(r);
-                intersections.clearRetainingCapacity();
+            var y = start_y;
+            while (y <= end_y) : (y += 1) {
+                const fy: f32 = @floatFromInt(y);
+                var intersection_count: usize = 0;
+
+                // Find intersections with polygon edges
                 for (0..polygon.len) |i| {
-                    const p1 = &polygon[i];
-                    const p2 = &polygon[(i + 1) % polygon.len];
-                    if (p1.y == p2.y) {
-                        continue;
+                    const p1 = polygon[i];
+                    const p2 = polygon[(i + 1) % polygon.len];
+
+                    if ((p1.y <= fy and p2.y > fy) or (p2.y <= fy and p1.y > fy)) {
+                        const intersection = p1.x + (fy - p1.y) * (p2.x - p1.x) / (p2.y - p1.y);
+
+                        if (intersection_count >= max_intersections) {
+                            return FillError.TooManyIntersections;
+                        }
+
+                        intersections[intersection_count] = intersection;
+                        intersection_count += 1;
                     }
-                    if ((y <= p1.y and y <= p2.y) or (y > p1.y and y > p2.y)) {
-                        continue;
-                    }
-                    try intersections.append(p1.x + (y - p1.y) * (p2.x - p1.x) / (p2.y - p1.y));
                 }
-                std.mem.sort(f32, intersections.items, {}, std.sort.asc(f32));
-                var i: usize = 1;
-                while (i < intersections.items.len) : (i += 2) {
-                    const left_edge = intersections.items[i - 1];
-                    const right_edge = intersections.items[i];
-                    var left_x: i32 = @intFromFloat(@floor(left_edge));
-                    var right_x: i32 = @intFromFloat(@ceil(right_edge));
-                    left_x = @max(0, left_x);
-                    right_x = @min(as(i32, cols - 1), right_x);
 
-                    var x: i32 = left_x;
-                    while (x <= right_x) : (x += 1) {
-                        const fx = as(f32, x);
-                        const pos: usize = r * cols + as(usize, x);
+                // Get intersection slice
+                const intersection_slice = intersections[0..intersection_count];
 
-                        // Apply antialiasing at edges
-                        var alpha: f32 = 1.0;
-                        if (fx < left_edge + 1) {
-                            alpha = @min(alpha, fx + 0.5 - left_edge);
-                        }
-                        if (fx > right_edge - 1) {
-                            alpha = @min(alpha, right_edge - (fx - 0.5));
-                        }
-                        alpha = @max(0, @min(1, alpha));
+                // Sort intersections
+                if (intersection_slice.len > 1) {
+                    std.mem.sort(f32, intersection_slice, {}, std.sort.asc(f32));
+                }
 
-                        if (alpha > 0) {
-                            var c1 = convert(Rgba, self.image.data[pos]);
-                            c2.a = @intFromFloat(alpha * max_alpha);
-                            c1.blend(c2);
-                            self.image.data[pos] = convert(T, c1);
+                // Fill between pairs of intersections
+                var i: usize = 0;
+                while (i + 1 < intersection_slice.len) : (i += 2) {
+                    const left_edge = intersection_slice[i];
+                    const right_edge = intersection_slice[i + 1];
+
+                    const x_start = @max(0, @as(i32, @intFromFloat(@floor(left_edge))));
+                    const x_end = @min(@as(i32, @intCast(cols)) - 1, @as(i32, @intFromFloat(@ceil(right_edge))));
+
+                    var x = x_start;
+                    while (x <= x_end) : (x += 1) {
+                        const pos = @as(usize, @intCast(y)) * cols + @as(usize, @intCast(x));
+
+                        if (mode == .smooth) {
+                            // Apply antialiasing at edges
+                            const fx = @as(f32, @floatFromInt(x));
+                            var alpha: f32 = 1.0;
+                            if (fx < left_edge + 1) {
+                                alpha = @min(alpha, fx + 0.5 - left_edge);
+                            }
+                            if (fx > right_edge - 1) {
+                                alpha = @min(alpha, right_edge - (fx - 0.5));
+                            }
+                            alpha = @max(0, @min(1, alpha));
+
+                            if (alpha > 0) {
+                                var c1 = convert(Rgba, self.image.data[pos]);
+                                c2.a = @intFromFloat(alpha * max_alpha);
+                                c1.blend(c2);
+                                self.image.data[pos] = convert(T, c1);
+                            }
+                        } else {
+                            // No antialiasing - direct pixel write
+                            self.image.data[pos] = convert(T, c2);
                         }
                     }
                 }
