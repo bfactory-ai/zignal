@@ -31,18 +31,55 @@ pub fn Canvas(comptime T: type) type {
         pub fn drawLine(self: Self, p1: Point2d(f32), p2: Point2d(f32), width: usize, color: anytype) void {
             comptime assert(isColor(@TypeOf(color)));
             if (width == 0) return;
-            // To avoid casting all the time, perform all operations using the underlying type of p1 and p2.
+
             const Float = @TypeOf(p1.x);
-            var x1 = @round(p1.x);
-            var y1 = @round(p1.y);
-            var x2 = @round(p2.x);
-            var y2 = @round(p2.y);
             const rows: Float = @floatFromInt(self.image.rows);
             const cols: Float = @floatFromInt(self.image.cols);
-            const half_width: Float = @floatFromInt(width / 2);
+            const half_width: Float = @as(Float, @floatFromInt(width)) / 2.0;
             var c2 = convert(Rgba, color);
+            const max_alpha: Float = @floatFromInt(c2.a);
 
-            if (x1 == x2) {
+            // Calculate line direction vector
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            const line_length = @sqrt(dx * dx + dy * dy);
+
+            if (line_length == 0) {
+                // Single point - draw a small circle
+                const x = @round(p1.x);
+                const y = @round(p1.y);
+                var i = -half_width;
+                while (i <= half_width) : (i += 1) {
+                    var j = -half_width;
+                    while (j <= half_width) : (j += 1) {
+                        const px = x + i;
+                        const py = y + j;
+                        if (px >= 0 and px < cols and py >= 0 and py < rows) {
+                            if (i * i + j * j <= half_width * half_width) {
+                                const pos = as(usize, py) * self.image.cols + as(usize, px);
+                                var c1 = convert(Rgba, self.image.data[pos]);
+                                c1.blend(c2);
+                                self.image.data[pos] = convert(T, c1);
+                            }
+                        }
+                    }
+                }
+                return;
+            }
+
+            // Normalize direction vector
+            const dir_x = dx / line_length;
+            const dir_y = dy / line_length;
+
+            // Calculate perpendicular vector (rotated 90 degrees)
+            const perp_x = -dir_y;
+            const perp_y = dir_x;
+
+            // Special case for perfectly horizontal/vertical lines (faster rendering)
+            if (@abs(dx) < 0.001) { // Vertical line
+                const x1 = @round(p1.x);
+                var y1 = @round(p1.y);
+                var y2 = @round(p2.y);
                 if (y1 > y2) std.mem.swap(Float, &y1, &y2);
                 if (x1 < 0 or x1 >= cols) return;
                 var y = y1;
@@ -59,9 +96,13 @@ pub fn Canvas(comptime T: type) type {
                         }
                     }
                 }
-            } else if (y1 == y2) {
+                return;
+            } else if (@abs(dy) < 0.001) { // Horizontal line
+                var x1 = @round(p1.x);
+                var x2 = @round(p2.x);
+                const y1 = @round(p1.y);
                 if (x1 > x2) std.mem.swap(Float, &x1, &x2);
-                if (y1 < 0 or y1 > rows) return;
+                if (y1 < 0 or y1 >= rows) return;
                 var x = x1;
                 while (x <= x2) : (x += 1) {
                     if (x < 0 or x >= cols) continue;
@@ -76,106 +117,99 @@ pub fn Canvas(comptime T: type) type {
                         }
                     }
                 }
-            } else {
-                // This part is a little more complicated because we are going to perform alpha blending
-                // so the diagonal lines look nice.
-                const max_alpha: Float = @floatFromInt(c2.a);
-                const rise = y2 - y1;
-                const run = x2 - x1;
-                if (@abs(rise) < @abs(run)) { // Gentle slope: Iterate over x-coordinates
-                    const slope = rise / run;
-                    const first = if (x1 > x2) @max(x2, 0) else @max(x1, 0);
-                    const last = if (x1 > x2) @min(x1, cols - 1) else @min(x2, cols - 1);
-                    var i = first;
-                    while (i <= last) : (i += 1) {
-                        const dy = slope * (i - x1) + y1;
-                        const y = @floor(dy);
-                        const x = @floor(i);
-                        if (y >= 0 and y <= rows - 1) {
-                            var j = -half_width;
-                            while (j <= half_width) : (j += 1) {
-                                const py = @max(0, y + j);
-                                const pos = as(usize, py) * self.image.cols + as(usize, x);
-                                if (py >= 0 and py < rows) {
-                                    var c1: Rgba = convert(Rgba, self.image.data[pos]);
-                                    if (j == -half_width or j == half_width) {
-                                        c2.a = @intFromFloat((1 - (dy - y)) * max_alpha);
-                                        c1.blend(c2);
-                                        self.image.data[pos] = convert(T, c1);
-                                    } else {
-                                        c1.blend(c2);
-                                        self.image.data[pos] = convert(T, c1);
-                                    }
-                                }
-                            }
-                        }
-                        if (y + 1 >= 0 and y + 1 <= rows - 1) {
-                            var j = -half_width;
-                            while (j <= half_width) : (j += 1) {
-                                const py = @max(0, y + 1 + j);
-                                if (py >= 0 and py < rows) {
-                                    const pos = as(usize, py) * self.image.cols + as(usize, x);
-                                    var c1: Rgba = convert(Rgba, self.image.data[pos]);
-                                    if (j == -half_width or j == half_width) {
-                                        c2.a = @intFromFloat((dy - y) * max_alpha);
-                                        c1.blend(c2);
-                                        self.image.data[pos] = convert(T, c1);
-                                    } else {
-                                        c1.blend(c2);
-                                        self.image.data[pos] = convert(T, c1);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else { // Steep slope: Iterate over y-coordinates
-                    const slope = run / rise;
-                    const first = if (y1 > y2) @max(y2, 0) else @max(y1, 0);
-                    const last = if (y1 > y2) @min(y1, rows - 1) else @min(y2, rows - 1);
-                    var i = first;
-                    while (i <= last) : (i += 1) {
-                        const dx = slope * (i - y1) + x1;
-                        const y = @floor(i);
-                        const x = @floor(dx);
-                        if (x >= 0 and x <= cols - 1) {
-                            var j = -half_width;
-                            while (j <= half_width) : (j += 1) {
-                                const px = @max(0, x + j);
-                                const pos = as(usize, y) * self.image.cols + as(usize, px);
-                                if (px >= 0 and px < cols) {
-                                    var c1: Rgba = convert(Rgba, self.image.data[pos]);
-                                    if (j == -half_width or j == half_width) {
-                                        c2.a = @intFromFloat((1 - (dx - x)) * max_alpha);
-                                        c1.blend(c2);
-                                        self.image.data[pos] = convert(T, c1);
-                                    } else {
-                                        c1.blend(c2);
-                                        self.image.data[pos] = convert(T, c1);
-                                    }
-                                }
-                            }
-                        }
-                        if (x + 1 >= 0 and x + 1 <= cols - 1) {
-                            c2.a = @intFromFloat((dx - x) * max_alpha);
-                            var j = -half_width;
-                            while (j <= half_width) : (j += 1) {
-                                const px = @max(0, x + 1 + j);
-                                const pos = as(usize, y) * self.image.cols + as(usize, px);
-                                if (px >= 0 and px < cols) {
-                                    var c1: Rgba = convert(Rgba, self.image.data[pos]);
-                                    if (j == -half_width or j == half_width) {
-                                        c1.blend(c2);
-                                        self.image.data[pos] = convert(T, c1);
-                                    } else {
-                                        c1.blend(c2);
-                                        self.image.data[pos] = convert(T, c1);
-                                    }
-                                }
-                            }
+                return;
+            }
+
+            // For diagonal lines, use improved algorithm with perpendicular offsets
+            const steps = @max(@abs(dx), @abs(dy));
+            const step_x = dx / steps;
+            const step_y = dy / steps;
+
+            var t: Float = 0;
+            while (t <= steps) : (t += 1) {
+                const center_x = p1.x + t * step_x;
+                const center_y = p1.y + t * step_y;
+
+                // Draw line width using perpendicular offsets with proper spacing
+                const width_samples = @as(usize, @intFromFloat(@ceil(half_width * 2))) + 1;
+                for (0..width_samples) |w_idx| {
+                    const w: Float = -half_width + (@as(Float, @floatFromInt(w_idx)) * (2 * half_width) / @as(Float, @floatFromInt(width_samples - 1)));
+                    const px = center_x + w * perp_x;
+                    const py = center_y + w * perp_y;
+
+                    // Apply Wu's antialiasing
+                    const x_floor = @floor(px);
+                    const y_floor = @floor(py);
+                    const x_frac = px - x_floor;
+                    const y_frac = py - y_floor;
+
+                    // Calculate edge alpha for smooth width transitions
+                    const dist_from_edge = half_width - @abs(w);
+                    const edge_alpha = @min(1.0, @max(0.0, dist_from_edge + 0.5));
+
+                    // Draw the four pixels with antialiasing
+                    const pixels = [_]struct { x: Float, y: Float, alpha: Float }{
+                        .{ .x = x_floor, .y = y_floor, .alpha = (1 - x_frac) * (1 - y_frac) * edge_alpha },
+                        .{ .x = x_floor + 1, .y = y_floor, .alpha = x_frac * (1 - y_frac) * edge_alpha },
+                        .{ .x = x_floor, .y = y_floor + 1, .alpha = (1 - x_frac) * y_frac * edge_alpha },
+                        .{ .x = x_floor + 1, .y = y_floor + 1, .alpha = x_frac * y_frac * edge_alpha },
+                    };
+
+                    for (pixels) |pixel| {
+                        if (pixel.x >= 0 and pixel.x < cols and pixel.y >= 0 and pixel.y < rows) {
+                            const pos = as(usize, pixel.y) * self.image.cols + as(usize, pixel.x);
+                            var c1 = convert(Rgba, self.image.data[pos]);
+                            c2.a = @intFromFloat(pixel.alpha * max_alpha);
+                            c1.blend(c2);
+                            self.image.data[pos] = convert(T, c1);
                         }
                     }
                 }
             }
+        }
+
+        /// Draws a colored straight line using a filled rectangle approach.
+        /// This creates a line by calculating the four corners of a rectangle and filling it.
+        pub fn drawLineRect(self: Self, p1: Point2d(f32), p2: Point2d(f32), width: usize, color: anytype) !void {
+            comptime assert(isColor(@TypeOf(color)));
+            if (width == 0) return;
+
+            const Float = @TypeOf(p1.x);
+            const half_width: Float = @as(Float, @floatFromInt(width)) / 2.0;
+
+            // Calculate line direction
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            const line_length = @sqrt(dx * dx + dy * dy);
+
+            if (line_length == 0) {
+                // Single point - draw a small circle
+                self.fillCircle(p1, half_width, color);
+                return;
+            }
+
+            // Normalize direction vector
+            const dir_x = dx / line_length;
+            const dir_y = dy / line_length;
+
+            // Calculate perpendicular vector
+            const perp_x = -dir_y * half_width;
+            const perp_y = dir_x * half_width;
+
+            // Calculate the four corners of the rectangle
+            const corners = [_]Point2d(f32){
+                .{ .x = p1.x + perp_x, .y = p1.y + perp_y },
+                .{ .x = p1.x - perp_x, .y = p1.y - perp_y },
+                .{ .x = p2.x - perp_x, .y = p2.y - perp_y },
+                .{ .x = p2.x + perp_x, .y = p2.y + perp_y },
+            };
+
+            // Fill the rectangle
+            try self.fillPolygon(&corners, color);
+
+            // Add round end caps
+            self.fillCircle(p1, half_width, color);
+            self.fillCircle(p2, half_width, color);
         }
 
         /// Draws a colored straight line of a custom width between `p1` and `p2` on `image` using Bresenham's line algorithm.
@@ -282,7 +316,7 @@ pub fn Canvas(comptime T: type) type {
         }
 
         /// Draws the outline of a rectangle on the given image.
-        pub fn drawRectangle(self: Self, rect: Rectangle(f32), width: usize, color: anytype) void {
+        pub fn drawRectangle(self: Self, rect: Rectangle(f32), width: usize, color: anytype) !void {
             comptime assert(isColor(@TypeOf(color)));
             const points: []const Point2d(f32) = &.{
                 .{ .x = rect.l, .y = rect.t },
@@ -290,7 +324,7 @@ pub fn Canvas(comptime T: type) type {
                 .{ .x = rect.r, .y = rect.b },
                 .{ .x = rect.l, .y = rect.b },
             };
-            self.drawPolygon(points, width, color);
+            try self.drawPolygon(points, width, color);
         }
 
         /// Draws a cross shape (plus sign) on the given image at a specified center point.
@@ -310,16 +344,26 @@ pub fn Canvas(comptime T: type) type {
         /// Draws the outline of a polygon on the given image.
         /// The polygon is defined by a sequence of vertices. Lines are drawn between consecutive
         /// vertices, and a final line is drawn from the last vertex to the first to close the shape.
-        pub fn drawPolygon(self: Self, polygon: []const Point2d(f32), width: usize, color: anytype) void {
+        /// Round joints are added at vertices to ensure smooth connections.
+        pub fn drawPolygon(self: Self, polygon: []const Point2d(f32), width: usize, color: anytype) !void {
             comptime assert(isColor(@TypeOf(color)));
             if (width == 0) return;
+
+            // Draw all line segments
             for (0..polygon.len) |i| {
                 self.drawLine(polygon[i], polygon[@mod(i + 1, polygon.len)], width, color);
+            }
+
+            // Fill vertices with circles to create round joints
+            const radius: f32 = @as(f32, @floatFromInt(width)) / 2.0;
+            for (polygon) |vertex| {
+                self.fillCircle(vertex, radius, color);
             }
         }
 
         /// Draws the outline of a circle on the given image.
-        pub fn drawCircle(self: Self, center: Point2d(f32), radius: f32, color: T) void {
+        pub fn drawCircle(self: Self, center: Point2d(f32), radius: f32, color: anytype) void {
+            comptime assert(isColor(@TypeOf(color)));
             if (radius <= 0) return;
             const cx = @round(center.x);
             const cy = @round(center.y);
@@ -342,7 +386,11 @@ pub fn Canvas(comptime T: type) type {
                     const col = @as(usize, @intFromFloat(p.x));
                     const row = @as(usize, @intFromFloat(p.y));
                     if (row < self.image.rows and col < self.image.cols) {
-                        self.image.data[row * self.image.cols + col] = color;
+                        const pos = row * self.image.cols + col;
+                        var c1 = convert(Rgba, self.image.data[pos]);
+                        const c2 = convert(Rgba, color);
+                        c1.blend(c2);
+                        self.image.data[pos] = convert(T, c1);
                     }
                 }
                 if (err <= 0) {
@@ -357,7 +405,8 @@ pub fn Canvas(comptime T: type) type {
         }
 
         /// Fills a circle on the given image.
-        pub fn fillCircle(self: Self, center: Point2d(f32), radius: f32, color: T) void {
+        pub fn fillCircle(self: Self, center: Point2d(f32), radius: f32, color: anytype) void {
+            comptime assert(isColor(@TypeOf(color)));
             if (radius <= 0) return;
             const frows: f32 = @floatFromInt(self.image.rows);
             const fcols: f32 = @floatFromInt(self.image.cols);
@@ -365,12 +414,34 @@ pub fn Canvas(comptime T: type) type {
             const top: usize = @intFromFloat(@round(@max(0, center.y - radius)));
             const right: usize = @intFromFloat(@round(@min(fcols, center.x + radius)));
             const bottom: usize = @intFromFloat(@round(@min(frows, center.y + radius)));
+
+            var c2 = convert(Rgba, color);
+            const max_alpha: f32 = @floatFromInt(c2.a);
+
             for (top..bottom) |r| {
                 const y = as(f32, r) - center.y;
                 for (left..right) |c| {
                     const x = as(f32, c) - center.x;
-                    if (x * x + y * y <= radius * radius) {
-                        self.image.data[r * self.image.cols + c] = color;
+                    const dist_sq = x * x + y * y;
+                    if (dist_sq <= radius * radius) {
+                        const pos = r * self.image.cols + c;
+
+                        // Apply antialiasing at the edge
+                        const dist = @sqrt(dist_sq);
+                        if (dist > radius - 1) {
+                            // Edge antialiasing
+                            const edge_alpha = radius - dist;
+                            var c1 = convert(Rgba, self.image.data[pos]);
+                            c2.a = @intFromFloat(edge_alpha * max_alpha);
+                            c1.blend(c2);
+                            self.image.data[pos] = convert(T, c1);
+                        } else {
+                            // Full opacity in the center
+                            var c1 = convert(Rgba, self.image.data[pos]);
+                            c2.a = @intFromFloat(max_alpha);
+                            c1.blend(c2);
+                            self.image.data[pos] = convert(T, c1);
+                        }
                     }
                 }
             }
@@ -378,11 +449,16 @@ pub fn Canvas(comptime T: type) type {
 
         /// Fills the given polygon on an image using the scanline algorithm.
         /// The polygon is defined by an array of points (vertices).
-        pub fn fillPolygon(self: Self, polygon: []const Point2d(f32), color: T) !void {
+        pub fn fillPolygon(self: Self, polygon: []const Point2d(f32), color: anytype) !void {
+            comptime assert(isColor(@TypeOf(color)));
             const rows = self.image.rows;
             const cols = self.image.cols;
             var intersections: std.ArrayList(f32) = .init(self.allocator);
             defer intersections.deinit();
+
+            var c2 = convert(Rgba, color);
+            const max_alpha: f32 = @floatFromInt(c2.a);
+
             for (0..rows) |r| {
                 const y: f32 = @floatFromInt(r);
                 intersections.clearRetainingCapacity();
@@ -400,16 +476,33 @@ pub fn Canvas(comptime T: type) type {
                 std.mem.sort(f32, intersections.items, {}, std.sort.asc(f32));
                 var i: usize = 1;
                 while (i < intersections.items.len) : (i += 2) {
-                    var left_x: i32 = @intFromFloat(@ceil(intersections.items[i - 1]));
-                    var right_x: i32 = @intFromFloat(@floor(intersections.items[i]));
+                    const left_edge = intersections.items[i - 1];
+                    const right_edge = intersections.items[i];
+                    var left_x: i32 = @intFromFloat(@floor(left_edge));
+                    var right_x: i32 = @intFromFloat(@ceil(right_edge));
                     left_x = @max(0, left_x);
-                    right_x = @min(as(i32, cols), right_x);
-                    while (left_x <= right_x) : (left_x += 1) {
-                        const pos: usize = r * cols + as(usize, left_x);
-                        if (T == Rgba) {
-                            self.image.data[pos].blend(color);
-                        } else {
-                            self.image.data[pos] = color;
+                    right_x = @min(as(i32, cols - 1), right_x);
+
+                    var x: i32 = left_x;
+                    while (x <= right_x) : (x += 1) {
+                        const fx = as(f32, x);
+                        const pos: usize = r * cols + as(usize, x);
+
+                        // Apply antialiasing at edges
+                        var alpha: f32 = 1.0;
+                        if (fx < left_edge + 1) {
+                            alpha = @min(alpha, fx + 0.5 - left_edge);
+                        }
+                        if (fx > right_edge - 1) {
+                            alpha = @min(alpha, right_edge - (fx - 0.5));
+                        }
+                        alpha = @max(0, @min(1, alpha));
+
+                        if (alpha > 0) {
+                            var c1 = convert(Rgba, self.image.data[pos]);
+                            c2.a = @intFromFloat(alpha * max_alpha);
+                            c1.blend(c2);
+                            self.image.data[pos] = convert(T, c1);
                         }
                     }
                 }
