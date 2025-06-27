@@ -66,14 +66,6 @@ pub fn Canvas(comptime T: type) type {
                 return;
             }
 
-            // Normalize direction vector
-            const dir_x = dx / line_length;
-            const dir_y = dy / line_length;
-
-            // Calculate perpendicular vector (rotated 90 degrees)
-            const perp_x = -dir_y;
-            const perp_y = dir_x;
-
             // Special case for perfectly horizontal/vertical lines (faster rendering)
             if (@abs(dx) < 0.001) { // Vertical line
                 const x1 = @round(p1.x);
@@ -119,29 +111,46 @@ pub fn Canvas(comptime T: type) type {
                 return;
             }
 
-            // For diagonal lines, use distance-based anti-aliasing
-            // Calculate bounding box of the thick line
-            const min_x = @floor(@min(@min(p1.x - half_width * @abs(perp_x), p1.x + half_width * @abs(perp_x)), @min(p2.x - half_width * @abs(perp_x), p2.x + half_width * @abs(perp_x))));
-            const max_x = @ceil(@max(@max(p1.x - half_width * @abs(perp_x), p1.x + half_width * @abs(perp_x)), @max(p2.x - half_width * @abs(perp_x), p2.x + half_width * @abs(perp_x))));
-            const min_y = @floor(@min(@min(p1.y - half_width * @abs(perp_y), p1.y + half_width * @abs(perp_y)), @min(p2.y - half_width * @abs(perp_y), p2.y + half_width * @abs(perp_y))));
-            const max_y = @ceil(@max(@max(p1.y - half_width * @abs(perp_y), p1.y + half_width * @abs(perp_y)), @max(p2.y - half_width * @abs(perp_y), p2.y + half_width * @abs(perp_y))));
+            // For diagonal lines, use optimized distance-based anti-aliasing
+            // Calculate tighter bounding box
+            const line_min_x = @min(p1.x, p2.x) - half_width;
+            const line_max_x = @max(p1.x, p2.x) + half_width;
+            const line_min_y = @min(p1.y, p2.y) - half_width;
+            const line_max_y = @max(p1.y, p2.y) + half_width;
+
+            const min_x = @max(0, @floor(line_min_x));
+            const max_x = @min(cols - 1, @ceil(line_max_x));
+            const min_y = @max(0, @floor(line_min_y));
+            const max_y = @min(rows - 1, @ceil(line_max_y));
+
+            // Precompute for distance calculation optimization
+            const dx_sq = dx * dx;
+            const dy_sq = dy * dy;
+            const length_sq = dx_sq + dy_sq;
+            const inv_length_sq = 1.0 / length_sq;
 
             // Iterate through pixels in bounding box
-            var y = @max(0, @as(i32, @intFromFloat(min_y)));
-            while (y <= @min(@as(i32, @intFromFloat(rows)) - 1, @as(i32, @intFromFloat(max_y)))) : (y += 1) {
-                var x = @max(0, @as(i32, @intFromFloat(min_x)));
-                while (x <= @min(@as(i32, @intFromFloat(cols)) - 1, @as(i32, @intFromFloat(max_x)))) : (x += 1) {
+            var y = @as(i32, @intFromFloat(min_y));
+            while (y <= @as(i32, @intFromFloat(max_y))) : (y += 1) {
+                const py = @as(Float, @floatFromInt(y));
+                var x = @as(i32, @intFromFloat(min_x));
+                while (x <= @as(i32, @intFromFloat(max_x))) : (x += 1) {
                     const px = @as(Float, @floatFromInt(x));
-                    const py = @as(Float, @floatFromInt(y));
 
-                    // Calculate distance from pixel to line segment
-                    const dist = self.distanceToLineSegment(px, py, p1, p2);
+                    // Optimized distance calculation
+                    const dpx = px - p1.x;
+                    const dpy = py - p1.y;
+                    const t = @max(0, @min(1, (dpx * dx + dpy * dy) * inv_length_sq));
+                    const closest_x = p1.x + t * dx;
+                    const closest_y = p1.y + t * dy;
+                    const dist_x = px - closest_x;
+                    const dist_y = py - closest_y;
+                    const dist = @sqrt(dist_x * dist_x + dist_y * dist_y);
 
                     // Anti-aliased coverage based on distance
                     if (dist <= half_width + 0.5) {
                         var alpha: Float = 1.0;
                         if (dist > half_width - 0.5) {
-                            // Smooth falloff at edges
                             alpha = (half_width + 0.5 - dist);
                         }
 
@@ -154,133 +163,6 @@ pub fn Canvas(comptime T: type) type {
                             self.image.data[pos] = convert(T, c1);
                         }
                     }
-                }
-            }
-        }
-
-        /// Calculate the shortest distance from a point to a line segment
-        fn distanceToLineSegment(self: Self, px: f32, py: f32, p1: Point2d(f32), p2: Point2d(f32)) f32 {
-            _ = self;
-            const dx = p2.x - p1.x;
-            const dy = p2.y - p1.y;
-            const length_sq = dx * dx + dy * dy;
-
-            if (length_sq == 0) {
-                // Line segment is a point
-                const dpx = px - p1.x;
-                const dpy = py - p1.y;
-                return @sqrt(dpx * dpx + dpy * dpy);
-            }
-
-            // Calculate parameter t for the closest point on the line segment
-            const t = @max(0, @min(1, ((px - p1.x) * dx + (py - p1.y) * dy) / length_sq));
-
-            // Find the closest point on the line segment
-            const closest_x = p1.x + t * dx;
-            const closest_y = p1.y + t * dy;
-
-            // Return distance to closest point
-            const dist_x = px - closest_x;
-            const dist_y = py - closest_y;
-            return @sqrt(dist_x * dist_x + dist_y * dist_y);
-        }
-
-        /// Internal helper to draw a 1-pixel wide anti-aliased line using Wu's algorithm
-        fn drawWuLine(self: Self, p1: Point2d(f32), p2: Point2d(f32), color: anytype) void {
-            const Float = @TypeOf(p1.x);
-            const rows: Float = @floatFromInt(self.image.rows);
-            const cols: Float = @floatFromInt(self.image.cols);
-            const c2 = convert(Rgba, color);
-            const max_alpha: Float = @floatFromInt(c2.a);
-
-            const dx = p2.x - p1.x;
-            const dy = p2.y - p1.y;
-
-            if (@abs(dx) > @abs(dy)) {
-                // X-major line
-                var x1 = p1.x;
-                var y1 = p1.y;
-                var x2 = p2.x;
-                var y2 = p2.y;
-
-                if (x1 > x2) {
-                    std.mem.swap(Float, &x1, &x2);
-                    std.mem.swap(Float, &y1, &y2);
-                }
-
-                const gradient = (y2 - y1) / (x2 - x1);
-                var y = y1;
-
-                var x = x1;
-                while (x <= x2) : (x += 1.0) {
-                    if (x >= 0 and x < cols) {
-                        const y_floor = @floor(y);
-                        const y_frac = y - y_floor;
-
-                        // Upper pixel
-                        if (y_floor >= 0 and y_floor < rows) {
-                            const pos1 = @as(usize, @intFromFloat(y_floor)) * self.image.cols + @as(usize, @intFromFloat(x));
-                            var c1 = convert(Rgba, self.image.data[pos1]);
-                            var c_blend = c2;
-                            c_blend.a = @intFromFloat((1.0 - y_frac) * max_alpha);
-                            c1.blend(c_blend);
-                            self.image.data[pos1] = convert(T, c1);
-                        }
-
-                        // Lower pixel
-                        if (y_floor + 1 >= 0 and y_floor + 1 < rows) {
-                            const pos2 = @as(usize, @intFromFloat(y_floor + 1)) * self.image.cols + @as(usize, @intFromFloat(x));
-                            var c1 = convert(Rgba, self.image.data[pos2]);
-                            var c_blend = c2;
-                            c_blend.a = @intFromFloat(y_frac * max_alpha);
-                            c1.blend(c_blend);
-                            self.image.data[pos2] = convert(T, c1);
-                        }
-                    }
-                    y += gradient;
-                }
-            } else {
-                // Y-major line
-                var x1 = p1.x;
-                var y1 = p1.y;
-                var x2 = p2.x;
-                var y2 = p2.y;
-
-                if (y1 > y2) {
-                    std.mem.swap(Float, &x1, &x2);
-                    std.mem.swap(Float, &y1, &y2);
-                }
-
-                const gradient = (x2 - x1) / (y2 - y1);
-                var x = x1;
-
-                var y = y1;
-                while (y <= y2) : (y += 1.0) {
-                    if (y >= 0 and y < rows) {
-                        const x_floor = @floor(x);
-                        const x_frac = x - x_floor;
-
-                        // Left pixel
-                        if (x_floor >= 0 and x_floor < cols) {
-                            const pos1 = @as(usize, @intFromFloat(y)) * self.image.cols + @as(usize, @intFromFloat(x_floor));
-                            var c1 = convert(Rgba, self.image.data[pos1]);
-                            var c_blend = c2;
-                            c_blend.a = @intFromFloat((1.0 - x_frac) * max_alpha);
-                            c1.blend(c_blend);
-                            self.image.data[pos1] = convert(T, c1);
-                        }
-
-                        // Right pixel
-                        if (x_floor + 1 >= 0 and x_floor + 1 < cols) {
-                            const pos2 = @as(usize, @intFromFloat(y)) * self.image.cols + @as(usize, @intFromFloat(x_floor + 1));
-                            var c1 = convert(Rgba, self.image.data[pos2]);
-                            var c_blend = c2;
-                            c_blend.a = @intFromFloat(x_frac * max_alpha);
-                            c1.blend(c_blend);
-                            self.image.data[pos2] = convert(T, c1);
-                        }
-                    }
-                    x += gradient;
                 }
             }
         }
