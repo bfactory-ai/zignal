@@ -34,6 +34,8 @@ pub fn Canvas(comptime T: type) type {
         }
 
         /// Draws a colored straight line of a custom width between p1 and p2 on an image.
+        /// Width=1 lines use fast Bresenham algorithm with no caps for precise pixel placement.
+        /// Width>1 lines are rendered as rectangles with rounded caps for smooth appearance.
         /// Use FillMode.smooth for anti-aliased lines or FillMode.solid for fast non-anti-aliased lines.
         /// If the `color` is of Rgba type, it alpha-blends it onto the image.
         pub fn drawLine(self: Self, p1: Point2d(f32), p2: Point2d(f32), width: usize, color: anytype, mode: FillMode) void {
@@ -337,9 +339,19 @@ pub fn Canvas(comptime T: type) type {
         }
 
         /// Draws the outline of a circle on the given image.
-        pub fn drawCircle(self: Self, center: Point2d(f32), radius: f32, color: anytype) void {
+        /// Use FillMode.smooth for anti-aliased edges or FillMode.solid for fast aliased edges.
+        pub fn drawCircle(self: Self, center: Point2d(f32), radius: f32, color: anytype, mode: FillMode) void {
             comptime assert(isColor(@TypeOf(color)));
             if (radius <= 0) return;
+
+            switch (mode) {
+                .solid => self.drawCircleSolid(center, radius, color),
+                .smooth => self.drawCircleSmooth(center, radius, color),
+            }
+        }
+
+        /// Internal function for drawing solid (aliased) circle outlines.
+        fn drawCircleSolid(self: Self, center: Point2d(f32), radius: f32, color: anytype) void {
             const cx = @round(center.x);
             const cy = @round(center.y);
             const r = @round(radius);
@@ -375,6 +387,57 @@ pub fn Canvas(comptime T: type) type {
                 if (err > 0) {
                     x -= 1;
                     err -= 2 * x + 1;
+                }
+            }
+        }
+
+        /// Internal function for drawing smooth (anti-aliased) circle outlines.
+        fn drawCircleSmooth(self: Self, center: Point2d(f32), radius: f32, color: anytype) void {
+            const frows: f32 = @floatFromInt(self.image.rows);
+            const fcols: f32 = @floatFromInt(self.image.cols);
+            const line_width: f32 = 1.0; // Circle outline thickness
+            const inner_radius = radius - line_width / 2.0;
+            const outer_radius = radius + line_width / 2.0;
+            
+            // Calculate bounding box
+            const left: usize = @intFromFloat(@round(@max(0, center.x - outer_radius - 1)));
+            const top: usize = @intFromFloat(@round(@max(0, center.y - outer_radius - 1)));
+            const right: usize = @intFromFloat(@round(@min(fcols, center.x + outer_radius + 1)));
+            const bottom: usize = @intFromFloat(@round(@min(frows, center.y + outer_radius + 1)));
+
+            const c2 = convert(Rgba, color);
+
+            for (top..bottom) |r| {
+                const y = @as(f32, @floatFromInt(r)) - center.y;
+                for (left..right) |c| {
+                    const x = @as(f32, @floatFromInt(c)) - center.x;
+                    const dist = @sqrt(x * x + y * y);
+                    
+                    // Only draw if we're in the ring area
+                    if (dist >= inner_radius - 0.5 and dist <= outer_radius + 0.5) {
+                        var alpha: f32 = 1.0;
+                        
+                        // Smooth outer edge
+                        if (dist > outer_radius - 0.5) {
+                            alpha = @min(alpha, outer_radius + 0.5 - dist);
+                        }
+                        
+                        // Smooth inner edge
+                        if (dist < inner_radius + 0.5) {
+                            alpha = @min(alpha, dist - (inner_radius - 0.5));
+                        }
+                        
+                        alpha = @max(0, @min(1, alpha));
+                        
+                        if (alpha > 0) {
+                            const pos = r * self.image.cols + c;
+                            var c1 = convert(Rgba, self.image.data[pos]);
+                            var c_blend = c2;
+                            c_blend.a = @intFromFloat(alpha * @as(f32, @floatFromInt(c2.a)));
+                            c1.blend(c_blend);
+                            self.image.data[pos] = convert(T, c1);
+                        }
+                    }
                 }
             }
         }
