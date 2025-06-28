@@ -340,62 +340,94 @@ pub fn Canvas(comptime T: type) type {
 
         /// Draws the outline of a circle on the given image.
         /// Use FillMode.smooth for anti-aliased edges or FillMode.solid for fast aliased edges.
-        pub fn drawCircle(self: Self, center: Point2d(f32), radius: f32, color: anytype, mode: FillMode) void {
+        pub fn drawCircle(self: Self, center: Point2d(f32), radius: f32, width: usize, color: anytype, mode: FillMode) void {
             comptime assert(isColor(@TypeOf(color)));
-            if (radius <= 0) return;
+            if (radius <= 0 or width == 0) return;
 
             switch (mode) {
-                .solid => self.drawCircleSolid(center, radius, color),
-                .smooth => self.drawCircleSmooth(center, radius, color),
+                .solid => self.drawCircleSolid(center, radius, width, color),
+                .smooth => self.drawCircleSmooth(center, radius, width, color),
             }
         }
 
         /// Internal function for drawing solid (aliased) circle outlines.
-        fn drawCircleSolid(self: Self, center: Point2d(f32), radius: f32, color: anytype) void {
-            const cx = @round(center.x);
-            const cy = @round(center.y);
-            const r = @round(radius);
-            var x: f32 = r;
-            var y: f32 = 0;
-            var err: f32 = 0;
-            while (x >= y) {
-                const points = [_]Point2d(f32){
-                    .{ .x = cx + x, .y = cy + y },
-                    .{ .x = cx - x, .y = cy + y },
-                    .{ .x = cx + x, .y = cy - y },
-                    .{ .x = cx - x, .y = cy - y },
-                    .{ .x = cx + y, .y = cy + x },
-                    .{ .x = cx - y, .y = cy + x },
-                    .{ .x = cx + y, .y = cy - x },
-                    .{ .x = cx - y, .y = cy - x },
-                };
-                for (points) |p| {
-                    const col = @as(usize, @intFromFloat(p.x));
-                    const row = @as(usize, @intFromFloat(p.y));
-                    if (row < self.image.rows and col < self.image.cols) {
-                        const pos = row * self.image.cols + col;
-                        var c1 = convert(Rgba, self.image.data[pos]);
-                        const c2 = convert(Rgba, color);
-                        c1.blend(c2);
-                        self.image.data[pos] = convert(T, c1);
+        fn drawCircleSolid(self: Self, center: Point2d(f32), radius: f32, width: usize, color: anytype) void {
+            if (width == 1) {
+                // Use fast Bresenham for 1-pixel width
+                const cx = @round(center.x);
+                const cy = @round(center.y);
+                const r = @round(radius);
+                var x: f32 = r;
+                var y: f32 = 0;
+                var err: f32 = 0;
+                while (x >= y) {
+                    const points = [_]Point2d(f32){
+                        .{ .x = cx + x, .y = cy + y },
+                        .{ .x = cx - x, .y = cy + y },
+                        .{ .x = cx + x, .y = cy - y },
+                        .{ .x = cx - x, .y = cy - y },
+                        .{ .x = cx + y, .y = cy + x },
+                        .{ .x = cx - y, .y = cy + x },
+                        .{ .x = cx + y, .y = cy - x },
+                        .{ .x = cx - y, .y = cy - x },
+                    };
+                    for (points) |p| {
+                        const col = @as(usize, @intFromFloat(p.x));
+                        const row = @as(usize, @intFromFloat(p.y));
+                        if (row < self.image.rows and col < self.image.cols) {
+                            const pos = row * self.image.cols + col;
+                            var c1 = convert(Rgba, self.image.data[pos]);
+                            const c2 = convert(Rgba, color);
+                            c1.blend(c2);
+                            self.image.data[pos] = convert(T, c1);
+                        }
+                    }
+                    if (err <= 0) {
+                        y += 1;
+                        err += 2 * y + 1;
+                    }
+                    if (err > 0) {
+                        x -= 1;
+                        err -= 2 * x + 1;
                     }
                 }
-                if (err <= 0) {
-                    y += 1;
-                    err += 2 * y + 1;
-                }
-                if (err > 0) {
-                    x -= 1;
-                    err -= 2 * x + 1;
+            } else {
+                // Use ring filling for thick outlines
+                const frows: f32 = @floatFromInt(self.image.rows);
+                const fcols: f32 = @floatFromInt(self.image.cols);
+                const line_width: f32 = @floatFromInt(width);
+                const inner_radius = radius - line_width / 2.0;
+                const outer_radius = radius + line_width / 2.0;
+                const solid_color = convert(T, color);
+                
+                // Calculate bounding box
+                const left: usize = @intFromFloat(@round(@max(0, center.x - outer_radius - 1)));
+                const top: usize = @intFromFloat(@round(@max(0, center.y - outer_radius - 1)));
+                const right: usize = @intFromFloat(@round(@min(fcols, center.x + outer_radius + 1)));
+                const bottom: usize = @intFromFloat(@round(@min(frows, center.y + outer_radius + 1)));
+
+                for (top..bottom) |r| {
+                    const y = @as(f32, @floatFromInt(r)) - center.y;
+                    for (left..right) |c| {
+                        const x = @as(f32, @floatFromInt(c)) - center.x;
+                        const dist_sq = x * x + y * y;
+                        const inner_radius_sq = inner_radius * inner_radius;
+                        const outer_radius_sq = outer_radius * outer_radius;
+                        
+                        if (dist_sq >= inner_radius_sq and dist_sq <= outer_radius_sq) {
+                            const pos = r * self.image.cols + c;
+                            self.image.data[pos] = solid_color;
+                        }
+                    }
                 }
             }
         }
 
         /// Internal function for drawing smooth (anti-aliased) circle outlines.
-        fn drawCircleSmooth(self: Self, center: Point2d(f32), radius: f32, color: anytype) void {
+        fn drawCircleSmooth(self: Self, center: Point2d(f32), radius: f32, width: usize, color: anytype) void {
             const frows: f32 = @floatFromInt(self.image.rows);
             const fcols: f32 = @floatFromInt(self.image.cols);
-            const line_width: f32 = 1.0; // Circle outline thickness
+            const line_width: f32 = @floatFromInt(width);
             const inner_radius = radius - line_width / 2.0;
             const outer_radius = radius + line_width / 2.0;
             
