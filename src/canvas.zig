@@ -65,16 +65,67 @@ pub fn Canvas(comptime T: type) type {
             }
         }
 
+        /// Internal function for drawing solid (non-anti-aliased) lines.
+        /// Uses Bresenham's algorithm for 1px lines and polygon-based approach for thick lines.
+        fn drawLineFast(self: Self, p1: Point2d(f32), p2: Point2d(f32), width: usize, color: anytype) void {
+            comptime assert(isColor(@TypeOf(color)));
+            if (width == 0) return;
+            if (width == 1) {
+                // Use Bresenham's algorithm for 1px lines - fast and precise
+                self.drawLineBresenham(p1, p2, color);
+            } else {
+                // Use polygon-based approach for thick lines
+                self.drawLinePolygon(p1, p2, width, color);
+            }
+        }
         /// Internal function for drawing smooth (anti-aliased) lines.
         /// Uses Wu's algorithm for 1px lines (optimal antialiasing) and distance-based
         /// antialiasing for thick lines (better quality than polygon approach).
         fn drawLineSoft(self: Self, p1: Point2d(f32), p2: Point2d(f32), width: usize, color: anytype) void {
+            if (width == 0) return;
             if (width == 1) {
                 // Use Wu's algorithm for 1px lines - optimal antialiasing and performance
                 self.drawLineWu(p1, p2, color);
             } else {
                 // Use distance-based antialiasing for thick lines - better quality
                 self.drawLineDistance(p1, p2, width, color);
+            }
+        }
+
+        /// Bresenham's line algorithm for 1-pixel width solid lines.
+        /// Fast integer-only algorithm that draws precise pixel-perfect lines.
+        /// No antialiasing - draws hard edges for maximum performance.
+        fn drawLineBresenham(self: Self, p1: Point2d(f32), p2: Point2d(f32), color: anytype) void {
+            const solid_color = convert(T, color);
+
+            var x1: i32 = @intFromFloat(p1.x);
+            var y1: i32 = @intFromFloat(p1.y);
+            const x2: i32 = @intFromFloat(p2.x);
+            const y2: i32 = @intFromFloat(p2.y);
+
+            const dx: i32 = @intCast(@abs(x2 - x1));
+            const dy: i32 = @intCast(@abs(y2 - y1));
+            const sx: i32 = if (x1 < x2) 1 else -1;
+            const sy: i32 = if (y1 < y2) 1 else -1;
+            var err = dx - dy;
+
+            while (true) {
+                if (x1 >= 0 and x1 < self.image.cols and y1 >= 0 and y1 < self.image.rows) {
+                    const pos: usize = @as(usize, @intCast(y1)) * self.image.cols + @as(usize, @intCast(x1));
+                    self.image.data[pos] = solid_color;
+                }
+
+                if (x1 == x2 and y1 == y2) break;
+
+                const e2 = 2 * err;
+                if (e2 > -dy) {
+                    err -= dy;
+                    x1 += sx;
+                }
+                if (e2 < dx) {
+                    err += dx;
+                    y1 += sy;
+                }
             }
         }
 
@@ -147,6 +198,44 @@ pub fn Canvas(comptime T: type) type {
                 }
                 intery += gradient;
             }
+        }
+
+        /// Polygon-based thick line drawing for solid (non-anti-aliased) lines.
+        /// Creates a filled rectangle with circular end caps for thick line appearance.
+        fn drawLinePolygon(self: Self, p1: Point2d(f32), p2: Point2d(f32), width: usize, color: anytype) void {
+            const solid_color = convert(T, color);
+
+            // For thick lines, draw as a filled rectangle
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            const line_length = @sqrt(dx * dx + dy * dy);
+
+            if (line_length == 0) {
+                // Single point - draw a filled circle
+                const half_width: f32 = @as(f32, @floatFromInt(width)) / 2.0;
+                self.fillCircle(p1, half_width, color, .fast);
+                return;
+            }
+
+            // Calculate perpendicular vector for thick line
+            const half_width: f32 = @as(f32, @floatFromInt(width)) / 2.0;
+            const perp_x = -dy / line_length * half_width;
+            const perp_y = dx / line_length * half_width;
+
+            // Create rectangle corners
+            const corners = [_]Point2d(f32){
+                .{ .x = p1.x - perp_x, .y = p1.y - perp_y },
+                .{ .x = p1.x + perp_x, .y = p1.y + perp_y },
+                .{ .x = p2.x + perp_x, .y = p2.y + perp_y },
+                .{ .x = p2.x - perp_x, .y = p2.y - perp_y },
+            };
+
+            // Fill rectangle using scanline algorithm (no anti-aliasing)
+            self.fillPolygon(&corners, solid_color, .fast) catch return;
+
+            // Add rounded caps using solid circles
+            self.fillCircle(p1, half_width, color, .fast);
+            self.fillCircle(p2, half_width, color, .fast);
         }
 
         /// Distance-based anti-aliased line drawing for thick lines.
@@ -269,8 +358,15 @@ pub fn Canvas(comptime T: type) type {
         /// The alpha parameter (0.0-1.0) is multiplied with the color's alpha channel.
         fn blendPixel(self: Self, x: i32, y: i32, color: anytype, alpha: f32) void {
             if (self.image.atOrNull(y, x)) |pixel| {
-                var dst = convert(Rgba, pixel.*);
                 var src = convert(Rgba, color);
+
+                // Optimize for full opacity - direct assignment when alpha is 1.0 and source is opaque
+                if (alpha >= 1.0 and src.a == 255) {
+                    pixel.* = convert(T, src);
+                    return;
+                }
+
+                var dst = convert(Rgba, pixel.*);
 
                 // Apply additional alpha factor
                 if (alpha < 1.0) {
@@ -296,359 +392,6 @@ pub fn Canvas(comptime T: type) type {
             return 1 - fpart(x);
         }
 
-        /// Bresenham's line algorithm for 1-pixel width solid lines.
-        /// Fast integer-only algorithm that draws precise pixel-perfect lines.
-        /// No antialiasing - draws hard edges for maximum performance.
-        fn drawLineBresenham(self: Self, p1: Point2d(f32), p2: Point2d(f32), color: anytype) void {
-            const solid_color = convert(T, color);
-
-            var x1: i32 = @intFromFloat(p1.x);
-            var y1: i32 = @intFromFloat(p1.y);
-            const x2: i32 = @intFromFloat(p2.x);
-            const y2: i32 = @intFromFloat(p2.y);
-
-            const dx: i32 = @intCast(@abs(x2 - x1));
-            const dy: i32 = @intCast(@abs(y2 - y1));
-            const sx: i32 = if (x1 < x2) 1 else -1;
-            const sy: i32 = if (y1 < y2) 1 else -1;
-            var err = dx - dy;
-
-            while (true) {
-                if (x1 >= 0 and x1 < self.image.cols and y1 >= 0 and y1 < self.image.rows) {
-                    const pos: usize = @as(usize, @intCast(y1)) * self.image.cols + @as(usize, @intCast(x1));
-                    self.image.data[pos] = solid_color;
-                }
-
-                if (x1 == x2 and y1 == y2) break;
-
-                const e2 = 2 * err;
-                if (e2 > -dy) {
-                    err -= dy;
-                    x1 += sx;
-                }
-                if (e2 < dx) {
-                    err += dx;
-                    y1 += sy;
-                }
-            }
-        }
-
-        /// Internal function for drawing solid (non-anti-aliased) lines.
-        /// Uses Bresenham's algorithm for 1px lines and polygon-based approach for thick lines.
-        fn drawLineFast(self: Self, p1: Point2d(f32), p2: Point2d(f32), width: usize, color: anytype) void {
-            comptime assert(isColor(@TypeOf(color)));
-            if (width == 0) return;
-
-            if (width == 1) {
-                // Use Bresenham's algorithm for 1px lines - fast and precise
-                self.drawLineBresenham(p1, p2, color);
-            } else {
-                // Use polygon-based approach for thick lines
-                self.drawLinePolygon(p1, p2, width, color);
-            }
-        }
-
-        /// Polygon-based thick line drawing for solid (non-anti-aliased) lines.
-        /// Creates a filled rectangle with circular end caps for thick line appearance.
-        fn drawLinePolygon(self: Self, p1: Point2d(f32), p2: Point2d(f32), width: usize, color: anytype) void {
-            const solid_color = convert(T, color);
-
-            // For thick lines, draw as a filled rectangle
-            const dx = p2.x - p1.x;
-            const dy = p2.y - p1.y;
-            const line_length = @sqrt(dx * dx + dy * dy);
-
-            if (line_length == 0) {
-                // Single point - draw a filled circle
-                const half_width: f32 = @as(f32, @floatFromInt(width)) / 2.0;
-                self.fillCircle(p1, half_width, color, .fast);
-                return;
-            }
-
-            // Calculate perpendicular vector for thick line
-            const half_width: f32 = @as(f32, @floatFromInt(width)) / 2.0;
-            const perp_x = -dy / line_length * half_width;
-            const perp_y = dx / line_length * half_width;
-
-            // Create rectangle corners
-            const corners = [_]Point2d(f32){
-                .{ .x = p1.x - perp_x, .y = p1.y - perp_y },
-                .{ .x = p1.x + perp_x, .y = p1.y + perp_y },
-                .{ .x = p2.x + perp_x, .y = p2.y + perp_y },
-                .{ .x = p2.x - perp_x, .y = p2.y - perp_y },
-            };
-
-            // Fill rectangle using scanline algorithm (no anti-aliasing)
-            self.fillPolygon(&corners, solid_color, .fast) catch return;
-
-            // Add rounded caps using solid circles
-            self.fillCircle(p1, half_width, color, .fast);
-            self.fillCircle(p2, half_width, color, .fast);
-        }
-
-        /// Evaluates a quadratic Bézier curve at parameter t.
-        /// Uses the standard quadratic Bézier formula: (1-t)²P₀ + 2t(1-t)P₁ + t²P₂
-        /// Parameter t is in range [0, 1] where 0=start point, 1=end point.
-        fn evalQuadraticBezier(p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32), t: f32) Point2d(f32) {
-            const u = 1 - t;
-            const uu = u * u;
-            const tt = t * t;
-            return .{
-                .x = uu * p0.x + 2 * u * t * p1.x + tt * p2.x,
-                .y = uu * p0.y + 2 * u * t * p1.y + tt * p2.y,
-            };
-        }
-
-        /// Evaluates a cubic Bézier curve at parameter t.
-        /// Uses the standard cubic Bézier formula: (1-t)³P₀ + 3t(1-t)²P₁ + 3t²(1-t)P₂ + t³P₃
-        /// Parameter t is in range [0, 1] where 0=start point, 1=end point.
-        fn evalCubicBezier(p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32), p3: Point2d(f32), t: f32) Point2d(f32) {
-            const u = 1 - t;
-            const uu = u * u;
-            const uuu = uu * u;
-            const tt = t * t;
-            const ttt = tt * t;
-            return .{
-                .x = uuu * p0.x + 3 * uu * t * p1.x + 3 * u * tt * p2.x + ttt * p3.x,
-                .y = uuu * p0.y + 3 * uu * t * p1.y + 3 * u * tt * p2.y + ttt * p3.y,
-            };
-        }
-
-        /// Estimates the length of a quadratic Bézier curve segment.
-        /// Uses chord + control polygon approximation for fast, reasonably accurate estimation.
-        /// The estimate is (chord_length + control_polygon_length) / 2.
-        fn estimateQuadraticBezierLength(p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32)) f32 {
-            // Use chord + control polygon approximation
-            const chord = p0.distance(p2);
-            const control_net = p0.distance(p1) + p1.distance(p2);
-            return (chord + control_net) / 2.0;
-        }
-
-        /// Estimates the length of a cubic Bézier curve segment.
-        /// Uses chord + control polygon approximation for fast, reasonably accurate estimation.
-        /// The estimate is (chord_length + control_polygon_length) / 2.
-        fn estimateCubicBezierLength(p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32), p3: Point2d(f32)) f32 {
-            // Use chord + control polygon approximation
-            const chord = p0.distance(p3);
-            const control_net = p0.distance(p1) + p1.distance(p2) + p2.distance(p3);
-            return (chord + control_net) / 2.0;
-        }
-
-        /// Tessellates a Bézier curve into discrete points for line segment rendering.
-        /// Adaptively determines segment count based on curve length and desired quality.
-        ///
-        /// Parameters:
-        /// - estimated_length: Approximate curve length in pixels
-        /// - pixels_per_segment: Target distance between tessellation points
-        /// - evalFn: Function to evaluate curve at parameter t (e.g. evalCubicBezier)
-        /// - evalArgs: Arguments to pass to evalFn before the t parameter
-        ///
-        /// Returns the number of points actually written to buffer.
-        fn tessellateBezier(
-            estimated_length: f32,
-            pixels_per_segment: f32,
-            min_segments: usize,
-            max_segments: usize,
-            comptime evalFn: anytype,
-            evalArgs: anytype,
-            buffer: []Point2d(f32),
-        ) usize {
-            const segments = @max(min_segments, @min(max_segments, @as(usize, @intFromFloat(estimated_length / pixels_per_segment))));
-            const actual_segments = @min(segments, buffer.len);
-
-            for (0..actual_segments) |i| {
-                const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(actual_segments - 1));
-                buffer[i] = @call(.auto, evalFn, evalArgs ++ .{t});
-            }
-
-            return actual_segments;
-        }
-
-        /// Draws a Bézier curve by tessellating it into line segments.
-        fn drawBezierTessellated(
-            self: Self,
-            estimated_length: f32,
-            pixels_per_segment: f32,
-            min_segments: usize,
-            comptime evalFn: anytype,
-            evalArgs: anytype,
-            color: anytype,
-            width: usize,
-            mode: FillMode,
-        ) void {
-            var stack_buffer: [default_bezier_max_segments]Point2d(f32) = undefined;
-
-            const actual_segments = tessellateBezier(
-                estimated_length,
-                pixels_per_segment,
-                min_segments,
-                default_bezier_max_segments,
-                evalFn,
-                evalArgs,
-                &stack_buffer,
-            );
-
-            // Draw lines between consecutive points
-            for (1..actual_segments) |i| {
-                self.drawLine(stack_buffer[i - 1], stack_buffer[i], color, width, mode);
-            }
-        }
-
-        /// Draws a quadratic Bézier curve with specified width and fill mode.
-        pub fn drawQuadraticBezier(self: Self, p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32), color: anytype, width: usize, mode: FillMode) void {
-            comptime assert(isColor(@TypeOf(color)));
-            if (width == 0) return;
-
-            const estimated_length = estimateQuadraticBezierLength(p0, p1, p2);
-
-            self.drawBezierTessellated(
-                estimated_length,
-                default_pixels_per_segment_quadratic,
-                default_quadratic_min_segments,
-                evalQuadraticBezier,
-                .{ p0, p1, p2 },
-                color,
-                width,
-                mode,
-            );
-        }
-
-        /// Draws a cubic Bézier curve with specified width and fill mode.
-        /// The curve is adaptively subdivided for optimal quality and performance.
-        pub fn drawCubicBezier(self: Self, p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32), p3: Point2d(f32), color: anytype, width: usize, mode: FillMode) void {
-            comptime assert(isColor(@TypeOf(color)));
-            if (width == 0) return;
-
-            const estimated_length = estimateCubicBezierLength(p0, p1, p2, p3);
-            const pixels_per_segment: f32 = if (mode == .soft or width > 2) default_pixels_per_segment_smooth else default_pixels_per_segment_solid;
-
-            self.drawBezierTessellated(
-                estimated_length,
-                pixels_per_segment,
-                default_spline_min_segments,
-                evalCubicBezier,
-                .{ p0, p1, p2, p3 },
-                color,
-                width,
-                mode,
-            );
-        }
-
-        /// Calculates Bézier control points for smooth spline interpolation through three points.
-        /// Creates control points that produce a smooth curve through p1, influenced by p0 and p2.
-        ///
-        /// Parameters:
-        /// - p0: Previous point (influences incoming tangent)
-        /// - p1: Current point (the vertex being processed)
-        /// - p2: Next point (influences outgoing tangent)
-        /// - tension: Curve tension (0=sharp corners, 1=maximum smoothness)
-        ///
-        /// Returns control points for cubic Bézier: cp1 (outgoing from p0), cp2 (incoming to p1).
-        fn calculateSmoothControlPoints(p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32), tension: f32) struct { cp1: Point2d(f32), cp2: Point2d(f32) } {
-            const tension_factor = 1 - @max(0, @min(1, tension));
-            return .{
-                .cp1 = .{
-                    .x = p0.x + (p1.x - p0.x) * tension_factor,
-                    .y = p0.y + (p1.y - p0.y) * tension_factor,
-                },
-                .cp2 = .{
-                    .x = p1.x - (p2.x - p1.x) * tension_factor,
-                    .y = p1.y - (p2.y - p1.y) * tension_factor,
-                },
-            };
-        }
-
-        /// Draws a spline polygon outline with Bézier curves connecting vertices.
-        /// The polygon's edges are rendered as cubic Bézier splines for smooth, curved appearance.
-        /// Use tension to control curve smoothness: 0=sharp corners, 1=maximum smoothness.
-        pub fn drawSplinePolygon(self: Self, polygon: []const Point2d(f32), color: anytype, width: usize, tension: f32, mode: FillMode) void {
-            comptime assert(isColor(@TypeOf(color)));
-            if (width == 0 or polygon.len < 3) return;
-
-            for (0..polygon.len) |i| {
-                const p0 = polygon[i];
-                const p1 = polygon[(i + 1) % polygon.len];
-                const p2 = polygon[(i + 2) % polygon.len];
-                const control_points = calculateSmoothControlPoints(p0, p1, p2, tension);
-                self.drawCubicBezier(p0, control_points.cp1, control_points.cp2, p1, color, width, mode);
-            }
-        }
-
-        /// Fills a spline polygon with Bézier curves connecting vertices.
-        /// The polygon's outline is defined by Bézier splines for smooth, curved edges.
-        /// Use tension to control curve smoothness: 0=sharp corners, 1=maximum smoothness.
-        pub fn fillSplinePolygon(self: Self, polygon: []const Point2d(f32), color: anytype, tension: f32, mode: FillMode) !void {
-            comptime assert(isColor(@TypeOf(color)));
-            if (polygon.len < 3) return;
-
-            // Stack buffer for common cases (up to 50 segments per curve, 8 curves)
-            var stack_buffer: [spline_polygon_stack_buffer_size]Point2d(f32) = undefined;
-            var total_points: usize = 0;
-
-            // First pass: calculate total points needed
-            const pixels_per_segment = 3.0; // Balance between quality and performance for filled shapes
-            for (0..polygon.len) |i| {
-                const p0 = polygon[i];
-                const p1 = polygon[(i + 1) % polygon.len];
-                const p2 = polygon[(i + 2) % polygon.len];
-                const control_points = calculateSmoothControlPoints(p0, p1, p2, tension);
-                const estimated_length = estimateCubicBezierLength(p0, control_points.cp1, control_points.cp2, p1);
-                const segments = @max(default_spline_min_segments, @min(default_spline_max_segments, @as(usize, @intFromFloat(estimated_length / pixels_per_segment))));
-                total_points += segments;
-            }
-
-            // Use stack buffer if possible, otherwise allocate
-            var points_buffer: []Point2d(f32) = undefined;
-            var heap_buffer: ?[]Point2d(f32) = null;
-            defer if (heap_buffer) |h| self.allocator.free(h);
-
-            if (total_points <= spline_polygon_stack_buffer_size) {
-                points_buffer = stack_buffer[0..total_points];
-            } else {
-                heap_buffer = try self.allocator.alloc(Point2d(f32), total_points);
-                points_buffer = heap_buffer.?;
-            }
-
-            // Second pass: tessellate curves into the buffer
-            var write_idx: usize = 0;
-            for (0..polygon.len) |i| {
-                const p0 = polygon[i];
-                const p1 = polygon[(i + 1) % polygon.len];
-                const p2 = polygon[(i + 2) % polygon.len];
-                const control_points = calculateSmoothControlPoints(p0, p1, p2, tension);
-
-                const estimated_length = estimateCubicBezierLength(p0, control_points.cp1, control_points.cp2, p1);
-                const segments = @max(default_spline_min_segments, @min(default_spline_max_segments, @as(usize, @intFromFloat(estimated_length / pixels_per_segment))));
-
-                // Tessellate directly into our buffer
-                const segment_buffer = points_buffer[write_idx .. write_idx + segments];
-                const actual_segments = tessellateBezier(
-                    estimated_length,
-                    pixels_per_segment,
-                    default_spline_min_segments, // min_segments for cubic
-                    default_spline_max_segments, // max_segments
-                    evalCubicBezier,
-                    .{ p0, control_points.cp1, control_points.cp2, p1 },
-                    segment_buffer,
-                );
-                write_idx += actual_segments;
-            }
-
-            try self.fillPolygon(points_buffer, color, mode);
-        }
-
-        /// Draws the outline of a rectangle on the given image.
-        pub fn drawRectangle(self: Self, rect: Rectangle(f32), color: anytype, width: usize, mode: FillMode) void {
-            comptime assert(isColor(@TypeOf(color)));
-            const points: []const Point2d(f32) = &.{
-                .{ .x = rect.l, .y = rect.t },
-                .{ .x = rect.r, .y = rect.t },
-                .{ .x = rect.r, .y = rect.b },
-                .{ .x = rect.l, .y = rect.b },
-            };
-            self.drawPolygon(points, color, width, mode);
-        }
-
         /// Draws the outline of a polygon on the given image.
         /// The polygon is defined by a sequence of vertices. Lines are drawn between consecutive
         /// vertices, and a final line is drawn from the last vertex to the first to close the shape.
@@ -663,6 +406,18 @@ pub fn Canvas(comptime T: type) type {
             }
         }
 
+        /// Draws the outline of a rectangle on the given image.
+        pub fn drawRectangle(self: Self, rect: Rectangle(f32), color: anytype, width: usize, mode: FillMode) void {
+            comptime assert(isColor(@TypeOf(color)));
+            const points: []const Point2d(f32) = &.{
+                .{ .x = rect.l, .y = rect.t },
+                .{ .x = rect.r, .y = rect.t },
+                .{ .x = rect.r, .y = rect.b },
+                .{ .x = rect.l, .y = rect.b },
+            };
+            self.drawPolygon(points, color, width, mode);
+        }
+
         /// Draws the outline of a circle on the given image.
         /// Use FillMode.soft for anti-aliased edges or FillMode.fast for fast aliased edges.
         pub fn drawCircle(self: Self, center: Point2d(f32), radius: f32, color: anytype, width: usize, mode: FillMode) void {
@@ -670,13 +425,13 @@ pub fn Canvas(comptime T: type) type {
             if (radius <= 0 or width == 0) return;
 
             switch (mode) {
-                .fast => self.drawCircleSolid(center, radius, width, color),
-                .soft => self.drawCircleSmooth(center, radius, width, color),
+                .fast => self.drawCircleFast(center, radius, width, color),
+                .soft => self.drawCircleSoft(center, radius, width, color),
             }
         }
 
         /// Internal function for drawing solid (aliased) circle outlines.
-        fn drawCircleSolid(self: Self, center: Point2d(f32), radius: f32, width: usize, color: anytype) void {
+        fn drawCircleFast(self: Self, center: Point2d(f32), radius: f32, width: usize, color: anytype) void {
             if (width == 1) {
                 // Use fast Bresenham for 1-pixel width
                 const cx = @round(center.x);
@@ -745,7 +500,7 @@ pub fn Canvas(comptime T: type) type {
         }
 
         /// Internal function for drawing smooth (anti-aliased) circle outlines.
-        fn drawCircleSmooth(self: Self, center: Point2d(f32), radius: f32, width: usize, color: anytype) void {
+        fn drawCircleSoft(self: Self, center: Point2d(f32), radius: f32, width: usize, color: anytype) void {
             const frows: f32 = @floatFromInt(self.image.rows);
             const fcols: f32 = @floatFromInt(self.image.cols);
             const line_width: f32 = @floatFromInt(width);
@@ -785,75 +540,6 @@ pub fn Canvas(comptime T: type) type {
                         if (alpha > 0) {
                             self.blendPixel(@intCast(c), @intCast(r), c2, alpha);
                         }
-                    }
-                }
-            }
-        }
-
-        /// Fills a circle on the given image.
-        /// Use FillMode.soft for anti-aliased edges or FillMode.fast for hard edges.
-        pub fn fillCircle(self: Self, center: Point2d(f32), radius: f32, color: anytype, mode: FillMode) void {
-            comptime assert(isColor(@TypeOf(color)));
-            if (radius <= 0) return;
-
-            switch (mode) {
-                .fast => self.fillCircleSolid(center, radius, color),
-                .soft => self.fillCircleSmooth(center, radius, color),
-            }
-        }
-
-        /// Internal function for filling smooth (anti-aliased) circles.
-        fn fillCircleSmooth(self: Self, center: Point2d(f32), radius: f32, color: anytype) void {
-            const frows: f32 = @floatFromInt(self.image.rows);
-            const fcols: f32 = @floatFromInt(self.image.cols);
-            const left: usize = @intFromFloat(@round(@max(0, center.x - radius)));
-            const top: usize = @intFromFloat(@round(@max(0, center.y - radius)));
-            const right: usize = @intFromFloat(@round(@min(fcols, center.x + radius)));
-            const bottom: usize = @intFromFloat(@round(@min(frows, center.y + radius)));
-
-            for (top..bottom) |r| {
-                const y = as(f32, r) - center.y;
-                for (left..right) |c| {
-                    const x = as(f32, c) - center.x;
-                    const dist_sq = x * x + y * y;
-                    if (dist_sq <= radius * radius) {
-                        // Apply antialiasing at the edge
-                        const dist = @sqrt(dist_sq);
-                        if (dist > radius - 1) {
-                            // Edge antialiasing
-                            const edge_alpha = radius - dist;
-                            self.blendPixel(@intCast(c), @intCast(r), color, edge_alpha);
-                        } else {
-                            // Full opacity in the center - direct assignment
-                            if (self.image.atOrNull(@intCast(r), @intCast(c))) |pixel| {
-                                pixel.* = convert(T, color);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        /// Internal function for filling solid (non-anti-aliased) circles.
-        fn fillCircleSolid(self: Self, center: Point2d(f32), radius: f32, color: anytype) void {
-            const solid_color = convert(T, color);
-            const frows: f32 = @floatFromInt(self.image.rows);
-            const fcols: f32 = @floatFromInt(self.image.cols);
-            const left: usize = @intFromFloat(@round(@max(0, center.x - radius)));
-            const top: usize = @intFromFloat(@round(@max(0, center.y - radius)));
-            const right: usize = @intFromFloat(@round(@min(fcols, center.x + radius)));
-            const bottom: usize = @intFromFloat(@round(@min(frows, center.y + radius)));
-
-            const radius_sq = radius * radius;
-
-            for (top..bottom) |r| {
-                const y = as(f32, r) - center.y;
-                for (left..right) |c| {
-                    const x = as(f32, c) - center.x;
-                    const dist_sq = x * x + y * y;
-                    if (dist_sq <= radius_sq) {
-                        const pos = r * self.image.cols + c;
-                        self.image.data[pos] = solid_color;
                     }
                 }
             }
@@ -971,6 +657,342 @@ pub fn Canvas(comptime T: type) type {
                     }
                 }
             }
+        }
+        /// Fills a circle on the given image.
+        /// Use FillMode.soft for anti-aliased edges or FillMode.fast for hard edges.
+        pub fn fillCircle(self: Self, center: Point2d(f32), radius: f32, color: anytype, mode: FillMode) void {
+            comptime assert(isColor(@TypeOf(color)));
+            if (radius <= 0) return;
+
+            switch (mode) {
+                .fast => self.fillCircleFast(center, radius, color),
+                .soft => self.fillCircleSoft(center, radius, color),
+            }
+        }
+
+        /// Internal function for filling smooth (anti-aliased) circles.
+        fn fillCircleSoft(self: Self, center: Point2d(f32), radius: f32, color: anytype) void {
+            const frows: f32 = @floatFromInt(self.image.rows);
+            const fcols: f32 = @floatFromInt(self.image.cols);
+            const left: usize = @intFromFloat(@round(@max(0, center.x - radius)));
+            const top: usize = @intFromFloat(@round(@max(0, center.y - radius)));
+            const right: usize = @intFromFloat(@round(@min(fcols, center.x + radius)));
+            const bottom: usize = @intFromFloat(@round(@min(frows, center.y + radius)));
+
+            for (top..bottom) |r| {
+                const y = as(f32, r) - center.y;
+                for (left..right) |c| {
+                    const x = as(f32, c) - center.x;
+                    const dist_sq = x * x + y * y;
+                    if (dist_sq <= radius * radius) {
+                        // Apply antialiasing at the edge
+                        const dist = @sqrt(dist_sq);
+                        if (dist > radius - 1) {
+                            // Edge antialiasing
+                            const edge_alpha = radius - dist;
+                            self.blendPixel(@intCast(c), @intCast(r), color, edge_alpha);
+                        } else {
+                            // Full opacity in the center - direct assignment
+                            if (self.image.atOrNull(@intCast(r), @intCast(c))) |pixel| {
+                                pixel.* = convert(T, color);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /// Internal function for filling solid (non-anti-aliased) circles.
+        fn fillCircleFast(self: Self, center: Point2d(f32), radius: f32, color: anytype) void {
+            const solid_color = convert(T, color);
+            const frows: f32 = @floatFromInt(self.image.rows);
+            const fcols: f32 = @floatFromInt(self.image.cols);
+            const left: usize = @intFromFloat(@round(@max(0, center.x - radius)));
+            const top: usize = @intFromFloat(@round(@max(0, center.y - radius)));
+            const right: usize = @intFromFloat(@round(@min(fcols, center.x + radius)));
+            const bottom: usize = @intFromFloat(@round(@min(frows, center.y + radius)));
+
+            const radius_sq = radius * radius;
+
+            for (top..bottom) |r| {
+                const y = as(f32, r) - center.y;
+                for (left..right) |c| {
+                    const x = as(f32, c) - center.x;
+                    const dist_sq = x * x + y * y;
+                    if (dist_sq <= radius_sq) {
+                        const pos = r * self.image.cols + c;
+                        self.image.data[pos] = solid_color;
+                    }
+                }
+            }
+        }
+
+        /// Draws a quadratic Bézier curve with specified width and fill mode.
+        pub fn drawQuadraticBezier(
+            self: Self,
+            p0: Point2d(f32),
+            p1: Point2d(f32),
+            p2: Point2d(f32),
+            color: anytype,
+            width: usize,
+            mode: FillMode,
+        ) void {
+            comptime assert(isColor(@TypeOf(color)));
+            if (width == 0) return;
+
+            const estimated_length = estimateQuadraticBezierLength(p0, p1, p2);
+
+            self.drawBezierTessellated(
+                estimated_length,
+                default_pixels_per_segment_quadratic,
+                default_quadratic_min_segments,
+                evalQuadraticBezier,
+                .{ p0, p1, p2 },
+                color,
+                width,
+                mode,
+            );
+        }
+
+        /// Draws a cubic Bézier curve with specified width and fill mode.
+        /// The curve is adaptively subdivided for optimal quality and performance.
+        pub fn drawCubicBezier(
+            self: Self,
+            p0: Point2d(f32),
+            p1: Point2d(f32),
+            p2: Point2d(f32),
+            p3: Point2d(f32),
+            color: anytype,
+            width: usize,
+            mode: FillMode,
+        ) void {
+            comptime assert(isColor(@TypeOf(color)));
+            if (width == 0) return;
+
+            const estimated_length = estimateCubicBezierLength(p0, p1, p2, p3);
+            const pixels_per_segment: f32 = if (mode == .soft or width > 2) default_pixels_per_segment_smooth else default_pixels_per_segment_solid;
+
+            self.drawBezierTessellated(
+                estimated_length,
+                pixels_per_segment,
+                default_spline_min_segments,
+                evalCubicBezier,
+                .{ p0, p1, p2, p3 },
+                color,
+                width,
+                mode,
+            );
+        }
+
+        /// Draws a spline polygon outline with Bézier curves connecting vertices.
+        /// The polygon's edges are rendered as cubic Bézier splines for smooth, curved appearance.
+        /// Use tension to control curve smoothness: 0=sharp corners, 1=maximum smoothness.
+        pub fn drawSplinePolygon(self: Self, polygon: []const Point2d(f32), color: anytype, width: usize, tension: f32, mode: FillMode) void {
+            comptime assert(isColor(@TypeOf(color)));
+            if (width == 0 or polygon.len < 3) return;
+
+            for (0..polygon.len) |i| {
+                const p0 = polygon[i];
+                const p1 = polygon[(i + 1) % polygon.len];
+                const p2 = polygon[(i + 2) % polygon.len];
+                const control_points = calculateSmoothControlPoints(p0, p1, p2, tension);
+                self.drawCubicBezier(p0, control_points.cp1, control_points.cp2, p1, color, width, mode);
+            }
+        }
+
+        /// Fills a spline polygon with Bézier curves connecting vertices.
+        /// The polygon's outline is defined by Bézier splines for smooth, curved edges.
+        /// Use tension to control curve smoothness: 0=sharp corners, 1=maximum smoothness.
+        pub fn fillSplinePolygon(self: Self, polygon: []const Point2d(f32), color: anytype, tension: f32, mode: FillMode) !void {
+            comptime assert(isColor(@TypeOf(color)));
+            if (polygon.len < 3) return;
+
+            // Stack buffer for common cases (up to 50 segments per curve, 8 curves)
+            var stack_buffer: [spline_polygon_stack_buffer_size]Point2d(f32) = undefined;
+            var total_points: usize = 0;
+
+            // First pass: calculate total points needed
+            const pixels_per_segment = 3.0; // Balance between quality and performance for filled shapes
+            for (0..polygon.len) |i| {
+                const p0 = polygon[i];
+                const p1 = polygon[(i + 1) % polygon.len];
+                const p2 = polygon[(i + 2) % polygon.len];
+                const control_points = calculateSmoothControlPoints(p0, p1, p2, tension);
+                const estimated_length = estimateCubicBezierLength(p0, control_points.cp1, control_points.cp2, p1);
+                const segments = @max(default_spline_min_segments, @min(default_spline_max_segments, @as(usize, @intFromFloat(estimated_length / pixels_per_segment))));
+                total_points += segments;
+            }
+
+            // Use stack buffer if possible, otherwise allocate
+            var points_buffer: []Point2d(f32) = undefined;
+            var heap_buffer: ?[]Point2d(f32) = null;
+            defer if (heap_buffer) |h| self.allocator.free(h);
+
+            if (total_points <= spline_polygon_stack_buffer_size) {
+                points_buffer = stack_buffer[0..total_points];
+            } else {
+                heap_buffer = try self.allocator.alloc(Point2d(f32), total_points);
+                points_buffer = heap_buffer.?;
+            }
+
+            // Second pass: tessellate curves into the buffer
+            var write_idx: usize = 0;
+            for (0..polygon.len) |i| {
+                const p0 = polygon[i];
+                const p1 = polygon[(i + 1) % polygon.len];
+                const p2 = polygon[(i + 2) % polygon.len];
+                const control_points = calculateSmoothControlPoints(p0, p1, p2, tension);
+
+                const estimated_length = estimateCubicBezierLength(p0, control_points.cp1, control_points.cp2, p1);
+                const segments = @max(default_spline_min_segments, @min(default_spline_max_segments, @as(usize, @intFromFloat(estimated_length / pixels_per_segment))));
+
+                // Tessellate directly into our buffer
+                const segment_buffer = points_buffer[write_idx .. write_idx + segments];
+                const actual_segments = tessellateBezier(
+                    estimated_length,
+                    pixels_per_segment,
+                    default_spline_min_segments, // min_segments for cubic
+                    default_spline_max_segments, // max_segments
+                    evalCubicBezier,
+                    .{ p0, control_points.cp1, control_points.cp2, p1 },
+                    segment_buffer,
+                );
+                write_idx += actual_segments;
+            }
+
+            try self.fillPolygon(points_buffer, color, mode);
+        }
+
+        /// Evaluates a quadratic Bézier curve at parameter t.
+        /// Uses the standard quadratic Bézier formula: (1-t)²P₀ + 2t(1-t)P₁ + t²P₂
+        /// Parameter t is in range [0, 1] where 0=start point, 1=end point.
+        fn evalQuadraticBezier(p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32), t: f32) Point2d(f32) {
+            const u = 1 - t;
+            const uu = u * u;
+            const tt = t * t;
+            return .{
+                .x = uu * p0.x + 2 * u * t * p1.x + tt * p2.x,
+                .y = uu * p0.y + 2 * u * t * p1.y + tt * p2.y,
+            };
+        }
+
+        /// Evaluates a cubic Bézier curve at parameter t.
+        /// Uses the standard cubic Bézier formula: (1-t)³P₀ + 3t(1-t)²P₁ + 3t²(1-t)P₂ + t³P₃
+        /// Parameter t is in range [0, 1] where 0=start point, 1=end point.
+        fn evalCubicBezier(p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32), p3: Point2d(f32), t: f32) Point2d(f32) {
+            const u = 1 - t;
+            const uu = u * u;
+            const uuu = uu * u;
+            const tt = t * t;
+            const ttt = tt * t;
+            return .{
+                .x = uuu * p0.x + 3 * uu * t * p1.x + 3 * u * tt * p2.x + ttt * p3.x,
+                .y = uuu * p0.y + 3 * uu * t * p1.y + 3 * u * tt * p2.y + ttt * p3.y,
+            };
+        }
+
+        /// Estimates the length of a quadratic Bézier curve segment.
+        /// Uses chord + control polygon approximation for fast, reasonably accurate estimation.
+        /// The estimate is (chord_length + control_polygon_length) / 2.
+        fn estimateQuadraticBezierLength(p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32)) f32 {
+            // Use chord + control polygon approximation
+            const chord = p0.distance(p2);
+            const control_net = p0.distance(p1) + p1.distance(p2);
+            return (chord + control_net) / 2.0;
+        }
+
+        /// Estimates the length of a cubic Bézier curve segment.
+        /// Uses chord + control polygon approximation for fast, reasonably accurate estimation.
+        /// The estimate is (chord_length + control_polygon_length) / 2.
+        fn estimateCubicBezierLength(p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32), p3: Point2d(f32)) f32 {
+            // Use chord + control polygon approximation
+            const chord = p0.distance(p3);
+            const control_net = p0.distance(p1) + p1.distance(p2) + p2.distance(p3);
+            return (chord + control_net) / 2.0;
+        }
+
+        /// Tessellates a Bézier curve into discrete points for line segment rendering.
+        /// Adaptively determines segment count based on curve length and desired quality.
+        ///
+        /// Parameters:
+        /// - estimated_length: Approximate curve length in pixels
+        /// - pixels_per_segment: Target distance between tessellation points
+        /// - evalFn: Function to evaluate curve at parameter t (e.g. evalCubicBezier)
+        /// - evalArgs: Arguments to pass to evalFn before the t parameter
+        ///
+        /// Returns the number of points actually written to buffer.
+        fn tessellateBezier(
+            estimated_length: f32,
+            pixels_per_segment: f32,
+            min_segments: usize,
+            max_segments: usize,
+            comptime evalFn: anytype,
+            evalArgs: anytype,
+            buffer: []Point2d(f32),
+        ) usize {
+            const segments = @max(min_segments, @min(max_segments, @as(usize, @intFromFloat(estimated_length / pixels_per_segment))));
+            const actual_segments = @min(segments, buffer.len);
+
+            for (0..actual_segments) |i| {
+                const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(actual_segments - 1));
+                buffer[i] = @call(.auto, evalFn, evalArgs ++ .{t});
+            }
+
+            return actual_segments;
+        }
+
+        /// Draws a Bézier curve by tessellating it into line segments.
+        fn drawBezierTessellated(
+            self: Self,
+            estimated_length: f32,
+            pixels_per_segment: f32,
+            min_segments: usize,
+            comptime evalFn: anytype,
+            evalArgs: anytype,
+            color: anytype,
+            width: usize,
+            mode: FillMode,
+        ) void {
+            var stack_buffer: [default_bezier_max_segments]Point2d(f32) = undefined;
+
+            const actual_segments = tessellateBezier(
+                estimated_length,
+                pixels_per_segment,
+                min_segments,
+                default_bezier_max_segments,
+                evalFn,
+                evalArgs,
+                &stack_buffer,
+            );
+
+            // Draw lines between consecutive points
+            for (1..actual_segments) |i| {
+                self.drawLine(stack_buffer[i - 1], stack_buffer[i], color, width, mode);
+            }
+        }
+
+        /// Calculates Bézier control points for smooth spline interpolation through three points.
+        /// Creates control points that produce a smooth curve through p1, influenced by p0 and p2.
+        ///
+        /// Parameters:
+        /// - p0: Previous point (influences incoming tangent)
+        /// - p1: Current point (the vertex being processed)
+        /// - p2: Next point (influences outgoing tangent)
+        /// - tension: Curve tension (0=sharp corners, 1=maximum smoothness)
+        ///
+        /// Returns control points for cubic Bézier: cp1 (outgoing from p0), cp2 (incoming to p1).
+        fn calculateSmoothControlPoints(p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32), tension: f32) struct { cp1: Point2d(f32), cp2: Point2d(f32) } {
+            const tension_factor = 1 - @max(0, @min(1, tension));
+            return .{
+                .cp1 = .{
+                    .x = p0.x + (p1.x - p0.x) * tension_factor,
+                    .y = p0.y + (p1.y - p0.y) * tension_factor,
+                },
+                .cp2 = .{
+                    .x = p1.x - (p2.x - p1.x) * tension_factor,
+                    .y = p1.y - (p2.y - p1.y) * tension_factor,
+                },
+            };
         }
     };
 }
