@@ -276,24 +276,20 @@ pub fn Canvas(comptime T: type) type {
             };
         }
 
-        /// Computes the derivative of a cubic Bézier curve at parameter t.
-        fn cubicBezierDerivative(p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32), p3: Point2d(f32), t: f32) Point2d(f32) {
-            const u = 1 - t;
-            const uu = u * u;
-            const tt = t * t;
-            return .{
-                .x = 3 * uu * (p1.x - p0.x) + 6 * u * t * (p2.x - p1.x) + 3 * tt * (p3.x - p2.x),
-                .y = 3 * uu * (p1.y - p0.y) + 6 * u * t * (p2.y - p1.y) + 3 * tt * (p3.y - p2.y),
-            };
+
+        /// Estimates the length of a quadratic Bézier curve segment.
+        fn estimateQuadraticBezierLength(p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32)) f32 {
+            // Use chord + control polygon approximation
+            const chord = p0.distance(p2);
+            const control_net = p0.distance(p1) + p1.distance(p2);
+            return (chord + control_net) / 2.0;
         }
 
         /// Estimates the length of a cubic Bézier curve segment.
         fn estimateCubicBezierLength(p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32), p3: Point2d(f32)) f32 {
             // Use chord + control polygon approximation
-            const chord = @sqrt((p3.x - p0.x) * (p3.x - p0.x) + (p3.y - p0.y) * (p3.y - p0.y));
-            const control_net = @sqrt((p1.x - p0.x) * (p1.x - p0.x) + (p1.y - p0.y) * (p1.y - p0.y)) +
-                @sqrt((p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y)) +
-                @sqrt((p3.x - p2.x) * (p3.x - p2.x) + (p3.y - p2.y) * (p3.y - p2.y));
+            const chord = p0.distance(p3);
+            const control_net = p0.distance(p1) + p1.distance(p2) + p2.distance(p3);
             return (chord + control_net) / 2.0;
         }
 
@@ -303,12 +299,11 @@ pub fn Canvas(comptime T: type) type {
             if (width == 0) return;
 
             // Estimate number of segments based on curve length
-            const chord = @sqrt((p2.x - p0.x) * (p2.x - p0.x) + (p2.y - p0.y) * (p2.y - p0.y));
-            const control_net = @sqrt((p1.x - p0.x) * (p1.x - p0.x) + (p1.y - p0.y) * (p1.y - p0.y)) +
-                @sqrt((p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y));
-            const estimated_length = (chord + control_net) / 2.0;
-            const segments = @max(3, @as(usize, @intFromFloat(estimated_length / 2.0)));
+            const estimated_length = estimateQuadraticBezierLength(p0, p1, p2);
+            const pixels_per_segment = 2.0; // Lower = more quality, higher = more performance
+            const segments = @max(3, @as(usize, @intFromFloat(estimated_length / pixels_per_segment)));
 
+            // Start with the first point
             var prev_point = p0;
             var i: usize = 1;
             while (i <= segments) : (i += 1) {
@@ -327,11 +322,10 @@ pub fn Canvas(comptime T: type) type {
 
             // Use adaptive subdivision based on estimated length
             const estimated_length = estimateCubicBezierLength(p0, p1, p2, p3);
-            const base_segments = @max(4, @as(usize, @intFromFloat(estimated_length / 2.0)));
+            const pixels_per_segment: f32 = if (mode == .smooth or width > 2) 1.5 else 3.0;
+            const segments = @max(4, @as(usize, @intFromFloat(estimated_length / pixels_per_segment)));
 
-            // For smooth mode or thick lines, use more segments
-            const segments = if (mode == .smooth or width > 2) base_segments * 2 else base_segments;
-
+            // Start with the first point
             var prev_point = p0;
             var i: usize = 1;
             while (i <= segments) : (i += 1) {
@@ -386,13 +380,14 @@ pub fn Canvas(comptime T: type) type {
             var total_points: usize = 0;
 
             // First pass: calculate total points needed
+            const pixels_per_segment = 3.0; // Balance between quality and performance for filled shapes
             for (0..polygon.len) |i| {
                 const p0 = polygon[i];
                 const p1 = polygon[(i + 1) % polygon.len];
                 const p2 = polygon[(i + 2) % polygon.len];
                 const control_points = calculateSmoothControlPoints(p0, p1, p2, tension);
                 const estimated_length = estimateCubicBezierLength(p0, control_points.cp1, control_points.cp2, p1);
-                const segments = @max(4, @min(50, @as(usize, @intFromFloat(estimated_length / 3.0))));
+                const segments = @max(4, @min(50, @as(usize, @intFromFloat(estimated_length / pixels_per_segment))));
                 total_points += segments;
             }
 
@@ -417,7 +412,7 @@ pub fn Canvas(comptime T: type) type {
                 const control_points = calculateSmoothControlPoints(p0, p1, p2, tension);
 
                 const estimated_length = estimateCubicBezierLength(p0, control_points.cp1, control_points.cp2, p1);
-                const segments = @max(4, @min(50, @as(usize, @intFromFloat(estimated_length / 3.0))));
+                const segments = @max(4, @min(50, @as(usize, @intFromFloat(estimated_length / pixels_per_segment))));
 
                 // Tessellate directly into our buffer
                 const segment_buffer = points_buffer[write_idx..write_idx + segments];
@@ -829,7 +824,7 @@ const md5_checksums = [_]DrawTestCase{
     .{ .name = "bezier_cubic", .md5sum = "3a2b0d540a2353c817077729ee10007a", .draw_fn = drawBezierCubic },
     .{ .name = "bezier_quadratic", .md5sum = "9bf9d650485c3c5ed002f6766f9783c1", .draw_fn = drawBezierQuadratic },
     .{ .name = "polygon_complex", .md5sum = "da9b83426d2118ce99948eabebff91fb", .draw_fn = drawPolygonComplex },
-    .{ .name = "spline_polygon", .md5sum = "61834cc2edc7c6e3398a54a584c8465e", .draw_fn = drawSplinePolygon },
+    .{ .name = "spline_polygon", .md5sum = "91dcc599568d099ba45ea86b961b97c1", .draw_fn = drawSplinePolygon },
 };
 
 // Test drawing functions for MD5 checksums
