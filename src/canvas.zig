@@ -32,6 +32,19 @@ pub fn Canvas(comptime T: type) type {
 
         const Self = @This();
 
+        // Drawing-related constants
+        const default_bezier_max_segments = 200;
+        const default_spline_max_segments = 50;
+        const default_spline_min_segments = 4;
+        const default_quadratic_min_segments = 3;
+        const default_pixels_per_segment_smooth = 1.5;
+        const default_pixels_per_segment_solid = 3.0;
+        const default_pixels_per_segment_quadratic = 2.0;
+        const antialias_edge_offset = 0.5;
+        const horizontal_vertical_threshold = 0.001;
+        const polygon_intersection_stack_buffer_size = 64;
+        const spline_polygon_stack_buffer_size = 400;
+
         /// Creates a drawing canvas from an image, with an allocator for operations that need it.
         pub fn init(image: Image(T), allocator: std.mem.Allocator) Self {
             return .{ .image = image, .allocator = allocator };
@@ -72,7 +85,7 @@ pub fn Canvas(comptime T: type) type {
             }
 
             // Special case for perfectly horizontal/vertical lines (faster rendering)
-            if (@abs(dx) < 0.001) { // Vertical line
+            if (@abs(dx) < horizontal_vertical_threshold) { // Vertical line
                 const x1 = @round(p1.x);
                 var y1 = @round(p1.y);
                 var y2 = @round(p2.y);
@@ -96,7 +109,7 @@ pub fn Canvas(comptime T: type) type {
                 self.fillCircle(p1, half_width, color, .smooth);
                 self.fillCircle(p2, half_width, color, .smooth);
                 return;
-            } else if (@abs(dy) < 0.001) { // Horizontal line
+            } else if (@abs(dy) < horizontal_vertical_threshold) { // Horizontal line
                 var x1 = @round(p1.x);
                 var x2 = @round(p2.x);
                 const y1 = @round(p1.y);
@@ -159,10 +172,10 @@ pub fn Canvas(comptime T: type) type {
                     const dist = @sqrt(dist_x * dist_x + dist_y * dist_y);
 
                     // Anti-aliased coverage based on distance
-                    if (dist <= half_width + 0.5) {
+                    if (dist <= half_width + antialias_edge_offset) {
                         var alpha: Float = 1.0;
-                        if (dist > half_width - 0.5) {
-                            alpha = (half_width + 0.5 - dist);
+                        if (dist > half_width - antialias_edge_offset) {
+                            alpha = (half_width + antialias_edge_offset - dist);
                         }
 
                         if (alpha > 0) {
@@ -304,12 +317,12 @@ pub fn Canvas(comptime T: type) type {
         ) usize {
             const segments = @max(min_segments, @min(max_segments, @as(usize, @intFromFloat(estimated_length / pixels_per_segment))));
             const actual_segments = @min(segments, buffer.len);
-            
+
             for (0..actual_segments) |i| {
                 const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(actual_segments - 1));
                 buffer[i] = @call(.auto, evalFn, evalArgs ++ .{t});
             }
-            
+
             return actual_segments;
         }
 
@@ -325,19 +338,18 @@ pub fn Canvas(comptime T: type) type {
             width: usize,
             mode: FillMode,
         ) void {
-            const max_segments = 200; // Reasonable upper limit
-            var stack_buffer: [max_segments]Point2d(f32) = undefined;
-            
+            var stack_buffer: [default_bezier_max_segments]Point2d(f32) = undefined;
+
             const actual_segments = tessellateBezier(
                 estimated_length,
                 pixels_per_segment,
                 min_segments,
-                max_segments,
+                default_bezier_max_segments,
                 evalFn,
                 evalArgs,
                 &stack_buffer,
             );
-            
+
             // Draw lines between consecutive points
             for (1..actual_segments) |i| {
                 self.drawLine(stack_buffer[i - 1], stack_buffer[i], color, width, mode);
@@ -350,13 +362,11 @@ pub fn Canvas(comptime T: type) type {
             if (width == 0) return;
 
             const estimated_length = estimateQuadraticBezierLength(p0, p1, p2);
-            const pixels_per_segment = 2.0; // Good balance for quadratic curves
-            const min_segments = 3; // Minimum for curve appearance
 
             self.drawBezierTessellated(
                 estimated_length,
-                pixels_per_segment,
-                min_segments,
+                default_pixels_per_segment_quadratic,
+                default_quadratic_min_segments,
                 evalQuadraticBezier,
                 .{ p0, p1, p2 },
                 color,
@@ -372,13 +382,12 @@ pub fn Canvas(comptime T: type) type {
             if (width == 0) return;
 
             const estimated_length = estimateCubicBezierLength(p0, p1, p2, p3);
-            const pixels_per_segment: f32 = if (mode == .smooth or width > 2) 1.5 else 3.0;
-            const min_segments = 4; // Higher minimum for cubic curves
+            const pixels_per_segment: f32 = if (mode == .smooth or width > 2) default_pixels_per_segment_smooth else default_pixels_per_segment_solid;
 
             self.drawBezierTessellated(
                 estimated_length,
                 pixels_per_segment,
-                min_segments,
+                default_spline_min_segments,
                 evalCubicBezier,
                 .{ p0, p1, p2, p3 },
                 color,
@@ -426,8 +435,7 @@ pub fn Canvas(comptime T: type) type {
             if (polygon.len < 3) return;
 
             // Stack buffer for common cases (up to 50 segments per curve, 8 curves)
-            const max_stack_points = 400;
-            var stack_buffer: [max_stack_points]Point2d(f32) = undefined;
+            var stack_buffer: [spline_polygon_stack_buffer_size]Point2d(f32) = undefined;
             var total_points: usize = 0;
 
             // First pass: calculate total points needed
@@ -438,7 +446,7 @@ pub fn Canvas(comptime T: type) type {
                 const p2 = polygon[(i + 2) % polygon.len];
                 const control_points = calculateSmoothControlPoints(p0, p1, p2, tension);
                 const estimated_length = estimateCubicBezierLength(p0, control_points.cp1, control_points.cp2, p1);
-                const segments = @max(4, @min(50, @as(usize, @intFromFloat(estimated_length / pixels_per_segment))));
+                const segments = @max(default_spline_min_segments, @min(default_spline_max_segments, @as(usize, @intFromFloat(estimated_length / pixels_per_segment))));
                 total_points += segments;
             }
 
@@ -447,7 +455,7 @@ pub fn Canvas(comptime T: type) type {
             var heap_buffer: ?[]Point2d(f32) = null;
             defer if (heap_buffer) |h| self.allocator.free(h);
 
-            if (total_points <= max_stack_points) {
+            if (total_points <= spline_polygon_stack_buffer_size) {
                 points_buffer = stack_buffer[0..total_points];
             } else {
                 heap_buffer = try self.allocator.alloc(Point2d(f32), total_points);
@@ -463,15 +471,15 @@ pub fn Canvas(comptime T: type) type {
                 const control_points = calculateSmoothControlPoints(p0, p1, p2, tension);
 
                 const estimated_length = estimateCubicBezierLength(p0, control_points.cp1, control_points.cp2, p1);
-                const segments = @max(4, @min(50, @as(usize, @intFromFloat(estimated_length / pixels_per_segment))));
+                const segments = @max(default_spline_min_segments, @min(default_spline_max_segments, @as(usize, @intFromFloat(estimated_length / pixels_per_segment))));
 
                 // Tessellate directly into our buffer
                 const segment_buffer = points_buffer[write_idx .. write_idx + segments];
                 const actual_segments = tessellateBezier(
                     estimated_length,
                     pixels_per_segment,
-                    4, // min_segments for cubic
-                    50, // max_segments
+                    default_spline_min_segments, // min_segments for cubic
+                    default_spline_max_segments, // max_segments
                     evalCubicBezier,
                     .{ p0, control_points.cp1, control_points.cp2, p1 },
                     segment_buffer,
@@ -616,17 +624,17 @@ pub fn Canvas(comptime T: type) type {
                     const dist = @sqrt(x * x + y * y);
 
                     // Only draw if we're in the ring area
-                    if (dist >= inner_radius - 0.5 and dist <= outer_radius + 0.5) {
+                    if (dist >= inner_radius - antialias_edge_offset and dist <= outer_radius + antialias_edge_offset) {
                         var alpha: f32 = 1.0;
 
                         // Smooth outer edge
-                        if (dist > outer_radius - 0.5) {
-                            alpha = @min(alpha, outer_radius + 0.5 - dist);
+                        if (dist > outer_radius - antialias_edge_offset) {
+                            alpha = @min(alpha, outer_radius + antialias_edge_offset - dist);
                         }
 
                         // Smooth inner edge
-                        if (dist < inner_radius + 0.5) {
-                            alpha = @min(alpha, dist - (inner_radius - 0.5));
+                        if (dist < inner_radius + antialias_edge_offset) {
+                            alpha = @min(alpha, dist - (inner_radius - antialias_edge_offset));
                         }
 
                         alpha = @max(0, @min(1, alpha));
@@ -744,8 +752,7 @@ pub fn Canvas(comptime T: type) type {
             const end_y = @min(@as(i32, @intCast(rows)) - 1, @as(i32, @intFromFloat(@ceil(max_y))));
 
             // Use stack buffer for small polygons, fallback to heap for complex ones
-            const stack_buffer_size = 64;
-            var stack_intersections: [stack_buffer_size]f32 = undefined;
+            var stack_intersections: [polygon_intersection_stack_buffer_size]f32 = undefined;
             var heap_intersections: ?[]f32 = null;
             defer if (heap_intersections) |h| self.allocator.free(h);
 
@@ -769,7 +776,7 @@ pub fn Canvas(comptime T: type) type {
 
                 // Get appropriate buffer
                 var intersections: []f32 = undefined;
-                if (intersection_count <= stack_buffer_size) {
+                if (intersection_count <= polygon_intersection_stack_buffer_size) {
                     intersections = stack_intersections[0..intersection_count];
                 } else {
                     // Need heap allocation
@@ -819,10 +826,10 @@ pub fn Canvas(comptime T: type) type {
                             const fx = @as(f32, @floatFromInt(x));
                             var alpha: f32 = 1.0;
                             if (fx < left_edge + 1) {
-                                alpha = @min(alpha, fx + 0.5 - left_edge);
+                                alpha = @min(alpha, fx + antialias_edge_offset - left_edge);
                             }
                             if (fx > right_edge - 1) {
-                                alpha = @min(alpha, right_edge - (fx - 0.5));
+                                alpha = @min(alpha, right_edge - (fx - antialias_edge_offset));
                             }
                             alpha = @max(0, @min(1, alpha));
 
@@ -840,7 +847,6 @@ pub fn Canvas(comptime T: type) type {
                 }
             }
         }
-
     };
 }
 
