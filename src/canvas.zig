@@ -119,7 +119,9 @@ pub fn Canvas(comptime T: type) type {
             var err = dx - dy;
 
             while (true) {
-                self.setPixel(x1, y1, color, 1.0);
+                if (self.image.atOrNull(y1, x1)) |pixel| {
+                    pixel.* = convert(T, color);
+                }
 
                 if (x1 == x2 and y1 == y2) break;
 
@@ -165,15 +167,13 @@ pub fn Canvas(comptime T: type) type {
             var x_end = @round(x1);
             var y_end = y1 + gradient * (x_end - x1);
             var x_gap = rfpart(x1 + 0.5);
-            const x_px1: i32 = @intFromFloat(x_end);
-            const y_px1: i32 = @intFromFloat(y_end);
 
             if (steep) {
-                self.setPixel(y_px1, x_px1, c2, rfpart(y_end) * x_gap);
-                self.setPixel(y_px1 + 1, x_px1, c2, fpart(y_end) * x_gap);
+                self.setPixel(.{ .x = y_end, .y = x_end }, c2, rfpart(y_end) * x_gap);
+                self.setPixel(.{ .x = y_end + 1, .y = x_end }, c2, fpart(y_end) * x_gap);
             } else {
-                self.setPixel(x_px1, y_px1, c2, rfpart(y_end) * x_gap);
-                self.setPixel(x_px1, y_px1 + 1, c2, fpart(y_end) * x_gap);
+                self.setPixel(.{ .x = x_end, .y = y_end }, c2, rfpart(y_end) * x_gap);
+                self.setPixel(.{ .x = x_end, .y = y_end + 1 }, c2, fpart(y_end) * x_gap);
             }
             var intery = y_end + gradient;
 
@@ -181,26 +181,26 @@ pub fn Canvas(comptime T: type) type {
             x_end = @round(x2);
             y_end = y2 + gradient * (x_end - x2);
             x_gap = fpart(x2 + 0.5);
-            const x_px2: i32 = @intFromFloat(x_end);
-            const y_px2: i32 = @intFromFloat(y_end);
 
             if (steep) {
-                self.setPixel(y_px2, x_px2, c2, rfpart(y_end) * x_gap);
-                self.setPixel(y_px2 + 1, x_px2, c2, fpart(y_end) * x_gap);
+                self.setPixel(.{ .x = y_end, .y = x_end }, c2, rfpart(y_end) * x_gap);
+                self.setPixel(.{ .x = y_end + 1, .y = x_end }, c2, fpart(y_end) * x_gap);
             } else {
-                self.setPixel(x_px2, y_px2, c2, rfpart(y_end) * x_gap);
-                self.setPixel(x_px2, y_px2 + 1, c2, fpart(y_end) * x_gap);
+                self.setPixel(.{ .x = x_end, .y = y_end }, c2, rfpart(y_end) * x_gap);
+                self.setPixel(.{ .x = x_end, .y = y_end + 1 }, c2, fpart(y_end) * x_gap);
             }
 
             // Main loop
+            const x_px1 = @round(x1);
+            const x_px2 = @round(x2);
             var x = x_px1 + 1;
             while (x < x_px2) : (x += 1) {
                 if (steep) {
-                    self.setPixel(@as(i32, @intFromFloat(intery)), x, c2, rfpart(intery));
-                    self.setPixel(@as(i32, @intFromFloat(intery)) + 1, x, c2, fpart(intery));
+                    self.setPixel(.{ .x = intery, .y = x }, c2, rfpart(intery));
+                    self.setPixel(.{ .x = intery + 1, .y = x }, c2, fpart(intery));
                 } else {
-                    self.setPixel(x, @as(i32, @intFromFloat(intery)), c2, rfpart(intery));
-                    self.setPixel(x, @as(i32, @intFromFloat(intery)) + 1, c2, fpart(intery));
+                    self.setPixel(.{ .x = x, .y = intery }, c2, rfpart(intery));
+                    self.setPixel(.{ .x = x, .y = intery + 1 }, c2, fpart(intery));
                 }
                 intery += gradient;
             }
@@ -277,7 +277,7 @@ pub fn Canvas(comptime T: type) type {
                     var i = -half_width;
                     while (i <= half_width) : (i += 1) {
                         const px = x1 + i;
-                        self.setPixel(@intFromFloat(px), @intFromFloat(y), c2, 1.0);
+                        self.setPixel(.{ .x = px, .y = y }, c2, 1.0);
                     }
                 }
                 // Add rounded caps
@@ -296,7 +296,7 @@ pub fn Canvas(comptime T: type) type {
                     var i = -half_width;
                     while (i <= half_width) : (i += 1) {
                         const py = y1 + i;
-                        self.setPixel(@intFromFloat(x), @intFromFloat(py), c2, 1.0);
+                        self.setPixel(.{ .x = x, .y = py }, c2, 1.0);
                     }
                 }
                 // Add rounded caps
@@ -324,13 +324,10 @@ pub fn Canvas(comptime T: type) type {
             const inv_length_sq = 1.0 / length_sq;
 
             // Iterate through pixels in bounding box
-            var y: i32 = @as(i32, @intFromFloat(min_y));
-            while (y <= @as(i32, @intFromFloat(max_y))) : (y += 1) {
-                const py: Float = @floatFromInt(y);
-                var x: i32 = @as(i32, @intFromFloat(min_x));
-                while (x <= @as(i32, @intFromFloat(max_x))) : (x += 1) {
-                    const px: Float = @floatFromInt(x);
-
+            var py: Float = min_y;
+            while (py <= max_y) : (py += 1) {
+                var px: Float = min_x;
+                while (px <= max_x) : (px += 1) {
                     // Optimized distance calculation
                     const dpx = px - p1.x;
                     const dpy = py - p1.y;
@@ -349,7 +346,7 @@ pub fn Canvas(comptime T: type) type {
                         }
 
                         if (alpha > 0) {
-                            self.setPixel(x, y, c2, alpha);
+                            self.setPixel(.{ .x = px, .y = py }, c2, alpha);
                         }
                     }
                 }
@@ -359,9 +356,10 @@ pub fn Canvas(comptime T: type) type {
         /// Sets a color to a pixel at the given coordinates with alpha transparency.
         /// Uses optimized direct assignment for opaque colors (alpha >= 1.0) or blends when
         /// transparency is needed. Provides bounds checking and handles coordinate conversion.
+        /// Coordinates are truncated to integers for pixel placement.
         /// The alpha parameter (0.0-1.0) is multiplied with the color's alpha channel.
-        pub fn setPixel(self: Self, x: i32, y: i32, color: anytype, alpha: f32) void {
-            if (self.image.atOrNull(y, x)) |pixel| {
+        pub fn setPixel(self: Self, point: Point2d(f32), color: anytype, alpha: f32) void {
+            if (self.image.atOrNull(@intFromFloat(point.y), @intFromFloat(point.x))) |pixel| {
                 // No-op if color is already Rgba
                 var src = convert(Rgba, color);
 
@@ -457,7 +455,7 @@ pub fn Canvas(comptime T: type) type {
                         .{ .x = cx - y, .y = cy - x },
                     };
                     for (points) |p| {
-                        self.setPixel(@intFromFloat(p.x), @intFromFloat(p.y), color, 1.0);
+                        self.setPixel(p, color, 1.0);
                     }
                     if (err <= 0) {
                         y += 1;
@@ -539,7 +537,7 @@ pub fn Canvas(comptime T: type) type {
                         alpha = @max(0, @min(1, alpha));
 
                         if (alpha > 0) {
-                            self.setPixel(@intCast(c), @intCast(r), c2, alpha);
+                            self.setPixel(.{ .x = @floatFromInt(c), .y = @floatFromInt(r) }, c2, alpha);
                         }
                     }
                 }
@@ -564,8 +562,8 @@ pub fn Canvas(comptime T: type) type {
                 max_y = @max(max_y, p.y);
             }
 
-            const start_y = @max(0, @as(i32, @intFromFloat(@floor(min_y))));
-            const end_y = @min(@as(i32, @intCast(rows)) - 1, @as(i32, @intFromFloat(@ceil(max_y))));
+            const start_y = @max(0, @floor(min_y));
+            const end_y = @min(@as(f32, @floatFromInt(rows)) - 1, @ceil(max_y));
 
             // Use stack buffer for small polygons, fallback to heap for complex ones
             var stack_intersections: [polygon_intersection_stack_buffer_size]f32 = undefined;
@@ -576,7 +574,6 @@ pub fn Canvas(comptime T: type) type {
 
             var y = start_y;
             while (y <= end_y) : (y += 1) {
-                const fy: f32 = @floatFromInt(y);
                 var intersection_count: usize = 0;
 
                 // Count intersections first
@@ -584,7 +581,7 @@ pub fn Canvas(comptime T: type) type {
                     const p1 = polygon[i];
                     const p2 = polygon[(i + 1) % polygon.len];
 
-                    if ((p1.y <= fy and p2.y > fy) or (p2.y <= fy and p1.y > fy)) {
+                    if ((p1.y <= y and p2.y > y) or (p2.y <= y and p1.y > y)) {
                         intersection_count += 1;
                     }
                 }
@@ -608,8 +605,8 @@ pub fn Canvas(comptime T: type) type {
                     const p1 = polygon[i];
                     const p2 = polygon[(i + 1) % polygon.len];
 
-                    if ((p1.y <= fy and p2.y > fy) or (p2.y <= fy and p1.y > fy)) {
-                        const intersection = p1.x + (fy - p1.y) * (p2.x - p1.x) / (p2.y - p1.y);
+                    if ((p1.y <= y and p2.y > y) or (p2.y <= y and p1.y > y)) {
+                        const intersection = p1.x + (y - p1.y) * (p2.x - p1.x) / (p2.y - p1.y);
                         intersections[idx] = intersection;
                         idx += 1;
                     }
@@ -629,31 +626,35 @@ pub fn Canvas(comptime T: type) type {
                     const left_edge = intersection_slice[i];
                     const right_edge = intersection_slice[i + 1];
 
-                    const x_start = @max(0, @as(i32, @intFromFloat(@floor(left_edge))));
-                    const x_end = @min(@as(i32, @intCast(cols)) - 1, @as(i32, @intFromFloat(@ceil(right_edge))));
+                    const x_start = @max(0, @floor(left_edge));
+                    const x_end = @min(@as(f32, @floatFromInt(cols)) - 1, @ceil(right_edge));
 
-                    var x = x_start;
-                    while (x <= x_end) : (x += 1) {
-                        const pos = @as(usize, @intCast(y)) * cols + @as(usize, @intCast(x));
-
-                        if (mode == .soft) {
+                    if (mode == .soft) {
+                        var x = x_start;
+                        while (x <= x_end) : (x += 1) {
                             // Apply antialiasing at edges
-                            const fx = @as(f32, @floatFromInt(x));
                             var alpha: f32 = 1.0;
-                            if (fx < left_edge + 1) {
-                                alpha = @min(alpha, fx + antialias_edge_offset - left_edge);
+                            if (x < left_edge + 1) {
+                                alpha = @min(alpha, x + antialias_edge_offset - left_edge);
                             }
-                            if (fx > right_edge - 1) {
-                                alpha = @min(alpha, right_edge - (fx - antialias_edge_offset));
+                            if (x > right_edge - 1) {
+                                alpha = @min(alpha, right_edge - (x - antialias_edge_offset));
                             }
                             alpha = @max(0, @min(1, alpha));
 
                             if (alpha > 0) {
-                                self.setPixel(x, @intCast(y), color, alpha);
+                                self.setPixel(.{ .x = x, .y = y }, color, alpha);
                             }
-                        } else {
-                            // No antialiasing - direct pixel write
-                            self.image.data[pos] = convert(T, c2);
+                        }
+                    } else {
+                        // Fast mode - use integer loop for direct array access
+                        const x_start_int = @as(i32, @intFromFloat(x_start));
+                        const x_end_int = @as(i32, @intFromFloat(x_end));
+                        var x = x_start_int;
+                        while (x <= x_end_int) : (x += 1) {
+                            if (self.image.atOrNull(@intFromFloat(y), @intCast(x))) |pixel| {
+                                pixel.* = convert(T, c2);
+                            }
                         }
                     }
                 }
@@ -691,10 +692,10 @@ pub fn Canvas(comptime T: type) type {
                         if (dist > radius - 1) {
                             // Edge antialiasing
                             const edge_alpha = radius - dist;
-                            self.setPixel(@intCast(c), @intCast(r), color, edge_alpha);
+                            self.setPixel(.{ .x = @floatFromInt(c), .y = @floatFromInt(r) }, color, edge_alpha);
                         } else {
                             // Full opacity in the center - direct assignment
-                            self.setPixel(@intCast(c), @intCast(r), color, 1.0);
+                            self.setPixel(.{ .x = @floatFromInt(c), .y = @floatFromInt(r) }, color, 1.0);
                         }
                     }
                 }
