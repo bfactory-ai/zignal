@@ -61,13 +61,92 @@ pub fn Canvas(comptime T: type) type {
 
             switch (mode) {
                 .solid => self.drawLineSolid(p1, p2, width, color),
-                .smooth => self.drawLineSmoothOld(p1, p2, width, color),
+                .smooth => self.drawLineSmooth(p1, p2, width, color),
             }
         }
 
         /// Internal function for drawing smooth (anti-aliased) lines.
+        /// Uses Wu's algorithm for 1px lines (optimal antialiasing) and distance-based
+        /// antialiasing for thick lines (better quality than polygon approach).
         fn drawLineSmooth(self: Self, p1: Point2d(f32), p2: Point2d(f32), width: usize, color: anytype) void {
-            self.drawLineSmoothNew(p1, p2, width, color);
+            if (width == 1) {
+                // Use Wu's algorithm for 1px lines - optimal antialiasing and performance
+                self.drawLineSmoothWu(p1, p2, color);
+            } else {
+                // Use distance-based antialiasing for thick lines - better quality
+                self.drawLineSmoothOld(p1, p2, width, color);
+            }
+        }
+
+        /// Wu's anti-aliasing algorithm for 1-pixel width lines.
+        /// Provides optimal antialiasing quality and performance for thin lines.
+        fn drawLineSmoothWu(self: Self, p1: Point2d(f32), p2: Point2d(f32), color: anytype) void {
+            const Float = @TypeOf(p1.x);
+            const c2 = convert(Rgba, color);
+
+            // Wu's algorithm for 1px lines
+            var x1 = p1.x;
+            var y1 = p1.y;
+            var x2 = p2.x;
+            var y2 = p2.y;
+
+            const steep = @abs(y2 - y1) > @abs(x2 - x1);
+            if (steep) {
+                std.mem.swap(Float, &x1, &y1);
+                std.mem.swap(Float, &x2, &y2);
+            }
+            if (x1 > x2) {
+                std.mem.swap(Float, &x1, &x2);
+                std.mem.swap(Float, &y1, &y2);
+            }
+
+            const dx = x2 - x1;
+            const dy = y2 - y1;
+            const gradient = if (dx == 0) 1.0 else dy / dx;
+
+            // Handle first endpoint
+            var x_end = @round(x1);
+            var y_end = y1 + gradient * (x_end - x1);
+            var x_gap = rfpart(x1 + 0.5);
+            const x_px1 = @as(i32, @intFromFloat(x_end));
+            const y_px1 = @as(i32, @intFromFloat(y_end));
+
+            if (steep) {
+                self.plot(y_px1, x_px1, rfpart(y_end) * x_gap, c2);
+                self.plot(y_px1 + 1, x_px1, fpart(y_end) * x_gap, c2);
+            } else {
+                self.plot(x_px1, y_px1, rfpart(y_end) * x_gap, c2);
+                self.plot(x_px1, y_px1 + 1, fpart(y_end) * x_gap, c2);
+            }
+            var intery = y_end + gradient;
+
+            // Handle second endpoint
+            x_end = @round(x2);
+            y_end = y2 + gradient * (x_end - x2);
+            x_gap = fpart(x2 + 0.5);
+            const x_px2 = @as(i32, @intFromFloat(x_end));
+            const y_px2 = @as(i32, @intFromFloat(y_end));
+
+            if (steep) {
+                self.plot(y_px2, x_px2, rfpart(y_end) * x_gap, c2);
+                self.plot(y_px2 + 1, x_px2, fpart(y_end) * x_gap, c2);
+            } else {
+                self.plot(x_px2, y_px2, rfpart(y_end) * x_gap, c2);
+                self.plot(x_px2, y_px2 + 1, fpart(y_end) * x_gap, c2);
+            }
+
+            // Main loop
+            var x = x_px1 + 1;
+            while (x < x_px2) : (x += 1) {
+                if (steep) {
+                    self.plot(@as(i32, @intFromFloat(intery)), x, rfpart(intery), c2);
+                    self.plot(@as(i32, @intFromFloat(intery)) + 1, x, fpart(intery), c2);
+                } else {
+                    self.plot(x, @as(i32, @intFromFloat(intery)), rfpart(intery), c2);
+                    self.plot(x, @as(i32, @intFromFloat(intery)) + 1, fpart(intery), c2);
+                }
+                intery += gradient;
+            }
         }
 
         pub fn drawLineSmoothNew(self: Self, p1: Point2d(f32), p2: Point2d(f32), width: usize, color: anytype) void {
@@ -990,17 +1069,17 @@ const md5_checksums = [_]DrawTestCase{
     .{ .name = "line_horizontal", .md5sum = "96fc75d0d893373c0050e5fe76f5d7ea", .draw_fn = drawLineHorizontal },
     .{ .name = "line_vertical", .md5sum = "f7d52e274636af2b20b62172a408b446", .draw_fn = drawLineVertical },
     .{ .name = "line_diagonal", .md5sum = "1aee6bf80fd2e6a849e5520937566478", .draw_fn = drawLineDiagonal },
-    .{ .name = "line_thick", .md5sum = "5a4266d18f4db1907826400eb53b0aae", .draw_fn = drawLineThick },
+    .{ .name = "line_thick", .md5sum = "d8323d8d6580a34e724873701245f117", .draw_fn = drawLineThick },
     .{ .name = "circle_filled_solid", .md5sum = "efe2aa5419c9ffdead0dfddffb3b6a67", .draw_fn = drawCircleFilledSolid },
     .{ .name = "circle_filled_smooth", .md5sum = "4996924718641236276cdb1c166ae515", .draw_fn = drawCircleFilledSmooth },
     .{ .name = "circle_outline", .md5sum = "ae7e973d5644ff7bdde7338296e4ab40", .draw_fn = drawCircleOutline },
     .{ .name = "rectangle_filled", .md5sum = "3783f1119b7d5482b5a333f76c322c92", .draw_fn = drawRectangleFilled },
-    .{ .name = "rectangle_outline", .md5sum = "c5f5cdb6034fd06384b969edd8723078", .draw_fn = drawRectangleOutline },
+    .{ .name = "rectangle_outline", .md5sum = "033fdc24b89399af7b1810783e357b5f", .draw_fn = drawRectangleOutline },
     .{ .name = "triangle_filled", .md5sum = "283a9de3dd51dd00794559cc231ff5ac", .draw_fn = drawTriangleFilled },
     .{ .name = "bezier_cubic", .md5sum = "3a2b0d540a2353c817077729ee10007a", .draw_fn = drawBezierCubic },
-    .{ .name = "bezier_quadratic", .md5sum = "175b23959064d75d011fafc1b5a0364f", .draw_fn = drawBezierQuadratic },
+    .{ .name = "bezier_quadratic", .md5sum = "c3286e308aaaef5b302129cf67b713c6", .draw_fn = drawBezierQuadratic },
     .{ .name = "polygon_complex", .md5sum = "da9b83426d2118ce99948eabebff91fb", .draw_fn = drawPolygonComplex },
-    .{ .name = "spline_polygon", .md5sum = "fa3426a17b65bd6cee45d8c3d9dab16a", .draw_fn = drawSplinePolygon },
+    .{ .name = "spline_polygon", .md5sum = "6bae24f211c7fdd391cb5159dd4e8fd0", .draw_fn = drawSplinePolygon },
 };
 
 // Test drawing functions for MD5 checksums
