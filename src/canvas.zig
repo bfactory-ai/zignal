@@ -16,12 +16,12 @@ const Point2d = @import("point.zig").Point2d;
 const Rectangle = @import("geometry.zig").Rectangle;
 const Rgba = @import("color.zig").Rgba;
 
-/// Antialiasing mode for polygon filling operations
+/// Rendering quality mode for drawing operations
 pub const FillMode = enum {
-    /// No antialiasing - hard edges, fastest performance
-    solid,
-    /// Antialiased edges - smooth edges, slower performance
-    smooth,
+    /// Fast rendering - hard edges, maximum performance
+    fast,
+    /// Soft rendering - antialiased edges, better quality
+    soft,
 };
 
 /// A drawing context for an image, providing methods to draw shapes and lines.
@@ -53,34 +53,34 @@ pub fn Canvas(comptime T: type) type {
         /// Draws a colored straight line of a custom width between p1 and p2 on an image.
         /// Width=1 lines use fast Bresenham algorithm with no caps for precise pixel placement.
         /// Width>1 lines are rendered as rectangles with rounded caps for smooth appearance.
-        /// Use FillMode.smooth for anti-aliased lines or FillMode.solid for fast non-anti-aliased lines.
+        /// Use FillMode.soft for anti-aliased lines or FillMode.fast for fast non-anti-aliased lines.
         /// If the `color` is of Rgba type, it alpha-blends it onto the image.
         pub fn drawLine(self: Self, p1: Point2d(f32), p2: Point2d(f32), color: anytype, width: usize, mode: FillMode) void {
             comptime assert(isColor(@TypeOf(color)));
             if (width == 0) return;
 
             switch (mode) {
-                .solid => self.drawLineSolid(p1, p2, width, color),
-                .smooth => self.drawLineSmooth(p1, p2, width, color),
+                .fast => self.drawLineFast(p1, p2, width, color),
+                .soft => self.drawLineSoft(p1, p2, width, color),
             }
         }
 
         /// Internal function for drawing smooth (anti-aliased) lines.
         /// Uses Wu's algorithm for 1px lines (optimal antialiasing) and distance-based
         /// antialiasing for thick lines (better quality than polygon approach).
-        fn drawLineSmooth(self: Self, p1: Point2d(f32), p2: Point2d(f32), width: usize, color: anytype) void {
+        fn drawLineSoft(self: Self, p1: Point2d(f32), p2: Point2d(f32), width: usize, color: anytype) void {
             if (width == 1) {
                 // Use Wu's algorithm for 1px lines - optimal antialiasing and performance
-                self.drawLineSmoothWu(p1, p2, color);
+                self.drawLineWu(p1, p2, color);
             } else {
                 // Use distance-based antialiasing for thick lines - better quality
-                self.drawLineSmoothDistance(p1, p2, width, color);
+                self.drawLineDistance(p1, p2, width, color);
             }
         }
 
         /// Wu's anti-aliasing algorithm for 1-pixel width lines.
         /// Provides optimal antialiasing quality and performance for thin lines.
-        fn drawLineSmoothWu(self: Self, p1: Point2d(f32), p2: Point2d(f32), color: anytype) void {
+        fn drawLineWu(self: Self, p1: Point2d(f32), p2: Point2d(f32), color: anytype) void {
             const Float = @TypeOf(p1.x);
             const c2 = convert(Rgba, color);
 
@@ -149,10 +149,9 @@ pub fn Canvas(comptime T: type) type {
             }
         }
 
-
         /// Distance-based anti-aliased line drawing for thick lines.
         /// Uses exact distance calculation from each pixel to the line for superior quality.
-        fn drawLineSmoothDistance(self: Self, p1: Point2d(f32), p2: Point2d(f32), width: usize, color: anytype) void {
+        fn drawLineDistance(self: Self, p1: Point2d(f32), p2: Point2d(f32), width: usize, color: anytype) void {
             const Float = @TypeOf(p1.x);
             const rows: Float = @floatFromInt(self.image.rows);
             const cols: Float = @floatFromInt(self.image.cols);
@@ -166,7 +165,7 @@ pub fn Canvas(comptime T: type) type {
 
             if (line_length == 0) {
                 // Single point - draw a small circle
-                self.fillCircle(p1, half_width, color, .smooth);
+                self.fillCircle(p1, half_width, color, .soft);
                 return;
             }
 
@@ -189,8 +188,8 @@ pub fn Canvas(comptime T: type) type {
                     }
                 }
                 // Add rounded caps
-                self.fillCircle(p1, half_width, color, .smooth);
-                self.fillCircle(p2, half_width, color, .smooth);
+                self.fillCircle(p1, half_width, color, .soft);
+                self.fillCircle(p2, half_width, color, .soft);
                 return;
             } else if (@abs(dy) < horizontal_vertical_threshold) { // Horizontal line
                 var x1 = @round(p1.x);
@@ -210,8 +209,8 @@ pub fn Canvas(comptime T: type) type {
                     }
                 }
                 // Add rounded caps
-                self.fillCircle(p1, half_width, color, .smooth);
-                self.fillCircle(p2, half_width, color, .smooth);
+                self.fillCircle(p1, half_width, color, .soft);
+                self.fillCircle(p2, half_width, color, .soft);
                 return;
             }
 
@@ -270,16 +269,16 @@ pub fn Canvas(comptime T: type) type {
         /// The alpha parameter (0.0-1.0) is multiplied with the color's alpha channel.
         fn blendPixel(self: Self, x: i32, y: i32, color: anytype, alpha: f32) void {
             if (x < 0 or x >= self.image.cols or y < 0 or y >= self.image.rows) return;
-            
+
             const pos = @as(usize, @intCast(y)) * self.image.cols + @as(usize, @intCast(x));
             var dst = convert(Rgba, self.image.data[pos]);
             var src = convert(Rgba, color);
-            
+
             // Apply additional alpha factor
             if (alpha < 1.0) {
                 src.a = @intFromFloat(@as(f32, @floatFromInt(src.a)) * alpha);
             }
-            
+
             dst.blend(src);
             self.image.data[pos] = convert(T, dst);
         }
@@ -298,46 +297,62 @@ pub fn Canvas(comptime T: type) type {
             return 1 - fpart(x);
         }
 
+        /// Bresenham's line algorithm for 1-pixel width solid lines.
+        /// Fast integer-only algorithm that draws precise pixel-perfect lines.
+        /// No antialiasing - draws hard edges for maximum performance.
+        fn drawLineBresenham(self: Self, p1: Point2d(f32), p2: Point2d(f32), color: anytype) void {
+            const solid_color = convert(T, color);
+
+            var x1: i32 = @intFromFloat(p1.x);
+            var y1: i32 = @intFromFloat(p1.y);
+            const x2: i32 = @intFromFloat(p2.x);
+            const y2: i32 = @intFromFloat(p2.y);
+
+            const dx: i32 = @intCast(@abs(x2 - x1));
+            const dy: i32 = @intCast(@abs(y2 - y1));
+            const sx: i32 = if (x1 < x2) 1 else -1;
+            const sy: i32 = if (y1 < y2) 1 else -1;
+            var err = dx - dy;
+
+            while (true) {
+                if (x1 >= 0 and x1 < self.image.cols and y1 >= 0 and y1 < self.image.rows) {
+                    const pos = @as(usize, @intCast(y1)) * self.image.cols + @as(usize, @intCast(x1));
+                    self.image.data[pos] = solid_color;
+                }
+
+                if (x1 == x2 and y1 == y2) break;
+
+                const e2 = 2 * err;
+                if (e2 > -dy) {
+                    err -= dy;
+                    x1 += sx;
+                }
+                if (e2 < dx) {
+                    err += dx;
+                    y1 += sy;
+                }
+            }
+        }
+
         /// Internal function for drawing solid (non-anti-aliased) lines.
-        fn drawLineSolid(self: Self, p1: Point2d(f32), p2: Point2d(f32), width: usize, color: anytype) void {
+        /// Uses Bresenham's algorithm for 1px lines and polygon-based approach for thick lines.
+        fn drawLineFast(self: Self, p1: Point2d(f32), p2: Point2d(f32), width: usize, color: anytype) void {
             comptime assert(isColor(@TypeOf(color)));
             if (width == 0) return;
 
-            const solid_color = convert(T, color);
-
-            // For width 1, use simple Bresenham
             if (width == 1) {
-                var x1: i32 = @intFromFloat(p1.x);
-                var y1: i32 = @intFromFloat(p1.y);
-                const x2: i32 = @intFromFloat(p2.x);
-                const y2: i32 = @intFromFloat(p2.y);
-
-                const dx: i32 = @intCast(@abs(x2 - x1));
-                const dy: i32 = @intCast(@abs(y2 - y1));
-                const sx: i32 = if (x1 < x2) 1 else -1;
-                const sy: i32 = if (y1 < y2) 1 else -1;
-                var err = dx - dy;
-
-                while (true) {
-                    if (x1 >= 0 and x1 < self.image.cols and y1 >= 0 and y1 < self.image.rows) {
-                        const pos = @as(usize, @intCast(y1)) * self.image.cols + @as(usize, @intCast(x1));
-                        self.image.data[pos] = solid_color;
-                    }
-
-                    if (x1 == x2 and y1 == y2) break;
-
-                    const e2 = 2 * err;
-                    if (e2 > -dy) {
-                        err -= dy;
-                        x1 += sx;
-                    }
-                    if (e2 < dx) {
-                        err += dx;
-                        y1 += sy;
-                    }
-                }
-                return;
+                // Use Bresenham's algorithm for 1px lines - fast and precise
+                self.drawLineBresenham(p1, p2, color);
+            } else {
+                // Use polygon-based approach for thick lines
+                self.drawLinePolygon(p1, p2, width, color);
             }
+        }
+
+        /// Polygon-based thick line drawing for solid (non-anti-aliased) lines.
+        /// Creates a filled rectangle with circular end caps for thick line appearance.
+        fn drawLinePolygon(self: Self, p1: Point2d(f32), p2: Point2d(f32), width: usize, color: anytype) void {
+            const solid_color = convert(T, color);
 
             // For thick lines, draw as a filled rectangle
             const dx = p2.x - p1.x;
@@ -347,7 +362,7 @@ pub fn Canvas(comptime T: type) type {
             if (line_length == 0) {
                 // Single point - draw a filled circle
                 const half_width = @as(f32, @floatFromInt(width)) / 2.0;
-                self.fillCircle(p1, half_width, color, .solid);
+                self.fillCircle(p1, half_width, color, .fast);
                 return;
             }
 
@@ -365,11 +380,11 @@ pub fn Canvas(comptime T: type) type {
             };
 
             // Fill rectangle using scanline algorithm (no anti-aliasing)
-            self.fillPolygon(&corners, solid_color, .solid) catch return;
+            self.fillPolygon(&corners, solid_color, .fast) catch return;
 
             // Add rounded caps using solid circles
-            self.fillCircle(p1, half_width, color, .solid);
-            self.fillCircle(p2, half_width, color, .solid);
+            self.fillCircle(p1, half_width, color, .fast);
+            self.fillCircle(p2, half_width, color, .fast);
         }
 
         /// Evaluates a quadratic Bézier curve at parameter t.
@@ -422,13 +437,13 @@ pub fn Canvas(comptime T: type) type {
 
         /// Tessellates a Bézier curve into discrete points for line segment rendering.
         /// Adaptively determines segment count based on curve length and desired quality.
-        /// 
+        ///
         /// Parameters:
         /// - estimated_length: Approximate curve length in pixels
-        /// - pixels_per_segment: Target distance between tessellation points  
+        /// - pixels_per_segment: Target distance between tessellation points
         /// - evalFn: Function to evaluate curve at parameter t (e.g. evalCubicBezier)
         /// - evalArgs: Arguments to pass to evalFn before the t parameter
-        /// 
+        ///
         /// Returns the number of points actually written to buffer.
         fn tessellateBezier(
             estimated_length: f32,
@@ -506,7 +521,7 @@ pub fn Canvas(comptime T: type) type {
             if (width == 0) return;
 
             const estimated_length = estimateCubicBezierLength(p0, p1, p2, p3);
-            const pixels_per_segment: f32 = if (mode == .smooth or width > 2) default_pixels_per_segment_smooth else default_pixels_per_segment_solid;
+            const pixels_per_segment: f32 = if (mode == .soft or width > 2) default_pixels_per_segment_smooth else default_pixels_per_segment_solid;
 
             self.drawBezierTessellated(
                 estimated_length,
@@ -522,13 +537,13 @@ pub fn Canvas(comptime T: type) type {
 
         /// Calculates Bézier control points for smooth spline interpolation through three points.
         /// Creates control points that produce a smooth curve through p1, influenced by p0 and p2.
-        /// 
+        ///
         /// Parameters:
         /// - p0: Previous point (influences incoming tangent)
-        /// - p1: Current point (the vertex being processed)  
+        /// - p1: Current point (the vertex being processed)
         /// - p2: Next point (influences outgoing tangent)
         /// - tension: Curve tension (0=sharp corners, 1=maximum smoothness)
-        /// 
+        ///
         /// Returns control points for cubic Bézier: cp1 (outgoing from p0), cp2 (incoming to p1).
         fn calculateSmoothControlPoints(p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32), tension: f32) struct { cp1: Point2d(f32), cp2: Point2d(f32) } {
             const tension_factor = 1 - @max(0, @min(1, tension));
@@ -650,14 +665,14 @@ pub fn Canvas(comptime T: type) type {
         }
 
         /// Draws the outline of a circle on the given image.
-        /// Use FillMode.smooth for anti-aliased edges or FillMode.solid for fast aliased edges.
+        /// Use FillMode.soft for anti-aliased edges or FillMode.fast for fast aliased edges.
         pub fn drawCircle(self: Self, center: Point2d(f32), radius: f32, color: anytype, width: usize, mode: FillMode) void {
             comptime assert(isColor(@TypeOf(color)));
             if (radius <= 0 or width == 0) return;
 
             switch (mode) {
-                .solid => self.drawCircleSolid(center, radius, width, color),
-                .smooth => self.drawCircleSmooth(center, radius, width, color),
+                .fast => self.drawCircleSolid(center, radius, width, color),
+                .soft => self.drawCircleSmooth(center, radius, width, color),
             }
         }
 
@@ -777,14 +792,14 @@ pub fn Canvas(comptime T: type) type {
         }
 
         /// Fills a circle on the given image.
-        /// Use FillMode.smooth for anti-aliased edges or FillMode.solid for hard edges.
+        /// Use FillMode.soft for anti-aliased edges or FillMode.fast for hard edges.
         pub fn fillCircle(self: Self, center: Point2d(f32), radius: f32, color: anytype, mode: FillMode) void {
             comptime assert(isColor(@TypeOf(color)));
             if (radius <= 0) return;
 
             switch (mode) {
-                .solid => self.fillCircleSolid(center, radius, color),
-                .smooth => self.fillCircleSmooth(center, radius, color),
+                .fast => self.fillCircleSolid(center, radius, color),
+                .soft => self.fillCircleSmooth(center, radius, color),
             }
         }
 
@@ -845,7 +860,7 @@ pub fn Canvas(comptime T: type) type {
 
         /// Fills the given polygon on an image using the scanline algorithm.
         /// The polygon is defined by an array of points (vertices).
-        /// Use FillMode.solid for hard edges (fastest) or FillMode.smooth for antialiased edges.
+        /// Use FillMode.fast for hard edges (fastest) or FillMode.soft for antialiased edges.
         pub fn fillPolygon(self: Self, polygon: []const Point2d(f32), color: anytype, mode: FillMode) !void {
             comptime assert(isColor(@TypeOf(color)));
             if (polygon.len < 3) return;
@@ -933,7 +948,7 @@ pub fn Canvas(comptime T: type) type {
                     while (x <= x_end) : (x += 1) {
                         const pos = @as(usize, @intCast(y)) * cols + @as(usize, @intCast(x));
 
-                        if (mode == .smooth) {
+                        if (mode == .soft) {
                             // Apply antialiasing at edges
                             const fx = @as(f32, @floatFromInt(x));
                             var alpha: f32 = 1.0;
@@ -994,37 +1009,37 @@ const md5_checksums = [_]DrawTestCase{
 // Test drawing functions for MD5 checksums
 fn drawLineHorizontal(canvas: Canvas(Rgba)) void {
     const color = Rgba{ .r = 255, .g = 0, .b = 0, .a = 255 };
-    canvas.drawLine(.{ .x = 10, .y = 50 }, .{ .x = 90, .y = 50 }, color, 1, .solid);
+    canvas.drawLine(.{ .x = 10, .y = 50 }, .{ .x = 90, .y = 50 }, color, 1, .fast);
 }
 
 fn drawLineVertical(canvas: Canvas(Rgba)) void {
     const color = Rgba{ .r = 0, .g = 255, .b = 0, .a = 255 };
-    canvas.drawLine(.{ .x = 50, .y = 10 }, .{ .x = 50, .y = 90 }, color, 1, .solid);
+    canvas.drawLine(.{ .x = 50, .y = 10 }, .{ .x = 50, .y = 90 }, color, 1, .fast);
 }
 
 fn drawLineDiagonal(canvas: Canvas(Rgba)) void {
     const color = Rgba{ .r = 0, .g = 0, .b = 255, .a = 255 };
-    canvas.drawLine(.{ .x = 10, .y = 10 }, .{ .x = 90, .y = 90 }, color, 1, .solid);
+    canvas.drawLine(.{ .x = 10, .y = 10 }, .{ .x = 90, .y = 90 }, color, 1, .fast);
 }
 
 fn drawLineThick(canvas: Canvas(Rgba)) void {
     const color = Rgba{ .r = 255, .g = 128, .b = 0, .a = 255 };
-    canvas.drawLine(.{ .x = 20, .y = 20 }, .{ .x = 80, .y = 80 }, color, 5, .smooth);
+    canvas.drawLine(.{ .x = 20, .y = 20 }, .{ .x = 80, .y = 80 }, color, 5, .soft);
 }
 
 fn drawCircleFilledSolid(canvas: Canvas(Rgba)) void {
     const color = Rgba{ .r = 128, .g = 0, .b = 128, .a = 255 };
-    canvas.fillCircle(.{ .x = 50, .y = 50 }, 30, color, .solid);
+    canvas.fillCircle(.{ .x = 50, .y = 50 }, 30, color, .fast);
 }
 
 fn drawCircleFilledSmooth(canvas: Canvas(Rgba)) void {
     const color = Rgba{ .r = 0, .g = 128, .b = 128, .a = 255 };
-    canvas.fillCircle(.{ .x = 50, .y = 50 }, 25, color, .smooth);
+    canvas.fillCircle(.{ .x = 50, .y = 50 }, 25, color, .soft);
 }
 
 fn drawCircleOutline(canvas: Canvas(Rgba)) void {
     const color = Rgba{ .r = 255, .g = 255, .b = 0, .a = 255 };
-    canvas.drawCircle(.{ .x = 50, .y = 50 }, 35, color, 3, .smooth);
+    canvas.drawCircle(.{ .x = 50, .y = 50 }, 35, color, 3, .soft);
 }
 
 fn drawRectangleFilled(canvas: Canvas(Rgba)) void {
@@ -1036,13 +1051,13 @@ fn drawRectangleFilled(canvas: Canvas(Rgba)) void {
         .{ .x = rect.r, .y = rect.b },
         .{ .x = rect.l, .y = rect.b },
     };
-    canvas.fillPolygon(&corners, color, .solid) catch unreachable;
+    canvas.fillPolygon(&corners, color, .fast) catch unreachable;
 }
 
 fn drawRectangleOutline(canvas: Canvas(Rgba)) void {
     const color = Rgba{ .r = 192, .g = 64, .b = 128, .a = 255 };
     const rect = Rectangle(f32){ .l = 15, .t = 25, .r = 85, .b = 75 };
-    canvas.drawRectangle(rect, color, 2, .smooth);
+    canvas.drawRectangle(rect, color, 2, .soft);
 }
 
 fn drawTriangleFilled(canvas: Canvas(Rgba)) void {
@@ -1052,7 +1067,7 @@ fn drawTriangleFilled(canvas: Canvas(Rgba)) void {
         .{ .x = 80, .y = 80 },
         .{ .x = 20, .y = 80 },
     };
-    canvas.fillPolygon(&triangle, color, .smooth) catch unreachable;
+    canvas.fillPolygon(&triangle, color, .soft) catch unreachable;
 }
 
 fn drawBezierCubic(canvas: Canvas(Rgba)) void {
@@ -1064,7 +1079,7 @@ fn drawBezierCubic(canvas: Canvas(Rgba)) void {
         .{ .x = 90, .y = 50 },
         color,
         2,
-        .solid,
+        .fast,
     );
 }
 
@@ -1076,7 +1091,7 @@ fn drawBezierQuadratic(canvas: Canvas(Rgba)) void {
         .{ .x = 80, .y = 80 },
         color,
         3,
-        .smooth,
+        .soft,
     );
 }
 
@@ -1092,7 +1107,7 @@ fn drawPolygonComplex(canvas: Canvas(Rgba)) void {
         .{ .x = 10, .y = 40 },
         .{ .x = 30, .y = 30 },
     };
-    canvas.fillPolygon(&polygon, color, .smooth) catch unreachable;
+    canvas.fillPolygon(&polygon, color, .soft) catch unreachable;
 }
 
 fn drawSplinePolygon(canvas: Canvas(Rgba)) void {
@@ -1105,7 +1120,7 @@ fn drawSplinePolygon(canvas: Canvas(Rgba)) void {
         .{ .x = 20, .y = 65 },
         .{ .x = 20, .y = 35 },
     };
-    canvas.drawSplinePolygon(&polygon, color, 2, 0.5, .smooth);
+    canvas.drawSplinePolygon(&polygon, color, 2, 0.5, .soft);
 }
 
 test "MD5 checksum regression tests" {
@@ -1174,7 +1189,7 @@ test "line endpoints are connected" {
             pixel.* = Rgba{ .r = 255, .g = 255, .b = 255, .a = 255 };
         }
 
-        canvas.drawLine(tc.p1, tc.p2, color, 1, .solid);
+        canvas.drawLine(tc.p1, tc.p2, color, 1, .fast);
 
         // Check that endpoints are set (or very close)
         // At least one pixel near each endpoint should be black
@@ -1227,7 +1242,7 @@ test "thick lines have correct width" {
 
         // Draw horizontal line in the middle
         const y = @as(f32, @floatFromInt(height / 2));
-        canvas.drawLine(.{ .x = 50, .y = y }, .{ .x = 150, .y = y }, color, line_width, .solid);
+        canvas.drawLine(.{ .x = 50, .y = y }, .{ .x = 150, .y = y }, color, line_width, .fast);
 
         // Measure actual width at several points along the line
         var measured_widths: [3]usize = .{ 0, 0, 0 };
@@ -1276,7 +1291,7 @@ test "filled circle has correct radius" {
             pixel.* = Rgba{ .r = 255, .g = 255, .b = 255, .a = 255 };
         }
 
-        canvas.fillCircle(center, radius, color, .solid);
+        canvas.fillCircle(center, radius, color, .fast);
 
         // Check pixels at various distances from center
         var inside_count: usize = 0;
@@ -1333,7 +1348,7 @@ test "circle outline has correct thickness" {
             pixel.* = Rgba{ .r = 255, .g = 255, .b = 255, .a = 255 };
         }
 
-        canvas.drawCircle(center, radius, color, line_width, .solid);
+        canvas.drawCircle(center, radius, color, line_width, .fast);
 
         // Sample along several radii to check thickness
         const angles = [_]f32{ 0, std.math.pi / @as(f32, 4), std.math.pi / @as(f32, 2), 3 * std.math.pi / @as(f32, 4) };
@@ -1387,7 +1402,7 @@ test "filled rectangle has correct area" {
         .{ .x = rect.r, .y = rect.b },
         .{ .x = rect.l, .y = rect.b },
     };
-    try canvas.fillPolygon(&corners, color, .solid);
+    try canvas.fillPolygon(&corners, color, .fast);
 
     // Count black pixels
     var black_pixels: usize = 0;
@@ -1422,7 +1437,7 @@ test "polygon fill respects convexity" {
         pixel.* = Rgba{ .r = 255, .g = 255, .b = 255, .a = 255 };
     }
 
-    try canvas.fillPolygon(&triangle, color, .solid);
+    try canvas.fillPolygon(&triangle, color, .fast);
 
     // Check that points inside triangle are filled
     const test_points = [_]struct { p: Point2d(f32), inside: bool }{
@@ -1468,8 +1483,8 @@ test "antialiased vs solid fill coverage" {
     const center = Point2d(f32){ .x = 50, .y = 50 };
     const radius: f32 = 20;
 
-    canvas_solid.fillCircle(center, radius, color, .solid);
-    canvas_smooth.fillCircle(center, radius, color, .smooth);
+    canvas_solid.fillCircle(center, radius, color, .fast);
+    canvas_smooth.fillCircle(center, radius, color, .soft);
 
     // Count coverage (sum of darkness)
     var solid_coverage: f32 = 0;
@@ -1507,7 +1522,7 @@ test "bezier curve smoothness" {
     const p2 = Point2d(f32){ .x = 140, .y = 180 };
     const p3 = Point2d(f32){ .x = 180, .y = 100 };
 
-    canvas.drawCubicBezier(p0, p1, p2, p3, color, 2, .solid);
+    canvas.drawCubicBezier(p0, p1, p2, p3, color, 2, .fast);
 
     // Verify endpoints are connected
     var p0_found = false;
