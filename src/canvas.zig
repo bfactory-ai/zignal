@@ -182,8 +182,8 @@ pub fn Canvas(comptime T: type) type {
                     var i = -half_width;
                     while (i <= half_width) : (i += 1) {
                         const px = x1 + i;
-                        if (px >= 0 and px < cols) {
-                            self.blendPixel(@as(i32, @intFromFloat(px)), @as(i32, @intFromFloat(y)), c2, 1.0);
+                        if (self.image.atOrNull(@as(i32, @intFromFloat(y)), @as(i32, @intFromFloat(px)))) |pixel| {
+                            pixel.* = convert(T, c2);
                         }
                     }
                 }
@@ -203,8 +203,8 @@ pub fn Canvas(comptime T: type) type {
                     var i = -half_width;
                     while (i <= half_width) : (i += 1) {
                         const py = y1 + i;
-                        if (py >= 0 and py < rows) {
-                            self.blendPixel(@as(i32, @intFromFloat(x)), @as(i32, @intFromFloat(py)), c2, 1.0);
+                        if (self.image.atOrNull(@as(i32, @intFromFloat(py)), @as(i32, @intFromFloat(x)))) |pixel| {
+                            pixel.* = convert(T, c2);
                         }
                     }
                 }
@@ -268,19 +268,18 @@ pub fn Canvas(comptime T: type) type {
         /// Blends a color onto a pixel at the given coordinates with alpha transparency.
         /// The alpha parameter (0.0-1.0) is multiplied with the color's alpha channel.
         fn blendPixel(self: Self, x: i32, y: i32, color: anytype, alpha: f32) void {
-            if (x < 0 or x >= self.image.cols or y < 0 or y >= self.image.rows) return;
+            if (self.image.atOrNull(y, x)) |pixel| {
+                var dst = convert(Rgba, pixel.*);
+                var src = convert(Rgba, color);
 
-            const pos = @as(usize, @intCast(y)) * self.image.cols + @as(usize, @intCast(x));
-            var dst = convert(Rgba, self.image.data[pos]);
-            var src = convert(Rgba, color);
+                // Apply additional alpha factor
+                if (alpha < 1.0) {
+                    src.a = @intFromFloat(@as(f32, @floatFromInt(src.a)) * alpha);
+                }
 
-            // Apply additional alpha factor
-            if (alpha < 1.0) {
-                src.a = @intFromFloat(@as(f32, @floatFromInt(src.a)) * alpha);
+                dst.blend(src);
+                pixel.* = convert(T, dst);
             }
-
-            dst.blend(src);
-            self.image.data[pos] = convert(T, dst);
         }
 
         /// Returns the fractional part of a floating-point number.
@@ -700,8 +699,8 @@ pub fn Canvas(comptime T: type) type {
                     for (points) |p| {
                         const col = @as(usize, @intFromFloat(p.x));
                         const row = @as(usize, @intFromFloat(p.y));
-                        if (row < self.image.rows and col < self.image.cols) {
-                            self.blendPixel(@intCast(col), @intCast(row), color, 1.0);
+                        if (self.image.atOrNull(@intCast(row), @intCast(col))) |pixel| {
+                            pixel.* = convert(T, color);
                         }
                     }
                     if (err <= 0) {
@@ -825,8 +824,10 @@ pub fn Canvas(comptime T: type) type {
                             const edge_alpha = radius - dist;
                             self.blendPixel(@intCast(c), @intCast(r), color, edge_alpha);
                         } else {
-                            // Full opacity in the center
-                            self.blendPixel(@intCast(c), @intCast(r), color, 1.0);
+                            // Full opacity in the center - direct assignment
+                            if (self.image.atOrNull(@intCast(r), @intCast(c))) |pixel| {
+                                pixel.* = convert(T, color);
+                            }
                         }
                     }
                 }
