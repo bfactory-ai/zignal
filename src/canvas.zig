@@ -33,16 +33,27 @@ pub fn Canvas(comptime T: type) type {
         const Self = @This();
 
         // Drawing-related constants
-        const default_bezier_max_segments = 200;
-        const default_spline_max_segments = 50;
-        const default_spline_min_segments = 4;
-        const default_quadratic_min_segments = 3;
-        const default_pixels_per_segment_smooth = 1.5;
-        const default_pixels_per_segment_solid = 3.0;
-        const default_pixels_per_segment_quadratic = 2.0;
+        /// Maximum number of line segments when tessellating Bézier curves for line drawing
+        const bezier_max_segments_count = 200;
+        /// Maximum number of line segments when tessellating spline polygons
+        const spline_max_segments_count = 50;
+        /// Minimum number of line segments for spline curves to ensure reasonable quality
+        const spline_min_segments_count = 4;
+        /// Minimum number of line segments for quadratic Bézier curves
+        const quadratic_min_segments_count = 3;
+        /// Target pixels per segment for smooth/antialiased rendering (higher quality, more segments)
+        const pixels_per_segment_soft = 1.5;
+        /// Target pixels per segment for solid/fast rendering (lower quality, fewer segments)
+        const pixels_per_segment_fast = 3.0;
+        /// Target pixels per segment specifically for quadratic Bézier curves
+        const pixels_per_segment_quadratic = 2.0;
+        /// Offset for antialiasing edge calculations (0.5 = pixel center alignment)
         const antialias_edge_offset = 0.5;
+        /// Threshold for detecting horizontal/vertical lines in line drawing algorithms
         const horizontal_vertical_threshold = 0.001;
+        /// Stack buffer size for polygon intersection calculations (avoids allocation for most cases)
         const polygon_intersection_stack_buffer_size = 64;
+        /// Stack buffer size for spline polygon tessellation (avoids allocation for typical polygons)
         const spline_polygon_stack_buffer_size = 400;
 
         /// Creates a drawing canvas from an image, with an allocator for operations that need it.
@@ -744,8 +755,8 @@ pub fn Canvas(comptime T: type) type {
 
             self.drawBezierTessellated(
                 estimated_length,
-                default_pixels_per_segment_quadratic,
-                default_quadratic_min_segments,
+                pixels_per_segment_quadratic,
+                quadratic_min_segments_count,
                 evalQuadraticBezier,
                 .{ p0, p1, p2 },
                 color,
@@ -770,12 +781,12 @@ pub fn Canvas(comptime T: type) type {
             if (width == 0) return;
 
             const estimated_length = estimateCubicBezierLength(p0, p1, p2, p3);
-            const pixels_per_segment: f32 = if (mode == .soft or width > 2) default_pixels_per_segment_smooth else default_pixels_per_segment_solid;
+            const pixels_per_segment: f32 = if (mode == .soft or width > 2) pixels_per_segment_soft else pixels_per_segment_fast;
 
             self.drawBezierTessellated(
                 estimated_length,
                 pixels_per_segment,
-                default_spline_min_segments,
+                spline_min_segments_count,
                 evalCubicBezier,
                 .{ p0, p1, p2, p3 },
                 color,
@@ -812,14 +823,14 @@ pub fn Canvas(comptime T: type) type {
             var total_points: usize = 0;
 
             // First pass: calculate total points needed
-            const pixels_per_segment = 3.0; // Balance between quality and performance for filled shapes
+            const pixels_per_segment = pixels_per_segment_fast; // Balance between quality and performance for filled shapes
             for (0..polygon.len) |i| {
                 const p0 = polygon[i];
                 const p1 = polygon[(i + 1) % polygon.len];
                 const p2 = polygon[(i + 2) % polygon.len];
                 const control_points = calculateSmoothControlPoints(p0, p1, p2, tension);
                 const estimated_length = estimateCubicBezierLength(p0, control_points.cp1, control_points.cp2, p1);
-                const segments = @max(default_spline_min_segments, @min(default_spline_max_segments, @as(usize, @intFromFloat(estimated_length / pixels_per_segment))));
+                const segments = @max(spline_min_segments_count, @min(spline_max_segments_count, @as(usize, @intFromFloat(estimated_length / pixels_per_segment))));
                 total_points += segments;
             }
 
@@ -844,15 +855,15 @@ pub fn Canvas(comptime T: type) type {
                 const control_points = calculateSmoothControlPoints(p0, p1, p2, tension);
 
                 const estimated_length = estimateCubicBezierLength(p0, control_points.cp1, control_points.cp2, p1);
-                const segments = @max(default_spline_min_segments, @min(default_spline_max_segments, @as(usize, @intFromFloat(estimated_length / pixels_per_segment))));
+                const segments = @max(spline_min_segments_count, @min(spline_max_segments_count, @as(usize, @intFromFloat(estimated_length / pixels_per_segment))));
 
                 // Tessellate directly into our buffer
                 const segment_buffer = points_buffer[write_idx .. write_idx + segments];
                 const actual_segments = tessellateBezier(
                     estimated_length,
                     pixels_per_segment,
-                    default_spline_min_segments, // min_segments for cubic
-                    default_spline_max_segments, // max_segments
+                    spline_min_segments_count, // min_segments for cubic
+                    spline_max_segments_count, // max_segments
                     evalCubicBezier,
                     .{ p0, control_points.cp1, control_points.cp2, p1 },
                     segment_buffer,
@@ -953,13 +964,13 @@ pub fn Canvas(comptime T: type) type {
             width: usize,
             mode: FillMode,
         ) void {
-            var stack_buffer: [default_bezier_max_segments]Point2d(f32) = undefined;
+            var stack_buffer: [bezier_max_segments_count]Point2d(f32) = undefined;
 
             const actual_segments = tessellateBezier(
                 estimated_length,
                 pixels_per_segment,
                 min_segments,
-                default_bezier_max_segments,
+                bezier_max_segments_count,
                 evalFn,
                 evalArgs,
                 &stack_buffer,
