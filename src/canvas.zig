@@ -108,8 +108,8 @@ pub fn Canvas(comptime T: type) type {
             var x_end = @round(x1);
             var y_end = y1 + gradient * (x_end - x1);
             var x_gap = rfpart(x1 + 0.5);
-            const x_px1 = @as(i32, @intFromFloat(x_end));
-            const y_px1 = @as(i32, @intFromFloat(y_end));
+            const x_px1: i32 = @intFromFloat(x_end);
+            const y_px1: i32 = @intFromFloat(y_end);
 
             if (steep) {
                 self.blendPixel(y_px1, x_px1, c2, rfpart(y_end) * x_gap);
@@ -124,8 +124,8 @@ pub fn Canvas(comptime T: type) type {
             x_end = @round(x2);
             y_end = y2 + gradient * (x_end - x2);
             x_gap = fpart(x2 + 0.5);
-            const x_px2 = @as(i32, @intFromFloat(x_end));
-            const y_px2 = @as(i32, @intFromFloat(y_end));
+            const x_px2: i32 = @intFromFloat(x_end);
+            const y_px2: i32 = @intFromFloat(y_end);
 
             if (steep) {
                 self.blendPixel(y_px2, x_px2, c2, rfpart(y_end) * x_gap);
@@ -182,7 +182,7 @@ pub fn Canvas(comptime T: type) type {
                     var i = -half_width;
                     while (i <= half_width) : (i += 1) {
                         const px = x1 + i;
-                        if (self.image.atOrNull(@as(i32, @intFromFloat(y)), @as(i32, @intFromFloat(px)))) |pixel| {
+                        if (self.image.atOrNull(@intFromFloat(y), @intFromFloat(px))) |pixel| {
                             pixel.* = convert(T, c2);
                         }
                     }
@@ -203,7 +203,7 @@ pub fn Canvas(comptime T: type) type {
                     var i = -half_width;
                     while (i <= half_width) : (i += 1) {
                         const py = y1 + i;
-                        if (self.image.atOrNull(@as(i32, @intFromFloat(py)), @as(i32, @intFromFloat(x)))) |pixel| {
+                        if (self.image.atOrNull(@intFromFloat(py), @intFromFloat(x))) |pixel| {
                             pixel.* = convert(T, c2);
                         }
                     }
@@ -233,12 +233,12 @@ pub fn Canvas(comptime T: type) type {
             const inv_length_sq = 1.0 / length_sq;
 
             // Iterate through pixels in bounding box
-            var y = @as(i32, @intFromFloat(min_y));
+            var y: i32 = @as(i32, @intFromFloat(min_y));
             while (y <= @as(i32, @intFromFloat(max_y))) : (y += 1) {
-                const py = @as(Float, @floatFromInt(y));
-                var x = @as(i32, @intFromFloat(min_x));
+                const py: Float = @floatFromInt(y);
+                var x: i32 = @as(i32, @intFromFloat(min_x));
                 while (x <= @as(i32, @intFromFloat(max_x))) : (x += 1) {
-                    const px = @as(Float, @floatFromInt(x));
+                    const px: Float = @floatFromInt(x);
 
                     // Optimized distance calculation
                     const dpx = px - p1.x;
@@ -315,7 +315,7 @@ pub fn Canvas(comptime T: type) type {
 
             while (true) {
                 if (x1 >= 0 and x1 < self.image.cols and y1 >= 0 and y1 < self.image.rows) {
-                    const pos = @as(usize, @intCast(y1)) * self.image.cols + @as(usize, @intCast(x1));
+                    const pos: usize = @as(usize, @intCast(y1)) * self.image.cols + @as(usize, @intCast(x1));
                     self.image.data[pos] = solid_color;
                 }
 
@@ -360,13 +360,13 @@ pub fn Canvas(comptime T: type) type {
 
             if (line_length == 0) {
                 // Single point - draw a filled circle
-                const half_width = @as(f32, @floatFromInt(width)) / 2.0;
+                const half_width: f32 = @as(f32, @floatFromInt(width)) / 2.0;
                 self.fillCircle(p1, half_width, color, .fast);
                 return;
             }
 
             // Calculate perpendicular vector for thick line
-            const half_width = @as(f32, @floatFromInt(width)) / 2.0;
+            const half_width: f32 = @as(f32, @floatFromInt(width)) / 2.0;
             const perp_x = -dy / line_length * half_width;
             const perp_y = dx / line_length * half_width;
 
