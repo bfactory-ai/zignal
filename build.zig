@@ -41,6 +41,7 @@ pub fn build(b: *Build) void {
         "matrix",
         "svd",
         "perlin",
+        "canvas",
     }) |module| {
         const module_test = b.addTest(.{
             .name = module,
