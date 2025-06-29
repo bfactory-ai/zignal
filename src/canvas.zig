@@ -107,8 +107,6 @@ pub fn Canvas(comptime T: type) type {
         /// Fast integer-only algorithm that draws precise pixel-perfect lines.
         /// No antialiasing - draws hard edges for maximum performance.
         fn drawLineBresenham(self: Self, p1: Point2d(f32), p2: Point2d(f32), color: anytype) void {
-            const solid_color = convert(T, color);
-
             var x1: i32 = @intFromFloat(p1.x);
             var y1: i32 = @intFromFloat(p1.y);
             const x2: i32 = @intFromFloat(p2.x);
@@ -121,10 +119,7 @@ pub fn Canvas(comptime T: type) type {
             var err = dx - dy;
 
             while (true) {
-                if (x1 >= 0 and x1 < self.image.cols and y1 >= 0 and y1 < self.image.rows) {
-                    const pos: usize = @as(usize, @intCast(y1)) * self.image.cols + @as(usize, @intCast(x1));
-                    self.image.data[pos] = solid_color;
-                }
+                self.assignPixel(x1, y1, color, 1.0);
 
                 if (x1 == x2 and y1 == y2) break;
 
@@ -174,11 +169,11 @@ pub fn Canvas(comptime T: type) type {
             const y_px1: i32 = @intFromFloat(y_end);
 
             if (steep) {
-                self.blendPixel(y_px1, x_px1, c2, rfpart(y_end) * x_gap);
-                self.blendPixel(y_px1 + 1, x_px1, c2, fpart(y_end) * x_gap);
+                self.assignPixel(y_px1, x_px1, c2, rfpart(y_end) * x_gap);
+                self.assignPixel(y_px1 + 1, x_px1, c2, fpart(y_end) * x_gap);
             } else {
-                self.blendPixel(x_px1, y_px1, c2, rfpart(y_end) * x_gap);
-                self.blendPixel(x_px1, y_px1 + 1, c2, fpart(y_end) * x_gap);
+                self.assignPixel(x_px1, y_px1, c2, rfpart(y_end) * x_gap);
+                self.assignPixel(x_px1, y_px1 + 1, c2, fpart(y_end) * x_gap);
             }
             var intery = y_end + gradient;
 
@@ -190,22 +185,22 @@ pub fn Canvas(comptime T: type) type {
             const y_px2: i32 = @intFromFloat(y_end);
 
             if (steep) {
-                self.blendPixel(y_px2, x_px2, c2, rfpart(y_end) * x_gap);
-                self.blendPixel(y_px2 + 1, x_px2, c2, fpart(y_end) * x_gap);
+                self.assignPixel(y_px2, x_px2, c2, rfpart(y_end) * x_gap);
+                self.assignPixel(y_px2 + 1, x_px2, c2, fpart(y_end) * x_gap);
             } else {
-                self.blendPixel(x_px2, y_px2, c2, rfpart(y_end) * x_gap);
-                self.blendPixel(x_px2, y_px2 + 1, c2, fpart(y_end) * x_gap);
+                self.assignPixel(x_px2, y_px2, c2, rfpart(y_end) * x_gap);
+                self.assignPixel(x_px2, y_px2 + 1, c2, fpart(y_end) * x_gap);
             }
 
             // Main loop
             var x = x_px1 + 1;
             while (x < x_px2) : (x += 1) {
                 if (steep) {
-                    self.blendPixel(@as(i32, @intFromFloat(intery)), x, c2, rfpart(intery));
-                    self.blendPixel(@as(i32, @intFromFloat(intery)) + 1, x, c2, fpart(intery));
+                    self.assignPixel(@as(i32, @intFromFloat(intery)), x, c2, rfpart(intery));
+                    self.assignPixel(@as(i32, @intFromFloat(intery)) + 1, x, c2, fpart(intery));
                 } else {
-                    self.blendPixel(x, @as(i32, @intFromFloat(intery)), c2, rfpart(intery));
-                    self.blendPixel(x, @as(i32, @intFromFloat(intery)) + 1, c2, fpart(intery));
+                    self.assignPixel(x, @as(i32, @intFromFloat(intery)), c2, rfpart(intery));
+                    self.assignPixel(x, @as(i32, @intFromFloat(intery)) + 1, c2, fpart(intery));
                 }
                 intery += gradient;
             }
@@ -282,9 +277,7 @@ pub fn Canvas(comptime T: type) type {
                     var i = -half_width;
                     while (i <= half_width) : (i += 1) {
                         const px = x1 + i;
-                        if (self.image.atOrNull(@intFromFloat(y), @intFromFloat(px))) |pixel| {
-                            pixel.* = convert(T, c2);
-                        }
+                        self.assignPixel(@intFromFloat(px), @intFromFloat(y), c2, 1.0);
                     }
                 }
                 // Add rounded caps
@@ -303,9 +296,7 @@ pub fn Canvas(comptime T: type) type {
                     var i = -half_width;
                     while (i <= half_width) : (i += 1) {
                         const py = y1 + i;
-                        if (self.image.atOrNull(@intFromFloat(py), @intFromFloat(x))) |pixel| {
-                            pixel.* = convert(T, c2);
-                        }
+                        self.assignPixel(@intFromFloat(x), @intFromFloat(py), c2, 1.0);
                     }
                 }
                 // Add rounded caps
@@ -358,16 +349,18 @@ pub fn Canvas(comptime T: type) type {
                         }
 
                         if (alpha > 0) {
-                            self.blendPixel(x, y, c2, alpha);
+                            self.assignPixel(x, y, c2, alpha);
                         }
                     }
                 }
             }
         }
 
-        /// Blends a color onto a pixel at the given coordinates with alpha transparency.
+        /// Assigns a color to a pixel at the given coordinates with alpha transparency.
+        /// Uses optimized direct assignment for opaque colors (alpha >= 1.0) or blends when
+        /// transparency is needed.
         /// The alpha parameter (0.0-1.0) is multiplied with the color's alpha channel.
-        fn blendPixel(self: Self, x: i32, y: i32, color: anytype, alpha: f32) void {
+        fn assignPixel(self: Self, x: i32, y: i32, color: anytype, alpha: f32) void {
             if (self.image.atOrNull(y, x)) |pixel| {
                 var src = convert(Rgba, color);
 
@@ -463,11 +456,7 @@ pub fn Canvas(comptime T: type) type {
                         .{ .x = cx - y, .y = cy - x },
                     };
                     for (points) |p| {
-                        const col = @as(usize, @intFromFloat(p.x));
-                        const row = @as(usize, @intFromFloat(p.y));
-                        if (self.image.atOrNull(@intCast(row), @intCast(col))) |pixel| {
-                            pixel.* = convert(T, color);
-                        }
+                        self.assignPixel(@intFromFloat(p.x), @intFromFloat(p.y), color, 1.0);
                     }
                     if (err <= 0) {
                         y += 1;
@@ -549,7 +538,7 @@ pub fn Canvas(comptime T: type) type {
                         alpha = @max(0, @min(1, alpha));
 
                         if (alpha > 0) {
-                            self.blendPixel(@intCast(c), @intCast(r), c2, alpha);
+                            self.assignPixel(@intCast(c), @intCast(r), c2, alpha);
                         }
                     }
                 }
@@ -659,7 +648,7 @@ pub fn Canvas(comptime T: type) type {
                             alpha = @max(0, @min(1, alpha));
 
                             if (alpha > 0) {
-                                self.blendPixel(x, @intCast(y), color, alpha);
+                                self.assignPixel(x, @intCast(y), color, alpha);
                             }
                         } else {
                             // No antialiasing - direct pixel write
@@ -701,12 +690,10 @@ pub fn Canvas(comptime T: type) type {
                         if (dist > radius - 1) {
                             // Edge antialiasing
                             const edge_alpha = radius - dist;
-                            self.blendPixel(@intCast(c), @intCast(r), color, edge_alpha);
+                            self.assignPixel(@intCast(c), @intCast(r), color, edge_alpha);
                         } else {
                             // Full opacity in the center - direct assignment
-                            if (self.image.atOrNull(@intCast(r), @intCast(c))) |pixel| {
-                                pixel.* = convert(T, color);
-                            }
+                            self.assignPixel(@intCast(c), @intCast(r), color, 1.0);
                         }
                     }
                 }
