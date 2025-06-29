@@ -169,11 +169,11 @@ pub fn Canvas(comptime T: type) type {
             var x_gap = rfpart(x1 + 0.5);
 
             if (steep) {
-                self.setPixel(.{ .x = y_end, .y = x_end }, c2, rfpart(y_end) * x_gap);
-                self.setPixel(.{ .x = y_end + 1, .y = x_end }, c2, fpart(y_end) * x_gap);
+                self.setPixel(.{ .x = y_end, .y = x_end }, c2.fade(rfpart(y_end) * x_gap));
+                self.setPixel(.{ .x = y_end + 1, .y = x_end }, c2.fade(fpart(y_end) * x_gap));
             } else {
-                self.setPixel(.{ .x = x_end, .y = y_end }, c2, rfpart(y_end) * x_gap);
-                self.setPixel(.{ .x = x_end, .y = y_end + 1 }, c2, fpart(y_end) * x_gap);
+                self.setPixel(.{ .x = x_end, .y = y_end }, c2.fade(rfpart(y_end) * x_gap));
+                self.setPixel(.{ .x = x_end, .y = y_end + 1 }, c2.fade(fpart(y_end) * x_gap));
             }
             var intery = y_end + gradient;
 
@@ -183,11 +183,11 @@ pub fn Canvas(comptime T: type) type {
             x_gap = fpart(x2 + 0.5);
 
             if (steep) {
-                self.setPixel(.{ .x = y_end, .y = x_end }, c2, rfpart(y_end) * x_gap);
-                self.setPixel(.{ .x = y_end + 1, .y = x_end }, c2, fpart(y_end) * x_gap);
+                self.setPixel(.{ .x = y_end, .y = x_end }, c2.fade(rfpart(y_end) * x_gap));
+                self.setPixel(.{ .x = y_end + 1, .y = x_end }, c2.fade(fpart(y_end) * x_gap));
             } else {
-                self.setPixel(.{ .x = x_end, .y = y_end }, c2, rfpart(y_end) * x_gap);
-                self.setPixel(.{ .x = x_end, .y = y_end + 1 }, c2, fpart(y_end) * x_gap);
+                self.setPixel(.{ .x = x_end, .y = y_end }, c2.fade(rfpart(y_end) * x_gap));
+                self.setPixel(.{ .x = x_end, .y = y_end + 1 }, c2.fade(fpart(y_end) * x_gap));
             }
 
             // Main loop
@@ -196,11 +196,11 @@ pub fn Canvas(comptime T: type) type {
             var x = x_px1 + 1;
             while (x < x_px2) : (x += 1) {
                 if (steep) {
-                    self.setPixel(.{ .x = intery, .y = x }, c2, rfpart(intery));
-                    self.setPixel(.{ .x = intery + 1, .y = x }, c2, fpart(intery));
+                    self.setPixel(.{ .x = intery, .y = x }, c2.fade(rfpart(intery)));
+                    self.setPixel(.{ .x = intery + 1, .y = x }, c2.fade(fpart(intery)));
                 } else {
-                    self.setPixel(.{ .x = x, .y = intery }, c2, rfpart(intery));
-                    self.setPixel(.{ .x = x, .y = intery + 1 }, c2, fpart(intery));
+                    self.setPixel(.{ .x = x, .y = intery }, c2.fade(rfpart(intery)));
+                    self.setPixel(.{ .x = x, .y = intery + 1 }, c2.fade(fpart(intery)));
                 }
                 intery += gradient;
             }
@@ -277,7 +277,7 @@ pub fn Canvas(comptime T: type) type {
                     var i = -half_width;
                     while (i <= half_width) : (i += 1) {
                         const px = x1 + i;
-                        self.setPixel(.{ .x = px, .y = y }, c2, 1.0);
+                        self.setPixel(.{ .x = px, .y = y }, c2);
                     }
                 }
                 // Add rounded caps
@@ -296,7 +296,7 @@ pub fn Canvas(comptime T: type) type {
                     var i = -half_width;
                     while (i <= half_width) : (i += 1) {
                         const py = y1 + i;
-                        self.setPixel(.{ .x = x, .y = py }, c2, 1.0);
+                        self.setPixel(.{ .x = x, .y = py }, c2);
                     }
                 }
                 // Add rounded caps
@@ -346,7 +346,7 @@ pub fn Canvas(comptime T: type) type {
                         }
 
                         if (alpha > 0) {
-                            self.setPixel(.{ .x = px, .y = py }, c2, alpha);
+                            self.setPixel(.{ .x = px, .y = py }, c2.fade(alpha));
                         }
                     }
                 }
@@ -354,30 +354,26 @@ pub fn Canvas(comptime T: type) type {
         }
 
         /// Sets a color to a pixel at the given coordinates with alpha transparency.
-        /// Uses optimized direct assignment for opaque colors (alpha >= 1.0) or blends when
-        /// transparency is needed. Provides bounds checking and handles coordinate conversion.
+        /// Uses optimized direct assignment for opaque colors or blends when transparency is needed.
+        /// Provides bounds checking and handles coordinate conversion.
         /// Coordinates are truncated to integers for pixel placement.
-        /// The alpha parameter (0.0-1.0) is multiplied with the color's alpha channel.
-        pub fn setPixel(self: Self, point: Point2d(f32), color: anytype, alpha: f32) void {
+        /// For Rgba colors, uses the color's alpha channel; for other colors, treats as opaque.
+        pub fn setPixel(self: Self, point: Point2d(f32), color: anytype) void {
             if (self.image.atOrNull(@intFromFloat(point.y), @intFromFloat(point.x))) |pixel| {
-                // No-op if color is already Rgba
-                var src = convert(Rgba, color);
+                const src = convert(Rgba, color);
 
-                // Optimize for full opacity - direct assignment when alpha is 1.0 and source is opaque
-                if (alpha >= 1.0 and src.a == 255) {
+                // Optimize for opaque colors - direct assignment when source is fully opaque
+                if (src.a == 255) {
                     pixel.* = convert(T, src);
                     return;
                 }
 
-                var dst = convert(Rgba, pixel.*);
-
-                // Apply additional alpha factor
-                if (alpha < 1.0) {
-                    src.a = @intFromFloat(@as(f32, @floatFromInt(src.a)) * alpha);
+                // Alpha blend for transparent colors
+                if (src.a > 0) {
+                    var dst = convert(Rgba, pixel.*);
+                    dst.blend(src);
+                    pixel.* = convert(T, dst);
                 }
-
-                dst.blend(src);
-                pixel.* = convert(T, dst);
             }
         }
 
@@ -455,7 +451,7 @@ pub fn Canvas(comptime T: type) type {
                         .{ .x = cx - y, .y = cy - x },
                     };
                     for (points) |p| {
-                        self.setPixel(p, color, 1.0);
+                        self.setPixel(p, color);
                     }
                     if (err <= 0) {
                         y += 1;
@@ -537,7 +533,7 @@ pub fn Canvas(comptime T: type) type {
                         alpha = @max(0, @min(1, alpha));
 
                         if (alpha > 0) {
-                            self.setPixel(.{ .x = @floatFromInt(c), .y = @floatFromInt(r) }, c2, alpha);
+                            self.setPixel(.{ .x = @floatFromInt(c), .y = @floatFromInt(r) }, c2.fade(alpha));
                         }
                     }
                 }
@@ -643,7 +639,8 @@ pub fn Canvas(comptime T: type) type {
                             alpha = @max(0, @min(1, alpha));
 
                             if (alpha > 0) {
-                                self.setPixel(.{ .x = x, .y = y }, color, alpha);
+                                const rgba_color = convert(Rgba, color);
+                                self.setPixel(.{ .x = x, .y = y }, rgba_color.fade(alpha));
                             }
                         }
                     } else {
@@ -692,10 +689,11 @@ pub fn Canvas(comptime T: type) type {
                         if (dist > radius - 1) {
                             // Edge antialiasing
                             const edge_alpha = radius - dist;
-                            self.setPixel(.{ .x = @floatFromInt(c), .y = @floatFromInt(r) }, color, edge_alpha);
+                            const rgba_color = convert(Rgba, color);
+                            self.setPixel(.{ .x = @floatFromInt(c), .y = @floatFromInt(r) }, rgba_color.fade(edge_alpha));
                         } else {
                             // Full opacity in the center - direct assignment
-                            self.setPixel(.{ .x = @floatFromInt(c), .y = @floatFromInt(r) }, color, 1.0);
+                            self.setPixel(.{ .x = @floatFromInt(c), .y = @floatFromInt(r) }, color);
                         }
                     }
                 }
