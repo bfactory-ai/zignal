@@ -358,10 +358,11 @@ pub fn Canvas(comptime T: type) type {
 
         /// Assigns a color to a pixel at the given coordinates with alpha transparency.
         /// Uses optimized direct assignment for opaque colors (alpha >= 1.0) or blends when
-        /// transparency is needed.
+        /// transparency is needed. Provides bounds checking and handles coordinate conversion.
         /// The alpha parameter (0.0-1.0) is multiplied with the color's alpha channel.
         fn assignPixel(self: Self, x: i32, y: i32, color: anytype, alpha: f32) void {
             if (self.image.atOrNull(y, x)) |pixel| {
+                // No-op if color is already Rgba
                 var src = convert(Rgba, color);
 
                 // Optimize for full opacity - direct assignment when alpha is 1.0 and source is opaque
