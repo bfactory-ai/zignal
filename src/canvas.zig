@@ -359,8 +359,10 @@ pub fn Canvas(comptime T: type) type {
         /// Coordinates are truncated to integers for pixel placement.
         /// For Rgba colors, uses the color's alpha channel; for other colors, treats as opaque.
         pub fn setPixel(self: Self, point: Point2d(f32), color: anytype) void {
+            const ColorType = @TypeOf(color);
+            comptime assert(isColor(ColorType));
             if (self.image.atOrNull(@intFromFloat(point.y), @intFromFloat(point.x))) |pixel| {
-                switch (@TypeOf(color)) {
+                switch (ColorType) {
                     Rgba => {
                         if (color.a == 255) {
                             // Opaque - direct assignment
