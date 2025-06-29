@@ -74,7 +74,7 @@ pub fn Canvas(comptime T: type) type {
                 self.drawLineSmoothWu(p1, p2, color);
             } else {
                 // Use distance-based antialiasing for thick lines - better quality
-                self.drawLineSmoothOld(p1, p2, width, color);
+                self.drawLineSmoothDistance(p1, p2, width, color);
             }
         }
 
@@ -112,11 +112,11 @@ pub fn Canvas(comptime T: type) type {
             const y_px1 = @as(i32, @intFromFloat(y_end));
 
             if (steep) {
-                self.plot(y_px1, x_px1, rfpart(y_end) * x_gap, c2);
-                self.plot(y_px1 + 1, x_px1, fpart(y_end) * x_gap, c2);
+                self.blendPixel(y_px1, x_px1, c2, rfpart(y_end) * x_gap);
+                self.blendPixel(y_px1 + 1, x_px1, c2, fpart(y_end) * x_gap);
             } else {
-                self.plot(x_px1, y_px1, rfpart(y_end) * x_gap, c2);
-                self.plot(x_px1, y_px1 + 1, fpart(y_end) * x_gap, c2);
+                self.blendPixel(x_px1, y_px1, c2, rfpart(y_end) * x_gap);
+                self.blendPixel(x_px1, y_px1 + 1, c2, fpart(y_end) * x_gap);
             }
             var intery = y_end + gradient;
 
@@ -128,30 +128,31 @@ pub fn Canvas(comptime T: type) type {
             const y_px2 = @as(i32, @intFromFloat(y_end));
 
             if (steep) {
-                self.plot(y_px2, x_px2, rfpart(y_end) * x_gap, c2);
-                self.plot(y_px2 + 1, x_px2, fpart(y_end) * x_gap, c2);
+                self.blendPixel(y_px2, x_px2, c2, rfpart(y_end) * x_gap);
+                self.blendPixel(y_px2 + 1, x_px2, c2, fpart(y_end) * x_gap);
             } else {
-                self.plot(x_px2, y_px2, rfpart(y_end) * x_gap, c2);
-                self.plot(x_px2, y_px2 + 1, fpart(y_end) * x_gap, c2);
+                self.blendPixel(x_px2, y_px2, c2, rfpart(y_end) * x_gap);
+                self.blendPixel(x_px2, y_px2 + 1, c2, fpart(y_end) * x_gap);
             }
 
             // Main loop
             var x = x_px1 + 1;
             while (x < x_px2) : (x += 1) {
                 if (steep) {
-                    self.plot(@as(i32, @intFromFloat(intery)), x, rfpart(intery), c2);
-                    self.plot(@as(i32, @intFromFloat(intery)) + 1, x, fpart(intery), c2);
+                    self.blendPixel(@as(i32, @intFromFloat(intery)), x, c2, rfpart(intery));
+                    self.blendPixel(@as(i32, @intFromFloat(intery)) + 1, x, c2, fpart(intery));
                 } else {
-                    self.plot(x, @as(i32, @intFromFloat(intery)), rfpart(intery), c2);
-                    self.plot(x, @as(i32, @intFromFloat(intery)) + 1, fpart(intery), c2);
+                    self.blendPixel(x, @as(i32, @intFromFloat(intery)), c2, rfpart(intery));
+                    self.blendPixel(x, @as(i32, @intFromFloat(intery)) + 1, c2, fpart(intery));
                 }
                 intery += gradient;
             }
         }
 
 
-        /// Internal function for drawing smooth (anti-aliased) lines.
-        pub fn drawLineSmoothOld(self: Self, p1: Point2d(f32), p2: Point2d(f32), width: usize, color: anytype) void {
+        /// Distance-based anti-aliased line drawing for thick lines.
+        /// Uses exact distance calculation from each pixel to the line for superior quality.
+        fn drawLineSmoothDistance(self: Self, p1: Point2d(f32), p2: Point2d(f32), width: usize, color: anytype) void {
             const Float = @TypeOf(p1.x);
             const rows: Float = @floatFromInt(self.image.rows);
             const cols: Float = @floatFromInt(self.image.cols);
@@ -183,10 +184,7 @@ pub fn Canvas(comptime T: type) type {
                     while (i <= half_width) : (i += 1) {
                         const px = x1 + i;
                         if (px >= 0 and px < cols) {
-                            const pos = as(usize, y) * self.image.cols + as(usize, px);
-                            var c1 = convert(Rgba, self.image.data[pos]);
-                            c1.blend(c2);
-                            self.image.data[pos] = convert(T, c1);
+                            self.blendPixel(@as(i32, @intFromFloat(px)), @as(i32, @intFromFloat(y)), c2, 1.0);
                         }
                     }
                 }
@@ -207,10 +205,7 @@ pub fn Canvas(comptime T: type) type {
                     while (i <= half_width) : (i += 1) {
                         const py = y1 + i;
                         if (py >= 0 and py < rows) {
-                            const pos = as(usize, py) * self.image.cols + as(usize, x);
-                            var c1 = convert(Rgba, self.image.data[pos]);
-                            c1.blend(c2);
-                            self.image.data[pos] = convert(T, c1);
+                            self.blendPixel(@as(i32, @intFromFloat(x)), @as(i32, @intFromFloat(py)), c2, 1.0);
                         }
                     }
                 }
@@ -264,33 +259,41 @@ pub fn Canvas(comptime T: type) type {
                         }
 
                         if (alpha > 0) {
-                            const pos = @as(usize, @intCast(y)) * self.image.cols + @as(usize, @intCast(x));
-                            var c1 = convert(Rgba, self.image.data[pos]);
-                            var c_blend = c2;
-                            c_blend.a = @intFromFloat(alpha * @as(Float, @floatFromInt(c2.a)));
-                            c1.blend(c_blend);
-                            self.image.data[pos] = convert(T, c1);
+                            self.blendPixel(x, y, c2, alpha);
                         }
                     }
                 }
             }
         }
 
-        fn plot(self: Self, x: i32, y: i32, alpha: f32, color: Rgba) void {
+        /// Blends a color onto a pixel at the given coordinates with alpha transparency.
+        /// The alpha parameter (0.0-1.0) is multiplied with the color's alpha channel.
+        fn blendPixel(self: Self, x: i32, y: i32, color: anytype, alpha: f32) void {
             if (x < 0 or x >= self.image.cols or y < 0 or y >= self.image.rows) return;
-
+            
             const pos = @as(usize, @intCast(y)) * self.image.cols + @as(usize, @intCast(x));
-            var c1 = convert(Rgba, self.image.data[pos]);
-            var c_blend = color;
-            c_blend.a = @intFromFloat(@as(f32, @floatFromInt(color.a)) * alpha);
-            c1.blend(c_blend);
-            self.image.data[pos] = convert(T, c1);
+            var dst = convert(Rgba, self.image.data[pos]);
+            var src = convert(Rgba, color);
+            
+            // Apply additional alpha factor
+            if (alpha < 1.0) {
+                src.a = @intFromFloat(@as(f32, @floatFromInt(src.a)) * alpha);
+            }
+            
+            dst.blend(src);
+            self.image.data[pos] = convert(T, dst);
         }
 
+        /// Returns the fractional part of a floating-point number.
+        /// Used in Wu's anti-aliasing algorithm to calculate pixel coverage.
+        /// Example: fpart(3.7) = 0.7, fpart(-2.3) = 0.7
         fn fpart(x: f32) f32 {
             return x - @floor(x);
         }
 
+        /// Returns the reverse fractional part (1 - fractional part).
+        /// Used in Wu's anti-aliasing algorithm for complementary pixel coverage.
+        /// Example: rfpart(3.7) = 0.3, rfpart(-2.3) = 0.3
         fn rfpart(x: f32) f32 {
             return 1 - fpart(x);
         }
@@ -370,6 +373,8 @@ pub fn Canvas(comptime T: type) type {
         }
 
         /// Evaluates a quadratic Bézier curve at parameter t.
+        /// Uses the standard quadratic Bézier formula: (1-t)²P₀ + 2t(1-t)P₁ + t²P₂
+        /// Parameter t is in range [0, 1] where 0=start point, 1=end point.
         fn evalQuadraticBezier(p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32), t: f32) Point2d(f32) {
             const u = 1 - t;
             const uu = u * u;
@@ -381,6 +386,8 @@ pub fn Canvas(comptime T: type) type {
         }
 
         /// Evaluates a cubic Bézier curve at parameter t.
+        /// Uses the standard cubic Bézier formula: (1-t)³P₀ + 3t(1-t)²P₁ + 3t²(1-t)P₂ + t³P₃
+        /// Parameter t is in range [0, 1] where 0=start point, 1=end point.
         fn evalCubicBezier(p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32), p3: Point2d(f32), t: f32) Point2d(f32) {
             const u = 1 - t;
             const uu = u * u;
@@ -394,6 +401,8 @@ pub fn Canvas(comptime T: type) type {
         }
 
         /// Estimates the length of a quadratic Bézier curve segment.
+        /// Uses chord + control polygon approximation for fast, reasonably accurate estimation.
+        /// The estimate is (chord_length + control_polygon_length) / 2.
         fn estimateQuadraticBezierLength(p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32)) f32 {
             // Use chord + control polygon approximation
             const chord = p0.distance(p2);
@@ -402,6 +411,8 @@ pub fn Canvas(comptime T: type) type {
         }
 
         /// Estimates the length of a cubic Bézier curve segment.
+        /// Uses chord + control polygon approximation for fast, reasonably accurate estimation.
+        /// The estimate is (chord_length + control_polygon_length) / 2.
         fn estimateCubicBezierLength(p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32), p3: Point2d(f32)) f32 {
             // Use chord + control polygon approximation
             const chord = p0.distance(p3);
@@ -409,7 +420,16 @@ pub fn Canvas(comptime T: type) type {
             return (chord + control_net) / 2.0;
         }
 
-        /// Tessellates a Bézier curve into points, filling the provided buffer.
+        /// Tessellates a Bézier curve into discrete points for line segment rendering.
+        /// Adaptively determines segment count based on curve length and desired quality.
+        /// 
+        /// Parameters:
+        /// - estimated_length: Approximate curve length in pixels
+        /// - pixels_per_segment: Target distance between tessellation points  
+        /// - evalFn: Function to evaluate curve at parameter t (e.g. evalCubicBezier)
+        /// - evalArgs: Arguments to pass to evalFn before the t parameter
+        /// 
+        /// Returns the number of points actually written to buffer.
         fn tessellateBezier(
             estimated_length: f32,
             pixels_per_segment: f32,
@@ -500,7 +520,16 @@ pub fn Canvas(comptime T: type) type {
             );
         }
 
-        /// Calculates spline control points for a vertex in a polygon using tension.
+        /// Calculates Bézier control points for smooth spline interpolation through three points.
+        /// Creates control points that produce a smooth curve through p1, influenced by p0 and p2.
+        /// 
+        /// Parameters:
+        /// - p0: Previous point (influences incoming tangent)
+        /// - p1: Current point (the vertex being processed)  
+        /// - p2: Next point (influences outgoing tangent)
+        /// - tension: Curve tension (0=sharp corners, 1=maximum smoothness)
+        /// 
+        /// Returns control points for cubic Bézier: cp1 (outgoing from p0), cp2 (incoming to p1).
         fn calculateSmoothControlPoints(p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32), tension: f32) struct { cp1: Point2d(f32), cp2: Point2d(f32) } {
             const tension_factor = 1 - @max(0, @min(1, tension));
             return .{
@@ -657,11 +686,7 @@ pub fn Canvas(comptime T: type) type {
                         const col = @as(usize, @intFromFloat(p.x));
                         const row = @as(usize, @intFromFloat(p.y));
                         if (row < self.image.rows and col < self.image.cols) {
-                            const pos = row * self.image.cols + col;
-                            var c1 = convert(Rgba, self.image.data[pos]);
-                            const c2 = convert(Rgba, color);
-                            c1.blend(c2);
-                            self.image.data[pos] = convert(T, c1);
+                            self.blendPixel(@intCast(col), @intCast(row), color, 1.0);
                         }
                     }
                     if (err <= 0) {
@@ -744,12 +769,7 @@ pub fn Canvas(comptime T: type) type {
                         alpha = @max(0, @min(1, alpha));
 
                         if (alpha > 0) {
-                            const pos = r * self.image.cols + c;
-                            var c1 = convert(Rgba, self.image.data[pos]);
-                            var c_blend = c2;
-                            c_blend.a = @intFromFloat(alpha * @as(f32, @floatFromInt(c2.a)));
-                            c1.blend(c_blend);
-                            self.image.data[pos] = convert(T, c1);
+                            self.blendPixel(@intCast(c), @intCast(r), c2, alpha);
                         }
                     }
                 }
@@ -777,32 +797,21 @@ pub fn Canvas(comptime T: type) type {
             const right: usize = @intFromFloat(@round(@min(fcols, center.x + radius)));
             const bottom: usize = @intFromFloat(@round(@min(frows, center.y + radius)));
 
-            var c2 = convert(Rgba, color);
-            const max_alpha: f32 = @floatFromInt(c2.a);
-
             for (top..bottom) |r| {
                 const y = as(f32, r) - center.y;
                 for (left..right) |c| {
                     const x = as(f32, c) - center.x;
                     const dist_sq = x * x + y * y;
                     if (dist_sq <= radius * radius) {
-                        const pos = r * self.image.cols + c;
-
                         // Apply antialiasing at the edge
                         const dist = @sqrt(dist_sq);
                         if (dist > radius - 1) {
                             // Edge antialiasing
                             const edge_alpha = radius - dist;
-                            var c1 = convert(Rgba, self.image.data[pos]);
-                            c2.a = @intFromFloat(edge_alpha * max_alpha);
-                            c1.blend(c2);
-                            self.image.data[pos] = convert(T, c1);
+                            self.blendPixel(@intCast(c), @intCast(r), color, edge_alpha);
                         } else {
                             // Full opacity in the center
-                            var c1 = convert(Rgba, self.image.data[pos]);
-                            c2.a = @intFromFloat(max_alpha);
-                            c1.blend(c2);
-                            self.image.data[pos] = convert(T, c1);
+                            self.blendPixel(@intCast(c), @intCast(r), color, 1.0);
                         }
                     }
                 }
@@ -860,8 +869,7 @@ pub fn Canvas(comptime T: type) type {
             var heap_intersections: ?[]f32 = null;
             defer if (heap_intersections) |h| self.allocator.free(h);
 
-            var c2 = convert(Rgba, color);
-            const max_alpha: f32 = @floatFromInt(c2.a);
+            const c2 = convert(Rgba, color);
 
             var y = start_y;
             while (y <= end_y) : (y += 1) {
@@ -938,10 +946,7 @@ pub fn Canvas(comptime T: type) type {
                             alpha = @max(0, @min(1, alpha));
 
                             if (alpha > 0) {
-                                var c1 = convert(Rgba, self.image.data[pos]);
-                                c2.a = @intFromFloat(alpha * max_alpha);
-                                c1.blend(c2);
-                                self.image.data[pos] = convert(T, c1);
+                                self.blendPixel(x, @intCast(y), color, alpha);
                             }
                         } else {
                             // No antialiasing - direct pixel write
