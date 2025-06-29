@@ -360,19 +360,19 @@ pub fn Canvas(comptime T: type) type {
         /// For Rgba colors, uses the color's alpha channel; for other colors, treats as opaque.
         pub fn setPixel(self: Self, point: Point2d(f32), color: anytype) void {
             if (self.image.atOrNull(@intFromFloat(point.y), @intFromFloat(point.x))) |pixel| {
-                const src = convert(Rgba, color);
-
-                // Optimize for opaque colors - direct assignment when source is fully opaque
-                if (src.a == 255) {
-                    pixel.* = convert(T, src);
-                    return;
-                }
-
-                // Alpha blend for transparent colors
-                if (src.a > 0) {
-                    var dst = convert(Rgba, pixel.*);
-                    dst.blend(src);
-                    pixel.* = convert(T, dst);
+                switch (@TypeOf(color)) {
+                    Rgba => {
+                        if (color.a == 255) {
+                            // Opaque - direct assignment
+                            pixel.* = convert(T, color);
+                        } else if (color.a > 0) {
+                            // Transparent - blend
+                            var dst = convert(Rgba, pixel.*);
+                            dst.blend(color);
+                            pixel.* = convert(T, dst);
+                        }
+                    },
+                    else => pixel.* = convert(T, color),
                 }
             }
         }
