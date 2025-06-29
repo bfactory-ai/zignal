@@ -276,7 +276,6 @@ pub fn Canvas(comptime T: type) type {
             };
         }
 
-
         /// Estimates the length of a quadratic Bézier curve segment.
         fn estimateQuadraticBezierLength(p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32)) f32 {
             // Use chord + control polygon approximation
@@ -293,25 +292,50 @@ pub fn Canvas(comptime T: type) type {
             return (chord + control_net) / 2.0;
         }
 
+        /// Draws a Bézier curve by tessellating it into line segments.
+        fn drawBezierTessellated(
+            self: Self,
+            estimated_length: f32,
+            pixels_per_segment: f32,
+            min_segments: usize,
+            comptime evalFn: anytype,
+            evalArgs: anytype,
+            color: anytype,
+            width: usize,
+            mode: FillMode,
+        ) void {
+            const segments = @max(min_segments, @as(usize, @intFromFloat(estimated_length / pixels_per_segment)));
+
+            // Start with the first point
+            var prev_point = @call(.auto, evalFn, evalArgs ++ .{0.0});
+            var i: usize = 1;
+            while (i <= segments) : (i += 1) {
+                const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(segments));
+                const current_point = @call(.auto, evalFn, evalArgs ++ .{t});
+                self.drawLine(prev_point, current_point, color, width, mode);
+                prev_point = current_point;
+            }
+        }
+
         /// Draws a quadratic Bézier curve with specified width and fill mode.
         pub fn drawQuadraticBezier(self: Self, p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32), color: anytype, width: usize, mode: FillMode) void {
             comptime assert(isColor(@TypeOf(color)));
             if (width == 0) return;
 
-            // Estimate number of segments based on curve length
             const estimated_length = estimateQuadraticBezierLength(p0, p1, p2);
-            const pixels_per_segment = 2.0; // Lower = more quality, higher = more performance
-            const segments = @max(3, @as(usize, @intFromFloat(estimated_length / pixels_per_segment)));
+            const pixels_per_segment = 2.0; // Good balance for quadratic curves
+            const min_segments = 3; // Minimum for curve appearance
 
-            // Start with the first point
-            var prev_point = p0;
-            var i: usize = 1;
-            while (i <= segments) : (i += 1) {
-                const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(segments));
-                const current_point = evalQuadraticBezier(p0, p1, p2, t);
-                self.drawLine(prev_point, current_point, color, width, mode);
-                prev_point = current_point;
-            }
+            self.drawBezierTessellated(
+                estimated_length,
+                pixels_per_segment,
+                min_segments,
+                evalQuadraticBezier,
+                .{ p0, p1, p2 },
+                color,
+                width,
+                mode,
+            );
         }
 
         /// Draws a cubic Bézier curve with specified width and fill mode.
@@ -320,20 +344,20 @@ pub fn Canvas(comptime T: type) type {
             comptime assert(isColor(@TypeOf(color)));
             if (width == 0) return;
 
-            // Use adaptive subdivision based on estimated length
             const estimated_length = estimateCubicBezierLength(p0, p1, p2, p3);
             const pixels_per_segment: f32 = if (mode == .smooth or width > 2) 1.5 else 3.0;
-            const segments = @max(4, @as(usize, @intFromFloat(estimated_length / pixels_per_segment)));
+            const min_segments = 4; // Higher minimum for cubic curves
 
-            // Start with the first point
-            var prev_point = p0;
-            var i: usize = 1;
-            while (i <= segments) : (i += 1) {
-                const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(segments));
-                const current_point = evalCubicBezier(p0, p1, p2, p3, t);
-                self.drawLine(prev_point, current_point, color, width, mode);
-                prev_point = current_point;
-            }
+            self.drawBezierTessellated(
+                estimated_length,
+                pixels_per_segment,
+                min_segments,
+                evalCubicBezier,
+                .{ p0, p1, p2, p3 },
+                color,
+                width,
+                mode,
+            );
         }
 
         /// Calculates spline control points for a vertex in a polygon using tension.
@@ -415,7 +439,7 @@ pub fn Canvas(comptime T: type) type {
                 const segments = @max(4, @min(50, @as(usize, @intFromFloat(estimated_length / pixels_per_segment))));
 
                 // Tessellate directly into our buffer
-                const segment_buffer = points_buffer[write_idx..write_idx + segments];
+                const segment_buffer = points_buffer[write_idx .. write_idx + segments];
                 self.tessellateCubicBezier(p0, control_points.cp1, control_points.cp2, p1, segment_buffer);
                 write_idx += segments;
             }
