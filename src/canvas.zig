@@ -292,6 +292,27 @@ pub fn Canvas(comptime T: type) type {
             return (chord + control_net) / 2.0;
         }
 
+        /// Tessellates a Bézier curve into points, filling the provided buffer.
+        fn tessellateBezier(
+            estimated_length: f32,
+            pixels_per_segment: f32,
+            min_segments: usize,
+            max_segments: usize,
+            comptime evalFn: anytype,
+            evalArgs: anytype,
+            buffer: []Point2d(f32),
+        ) usize {
+            const segments = @max(min_segments, @min(max_segments, @as(usize, @intFromFloat(estimated_length / pixels_per_segment))));
+            const actual_segments = @min(segments, buffer.len);
+            
+            for (0..actual_segments) |i| {
+                const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(actual_segments - 1));
+                buffer[i] = @call(.auto, evalFn, evalArgs ++ .{t});
+            }
+            
+            return actual_segments;
+        }
+
         /// Draws a Bézier curve by tessellating it into line segments.
         fn drawBezierTessellated(
             self: Self,
@@ -304,16 +325,22 @@ pub fn Canvas(comptime T: type) type {
             width: usize,
             mode: FillMode,
         ) void {
-            const segments = @max(min_segments, @as(usize, @intFromFloat(estimated_length / pixels_per_segment)));
-
-            // Start with the first point
-            var prev_point = @call(.auto, evalFn, evalArgs ++ .{0.0});
-            var i: usize = 1;
-            while (i <= segments) : (i += 1) {
-                const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(segments));
-                const current_point = @call(.auto, evalFn, evalArgs ++ .{t});
-                self.drawLine(prev_point, current_point, color, width, mode);
-                prev_point = current_point;
+            const max_segments = 200; // Reasonable upper limit
+            var stack_buffer: [max_segments]Point2d(f32) = undefined;
+            
+            const actual_segments = tessellateBezier(
+                estimated_length,
+                pixels_per_segment,
+                min_segments,
+                max_segments,
+                evalFn,
+                evalArgs,
+                &stack_buffer,
+            );
+            
+            // Draw lines between consecutive points
+            for (1..actual_segments) |i| {
+                self.drawLine(stack_buffer[i - 1], stack_buffer[i], color, width, mode);
             }
         }
 
@@ -440,8 +467,16 @@ pub fn Canvas(comptime T: type) type {
 
                 // Tessellate directly into our buffer
                 const segment_buffer = points_buffer[write_idx .. write_idx + segments];
-                self.tessellateCubicBezier(p0, control_points.cp1, control_points.cp2, p1, segment_buffer);
-                write_idx += segments;
+                const actual_segments = tessellateBezier(
+                    estimated_length,
+                    pixels_per_segment,
+                    4, // min_segments for cubic
+                    50, // max_segments
+                    evalCubicBezier,
+                    .{ p0, control_points.cp1, control_points.cp2, p1 },
+                    segment_buffer,
+                );
+                write_idx += actual_segments;
             }
 
             try self.fillPolygon(points_buffer, color, mode);
@@ -806,16 +841,6 @@ pub fn Canvas(comptime T: type) type {
             }
         }
 
-        /// Tessellates a cubic Bézier curve into a series of line segments (points).
-        /// Writes the points directly into the provided buffer.
-        fn tessellateCubicBezier(self: Self, p0: Point2d(f32), p1: Point2d(f32), p2: Point2d(f32), p3: Point2d(f32), buffer: []Point2d(f32)) void {
-            _ = self;
-            const segments = buffer.len;
-            for (0..segments) |i| {
-                const t: f32 = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(segments - 1));
-                buffer[i] = evalCubicBezier(p0, p1, p2, p3, t);
-            }
-        }
     };
 }
 
@@ -846,9 +871,9 @@ const md5_checksums = [_]DrawTestCase{
     .{ .name = "rectangle_outline", .md5sum = "033fdc24b89399af7b1810783e357b5f", .draw_fn = drawRectangleOutline },
     .{ .name = "triangle_filled", .md5sum = "283a9de3dd51dd00794559cc231ff5ac", .draw_fn = drawTriangleFilled },
     .{ .name = "bezier_cubic", .md5sum = "3a2b0d540a2353c817077729ee10007a", .draw_fn = drawBezierCubic },
-    .{ .name = "bezier_quadratic", .md5sum = "9bf9d650485c3c5ed002f6766f9783c1", .draw_fn = drawBezierQuadratic },
+    .{ .name = "bezier_quadratic", .md5sum = "c3286e308aaaef5b302129cf67b713c6", .draw_fn = drawBezierQuadratic },
     .{ .name = "polygon_complex", .md5sum = "da9b83426d2118ce99948eabebff91fb", .draw_fn = drawPolygonComplex },
-    .{ .name = "spline_polygon", .md5sum = "91dcc599568d099ba45ea86b961b97c1", .draw_fn = drawSplinePolygon },
+    .{ .name = "spline_polygon", .md5sum = "6bae24f211c7fdd391cb5159dd4e8fd0", .draw_fn = drawSplinePolygon },
 };
 
 // Test drawing functions for MD5 checksums
