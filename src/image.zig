@@ -637,31 +637,129 @@ pub fn Image(comptime T: type) type {
                     }
                 },
                 .@"struct" => {
-                    var integral: Image([Self.channels()]f32) = undefined;
-                    try self.integralImage(allocator, &integral);
-                    defer integral.deinit(allocator);
+                    // Check if this is a struct with 4 u8 fields and use optimized SIMD path
+                    const fields = std.meta.fields(T);
+                    const is_4xu8_struct = comptime blk: {
+                        if (fields.len != 4) break :blk false;
+                        for (fields) |field| {
+                            if (field.type != u8) break :blk false;
+                        }
+                        break :blk true;
+                    };
+                    
+                    if (is_4xu8_struct) {
+                        try self.boxBlur4xu8Simd(allocator, blurred, radius);
+                    } else {
+                        // Generic struct path for other color types
+                        var integral: Image([Self.channels()]f32) = undefined;
+                        try self.integralImage(allocator, &integral);
+                        defer integral.deinit(allocator);
 
-                    for (0..self.rows) |r| {
-                        for (0..self.cols) |c| {
-                            const r1 = r -| radius;
-                            const c1 = c -| radius;
-                            const r2 = @min(r + radius, self.rows - 1);
-                            const c2 = @min(c + radius, self.cols - 1);
-                            const area: f32 = @floatFromInt((r2 - r1) * (c2 - c1));
+                        for (0..self.rows) |r| {
+                            for (0..self.cols) |c| {
+                                const r1 = r -| radius;
+                                const c1 = c -| radius;
+                                const r2 = @min(r + radius, self.rows - 1);
+                                const c2 = @min(c + radius, self.cols - 1);
+                                const area: f32 = @floatFromInt((r2 - r1) * (c2 - c1));
 
-                            inline for (std.meta.fields(T), 0..) |f, i| {
-                                const sum = integral.at(r2, c2)[i] - integral.at(r2, c1)[i] -
-                                    integral.at(r1, c2)[i] + integral.at(r1, c1)[i];
-                                @field(blurred.at(r, c).*, f.name) = switch (@typeInfo(f.type)) {
-                                    .int => @intFromFloat(@max(std.math.minInt(f.type), @min(std.math.maxInt(f.type), @round(sum / area)))),
-                                    .float => as(f.type, sum / area),
-                                    else => @compileError("Can't compute the boxBlur image with struct fields of type " ++ @typeName(f.type) ++ "."),
-                                };
+                                inline for (std.meta.fields(T), 0..) |f, i| {
+                                    const sum = integral.at(r2, c2)[i] - integral.at(r2, c1)[i] -
+                                        integral.at(r1, c2)[i] + integral.at(r1, c1)[i];
+                                    @field(blurred.at(r, c).*, f.name) = switch (@typeInfo(f.type)) {
+                                        .int => @intFromFloat(@max(std.math.minInt(f.type), @min(std.math.maxInt(f.type), @round(sum / area)))),
+                                        .float => as(f.type, sum / area),
+                                        else => @compileError("Can't compute the boxBlur image with struct fields of type " ++ @typeName(f.type) ++ "."),
+                                    };
+                                }
                             }
                         }
                     }
                 },
                 else => @compileError("Can't compute the boxBlur image of " ++ @typeName(T) ++ "."),
+            }
+        }
+
+        /// Optimized box blur implementation for structs with 4 u8 fields using SIMD throughout.
+        /// This is automatically called by boxBlur() when T has exactly 4 u8 fields (e.g., RGBA, BGRA, etc).
+        fn boxBlur4xu8Simd(self: Self, allocator: std.mem.Allocator, blurred: *Self, radius: usize) !void {
+            // Verify at compile time that this is a struct with 4 u8 fields
+            comptime {
+                const fields = std.meta.fields(T);
+                assert(fields.len == 4);
+                for (fields) |field| {
+                    assert(field.type == u8);
+                }
+            }
+            
+            // Initialize output if needed
+            if (!self.hasSameShape(blurred.*)) {
+                blurred.* = try .initAlloc(allocator, self.rows, self.cols);
+            }
+            if (radius == 0 and &self != blurred) {
+                @memcpy(blurred.data, self.data);
+                return;
+            }
+
+            // Create integral image with 4 channels
+            var integral = try Image([4]f32).initAlloc(allocator, self.rows, self.cols);
+            defer integral.deinit(allocator);
+
+            // Build integral image - first pass: row-wise cumulative sums
+            for (0..self.rows) |r| {
+                var tmp: @Vector(4, f32) = @splat(0);
+                const row_offset = r * self.stride;
+                const out_offset = r * integral.cols;
+
+                for (0..self.cols) |c| {
+                    const pixel = self.data[row_offset + c];
+                    var pixel_vec: @Vector(4, f32) = undefined;
+                    inline for (std.meta.fields(T), 0..) |field, i| {
+                        pixel_vec[i] = @floatFromInt(@field(pixel, field.name));
+                    }
+                    tmp += pixel_vec;
+                    integral.data[out_offset + c] = tmp;
+                }
+            }
+
+            // Second pass: column-wise cumulative sums
+            for (1..self.rows) |r| {
+                const prev_row_offset = (r - 1) * integral.cols;
+                const curr_row_offset = r * integral.cols;
+
+                for (0..self.cols) |c| {
+                    const prev_vec: @Vector(4, f32) = integral.data[prev_row_offset + c];
+                    const curr_vec: @Vector(4, f32) = integral.data[curr_row_offset + c];
+                    integral.data[curr_row_offset + c] = prev_vec + curr_vec;
+                }
+            }
+
+            // Apply box blur with SIMD
+            for (0..self.rows) |r| {
+                for (0..self.cols) |c| {
+                    const r1 = r -| radius;
+                    const c1 = c -| radius;
+                    const r2 = @min(r + radius, self.rows - 1);
+                    const c2 = @min(c + radius, self.cols - 1);
+                    const area: f32 = @floatFromInt((r2 - r1) * (c2 - c1));
+                    const area_vec: @Vector(4, f32) = @splat(area);
+
+                    // Use vectors for the box sum calculation
+                    const v_r2c2: @Vector(4, f32) = integral.at(r2, c2).*;
+                    const v_r2c1: @Vector(4, f32) = integral.at(r2, c1).*;
+                    const v_r1c2: @Vector(4, f32) = integral.at(r1, c2).*;
+                    const v_r1c1: @Vector(4, f32) = integral.at(r1, c1).*;
+
+                    const sum_vec = v_r2c2 - v_r2c1 - v_r1c2 + v_r1c1;
+                    const avg_vec = sum_vec / area_vec;
+
+                    // Convert back to struct
+                    var result: T = undefined;
+                    inline for (std.meta.fields(T), 0..) |field, i| {
+                        @field(result, field.name) = @intFromFloat(@max(0, @min(255, @round(avg_vec[i]))));
+                    }
+                    blurred.at(r, c).* = result;
+                }
             }
         }
 
@@ -1005,6 +1103,59 @@ test "boxBlur struct type" {
     try expectEqual(center.r != 255, true);
     try expectEqual(center.g != 255, true);
     try expectEqual(center.b != 255, true);
+}
+
+test "boxBlur RGB vs RGBA with full alpha produces same RGB values" {
+    // Simple test: RGB image and RGBA image with alpha=255 should produce
+    // identical results for the RGB channels
+    
+    const Rgb = @import("color.zig").Rgb;
+    const test_size = 10;
+    const radius = 2;
+    
+    // Create RGB image
+    var rgb_img = try Image(Rgb).initAlloc(std.testing.allocator, test_size, test_size);
+    defer rgb_img.deinit(std.testing.allocator);
+    
+    // Create RGBA image  
+    var rgba_img = try Image(Rgba).initAlloc(std.testing.allocator, test_size, test_size);
+    defer rgba_img.deinit(std.testing.allocator);
+    
+    // Fill both with identical RGB values
+    var seed: u8 = 0;
+    for (0..test_size) |r| {
+        for (0..test_size) |c| {
+            seed +%= 17;
+            const r_val = seed;
+            const g_val = seed +% 50;
+            const b_val = seed +% 100;
+            
+            rgb_img.at(r, c).* = .{ .r = r_val, .g = g_val, .b = b_val };
+            rgba_img.at(r, c).* = .{ .r = r_val, .g = g_val, .b = b_val, .a = 255 };
+        }
+    }
+    
+    // Apply blur to both
+    var rgb_blurred: Image(Rgb) = undefined;
+    try rgb_img.boxBlur(std.testing.allocator, &rgb_blurred, radius);
+    defer rgb_blurred.deinit(std.testing.allocator);
+    
+    var rgba_blurred: Image(Rgba) = undefined;
+    try rgba_img.boxBlur(std.testing.allocator, &rgba_blurred, radius);
+    defer rgba_blurred.deinit(std.testing.allocator);
+    
+    // Compare RGB channels - they should be identical
+    for (0..test_size) |r| {
+        for (0..test_size) |c| {
+            const rgb = rgb_blurred.at(r, c).*;
+            const rgba = rgba_blurred.at(r, c).*;
+            
+            try expectEqual(rgb.r, rgba.r);
+            try expectEqual(rgb.g, rgba.g);
+            try expectEqual(rgb.b, rgba.b);
+            try expectEqual(@as(u8, 255), rgba.a); // Alpha should remain 255
+        }
+    }
 }
 
 test "sharpen basic functionality" {
