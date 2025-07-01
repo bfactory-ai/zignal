@@ -163,8 +163,9 @@ pub const ChunkReader = struct {
         const chunk_crc = std.mem.readInt(u32, self.data[self.pos..self.pos + 4][0..4], .big);
         self.pos += 4;
 
-        // Verify CRC
-        const computed_crc = crc(self.data[self.pos - length - 8..self.pos - 4]);
+        // Verify CRC (includes chunk type and data)
+        const crc_start = self.pos - length - 8;
+        const computed_crc = crc(self.data[crc_start..self.pos - 4]);
         if (computed_crc != chunk_crc) {
             return error.InvalidCrc;
         }
@@ -364,7 +365,8 @@ pub fn toImage(allocator: Allocator, png_image: PngImage) !Image(u8) {
                 
                 for (0..width) |x| {
                     const byte_index = x / pixels_per_byte;
-                    const bit_offset: u3 = @intCast((x % pixels_per_byte) * bits_per_pixel);
+                    const pixel_index = x % pixels_per_byte;
+                    const bit_offset: u3 = @intCast((pixels_per_byte - 1 - pixel_index) * bits_per_pixel);
                     const pixel_value = (src_row[byte_index] >> bit_offset) & mask;
                     
                     // Scale to 8-bit
@@ -409,8 +411,11 @@ pub fn toRgbImage(allocator: Allocator, png_image: PngImage) !Image(Rgb) {
                 for (dst_row, 0..) |*pixel, i| {
                     const gray = if (png_image.header.bit_depth == 8) 
                         src_row[i] 
-                    else 
-                        @as(u8, @intCast((src_row[i / 8] >> @as(u3, @intCast(i % 8))) & 1)) * 255;
+                    else blk: {
+                        const byte_idx = i / 8;
+                        const bit_idx = 7 - (i % 8);
+                        break :blk @as(u8, @intCast((src_row[byte_idx] >> @intCast(bit_idx)) & 1)) * 255;
+                    };
                     pixel.* = Rgb{ .r = gray, .g = gray, .b = gray };
                 }
             },
@@ -498,8 +503,11 @@ pub fn toRgbaImage(allocator: Allocator, png_image: PngImage) !Image(Rgba) {
                 for (dst_row, 0..) |*pixel, i| {
                     const gray = if (png_image.header.bit_depth == 8) 
                         src_row[i] 
-                    else 
-                        @as(u8, @intCast((src_row[i / 8] >> @as(u3, @intCast(i % 8))) & 1)) * 255;
+                    else blk: {
+                        const byte_idx = i / 8;
+                        const bit_idx = 7 - (i % 8);
+                        break :blk @as(u8, @intCast((src_row[byte_idx] >> @intCast(bit_idx)) & 1)) * 255;
+                    };
                     pixel.* = Rgba{ .r = gray, .g = gray, .b = gray, .a = 255 };
                 }
             },
@@ -564,10 +572,10 @@ pub fn toRgbaImage(allocator: Allocator, png_image: PngImage) !Image(Rgba) {
                     } else {
                         // 16-bit to 8-bit conversion
                         pixel.* = Rgba{ 
-                            .r = @intCast(std.mem.readInt(u16, src_row[i * 8..i * 8 + 2][0..2], .big) >> 8),
-                            .g = @intCast(std.mem.readInt(u16, src_row[i * 8 + 2..i * 8 + 4][0..2], .big) >> 8),
-                            .b = @intCast(std.mem.readInt(u16, src_row[i * 8 + 4..i * 8 + 6][0..2], .big) >> 8),
-                            .a = @intCast(std.mem.readInt(u16, src_row[i * 8 + 6..i * 8 + 8][0..2], .big) >> 8),
+                            .r = @intCast(std.mem.readInt(u16, src_row[i * 8..][0..2], .big) >> 8),
+                            .g = @intCast(std.mem.readInt(u16, src_row[i * 8 + 2..][0..2], .big) >> 8),
+                            .b = @intCast(std.mem.readInt(u16, src_row[i * 8 + 4..][0..2], .big) >> 8),
+                            .a = @intCast(std.mem.readInt(u16, src_row[i * 8 + 6..][0..2], .big) >> 8),
                         };
                     }
                 }
@@ -1018,4 +1026,174 @@ test "PNG round-trip encoding/decoding" {
         try std.testing.expectEqual(orig.g, decoded.g);
         try std.testing.expectEqual(orig.b, decoded.b);
     }
+}
+
+test "PNG bit unpacking - 1-bit grayscale" {
+    
+    // Test data with bits: 10110010 = 0xB2
+    const test_byte: u8 = 0b10110010;
+    const src_row = [_]u8{test_byte};
+    var dst_row: [8]u8 = undefined;
+    
+    // Unpack bits according to PNG spec (MSB first)
+    const bits_per_pixel = 1;
+    const pixels_per_byte = 8;
+    const mask = (@as(u8, 1) << @intCast(bits_per_pixel)) - 1;
+    
+    for (0..8) |x| {
+        const byte_index = x / pixels_per_byte;
+        const pixel_index = x % pixels_per_byte;
+        const bit_offset: u3 = @intCast((pixels_per_byte - 1 - pixel_index) * bits_per_pixel);
+        const pixel_value = (src_row[byte_index] >> bit_offset) & mask;
+        
+        // Scale to 8-bit
+        const scale_factor = 255 / mask;
+        dst_row[x] = pixel_value * scale_factor;
+    }
+    
+    // Expected: 1,0,1,1,0,0,1,0 -> 255,0,255,255,0,0,255,0
+    try std.testing.expectEqual(@as(u8, 255), dst_row[0]);
+    try std.testing.expectEqual(@as(u8, 0), dst_row[1]);
+    try std.testing.expectEqual(@as(u8, 255), dst_row[2]);
+    try std.testing.expectEqual(@as(u8, 255), dst_row[3]);
+    try std.testing.expectEqual(@as(u8, 0), dst_row[4]);
+    try std.testing.expectEqual(@as(u8, 0), dst_row[5]);
+    try std.testing.expectEqual(@as(u8, 255), dst_row[6]);
+    try std.testing.expectEqual(@as(u8, 0), dst_row[7]);
+}
+
+test "PNG bit unpacking - 2-bit grayscale" {
+    const allocator = std.testing.allocator;
+    _ = allocator;
+    
+    // Test data with 2-bit values: 11 01 10 00 = 0xD8
+    const test_byte: u8 = 0b11011000;
+    const src_row = [_]u8{test_byte};
+    var dst_row: [4]u8 = undefined;
+    
+    // Unpack 2-bit values
+    const bits_per_pixel = 2;
+    const pixels_per_byte = 4;
+    const mask = (@as(u8, 1) << @intCast(bits_per_pixel)) - 1;
+    
+    for (0..4) |x| {
+        const byte_index = x / pixels_per_byte;
+        const pixel_index = x % pixels_per_byte;
+        const bit_offset: u3 = @intCast((pixels_per_byte - 1 - pixel_index) * bits_per_pixel);
+        const pixel_value = (src_row[byte_index] >> bit_offset) & mask;
+        
+        // Scale to 8-bit (0,85,170,255)
+        const scale_factor = 255 / mask;
+        dst_row[x] = pixel_value * scale_factor;
+    }
+    
+    // Expected: 3,1,2,0 -> 255,85,170,0
+    try std.testing.expectEqual(@as(u8, 255), dst_row[0]);
+    try std.testing.expectEqual(@as(u8, 85), dst_row[1]);
+    try std.testing.expectEqual(@as(u8, 170), dst_row[2]);
+    try std.testing.expectEqual(@as(u8, 0), dst_row[3]);
+}
+
+test "PNG bit unpacking - 4-bit grayscale" {
+    const allocator = std.testing.allocator;
+    _ = allocator;
+    
+    // Test data with 4-bit values: 1111 0101 = 0xF5
+    const test_byte: u8 = 0xF5;
+    const src_row = [_]u8{test_byte};
+    var dst_row: [2]u8 = undefined;
+    
+    // Unpack 4-bit values
+    const bits_per_pixel = 4;
+    const pixels_per_byte = 2;
+    const mask = (@as(u8, 1) << @intCast(bits_per_pixel)) - 1;
+    
+    for (0..2) |x| {
+        const byte_index = x / pixels_per_byte;
+        const pixel_index = x % pixels_per_byte;
+        const bit_offset: u3 = @intCast((pixels_per_byte - 1 - pixel_index) * bits_per_pixel);
+        const pixel_value = (src_row[byte_index] >> bit_offset) & mask;
+        
+        // Scale to 8-bit
+        const scale_factor = 255 / mask;
+        dst_row[x] = pixel_value * scale_factor;
+    }
+    
+    // Expected: 15,5 -> 255,85
+    try std.testing.expectEqual(@as(u8, 255), dst_row[0]);
+    try std.testing.expectEqual(@as(u8, 85), dst_row[1]);
+}
+
+test "PNG CRC validation" {
+    const allocator = std.testing.allocator;
+    _ = allocator;
+    
+    // Test IHDR chunk CRC
+    const ihdr_type = "IHDR";
+    const ihdr_data = [_]u8{
+        0, 0, 0, 4,   // width = 4
+        0, 0, 0, 4,   // height = 4
+        8,            // bit depth
+        2,            // color type (RGB)
+        0,            // compression
+        0,            // filter
+        0,            // interlace
+    };
+    
+    var test_data = ArrayList(u8).init(std.testing.allocator);
+    defer test_data.deinit();
+    
+    try test_data.appendSlice(ihdr_type);
+    try test_data.appendSlice(&ihdr_data);
+    
+    const calculated_crc = crc(test_data.items);
+    
+    // Verify CRC was calculated
+    try std.testing.expect(calculated_crc != 0);
+    
+    // Test with invalid data should give different CRC
+    test_data.items[4] = 1; // Change width
+    const different_crc = crc(test_data.items);
+    try std.testing.expect(calculated_crc != different_crc);
+}
+
+test "PNG 16-bit to 8-bit conversion" {
+    // Test 16-bit value conversion
+    const test_values = [_]u16{ 0x0000, 0x00FF, 0xFF00, 0xFFFF, 0x8080, 0x1234 };
+    const expected_8bit = [_]u8{ 0, 0, 255, 255, 128, 18 }; // Simple >>8 conversion
+    
+    for (test_values, expected_8bit) |val16, expected| {
+        const bytes = std.mem.toBytes(std.mem.nativeTo(u16, val16, .big));
+        const converted = @as(u8, @intCast(std.mem.readInt(u16, bytes[0..2], .big) >> 8));
+        try std.testing.expectEqual(expected, converted);
+    }
+}
+
+test "PNG filter types" {
+    // Test filter type validation
+    const valid_filters = [_]u8{ 0, 1, 2, 3, 4 };
+    const invalid_filter: u8 = 5;
+    
+    for (valid_filters) |filter| {
+        const filter_type: FilterType = switch (filter) {
+            0 => .none,
+            1 => .sub,
+            2 => .up,
+            3 => .average,
+            4 => .paeth,
+            else => unreachable,
+        };
+        try std.testing.expectEqual(filter, @intFromEnum(filter_type));
+    }
+    
+    // Test that invalid filter would be caught
+    const result: ?FilterType = switch (invalid_filter) {
+        0 => .none,
+        1 => .sub,
+        2 => .up,
+        3 => .average,
+        4 => .paeth,
+        else => null,
+    };
+    try std.testing.expect(result == null);
 }
