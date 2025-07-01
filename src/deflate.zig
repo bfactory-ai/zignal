@@ -480,6 +480,66 @@ pub fn inflate(allocator: Allocator, compressed_data: []const u8) ![]u8 {
     return result.toOwnedSlice();
 }
 
+// DEFLATE encoder for PNG compression
+pub const DeflateEncoder = struct {
+    allocator: Allocator,
+    output: ArrayList(u8),
+    
+    pub fn init(allocator: Allocator) DeflateEncoder {
+        return .{
+            .allocator = allocator,
+            .output = ArrayList(u8).init(allocator),
+        };
+    }
+    
+    pub fn deinit(self: *DeflateEncoder) void {
+        self.output.deinit();
+    }
+    
+    pub fn encode(self: *DeflateEncoder, data: []const u8) !ArrayList(u8) {
+        // For PNG, we'll use a simple deflate implementation
+        // Write final block with no compression (type 00)
+        
+        const block_size = @min(data.len, 65535); // Max uncompressed block size
+        var pos: usize = 0;
+        
+        while (pos < data.len) {
+            const remaining = data.len - pos;
+            const chunk_size = @min(remaining, block_size);
+            const is_final = (pos + chunk_size >= data.len);
+            
+            // Block header: BFINAL (1 bit) + BTYPE (2 bits) = 000 or 001 for final
+            const block_header: u8 = if (is_final) 0x01 else 0x00;
+            try self.output.append(block_header);
+            
+            // Length and NLEN (one's complement of length)
+            const len: u16 = @intCast(chunk_size);
+            const nlen: u16 = ~len;
+            
+            try self.output.appendSlice(std.mem.asBytes(&len));
+            try self.output.appendSlice(std.mem.asBytes(&nlen));
+            
+            // Uncompressed data
+            try self.output.appendSlice(data[pos..pos + chunk_size]);
+            
+            pos += chunk_size;
+        }
+        
+        return self.output.clone();
+    }
+};
+
+// Public compression function (simple implementation for PNG)
+pub fn deflate(allocator: Allocator, data: []const u8) ![]u8 {
+    var encoder = DeflateEncoder.init(allocator);
+    defer encoder.deinit();
+    
+    var result = try encoder.encode(data);
+    defer result.deinit();
+    
+    return result.toOwnedSlice();
+}
+
 // Basic test
 test "deflate decompression" {
     // This is a basic test to ensure the module compiles
@@ -489,4 +549,22 @@ test "deflate decompression" {
     const empty_data = [_]u8{};
     const result = inflate(allocator, &empty_data);
     try std.testing.expectError(error.UnexpectedEndOfData, result);
+}
+
+test "deflate round-trip compression" {
+    const allocator = std.testing.allocator;
+    
+    // Test data
+    const original_data = "Hello, World! This is a test string for deflate compression.";
+    
+    // Compress
+    const compressed = try deflate(allocator, original_data);
+    defer allocator.free(compressed);
+    
+    // Decompress
+    const decompressed = try inflate(allocator, compressed);
+    defer allocator.free(decompressed);
+    
+    // Verify
+    try std.testing.expectEqualSlices(u8, original_data, decompressed);
 }

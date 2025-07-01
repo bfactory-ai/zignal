@@ -27,3 +27,4 @@ pub const perlin = @import("perlin.zig");
 pub const Point2d = point.Point2d;
 pub const Point3d = point.Point3d;
 pub const svd = @import("svd.zig").svd;
+pub const png = @import("png.zig");

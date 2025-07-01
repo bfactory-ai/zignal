@@ -609,6 +609,194 @@ pub fn loadPngGrayscale(allocator: Allocator, file_path: []const u8) !Image(u8) 
     return toImage(allocator, png_image);
 }
 
+// PNG Encoder functionality
+
+// Chunk writer for PNG encoding
+pub const ChunkWriter = struct {
+    data: ArrayList(u8),
+    
+    pub fn init(allocator: Allocator) ChunkWriter {
+        return .{ .data = ArrayList(u8).init(allocator) };
+    }
+    
+    pub fn deinit(self: *ChunkWriter) void {
+        self.data.deinit();
+    }
+    
+    pub fn writeChunk(self: *ChunkWriter, chunk_type: [4]u8, chunk_data: []const u8) !void {
+        // Length (4 bytes, big endian)
+        const length: u32 = @intCast(chunk_data.len);
+        try self.data.appendSlice(std.mem.asBytes(&std.mem.nativeTo(u32, length, .big)));
+        
+        // Type (4 bytes)
+        try self.data.appendSlice(&chunk_type);
+        
+        // Data
+        try self.data.appendSlice(chunk_data);
+        
+        // CRC (4 bytes, big endian) - calculate CRC of type + data
+        var crc_data = try self.data.allocator.alloc(u8, 4 + chunk_data.len);
+        defer self.data.allocator.free(crc_data);
+        @memcpy(crc_data[0..4], &chunk_type);
+        @memcpy(crc_data[4..], chunk_data);
+        
+        const chunk_crc = crc(crc_data);
+        try self.data.appendSlice(std.mem.asBytes(&std.mem.nativeTo(u32, chunk_crc, .big)));
+    }
+    
+    pub fn toOwnedSlice(self: *ChunkWriter) ![]u8 {
+        return self.data.toOwnedSlice();
+    }
+};
+
+// Create IHDR chunk data
+fn createIHDR(header: Header) ![13]u8 {
+    var ihdr_data: [13]u8 = undefined;
+    
+    // Width (4 bytes)
+    std.mem.writeInt(u32, ihdr_data[0..4], header.width, .big);
+    
+    // Height (4 bytes) 
+    std.mem.writeInt(u32, ihdr_data[4..8], header.height, .big);
+    
+    // Bit depth (1 byte)
+    ihdr_data[8] = header.bit_depth;
+    
+    // Color type (1 byte)
+    ihdr_data[9] = @intFromEnum(header.color_type);
+    
+    // Compression method (1 byte) - always 0
+    ihdr_data[10] = 0;
+    
+    // Filter method (1 byte) - always 0  
+    ihdr_data[11] = 0;
+    
+    // Interlace method (1 byte) - 0 for no interlacing
+    ihdr_data[12] = 0;
+    
+    return ihdr_data;
+}
+
+// Apply PNG row filtering to scanlines
+fn filterScanlines(allocator: Allocator, data: []const u8, header: Header, filter_type: FilterType) ![]u8 {
+    const scanline_bytes = header.scanlineBytes();
+    const bytes_per_pixel = header.bytesPerPixel();
+    const filtered_size = header.height * (scanline_bytes + 1); // +1 for filter byte
+    
+    var filtered_data = try allocator.alloc(u8, filtered_size);
+    
+    var y: u32 = 0;
+    while (y < header.height) : (y += 1) {
+        const src_row_start = y * scanline_bytes;
+        const dst_row_start = y * (scanline_bytes + 1);
+        
+        const src_row = data[src_row_start..src_row_start + scanline_bytes];
+        const dst_row = filtered_data[dst_row_start + 1..dst_row_start + 1 + scanline_bytes];
+        
+        // Set filter type byte
+        filtered_data[dst_row_start] = @intFromEnum(filter_type);
+        
+        // Apply filtering
+        const previous_row = if (y > 0) 
+            data[(y - 1) * scanline_bytes..(y - 1) * scanline_bytes + scanline_bytes]
+        else 
+            null;
+            
+        filterRow(filter_type, dst_row, src_row, previous_row, bytes_per_pixel);
+    }
+    
+    return filtered_data;
+}
+
+// Encode Image data to PNG format
+pub fn encode(allocator: Allocator, image_data: []const u8, width: u32, height: u32, color_type: ColorType, bit_depth: u8) ![]u8 {
+    var writer = ChunkWriter.init(allocator);
+    defer writer.deinit();
+    
+    // Write PNG signature
+    try writer.data.appendSlice(&PNG_SIGNATURE);
+    
+    // Create and write IHDR
+    const header = Header{
+        .width = width,
+        .height = height,
+        .bit_depth = bit_depth,
+        .color_type = color_type,
+        .compression_method = 0,
+        .filter_method = 0,
+        .interlace_method = 0,
+    };
+    
+    const ihdr_data = try createIHDR(header);
+    try writer.writeChunk("IHDR".*, &ihdr_data);
+    
+    // Apply row filtering (using 'none' filter for simplicity)
+    const filtered_data = try filterScanlines(allocator, image_data, header, .none);
+    defer allocator.free(filtered_data);
+    
+    // Compress filtered data with deflate
+    const compressed_data = try deflate.deflate(allocator, filtered_data);
+    defer allocator.free(compressed_data);
+    
+    // Write IDAT chunk
+    try writer.writeChunk("IDAT".*, compressed_data);
+    
+    // Write IEND chunk
+    try writer.writeChunk("IEND".*, &[_]u8{});
+    
+    return writer.toOwnedSlice();
+}
+
+// High-level API functions for encoding from Zignal Image types
+pub fn encodeRgbaImage(allocator: Allocator, image: Image(Rgba)) ![]u8 {
+    // Convert RGBA Image to byte array
+    const image_bytes = image.asBytes();
+    return encode(allocator, image_bytes, @intCast(image.cols), @intCast(image.rows), .rgba, 8);
+}
+
+pub fn encodeRgbImage(allocator: Allocator, image: Image(Rgb)) ![]u8 {
+    // Convert RGB Image to byte array
+    const image_bytes = image.asBytes();
+    return encode(allocator, image_bytes, @intCast(image.cols), @intCast(image.rows), .rgb, 8);
+}
+
+pub fn encodeGrayscaleImage(allocator: Allocator, image: Image(u8)) ![]u8 {
+    // Convert grayscale Image to byte array
+    const image_bytes = image.asBytes();
+    return encode(allocator, image_bytes, @intCast(image.cols), @intCast(image.rows), .grayscale, 8);
+}
+
+// Save PNG files from Zignal Image types
+pub fn savePng(allocator: Allocator, image: Image(Rgba), file_path: []const u8) !void {
+    const png_data = try encodeRgbaImage(allocator, image);
+    defer allocator.free(png_data);
+    
+    const file = try std.fs.cwd().createFile(file_path, .{});
+    defer file.close();
+    
+    try file.writeAll(png_data);
+}
+
+pub fn savePngRgb(allocator: Allocator, image: Image(Rgb), file_path: []const u8) !void {
+    const png_data = try encodeRgbImage(allocator, image);
+    defer allocator.free(png_data);
+    
+    const file = try std.fs.cwd().createFile(file_path, .{});
+    defer file.close();
+    
+    try file.writeAll(png_data);
+}
+
+pub fn savePngGrayscale(allocator: Allocator, image: Image(u8), file_path: []const u8) !void {
+    const png_data = try encodeGrayscaleImage(allocator, image);
+    defer allocator.free(png_data);
+    
+    const file = try std.fs.cwd().createFile(file_path, .{});
+    defer file.close();
+    
+    try file.writeAll(png_data);
+}
+
 // PNG row filtering and defiltering functions
 fn paethPredictor(a: i32, b: i32, c: i32) u8 {
     const p = a + b - c;
@@ -776,4 +964,58 @@ test "Paeth predictor" {
     try std.testing.expectEqual(@as(u8, 15), paethPredictor(10, 20, 15)); // p=15, pa=5, pb=5, pc=0 -> c=15
     try std.testing.expectEqual(@as(u8, 5), paethPredictor(5, 20, 15));   // p=10, pa=5, pb=10, pc=5 -> a=5
     try std.testing.expectEqual(@as(u8, 10), paethPredictor(10, 5, 6));   // p=9, pa=1, pb=4, pc=3 -> a=10
+}
+
+test "PNG round-trip encoding/decoding" {
+    const allocator = std.testing.allocator;
+    
+    // Create a simple test image (4x4 RGB)
+    const width = 4;
+    const height = 4;
+    const test_data = [_]Rgb{
+        .{ .r = 255, .g = 0, .b = 0 }, .{ .r = 0, .g = 255, .b = 0 }, .{ .r = 0, .g = 0, .b = 255 }, .{ .r = 255, .g = 255, .b = 0 },
+        .{ .r = 255, .g = 0, .b = 255 }, .{ .r = 0, .g = 255, .b = 255 }, .{ .r = 128, .g = 128, .b = 128 }, .{ .r = 255, .g = 255, .b = 255 },
+        .{ .r = 0, .g = 0, .b = 0 }, .{ .r = 64, .g = 64, .b = 64 }, .{ .r = 192, .g = 192, .b = 192 }, .{ .r = 128, .g = 0, .b = 128 },
+        .{ .r = 128, .g = 128, .b = 0 }, .{ .r = 0, .g = 128, .b = 128 }, .{ .r = 255, .g = 128, .b = 64 }, .{ .r = 64, .g = 255, .b = 128 },
+    };
+    
+    // Create owned copy for Image
+    const owned_data = try allocator.alloc(Rgb, test_data.len);
+    defer allocator.free(owned_data);
+    @memcpy(owned_data, &test_data);
+    
+    const original_image = Image(Rgb).init(height, width, owned_data);
+    
+    // Encode to PNG
+    const png_data = try encodeRgbImage(allocator, original_image);
+    defer allocator.free(png_data);
+    
+    // Verify PNG signature
+    try std.testing.expect(png_data.len > 8);
+    try std.testing.expectEqualSlices(u8, &PNG_SIGNATURE, png_data[0..8]);
+    
+    // Decode back from PNG
+    var decoded_png = try decode(allocator, png_data);
+    defer decoded_png.deinit(allocator);
+    
+    // Verify header
+    try std.testing.expectEqual(@as(u32, width), decoded_png.header.width);
+    try std.testing.expectEqual(@as(u32, height), decoded_png.header.height);
+    try std.testing.expectEqual(ColorType.rgb, decoded_png.header.color_type);
+    try std.testing.expectEqual(@as(u8, 8), decoded_png.header.bit_depth);
+    
+    // Convert back to Image
+    var decoded_image = try toRgbImage(allocator, decoded_png);
+    defer decoded_image.deinit(allocator);
+    
+    // Verify dimensions
+    try std.testing.expectEqual(height, decoded_image.rows);
+    try std.testing.expectEqual(width, decoded_image.cols);
+    
+    // Verify pixel data
+    for (original_image.data, decoded_image.data) |orig, decoded| {
+        try std.testing.expectEqual(orig.r, decoded.r);
+        try std.testing.expectEqual(orig.g, decoded.g);
+        try std.testing.expectEqual(orig.b, decoded.b);
+    }
 }
