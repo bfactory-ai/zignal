@@ -653,7 +653,7 @@ pub fn encode(allocator: Allocator, image_data: []const u8, width: u32, height: 
     // Apply row filtering (using 'none' filter for simplicity)
     const filtered_data = try filterScanlines(allocator, image_data, header, .none);
     defer allocator.free(filtered_data);
-    
+
     // Compress filtered data with zlib format (required for PNG IDAT) using static Huffman
     const compressed_data = try deflate.zlibCompress(allocator, filtered_data, .static_huffman);
     defer allocator.free(compressed_data);
