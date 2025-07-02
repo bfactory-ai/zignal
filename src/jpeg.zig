@@ -282,13 +282,13 @@ pub const JpegDecoder = struct {
             var table: [64]u16 = undefined;
             
             if (precision == 0) {
-                // 8-bit values
+                // 8-bit values - stored in natural order in the file
                 for (0..64) |i| {
                     table[i] = data[pos + i];
                 }
                 pos += 64;
             } else {
-                // 16-bit values
+                // 16-bit values - stored in natural order in the file  
                 for (0..64) |i| {
                     table[i] = (@as(u16, data[pos + i * 2]) << 8) | data[pos + i * 2 + 1];
                 }
@@ -388,7 +388,7 @@ pub const JpegDecoder = struct {
             if (symbol == 0) {
                 // End of block
                 while (k < 64) {
-                    block[k] = 0;
+                    block[ZIGZAG_ORDER[k]] = 0;
                     k += 1;
                 }
                 return;
@@ -402,14 +402,14 @@ pub const JpegDecoder = struct {
                 // Skip 16 zeros
                 for (0..16) |_| {
                     if (k >= 64) return error.InvalidACValue;
-                    block[k] = 0;
+                    block[ZIGZAG_ORDER[k]] = 0;
                     k += 1;
                 }
             } else {
                 // Skip 'run' zeros
                 for (0..run) |_| {
                     if (k >= 64) return error.InvalidACValue;
-                    block[k] = 0;
+                    block[ZIGZAG_ORDER[k]] = 0;
                     k += 1;
                 }
                 
@@ -424,7 +424,7 @@ pub const JpegDecoder = struct {
                     value = @as(i32, @intCast(bits)) - @as(i32, @intCast((@as(u32, 1) << @intCast(size)) - 1));
                 }
                 
-                block[k] = value;
+                block[ZIGZAG_ORDER[k]] = value;
                 k += 1;
             }
         }
@@ -457,8 +457,7 @@ pub const JpegDecoder = struct {
         // Dequantize with overflow protection
         const quant_table = self.quant_tables[self.components[component_idx].quant_table_id] orelse return error.MissingQuantTable;
         for (0..64) |i| {
-            const zigzag_idx = ZIGZAG_ORDER[i];
-            const coeff = block[zigzag_idx];
+            const coeff = block[i];
             const quant_val = @as(i32, @intCast(quant_table[i]));
             
             // Perform multiplication with overflow checking
@@ -466,11 +465,11 @@ pub const JpegDecoder = struct {
                 const result = @as(i64, coeff) * @as(i64, quant_val);
                 // Clamp to i32 range to prevent overflow
                 if (result > std.math.maxInt(i32)) {
-                    block[zigzag_idx] = std.math.maxInt(i32);
+                    block[i] = std.math.maxInt(i32);
                 } else if (result < std.math.minInt(i32)) {
-                    block[zigzag_idx] = std.math.minInt(i32);
+                    block[i] = std.math.minInt(i32);
                 } else {
-                    block[zigzag_idx] = @intCast(result);
+                    block[i] = @intCast(result);
                 }
             }
         }
@@ -478,31 +477,49 @@ pub const JpegDecoder = struct {
         return block;
     }
 
-    // Decode MCU (Minimum Coded Unit) with proper chroma subsampling support
+    // Decode MCU (Minimum Coded Unit) with proper interleaved block order
     pub fn decodeMCU(self: *JpegDecoder, mcu_data: *[4][][64]i32, dc_values: []i64) !void {
+        // Calculate total number of blocks in MCU for interleaved decoding
+        var total_blocks: usize = 0;
+        var component_block_counts: [4]usize = .{0} ** 4;
         for (0..self.num_components) |comp_idx| {
             const comp = self.components[comp_idx];
-            const blocks_h = comp.h_sampling;
-            const blocks_v = comp.v_sampling;
-            
-            var block_idx: usize = 0;
-            for (0..blocks_v) |_| {
-                for (0..blocks_h) |_| {
-                    var block = try self.decodeBlock(comp_idx, &dc_values[comp_idx]);
-                    
-                    // Apply IDCT
-                    idct8x8(&block);
-                    
-                    // Level shift for color components (add 128 to shift from [-128,127] to [0,255])
-                    for (&block) |*val| {
-                        val.* += 128;
-                    }
-                    
-                    // Store the decoded block
-                    mcu_data[comp_idx][block_idx] = block;
-                    block_idx += 1;
-                }
+            const blocks_count = @as(usize, comp.h_sampling) * comp.v_sampling;
+            component_block_counts[comp_idx] = blocks_count;
+            total_blocks += blocks_count;
+        }
+        
+        // Create interleaved block order
+        var block_order: [64]struct { comp_idx: usize, block_idx: usize } = undefined; // Max possible blocks in MCU
+        var order_idx: usize = 0;
+        
+        // Standard JPEG interleaved order: cycle through components for each position
+        for (0..self.num_components) |comp_idx| {
+            for (0..component_block_counts[comp_idx]) |block_idx| {
+                block_order[order_idx] = .{ .comp_idx = comp_idx, .block_idx = block_idx };
+                order_idx += 1;
             }
+        }
+        
+        // Decode blocks in interleaved order
+        for (0..total_blocks) |i| {
+            const comp_idx = block_order[i].comp_idx;
+            const block_idx = block_order[i].block_idx;
+            
+            var block = try self.decodeBlock(comp_idx, &dc_values[comp_idx]);
+            
+            // Apply IDCT
+            idct8x8(&block);
+            
+            // Level shift and clamp: IDCT produces [-128,127], we need [0,255]
+            // Add 128 and clamp to valid range
+            for (&block) |*val| {
+                const shifted = val.* + 128;
+                val.* = std.math.clamp(shifted, 0, 255);
+            }
+            
+            // Store the decoded block
+            mcu_data[comp_idx][block_idx] = block;
         }
     }
 };
@@ -535,6 +552,11 @@ const BitReader = struct {
         return .{ .data = data };
     }
     
+    pub fn resetBitBuffer(self: *BitReader) void {
+        self.bit_buffer = 0;
+        self.bits_left = 0;
+    }
+    
     pub fn getBits(self: *BitReader, n: u5) !u16 {
         while (self.bits_left < n) {
             if (self.byte_pos >= self.data.len) return error.UnexpectedEndOfData;
@@ -542,12 +564,25 @@ const BitReader = struct {
             const byte = self.data[self.byte_pos];
             self.byte_pos += 1;
             
-            // Handle 0xFF byte stuffing
+            // Handle 0xFF byte stuffing - 0xFF 0x00 sequence represents actual 0xFF data
             if (byte == 0xFF) {
                 if (self.byte_pos >= self.data.len) return error.UnexpectedEndOfData;
                 const next = self.data[self.byte_pos];
-                if (next != 0x00) return error.InvalidByteStuffing;
-                self.byte_pos += 1;
+                if (next == 0x00) {
+                    // This is stuffed 0xFF - skip the 0x00 and use 0xFF
+                    self.byte_pos += 1;
+                    // byte remains 0xFF
+                } else if (next >= 0xD0 and next <= 0xD7) {
+                    // Restart marker - we've consumed the FF, now consume the marker byte
+                    self.byte_pos += 1;
+                    // Reset bit buffer state  
+                    self.bit_buffer = 0;
+                    self.bits_left = 0;
+                    continue;
+                } else {
+                    // This is another marker - should not happen in entropy-coded data
+                    return error.InvalidByteStuffing;
+                }
             }
             
             self.bit_buffer = (self.bit_buffer << 8) | byte;
@@ -576,14 +611,14 @@ const BitReader = struct {
 
 // Zigzag scan order for 8x8 blocks
 const ZIGZAG_ORDER = [64]u8{
-    0,  1,  8, 16,  9,  2,  3, 10,
-    17, 24, 32, 25, 18, 11,  4,  5,
-    12, 19, 26, 33, 40, 48, 41, 34,
-    27, 20, 13,  6,  7, 14, 21, 28,
-    35, 42, 49, 56, 57, 50, 43, 36,
-    29, 22, 15, 23, 30, 37, 44, 51,
-    58, 59, 52, 45, 38, 31, 39, 46,
-    53, 60, 61, 54, 47, 55, 62, 63
+    0,  1,  5,  6, 14, 15, 27, 28,
+    2,  4,  7, 13, 16, 26, 29, 42,
+    3,  8, 12, 17, 25, 30, 41, 43,
+    9, 11, 18, 24, 31, 40, 44, 53,
+   10, 19, 23, 32, 39, 45, 52, 54,
+   20, 22, 33, 38, 46, 51, 55, 60,
+   21, 34, 37, 47, 50, 56, 59, 61,
+   35, 36, 48, 49, 57, 58, 62, 63
 };
 
 // Parse JPEG file and decode image
@@ -646,8 +681,22 @@ pub fn decode(allocator: Allocator, data: []const u8) !JpegDecoder {
                 // Find the end of entropy-coded data (next marker)
                 var scan_end = pos;
                 while (scan_end < data.len - 1) {
-                    if (data[scan_end] == 0xFF and data[scan_end + 1] != 0x00) {
-                        break;
+                    if (data[scan_end] == 0xFF) {
+                        if (scan_end + 1 < data.len) {
+                            const next_byte = data[scan_end + 1];
+                            // 0xFF00 is byte stuffing, not a marker
+                            if (next_byte == 0x00) {
+                                scan_end += 2;
+                                continue;
+                            }
+                            // Check if it's a restart marker (can appear in entropy data)
+                            if (next_byte >= 0xD0 and next_byte <= 0xD7) {
+                                scan_end += 2;
+                                continue;
+                            }
+                            // Any other marker ends the entropy-coded segment
+                            break;
+                        }
                     }
                     scan_end += 1;
                 }
@@ -729,159 +778,184 @@ fn generateHuffmanTables(table: *HuffmanTable) !void {
     }
 }
 
-// IDCT constants
-const IDCT_SCALE = 2048; // 2^11 for fixed-point arithmetic
-const IDCT_HALF = 1024;  // IDCT_SCALE / 2
+// IDCT constants - based on IJG implementation
+const CONST_BITS = 13;
+const CONST_SCALE = 1 << CONST_BITS; // 8192
+const CONST_HALF = CONST_SCALE >> 1; // 4096
+const PASS1_BITS = 2;
+const PASS1_SCALE = 1 << PASS1_BITS; // 4
 
-// Fast integer IDCT based on Loeffler algorithm with overflow protection
+// Fixed-point constants for IDCT (scaled by CONST_SCALE = 8192)
+// These match the IJG reference implementation
+const FIX_1_414213562 = 11585; // sqrt(2) * CONST_SCALE
+const FIX_1_847759065 = 15137; // (sqrt(2) + sqrt(2) * cos(3π/8)) * CONST_SCALE  
+const FIX_1_082392200 = 8867;  // sqrt(2) * cos(3π/8) * CONST_SCALE
+const FIX_2_613125930 = 21407; // sqrt(2) * (1 + cos(3π/8)) * CONST_SCALE
+
+// Back to our working integer IDCT - focus on other issues
 fn idct8x8(block: *[64]i32) void {
-    var temp: [64]i64 = undefined; // Use i64 for intermediate calculations
+    // Pass 1: process columns
+    var temp: [64]i32 = undefined;
     
-    // Process rows
+    for (0..8) |i| {
+        const col_offset = i;
+        
+        // Check if all AC terms are zero
+        var ac_zero = true;
+        for (1..8) |row| {
+            if (block[row * 8 + col_offset] != 0) {
+                ac_zero = false;
+                break;
+            }
+        }
+        
+        if (ac_zero) {
+            // AC terms all zero; just propagate the DC term
+            const dc_val = block[col_offset] << PASS1_BITS; // Scale for pass 1
+            for (0..8) |row| {
+                temp[row * 8 + col_offset] = dc_val;
+            }
+        } else {
+            // General case: do the full IDCT
+            const tmp0 = block[0 * 8 + col_offset];
+            const tmp1 = block[2 * 8 + col_offset];
+            const tmp2 = block[4 * 8 + col_offset];
+            const tmp3 = block[6 * 8 + col_offset];
+            
+            const tmp10 = tmp0 + tmp2;
+            const tmp11 = tmp0 - tmp2;
+            const tmp13 = tmp1 + tmp3;
+            const tmp12 = ((tmp1 - tmp3) * FIX_1_414213562 + CONST_HALF) >> CONST_BITS;
+            
+            const tmp6 = tmp10 + tmp13;
+            const tmp5 = tmp10 - tmp13;
+            const tmp4 = tmp11 + tmp12;
+            const tmp7 = tmp11 - tmp12;
+            
+            // Odd part
+            const tmp1_odd = block[1 * 8 + col_offset];
+            const tmp2_odd = block[3 * 8 + col_offset];
+            const tmp3_odd = block[5 * 8 + col_offset];
+            const tmp0_odd = block[7 * 8 + col_offset];
+            
+            const z13 = tmp1_odd + tmp3_odd;
+            const z10 = tmp1_odd - tmp3_odd;
+            const z11 = tmp2_odd + tmp0_odd;
+            const z12 = tmp2_odd - tmp0_odd;
+            
+            const tmp7_odd = z11 + z13;
+            const tmp11_odd = ((z11 - z13) * FIX_1_414213562 + CONST_HALF) >> CONST_BITS;
+            
+            const z5 = ((z10 + z12) * FIX_1_847759065 + CONST_HALF) >> CONST_BITS;
+            const tmp10_odd = ((z12 * FIX_1_082392200 + CONST_HALF) >> CONST_BITS) - z5;
+            const tmp12_odd = z5 - ((z10 * FIX_2_613125930 + CONST_HALF) >> CONST_BITS);
+            
+            const tmp6_odd = tmp12_odd - tmp7_odd;
+            const tmp5_odd = tmp11_odd - tmp6_odd;
+            const tmp4_odd = tmp10_odd + tmp5_odd;
+            
+            // Final output for column (with pass 1 scaling)
+            temp[0 * 8 + col_offset] = (tmp6 + tmp7_odd) << PASS1_BITS;
+            temp[1 * 8 + col_offset] = (tmp4 + tmp6_odd) << PASS1_BITS;
+            temp[2 * 8 + col_offset] = (tmp5 + tmp5_odd) << PASS1_BITS;
+            temp[3 * 8 + col_offset] = (tmp7 + tmp4_odd) << PASS1_BITS;
+            temp[4 * 8 + col_offset] = (tmp7 - tmp4_odd) << PASS1_BITS;
+            temp[5 * 8 + col_offset] = (tmp5 - tmp5_odd) << PASS1_BITS;
+            temp[6 * 8 + col_offset] = (tmp4 - tmp6_odd) << PASS1_BITS;
+            temp[7 * 8 + col_offset] = (tmp6 - tmp7_odd) << PASS1_BITS;
+        }
+    }
+    
+    // Pass 2: process rows
     for (0..8) |i| {
         const row_offset = i * 8;
         
-        // Even part - convert to i64
-        const tmp0 = @as(i64, block[row_offset + 0]);
-        const tmp1 = @as(i64, block[row_offset + 2]);
-        const tmp2 = @as(i64, block[row_offset + 4]);
-        const tmp3 = @as(i64, block[row_offset + 6]);
+        // Check if all AC terms are zero
+        var ac_zero = true;
+        for (1..8) |col| {
+            if (temp[row_offset + col] != 0) {
+                ac_zero = false;
+                break;
+            }
+        }
         
-        const tmp10 = tmp0 + tmp2;
-        const tmp11 = tmp0 - tmp2;
-        const tmp13 = tmp1 + tmp3;
-        const tmp12 = mulFixedPoint64(tmp1 - tmp3, 1414) - tmp13; // 1.414213562
-        
-        const e0 = tmp10 + tmp13;
-        const e3 = tmp10 - tmp13;
-        const e1 = tmp11 + tmp12;
-        const e2 = tmp11 - tmp12;
-        
-        // Odd part - convert to i64
-        const tmp4 = @as(i64, block[row_offset + 1]);
-        const tmp5 = @as(i64, block[row_offset + 3]);
-        const tmp6 = @as(i64, block[row_offset + 5]);
-        const tmp7 = @as(i64, block[row_offset + 7]);
-        
-        const z13 = tmp6 + tmp5;
-        const z10 = tmp6 - tmp5;
-        const z11 = tmp4 + tmp7;
-        const z12 = tmp4 - tmp7;
-        
-        const tmp7_new = z11 + z13;
-        const tmp11_new = mulFixedPoint64(z11 - z13, 1414); // 1.414213562
-        
-        const z5 = mulFixedPoint64(z10 + z12, 1847); // 1.847759065
-        const tmp10_new = mulFixedPoint64(z12, 1082) - z5; // 1.082392200
-        const tmp12_new = mulFixedPoint64(z10, -2613) + z5; // -2.613125930
-        
-        const tmp6_new = tmp12_new - tmp7_new;
-        const tmp5_new = tmp11_new - tmp6_new;
-        const tmp4_new = tmp10_new + tmp5_new;
-        
-        // Final output
-        temp[row_offset + 0] = e0 + tmp7_new;
-        temp[row_offset + 7] = e0 - tmp7_new;
-        temp[row_offset + 1] = e1 + tmp6_new;
-        temp[row_offset + 6] = e1 - tmp6_new;
-        temp[row_offset + 2] = e2 + tmp5_new;
-        temp[row_offset + 5] = e2 - tmp5_new;
-        temp[row_offset + 4] = e3 + tmp4_new;
-        temp[row_offset + 3] = e3 - tmp4_new;
-    }
-    
-    // Process columns
-    for (0..8) |i| {
-        // Even part
-        const tmp0 = temp[i + 0 * 8];
-        const tmp1 = temp[i + 2 * 8];
-        const tmp2 = temp[i + 4 * 8];
-        const tmp3 = temp[i + 6 * 8];
-        
-        const tmp10 = tmp0 + tmp2;
-        const tmp11 = tmp0 - tmp2;
-        const tmp13 = tmp1 + tmp3;
-        const tmp12 = mulFixedPoint64(tmp1 - tmp3, 1414) - tmp13;
-        
-        const e0 = tmp10 + tmp13;
-        const e3 = tmp10 - tmp13;
-        const e1 = tmp11 + tmp12;
-        const e2 = tmp11 - tmp12;
-        
-        // Odd part
-        const tmp4 = temp[i + 1 * 8];
-        const tmp5 = temp[i + 3 * 8];
-        const tmp6 = temp[i + 5 * 8];
-        const tmp7 = temp[i + 7 * 8];
-        
-        const z13 = tmp6 + tmp5;
-        const z10 = tmp6 - tmp5;
-        const z11 = tmp4 + tmp7;
-        const z12 = tmp4 - tmp7;
-        
-        const tmp7_new = z11 + z13;
-        const tmp11_new = mulFixedPoint64(z11 - z13, 1414);
-        
-        const z5 = mulFixedPoint64(z10 + z12, 1847);
-        const tmp10_new = mulFixedPoint64(z12, 1082) - z5;
-        const tmp12_new = mulFixedPoint64(z10, -2613) + z5;
-        
-        const tmp6_new = tmp12_new - tmp7_new;
-        const tmp5_new = tmp11_new - tmp6_new;
-        const tmp4_new = tmp10_new + tmp5_new;
-        
-        // Final output with rounding and shifting
-        block[i + 0 * 8] = descale64(e0 + tmp7_new);
-        block[i + 7 * 8] = descale64(e0 - tmp7_new);
-        block[i + 1 * 8] = descale64(e1 + tmp6_new);
-        block[i + 6 * 8] = descale64(e1 - tmp6_new);
-        block[i + 2 * 8] = descale64(e2 + tmp5_new);
-        block[i + 5 * 8] = descale64(e2 - tmp5_new);
-        block[i + 4 * 8] = descale64(e3 + tmp4_new);
-        block[i + 3 * 8] = descale64(e3 - tmp4_new);
+        if (ac_zero) {
+            // AC terms all zero; just propagate the DC term  
+            const dc_val = (temp[row_offset] + 16) >> 5; // Match the scaling in full IDCT
+            const clamped = std.math.clamp(dc_val, -128, 127);
+            for (0..8) |col| {
+                block[row_offset + col] = clamped;
+            }
+        } else {
+            // General case: do the full IDCT
+            const tmp0 = temp[row_offset + 0];
+            const tmp1 = temp[row_offset + 2];
+            const tmp2 = temp[row_offset + 4];
+            const tmp3 = temp[row_offset + 6];
+            
+            const tmp10 = tmp0 + tmp2;
+            const tmp11 = tmp0 - tmp2;
+            const tmp13 = tmp1 + tmp3;
+            const tmp12 = ((tmp1 - tmp3) * FIX_1_414213562 + CONST_HALF) >> CONST_BITS;
+            
+            const tmp6 = tmp10 + tmp13;
+            const tmp5 = tmp10 - tmp13;
+            const tmp4 = tmp11 + tmp12;
+            const tmp7 = tmp11 - tmp12;
+            
+            // Odd part
+            const tmp1_odd = temp[row_offset + 1];
+            const tmp2_odd = temp[row_offset + 3];
+            const tmp3_odd = temp[row_offset + 5];
+            const tmp0_odd = temp[row_offset + 7];
+            
+            const z13 = tmp1_odd + tmp3_odd;
+            const z10 = tmp1_odd - tmp3_odd;
+            const z11 = tmp2_odd + tmp0_odd;
+            const z12 = tmp2_odd - tmp0_odd;
+            
+            const tmp7_odd = z11 + z13;
+            const tmp11_odd = ((z11 - z13) * FIX_1_414213562 + CONST_HALF) >> CONST_BITS;
+            
+            const z5 = ((z10 + z12) * FIX_1_847759065 + CONST_HALF) >> CONST_BITS;
+            const tmp10_odd = ((z12 * FIX_1_082392200 + CONST_HALF) >> CONST_BITS) - z5;
+            const tmp12_odd = z5 - ((z10 * FIX_2_613125930 + CONST_HALF) >> CONST_BITS);
+            
+            const tmp6_odd = tmp12_odd - tmp7_odd;
+            const tmp5_odd = tmp11_odd - tmp6_odd;
+            const tmp4_odd = tmp10_odd + tmp5_odd;
+            
+            // Final output with original scaling but corrected constants
+            block[row_offset + 0] = std.math.clamp((tmp6 + tmp7_odd + 16) >> 5, -128, 127);
+            block[row_offset + 1] = std.math.clamp((tmp4 + tmp6_odd + 16) >> 5, -128, 127);
+            block[row_offset + 2] = std.math.clamp((tmp5 + tmp5_odd + 16) >> 5, -128, 127);
+            block[row_offset + 3] = std.math.clamp((tmp7 + tmp4_odd + 16) >> 5, -128, 127);
+            block[row_offset + 4] = std.math.clamp((tmp7 - tmp4_odd + 16) >> 5, -128, 127);
+            block[row_offset + 5] = std.math.clamp((tmp5 - tmp5_odd + 16) >> 5, -128, 127);
+            block[row_offset + 6] = std.math.clamp((tmp4 - tmp6_odd + 16) >> 5, -128, 127);
+            block[row_offset + 7] = std.math.clamp((tmp6 - tmp7_odd + 16) >> 5, -128, 127);
+        }
     }
 }
 
-// Fixed-point multiplication with rounding
-fn mulFixedPoint(a: i32, b: i32) i32 {
-    return @divTrunc(a * b + IDCT_HALF, IDCT_SCALE);
-}
-
-// 64-bit fixed-point multiplication with rounding
-fn mulFixedPoint64(a: i64, b: i64) i64 {
-    return @divTrunc(a * b + IDCT_HALF, IDCT_SCALE);
-}
-
-// Descale and clamp to valid range
-fn descale(x: i32) i32 {
-    const shifted = @divTrunc(x + 8, 16); // Round and shift by 4 bits
-    return shifted;
-}
-
-// 64-bit descale and clamp to valid range
-fn descale64(x: i64) i32 {
-    const shifted = @divTrunc(x + 8, 16); // Round and shift by 4 bits
-    return @intCast(std.math.clamp(shifted, -2048, 2047)); // Clamp to prevent overflow
-}
 
 // YCbCr to RGB conversion
 fn ycbcrToRgb(y: i32, cb: i32, cr: i32) Rgb {
-    // Convert from JPEG YCbCr to RGB
-    // Y is in range [0, 255]
-    // Cb and Cr are in range [-128, 127] after level shift
-    const y_shifted = y;
-    const cb_shifted = cb - 128;
-    const cr_shifted = cr - 128;
+    // Convert from JPEG YCbCr to RGB using ITU-R BT.601 standard
+    // Y, Cb, Cr are all in range [0, 255] after level shift
+    const y_f = @as(f32, @floatFromInt(y));
+    const cb_f = @as(f32, @floatFromInt(cb)) - 128.0;  // Center around 0
+    const cr_f = @as(f32, @floatFromInt(cr)) - 128.0;  // Center around 0
     
-    // Fixed-point conversion (scaled by 256)
-    const r = y_shifted + ((cr_shifted * 359) >> 8); // 1.402 * 256 = 359
-    const g = y_shifted - ((cb_shifted * 88) >> 8) - ((cr_shifted * 183) >> 8); // 0.344 * 256 = 88, 0.714 * 256 = 183
-    const b = y_shifted + ((cb_shifted * 454) >> 8); // 1.772 * 256 = 454
+    // Standard ITU-R BT.601 conversion
+    const r_f = y_f + 1.402 * cr_f;
+    const g_f = y_f - 0.344136 * cb_f - 0.714136 * cr_f;
+    const b_f = y_f + 1.772 * cb_f;
     
     return Rgb{
-        .r = clampU8(r),
-        .g = clampU8(g),
-        .b = clampU8(b),
+        .r = clampU8(@intFromFloat(@round(r_f))),
+        .g = clampU8(@intFromFloat(@round(g_f))),
+        .b = clampU8(@intFromFloat(@round(b_f))),
     };
 }
 
@@ -892,21 +966,33 @@ fn clampU8(value: i32) u8 {
     return @intCast(value);
 }
 
-// Upsample chroma component for 4:2:0 subsampling
-fn upsampleChroma420(input: []const [64]i32, output: *[256]i32, h_blocks: u4, v_blocks: u4) void {
-    // For 4:2:0, input is typically 1 block (8x8), output should be 16x16
+// Upsample chroma component for 4:2:0 subsampling using JPEG standard box filter
+fn upsampleChroma420(input: []const [64]i32, output: *[256]i32, h_blocks: u4, v_blocks: u4, max_h: u4, max_v: u4) void {
+    // For 4:2:0, input is typically 1 block (8x8), output should be max_h*8 x max_v*8
     assert(h_blocks == 1 and v_blocks == 1);
     assert(input.len == 1);
     
     const src_block = &input[0];
+    const dst_width = @as(usize, max_h) * 8;
+    const dst_height = @as(usize, max_v) * 8;
     
-    // Upsample from 8x8 to 16x16 using nearest neighbor
-    for (0..16) |dst_y| {
-        for (0..16) |dst_x| {
-            const src_y = dst_y / 2; // Map to source coordinate
-            const src_x = dst_x / 2;
-            const src_idx = src_y * 8 + src_x;
-            const dst_idx = dst_y * 16 + dst_x;
+    // Box filter upsampling (pixel duplication) - JPEG standard approach
+    // Each 8x8 chroma block gets upsampled to 16x16 luma resolution
+    for (0..dst_height) |dst_y| {
+        for (0..dst_width) |dst_x| {
+            // Map destination coordinates to source coordinates
+            // For 4:2:0, each chroma sample covers a 2x2 area of luma samples
+            const src_y = dst_y / (dst_height / 8);
+            const src_x = dst_x / (dst_width / 8);
+            
+            // Clamp to ensure we don't go out of bounds
+            const src_y_clamped = @min(src_y, 7);
+            const src_x_clamped = @min(src_x, 7);
+            
+            const src_idx = @as(usize, src_y_clamped) * 8 + @as(usize, src_x_clamped);
+            const dst_idx = dst_y * dst_width + dst_x;
+            
+            // Simple pixel duplication (box filter)
             output[dst_idx] = src_block[src_idx];
         }
     }
@@ -961,11 +1047,15 @@ fn convertMCUToPixels(comptime T: type,
             cr_component.h_sampling == 1 and cr_component.v_sampling == 1) {
             
             // 4:2:0 subsampling - need to upsample chroma
-            var cb_upsampled: [256]i32 = undefined; // 16x16
-            var cr_upsampled: [256]i32 = undefined; // 16x16
+            const mcu_pixels = @as(usize, max_h) * 8 * @as(usize, max_v) * 8;
+            var cb_upsampled: [256]i32 = undefined; // Should be mcu_pixels but need compile-time size
+            var cr_upsampled: [256]i32 = undefined; // Should be mcu_pixels but need compile-time size
             
-            upsampleChroma420(mcu_data[1], &cb_upsampled, cb_component.h_sampling, cb_component.v_sampling);
-            upsampleChroma420(mcu_data[2], &cr_upsampled, cr_component.h_sampling, cr_component.v_sampling);
+            // Verify we don't exceed our fixed size
+            assert(mcu_pixels <= 256);
+            
+            upsampleChroma420(mcu_data[1], &cb_upsampled, cb_component.h_sampling, cb_component.v_sampling, max_h, max_v);
+            upsampleChroma420(mcu_data[2], &cr_upsampled, cr_component.h_sampling, cr_component.v_sampling, max_h, max_v);
             
             // Now convert Y (2x2 blocks) with upsampled chroma
             var y_block_idx: usize = 0;
@@ -975,14 +1065,16 @@ fn convertMCUToPixels(comptime T: type,
                     
                     for (0..8) |y| {
                         for (0..8) |x| {
-                            const px = mcu_x * 16 + block_h * 8 + x; // MCU is 16x16 for 4:2:0
-                            const py = mcu_y * 16 + block_v * 8 + y;
+                            const mcu_width_pixels = @as(usize, max_h) * 8;
+                            const mcu_height_pixels = @as(usize, max_v) * 8;
+                            const px = mcu_x * mcu_width_pixels + block_h * 8 + x;
+                            const py = mcu_y * mcu_height_pixels + block_v * 8 + y;
                             
                             if (px < img_width and py < img_height) {
                                 const y_val = y_block[y * 8 + x];
                                 
                                 // Get corresponding chroma values (upsampled)
-                                const chroma_idx = (block_v * 8 + y) * 16 + (block_h * 8 + x);
+                                const chroma_idx = (block_v * 8 + y) * mcu_width_pixels + (block_h * 8 + x);
                                 const cb_val = cb_upsampled[chroma_idx];
                                 const cr_val = cr_upsampled[chroma_idx];
                                 
@@ -1089,7 +1181,8 @@ pub fn loadJpeg(comptime T: type, allocator: Allocator, file_path: []const u8) !
             if (decoder.restart_interval > 0 and mcu_count % decoder.restart_interval == 0 and mcu_count < total_mcus) {
                 // Reset DC values
                 dc_values = [_]i64{0} ** 4;
-                // TODO: Find and skip restart marker in bit stream
+                // Reset bit buffer to handle restart marker
+                decoder.bit_reader.resetBitBuffer();
             }
         }
     }
