@@ -48,9 +48,7 @@ pub fn Image(comptime T: type) type {
 
         /// Constructs an image of rows and cols size allocating its own memory.
         pub fn initAlloc(allocator: std.mem.Allocator, rows: usize, cols: usize) !Image(T) {
-            var array: std.ArrayList(T) = .init(allocator);
-            try array.resize(rows * cols);
-            return .{ .rows = rows, .cols = cols, .data = try array.toOwnedSlice(), .stride = cols };
+            return .{ .rows = rows, .cols = cols, .data = try allocator.alloc(T, rows * cols), .stride = cols };
         }
 
         /// Constructs an image of `rows` and `cols` size by reinterpreting the provided slice of `bytes` as a slice of `T`.
