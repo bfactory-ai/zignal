@@ -519,52 +519,95 @@ pub fn inflate(allocator: Allocator, compressed_data: []const u8) ![]u8 {
     return result.toOwnedSlice();
 }
 
-// Static Huffman tables for deflate compression (RFC 1951)
+// Build static Huffman encoder tables by computing codes from lengths
 const StaticHuffmanTables = struct {
-    // Literal/length codes (0-287)
-    // 0-143: 8 bits (00110000 - 10111111)
-    // 144-255: 9 bits (110010000 - 111111111) 
-    // 256-279: 7 bits (0000000 - 0010111)
-    // 280-287: 8 bits (11000000 - 11000111)
     const LiteralCode = struct {
         code: u16,
         bits: u8,
     };
 
+    // Build literal codes from the same lengths as decoder uses
     const literal_codes = blk: {
+        @setEvalBranchQuota(10000); // Increase quota for comptime evaluation
         var codes: [288]LiteralCode = undefined;
         
-        // 0-143: 8 bits, codes 00110000 - 10111111
-        for (0..144) |i| {
-            codes[i] = LiteralCode{ .code = @intCast(0x30 + i), .bits = 8 };
+        // Count codes of each length
+        var length_count = [_]u16{0} ** 16;
+        for (FIXED_LITERAL_LENGTHS) |len| {
+            if (len > 0) length_count[len] += 1;
         }
-        
-        // 144-255: 9 bits, codes 110010000 - 111111111
-        for (144..256) |i| {
-            codes[i] = LiteralCode{ .code = @intCast(0x190 + (i - 144)), .bits = 9 };
+
+        // Calculate first code for each length
+        var code: u16 = 0;
+        var first_code = [_]u16{0} ** 16;
+        for (1..16) |bits| {
+            code = (code + length_count[bits - 1]) << 1;
+            first_code[bits] = code;
         }
-        
-        // 256-279: 7 bits, codes 0000000 - 0010111
-        for (256..280) |i| {
-            codes[i] = LiteralCode{ .code = @intCast(i - 256), .bits = 7 };
-        }
-        
-        // 280-287: 8 bits, codes 11000000 - 11000111
-        for (280..288) |i| {
-            codes[i] = LiteralCode{ .code = @intCast(0xC0 + (i - 280)), .bits = 8 };
+
+        // Assign codes to symbols
+        for (FIXED_LITERAL_LENGTHS, 0..) |len, symbol| {
+            if (len == 0) {
+                codes[symbol] = LiteralCode{ .code = 0, .bits = 0 };
+                continue;
+            }
+
+            const sym_code = first_code[len];
+            first_code[len] += 1;
+            
+            // Reverse the bits for proper deflate bit order
+            const reversed_code = reverseBits(sym_code, @intCast(len));
+            codes[symbol] = LiteralCode{ .code = reversed_code, .bits = @intCast(len) };
         }
         
         break :blk codes;
     };
 
-    // Distance codes (0-31): all 5 bits
+    // Distance codes built from fixed lengths like decoder
     const distance_codes = blk: {
         var codes: [32]LiteralCode = undefined;
-        for (0..32) |i| {
-            codes[i] = LiteralCode{ .code = @intCast(i), .bits = 5 };
+        
+        // Count codes of each length  
+        var length_count = [_]u16{0} ** 16;
+        for (FIXED_DISTANCE_LENGTHS) |len| {
+            if (len > 0) length_count[len] += 1;
         }
+
+        // Calculate first code for each length
+        var code: u16 = 0;
+        var first_code = [_]u16{0} ** 16;
+        for (1..16) |bits| {
+            code = (code + length_count[bits - 1]) << 1;
+            first_code[bits] = code;
+        }
+
+        // Assign codes to symbols (same logic as literals)
+        for (FIXED_DISTANCE_LENGTHS, 0..) |len, symbol| {
+            if (len == 0) {
+                codes[symbol] = LiteralCode{ .code = 0, .bits = 0 };
+                continue;
+            }
+
+            const sym_code = first_code[len];
+            first_code[len] += 1;
+            
+            // Reverse the bits for proper deflate bit order
+            const reversed_code = reverseBits(sym_code, @intCast(len));
+            codes[symbol] = LiteralCode{ .code = reversed_code, .bits = @intCast(len) };
+        }
+        
         break :blk codes;
     };
+
+    fn reverseBits(code: u16, length: u8) u16 {
+        var result: u16 = 0;
+        var temp = code;
+        for (0..length) |_| {
+            result = (result << 1) | (temp & 1);
+            temp >>= 1;
+        }
+        return result;
+    }
 };
 
 // Length and distance encoding tables for LZ77
@@ -744,6 +787,7 @@ pub const DeflateEncoder = struct {
             if (distance >= dc.base) {
                 const next_base = if (dc.code == 29) 32769 else distance_codes[dc.code + 1].base;
                 if (distance < next_base) {
+                    // Distance code found
                     return .{
                         .code = dc.code,
                         .extra_bits = dc.extra_bits,
@@ -811,6 +855,8 @@ pub const DeflateEncoder = struct {
                 const length_info = getLengthCode(match.length);
                 const distance_info = getDistanceCode(match.distance);
                 
+                // LZ77 match found
+                
                 // Write length code (using static Huffman table)
                 const length_huffman = StaticHuffmanTables.literal_codes[length_info.code];
                 try writer.writeBits(length_huffman.code, length_huffman.bits);
@@ -821,7 +867,8 @@ pub const DeflateEncoder = struct {
                 }
                 
                 // Write distance code (5 bits, values 0-31)
-                try writer.writeBits(distance_info.code, 5);
+                const distance_huffman = StaticHuffmanTables.distance_codes[distance_info.code];
+                try writer.writeBits(distance_huffman.code, distance_huffman.bits);
                 
                 // Write extra distance bits if needed
                 if (distance_info.extra_bits > 0) {
@@ -1065,15 +1112,8 @@ test "compression methods comparison" {
     const uncompressed = try deflate(allocator, test_data, .uncompressed);
     defer allocator.free(uncompressed);
 
-    // Test static Huffman method (for now, just ensure it doesn't crash)
-    // Note: Static Huffman may have issues with decoder compatibility currently
-    const static_huffman = deflate(allocator, test_data, .static_huffman) catch |err| switch (err) {
-        else => {
-            // If static Huffman fails, that's expected for now
-            std.testing.allocator.free(try deflate(allocator, test_data, .uncompressed));
-            return;
-        }
-    };
+    // Test static Huffman method
+    const static_huffman = try deflate(allocator, test_data, .static_huffman);
     defer allocator.free(static_huffman);
 
     // Both should decompress back to the original
@@ -1081,13 +1121,49 @@ test "compression methods comparison" {
     defer allocator.free(decompressed1);
     try std.testing.expectEqualSlices(u8, test_data, decompressed1);
 
-    // Note: Static Huffman decompression may fail due to decoder compatibility issues
-    if (inflate(allocator, static_huffman)) |decompressed2| {
-        defer allocator.free(decompressed2);
-        try std.testing.expectEqualSlices(u8, test_data, decompressed2);
-    } else |_| {
-        // Expected failure for now due to static Huffman decoder issues
+    // Test static Huffman decompression
+    const decompressed2 = try inflate(allocator, static_huffman);
+    defer allocator.free(decompressed2);
+    try std.testing.expectEqualSlices(u8, test_data, decompressed2);
+    
+    // Static Huffman should typically produce smaller output than uncompressed
+    // (Not always true for very small data, but good to check)
+    std.log.info("Uncompressed size: {}, Static Huffman size: {}", .{ uncompressed.len, static_huffman.len });
+}
+
+test "static huffman zlib round trip" {
+    const allocator = std.testing.allocator;
+
+    // Simple test data
+    const test_data = "Test data for static Huffman compression";
+
+    // Test zlib with static Huffman
+    const compressed = try zlibCompress(allocator, test_data, .static_huffman);
+    defer allocator.free(compressed);
+
+    const decompressed = try zlibDecompress(allocator, compressed);
+    defer allocator.free(decompressed);
+
+    try std.testing.expectEqualSlices(u8, test_data, decompressed);
+}
+
+test "static huffman with pattern data" {
+    const allocator = std.testing.allocator;
+
+    // Test data that mimics grayscale patterns that might cause issues
+    var test_data: [256]u8 = undefined;
+    for (0..256) |i| {
+        test_data[i] = @intCast(i % 256);
     }
+
+    // Test zlib with static Huffman
+    const compressed = try zlibCompress(allocator, &test_data, .static_huffman);
+    defer allocator.free(compressed);
+
+    const decompressed = try zlibDecompress(allocator, compressed);
+    defer allocator.free(decompressed);
+
+    try std.testing.expectEqualSlices(u8, &test_data, decompressed);
 }
 
 test "zlib round-trip compression" {
