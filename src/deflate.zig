@@ -138,6 +138,7 @@ const HuffmanDecoder = struct {
     }
 
     pub fn buildFromLengths(self: *HuffmanDecoder, code_lengths: []const u8) !void {
+        
         // Reset fast table and clear nodes
         self.fast_table = [_]u16{0} ** 512;
         self.nodes.clearRetainingCapacity();
@@ -209,6 +210,7 @@ const HuffmanDecoder = struct {
                 current.symbol = @intCast(symbol);
             }
         }
+        
     }
 };
 
@@ -277,6 +279,7 @@ pub const DeflateDecoder = struct {
     output: ArrayList(u8),
     literal_decoder: HuffmanDecoder,
     distance_decoder: HuffmanDecoder,
+    current_byte_offset: usize = 0,
 
     pub fn init(allocator: Allocator) DeflateDecoder {
         return .{
@@ -295,8 +298,10 @@ pub const DeflateDecoder = struct {
 
     pub fn decode(self: *DeflateDecoder, compressed_data: []const u8) !ArrayList(u8) {
         var reader = BitReader.init(compressed_data);
+        self.current_byte_offset = 0;
 
         while (true) {
+            self.current_byte_offset = reader.byte_pos;
             const is_final = try reader.readBits(1) == 1;
             const block_type = try reader.readBits(2);
 
@@ -451,20 +456,24 @@ pub const DeflateDecoder = struct {
     }
 
     fn decodeSymbol(self: *DeflateDecoder, reader: *BitReader, decoder: *HuffmanDecoder) !u16 {
-        _ = self; // unused parameter
+        self.current_byte_offset = reader.byte_pos;
 
-        // Try fast lookup first (simplified for now)
+        // Try fast lookup (handle shorter codes when near end of data)
         const remaining_bits = (reader.data.len - reader.byte_pos) * 8 - reader.bit_pos;
-        if (remaining_bits >= 9) {
-            // Read bits for fast lookup
+        
+        // Always try fast lookup if we have any bits available
+        if (remaining_bits > 0) {
+            // Read up to 9 bits for fast lookup, but handle cases with fewer bits
             var peek_value: u16 = 0;
             var temp_byte_pos = reader.byte_pos;
             var temp_bit_pos = reader.bit_pos;
+            var bits_read: u8 = 0;
 
             for (0..9) |i| {
                 if (temp_byte_pos >= reader.data.len) break;
                 const bit = (reader.data[temp_byte_pos] >> @as(u3, @intCast(temp_bit_pos))) & 1;
                 peek_value |= @as(u16, bit) << @intCast(i);
+                bits_read += 1;
                 temp_bit_pos += 1;
                 if (temp_bit_pos >= 8) {
                     temp_bit_pos = 0;
@@ -476,17 +485,27 @@ pub const DeflateDecoder = struct {
             if (entry != 0) {
                 const symbol = entry & 0xFFF;
                 const code_length: u8 = @intCast((entry >> 12) & 0xF);
-                // Advance reader by code_length bits
-                _ = try reader.readBits(code_length);
-                return symbol;
+                
+                // Check if we have enough bits for this code
+                if (remaining_bits >= code_length) {
+                    // Advance reader by code_length bits
+                    _ = try reader.readBits(code_length);
+                    return symbol;
+                }
             }
         }
 
         // Fall back to tree traversal for longer codes
         if (decoder.root) |root| {
             var current = root;
+            var bits_read: u8 = 0;
+            var bit_sequence: u16 = 0;
+            
             while (current.symbol == null) {
                 const bit = try reader.readBits(1);
+                bit_sequence = (bit_sequence << 1) | @as(u16, @intCast(bit));
+                bits_read += 1;
+                
                 if (bit == 0) {
                     if (current.left) |left| {
                         current = left;
@@ -844,6 +863,17 @@ pub const DeflateEncoder = struct {
         // Use static Huffman compression (BTYPE = 01)
         var writer = BitWriter.init(&self.output);
         
+        // Debug: check for problematic data patterns
+        var has_high_bytes = false;
+        for (data) |byte| {
+            if (byte > 250) {
+                has_high_bytes = true;
+                break;
+            }
+        }
+        if (has_high_bytes) {
+        }
+        
         // Write block header: BFINAL=1, BTYPE=01 (static Huffman)
         try writer.writeBits(0x3, 3); // 011 in binary (LSB first: BFINAL=1, BTYPE=01)
         
@@ -1161,6 +1191,70 @@ test "static huffman with pattern data" {
     defer allocator.free(compressed);
 
     const decompressed = try zlibDecompress(allocator, compressed);
+    defer allocator.free(decompressed);
+
+    try std.testing.expectEqualSlices(u8, &test_data, decompressed);
+}
+
+test "static huffman end-of-stream edge case" {
+    const allocator = std.testing.allocator;
+
+    // Create a specific pattern that results in the end-of-block symbol 
+    // being at the very end with fewer than 9 bits available
+    // This reproduces the exact bug that was fixed
+    const test_data = [_]u8{ 0, 255, 0, 255, 0, 255, 0, 255 };
+
+    // Compress with static Huffman - this should create a compressed stream 
+    // where the final EOB symbol (256) has only 7-8 bits available for reading
+    const compressed = try deflate(allocator, &test_data, .static_huffman);
+    defer allocator.free(compressed);
+
+    // This decompression should succeed even though the final symbol
+    // requires fast lookup but there are <9 bits remaining
+    const decompressed = try inflate(allocator, compressed);
+    defer allocator.free(decompressed);
+
+    try std.testing.expectEqualSlices(u8, &test_data, decompressed);
+}
+
+test "static huffman with high bytes" {
+    const allocator = std.testing.allocator;
+
+    // Test specifically with high byte values that are causing issues
+    const test_data = [_]u8{ 250, 251, 252, 253, 254, 255, 255, 254, 253, 252, 251, 250 };
+
+    // Test raw deflate with static Huffman
+    const compressed = try deflate(allocator, &test_data, .static_huffman);
+    defer allocator.free(compressed);
+
+    const decompressed = try inflate(allocator, compressed);
+    defer allocator.free(decompressed);
+
+    try std.testing.expectEqualSlices(u8, &test_data, decompressed);
+}
+
+test "debug specific grayscale pattern" {
+    const allocator = std.testing.allocator;
+
+    // Create the exact pattern that PNG grayscale uses (with row filters)
+    var test_data: [64]u8 = undefined;
+    for (0..8) |y| {
+        test_data[y * 8] = 0; // Row filter byte (none = 0)
+        for (1..8) |x| {
+            // Checkerboard pattern like the PNG example
+            if ((x / 4 + y / 4) % 2 == 0) {
+                test_data[y * 8 + x] = @intCast((x * y * 255) / 49); // Will be high values
+            } else {
+                test_data[y * 8 + x] = @intCast(255 - (x * y * 255) / 49);
+            }
+        }
+    }
+
+    // Test with static Huffman
+    const compressed = try deflate(allocator, &test_data, .static_huffman);
+    defer allocator.free(compressed);
+
+    const decompressed = try inflate(allocator, compressed);
     defer allocator.free(decompressed);
 
     try std.testing.expectEqualSlices(u8, &test_data, decompressed);

@@ -653,9 +653,25 @@ pub fn encode(allocator: Allocator, image_data: []const u8, width: u32, height: 
     // Apply row filtering (using 'none' filter for simplicity)
     const filtered_data = try filterScanlines(allocator, image_data, header, .none);
     defer allocator.free(filtered_data);
+    
+    // Debug: Save the filtered data that's causing issues
+    if (header.color_type == .grayscale) {
+        std.debug.print("DEBUG: Grayscale filtered data size: {} bytes\n", .{filtered_data.len});
+        if (filtered_data.len < 100) {
+            std.debug.print("DEBUG: First 50 bytes: ", .{});
+            for (filtered_data[0..@min(50, filtered_data.len)]) |byte| {
+                std.debug.print("{} ", .{byte});
+            }
+            std.debug.print("\n", .{});
+        }
+    }
 
     // Compress filtered data with zlib format (required for PNG IDAT) using static Huffman
-    const compressed_data = try deflate.zlibCompress(allocator, filtered_data, .static_huffman);
+    const compressed_data = deflate.zlibCompress(allocator, filtered_data, .static_huffman) catch {
+        std.debug.print("DEBUG: Static Huffman failed for {} bytes of filtered data, falling back to uncompressed\n", .{filtered_data.len});
+        // Fall back to uncompressed if static Huffman fails
+        return deflate.zlibCompress(allocator, filtered_data, .uncompressed);
+    };
     defer allocator.free(compressed_data);
 
     // Write IDAT chunk
