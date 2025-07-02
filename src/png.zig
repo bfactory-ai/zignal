@@ -315,7 +315,7 @@ pub fn decode(allocator: Allocator, png_data: []const u8) !PngImage {
 // Convert PNG image data to Zignal Image types
 pub fn toImage(allocator: Allocator, png_image: PngImage) !Image(u8) {
     // Decompress IDAT data
-    const decompressed = try deflate.inflate(allocator, png_image.idat_data.items);
+    const decompressed = try deflate.zlibDecompress(allocator, png_image.idat_data.items);
     defer allocator.free(decompressed);
 
     // Apply row defiltering
@@ -407,7 +407,7 @@ pub fn toImage(allocator: Allocator, png_image: PngImage) !Image(u8) {
 
 pub fn toRgbImage(allocator: Allocator, png_image: PngImage) !Image(Rgb) {
     // Decompress IDAT data
-    const decompressed = try deflate.inflate(allocator, png_image.idat_data.items);
+    const decompressed = try deflate.zlibDecompress(allocator, png_image.idat_data.items);
     defer allocator.free(decompressed);
 
     // Apply row defiltering
@@ -522,7 +522,7 @@ pub fn toRgbImage(allocator: Allocator, png_image: PngImage) !Image(Rgb) {
 
 pub fn toRgbaImage(allocator: Allocator, png_image: PngImage) !Image(Rgba) {
     // Decompress IDAT data
-    const decompressed = try deflate.inflate(allocator, png_image.idat_data.items);
+    const decompressed = try deflate.zlibDecompress(allocator, png_image.idat_data.items);
     defer allocator.free(decompressed);
 
     // Apply row defiltering
@@ -817,8 +817,8 @@ pub fn encode(allocator: Allocator, image_data: []const u8, width: u32, height: 
     const filtered_data = try filterScanlines(allocator, image_data, header, .none);
     defer allocator.free(filtered_data);
     
-    // Compress filtered data with deflate
-    const compressed_data = try deflate.deflate(allocator, filtered_data);
+    // Compress filtered data with zlib format (required for PNG IDAT)
+    const compressed_data = try deflate.zlibCompress(allocator, filtered_data);
     defer allocator.free(compressed_data);
     
     // Write IDAT chunk

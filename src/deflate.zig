@@ -547,6 +547,102 @@ pub fn deflate(allocator: Allocator, data: []const u8) ![]u8 {
     return result.toOwnedSlice();
 }
 
+// Adler-32 checksum implementation (required for zlib format)
+fn adler32(data: []const u8) u32 {
+    const MOD_ADLER: u32 = 65521;
+    var a: u32 = 1;
+    var b: u32 = 0;
+    
+    for (data) |byte| {
+        a = (a + byte) % MOD_ADLER;
+        b = (b + a) % MOD_ADLER;
+    }
+    
+    return (b << 16) | a;
+}
+
+// Compress data using zlib format (RFC 1950) - required for PNG IDAT chunks
+pub fn zlibCompress(allocator: Allocator, data: []const u8) ![]u8 {
+    // Generate raw DEFLATE data first
+    const deflate_data = try deflate(allocator, data);
+    defer allocator.free(deflate_data);
+    
+    // Calculate Adler-32 checksum of original data
+    const checksum = adler32(data);
+    
+    // Create zlib-wrapped result
+    var result = ArrayList(u8).init(allocator);
+    defer result.deinit();
+    
+    // zlib header (2 bytes)
+    // CMF: compression method (8) + compression info (7 for 32K window)
+    const cmf: u8 = 0x78; // 8 + (7 << 4) = 120 = 0x78
+    // FLG: fcheck will be calculated to make (cmf*256 + flg) % 31 == 0
+    var flg: u8 = 0x00; // No preset dictionary, default compression level
+    
+    // Calculate FCHECK to make header valid
+    const header_base = (@as(u16, cmf) << 8) | flg;
+    const fcheck = 31 - (header_base % 31);
+    if (fcheck < 31) {
+        flg |= @intCast(fcheck);
+    }
+    
+    try result.append(cmf);
+    try result.append(flg);
+    
+    // DEFLATE data
+    try result.appendSlice(deflate_data);
+    
+    // Adler-32 checksum (4 bytes, big-endian)
+    try result.append(@intCast((checksum >> 24) & 0xFF));
+    try result.append(@intCast((checksum >> 16) & 0xFF));
+    try result.append(@intCast((checksum >> 8) & 0xFF));
+    try result.append(@intCast(checksum & 0xFF));
+    
+    return result.toOwnedSlice();
+}
+
+// Decompress zlib format data (RFC 1950)
+pub fn zlibDecompress(allocator: Allocator, zlib_data: []const u8) ![]u8 {
+    if (zlib_data.len < 6) { // header(2) + data(at least 1) + checksum(4)
+        return error.InvalidZlibData;
+    }
+    
+    // Verify zlib header
+    const cmf = zlib_data[0];
+    const flg = zlib_data[1];
+    const header_check = (@as(u16, cmf) << 8) | flg;
+    
+    if ((cmf & 0x0F) != 8) { // compression method must be 8 (deflate)
+        return error.UnsupportedCompressionMethod;
+    }
+    
+    if ((header_check % 31) != 0) {
+        return error.InvalidZlibHeader;
+    }
+    
+    if ((flg & 0x20) != 0) { // FDICT bit - preset dictionary not supported
+        return error.PresetDictionaryNotSupported;
+    }
+    
+    // Extract DEFLATE data (skip header and checksum)
+    const deflate_data = zlib_data[2..zlib_data.len - 4];
+    
+    // Decompress DEFLATE data
+    const decompressed = try inflate(allocator, deflate_data);
+    
+    // Verify Adler-32 checksum
+    const expected_checksum = std.mem.readInt(u32, zlib_data[zlib_data.len - 4..][0..4], .big);
+    const actual_checksum = adler32(decompressed);
+    
+    if (actual_checksum != expected_checksum) {
+        allocator.free(decompressed);
+        return error.ChecksumMismatch;
+    }
+    
+    return decompressed;
+}
+
 // Basic test
 test "deflate decompression" {
     // This is a basic test to ensure the module compiles
@@ -598,6 +694,44 @@ test "deflate endianness" {
     
     try std.testing.expectEqual(@as(u16, 4), len); // "Test" is 4 bytes
     try std.testing.expectEqual(@as(u16, 0xFFFB), nlen); // ~4 = 0xFFFB
+}
+
+test "zlib round-trip compression" {
+    const allocator = std.testing.allocator;
+    
+    // Test data
+    const original_data = "Hello, zlib compression test for PNG!";
+    
+    // Compress with zlib format
+    const compressed = try zlibCompress(allocator, original_data);
+    defer allocator.free(compressed);
+    
+    // Decompress
+    const decompressed = try zlibDecompress(allocator, compressed);
+    defer allocator.free(decompressed);
+    
+    // Verify
+    try std.testing.expectEqualSlices(u8, original_data, decompressed);
+}
+
+test "zlib header validation" {
+    const allocator = std.testing.allocator;
+    
+    // Test with valid header
+    const test_data = "Test";
+    const compressed = try zlibCompress(allocator, test_data);
+    defer allocator.free(compressed);
+    
+    // Check zlib header format
+    try std.testing.expect(compressed.len >= 6); // header(2) + data + checksum(4)
+    
+    // CMF byte: compression method should be 8
+    const cmf = compressed[0];
+    try std.testing.expectEqual(@as(u8, 8), cmf & 0x0F);
+    
+    // Header should be valid (divisible by 31)
+    const header_check = (@as(u16, compressed[0]) << 8) | compressed[1];
+    try std.testing.expectEqual(@as(u16, 0), header_check % 31);
 }
 
 test "deflate invalid distance check" {
