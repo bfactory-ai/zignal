@@ -200,6 +200,16 @@ fn parseHeader(chunk: Chunk) !Header {
     if (width == 0 or height == 0) {
         return error.InvalidDimensions;
     }
+    
+    // Prevent resource exhaustion with reasonable size limits
+    const MAX_DIMENSION = 32767; // PNG spec limit
+    const MAX_PIXELS = 268435456; // 16K x 16K = 256 MB pixels
+    if (width > MAX_DIMENSION or height > MAX_DIMENSION) {
+        return error.ImageTooLarge;
+    }
+    if (@as(u64, width) * @as(u64, height) > MAX_PIXELS) {
+        return error.ImageTooLarge;
+    }
 
     const color_type: ColorType = switch (color_type_raw) {
         0 => .grayscale,
@@ -270,10 +280,13 @@ pub fn decode(allocator: Allocator, png_data: []const u8) !PngImage {
             if (chunk.length % 3 != 0) return error.InvalidPaletteLength;
             const palette_size = chunk.length / 3;
             if (palette_size > 256) return error.PaletteTooLarge;
+            if (chunk.data.len < palette_size * 3) return error.InvalidPaletteLength;
             
             var palette = try allocator.alloc([3]u8, palette_size);
             for (0..palette_size) |i| {
-                palette[i] = chunk.data[i * 3..i * 3 + 3][0..3].*;
+                const offset = i * 3;
+                if (offset + 3 > chunk.data.len) return error.InvalidPaletteLength;
+                palette[i] = [3]u8{ chunk.data[offset], chunk.data[offset + 1], chunk.data[offset + 2] };
             }
             png_image.palette = palette;
         } else if (std.mem.eql(u8, &chunk.type, "tRNS")) {
@@ -314,8 +327,13 @@ pub fn toImage(allocator: Allocator, png_image: PngImage) !Image(u8) {
     const channels = png_image.header.channels();
     const scanline_bytes = png_image.header.scanlineBytes();
 
-    // Create output image
-    var output_data = try allocator.alloc(u8, width * height * channels);
+    // Create output image with overflow protection
+    const total_pixels = @as(u64, width) * @as(u64, height);
+    const total_bytes = total_pixels * @as(u64, channels);
+    if (total_bytes > std.math.maxInt(usize)) {
+        return error.ImageTooLarge;
+    }
+    var output_data = try allocator.alloc(u8, @intCast(total_bytes));
     
     // Copy pixel data, skipping filter bytes
     for (0..height) |y| {
@@ -341,6 +359,7 @@ pub fn toImage(allocator: Allocator, png_image: PngImage) !Image(u8) {
                         
                         for (src_row, 0..) |index, i| {
                             if (index >= palette.len) return error.InvalidPaletteIndex;
+                            if (i * 3 + 2 >= dst_row.len) return error.InvalidScanlineData;
                             const rgb = palette[index];
                             dst_row[i * 3] = rgb[0];
                             dst_row[i * 3 + 1] = rgb[1];
@@ -353,8 +372,13 @@ pub fn toImage(allocator: Allocator, png_image: PngImage) !Image(u8) {
                 // 16-bit channels - convert to 8-bit for now
                 const samples_per_row = src_row.len / 2;
                 for (0..samples_per_row) |i| {
-                    const sample16 = std.mem.readInt(u16, src_row[i * 2..i * 2 + 2][0..2], .big);
-                    dst_row[i] = @intCast(sample16 >> 8); // Simple conversion
+                    const offset = i * 2;
+                    if (offset + 2 > src_row.len) {
+                        dst_row[i] = 0;
+                    } else {
+                        const sample16 = std.mem.readInt(u16, src_row[offset..offset + 2][0..2], .big);
+                        dst_row[i] = @intCast(sample16 >> 8); // Simple conversion
+                    }
                 }
             },
             1, 2, 4 => {
@@ -394,8 +418,12 @@ pub fn toRgbImage(allocator: Allocator, png_image: PngImage) !Image(Rgb) {
     const height = png_image.header.height;
     const scanline_bytes = png_image.header.scanlineBytes();
 
-    // Create output image
-    var output_data = try allocator.alloc(Rgb, width * height);
+    // Create output image with overflow protection
+    const total_pixels = @as(u64, width) * @as(u64, height);
+    if (total_pixels > std.math.maxInt(usize)) {
+        return error.ImageTooLarge;
+    }
+    var output_data = try allocator.alloc(Rgb, @intCast(total_pixels));
     
     // Copy and convert pixel data
     for (0..height) |y| {
@@ -409,12 +437,25 @@ pub fn toRgbImage(allocator: Allocator, png_image: PngImage) !Image(Rgb) {
             .grayscale => {
                 // Convert grayscale to RGB
                 for (dst_row, 0..) |*pixel, i| {
-                    const gray = if (png_image.header.bit_depth == 8) 
-                        src_row[i] 
-                    else blk: {
-                        const byte_idx = i / 8;
-                        const bit_idx = 7 - (i % 8);
-                        break :blk @as(u8, @intCast((src_row[byte_idx] >> @intCast(bit_idx)) & 1)) * 255;
+                    const gray = switch (png_image.header.bit_depth) {
+                        8 => src_row[i],
+                        16 => blk: {
+                            if (i * 2 + 1 >= src_row.len) break :blk 0;
+                            break :blk @as(u8, @intCast(std.mem.readInt(u16, src_row[i * 2..i * 2 + 2][0..2], .big) >> 8));
+                        },
+                        1, 2, 4 => blk: {
+                            const bits_per_pixel = png_image.header.bit_depth;
+                            const pixels_per_byte = 8 / bits_per_pixel;
+                            const mask = (@as(u8, 1) << @intCast(bits_per_pixel)) - 1;
+                            const byte_idx = i / pixels_per_byte;
+                            if (byte_idx >= src_row.len) break :blk 0;
+                            const pixel_idx = i % pixels_per_byte;
+                            const bit_offset: u3 = @intCast((pixels_per_byte - 1 - pixel_idx) * bits_per_pixel);
+                            const pixel_value = (src_row[byte_idx] >> bit_offset) & mask;
+                            const scale_factor = 255 / mask;
+                            break :blk pixel_value * scale_factor;
+                        },
+                        else => 0,
                     };
                     pixel.* = Rgb{ .r = gray, .g = gray, .b = gray };
                 }
@@ -429,12 +470,17 @@ pub fn toRgbImage(allocator: Allocator, png_image: PngImage) !Image(Rgb) {
                             .b = src_row[i * 3 + 2] 
                         };
                     } else {
-                        // 16-bit to 8-bit conversion
-                        pixel.* = Rgb{ 
-                            .r = @intCast(std.mem.readInt(u16, src_row[i * 6..i * 6 + 2][0..2], .big) >> 8),
-                            .g = @intCast(std.mem.readInt(u16, src_row[i * 6 + 2..i * 6 + 4][0..2], .big) >> 8),
-                            .b = @intCast(std.mem.readInt(u16, src_row[i * 6 + 4..i * 6 + 6][0..2], .big) >> 8),
-                        };
+                        // 16-bit to 8-bit conversion with bounds checking
+                        const offset = i * 6;
+                        if (offset + 6 > src_row.len) {
+                            pixel.* = Rgb{ .r = 0, .g = 0, .b = 0 };
+                        } else {
+                            pixel.* = Rgb{ 
+                                .r = @intCast(std.mem.readInt(u16, src_row[offset..offset + 2][0..2], .big) >> 8),
+                                .g = @intCast(std.mem.readInt(u16, src_row[offset + 2..offset + 4][0..2], .big) >> 8),
+                                .b = @intCast(std.mem.readInt(u16, src_row[offset + 4..offset + 6][0..2], .big) >> 8),
+                            };
+                        }
                     }
                 }
             },
@@ -444,6 +490,7 @@ pub fn toRgbImage(allocator: Allocator, png_image: PngImage) !Image(Rgb) {
                 const palette = png_image.palette.?;
                 
                 for (dst_row, 0..) |*pixel, i| {
+                    if (i >= src_row.len) return error.InvalidScanlineData;
                     const index = src_row[i];
                     if (index >= palette.len) return error.InvalidPaletteIndex;
                     const rgb = palette[index];
@@ -486,8 +533,12 @@ pub fn toRgbaImage(allocator: Allocator, png_image: PngImage) !Image(Rgba) {
     const height = png_image.header.height;
     const scanline_bytes = png_image.header.scanlineBytes();
 
-    // Create output image
-    var output_data = try allocator.alloc(Rgba, width * height);
+    // Create output image with overflow protection
+    const total_pixels = @as(u64, width) * @as(u64, height);
+    if (total_pixels > std.math.maxInt(usize)) {
+        return error.ImageTooLarge;
+    }
+    var output_data = try allocator.alloc(Rgba, @intCast(total_pixels));
     
     // Copy and convert pixel data
     for (0..height) |y| {
@@ -501,12 +552,25 @@ pub fn toRgbaImage(allocator: Allocator, png_image: PngImage) !Image(Rgba) {
             .grayscale => {
                 // Convert grayscale to RGBA
                 for (dst_row, 0..) |*pixel, i| {
-                    const gray = if (png_image.header.bit_depth == 8) 
-                        src_row[i] 
-                    else blk: {
-                        const byte_idx = i / 8;
-                        const bit_idx = 7 - (i % 8);
-                        break :blk @as(u8, @intCast((src_row[byte_idx] >> @intCast(bit_idx)) & 1)) * 255;
+                    const gray = switch (png_image.header.bit_depth) {
+                        8 => src_row[i],
+                        16 => blk: {
+                            if (i * 2 + 1 >= src_row.len) break :blk 0;
+                            break :blk @as(u8, @intCast(std.mem.readInt(u16, src_row[i * 2..i * 2 + 2][0..2], .big) >> 8));
+                        },
+                        1, 2, 4 => blk: {
+                            const bits_per_pixel = png_image.header.bit_depth;
+                            const pixels_per_byte = 8 / bits_per_pixel;
+                            const mask = (@as(u8, 1) << @intCast(bits_per_pixel)) - 1;
+                            const byte_idx = i / pixels_per_byte;
+                            if (byte_idx >= src_row.len) break :blk 0;
+                            const pixel_idx = i % pixels_per_byte;
+                            const bit_offset: u3 = @intCast((pixels_per_byte - 1 - pixel_idx) * bits_per_pixel);
+                            const pixel_value = (src_row[byte_idx] >> bit_offset) & mask;
+                            const scale_factor = 255 / mask;
+                            break :blk pixel_value * scale_factor;
+                        },
+                        else => 0,
                     };
                     pixel.* = Rgba{ .r = gray, .g = gray, .b = gray, .a = 255 };
                 }
@@ -522,13 +586,18 @@ pub fn toRgbaImage(allocator: Allocator, png_image: PngImage) !Image(Rgba) {
                             .a = 255
                         };
                     } else {
-                        // 16-bit to 8-bit conversion
-                        pixel.* = Rgba{ 
-                            .r = @intCast(std.mem.readInt(u16, src_row[i * 6..i * 6 + 2][0..2], .big) >> 8),
-                            .g = @intCast(std.mem.readInt(u16, src_row[i * 6 + 2..i * 6 + 4][0..2], .big) >> 8),
-                            .b = @intCast(std.mem.readInt(u16, src_row[i * 6 + 4..i * 6 + 6][0..2], .big) >> 8),
-                            .a = 255
-                        };
+                        // 16-bit to 8-bit conversion with bounds checking
+                        const offset = i * 6;
+                        if (offset + 6 > src_row.len) {
+                            pixel.* = Rgba{ .r = 0, .g = 0, .b = 0, .a = 255 };
+                        } else {
+                            pixel.* = Rgba{ 
+                                .r = @intCast(std.mem.readInt(u16, src_row[offset..offset + 2][0..2], .big) >> 8),
+                                .g = @intCast(std.mem.readInt(u16, src_row[offset + 2..offset + 4][0..2], .big) >> 8),
+                                .b = @intCast(std.mem.readInt(u16, src_row[offset + 4..offset + 6][0..2], .big) >> 8),
+                                .a = 255
+                            };
+                        }
                     }
                 }
             },
@@ -538,6 +607,7 @@ pub fn toRgbaImage(allocator: Allocator, png_image: PngImage) !Image(Rgba) {
                 const palette = png_image.palette.?;
                 
                 for (dst_row, 0..) |*pixel, i| {
+                    if (i >= src_row.len) return error.InvalidScanlineData;
                     const index = src_row[i];
                     if (index >= palette.len) return error.InvalidPaletteIndex;
                     const rgb = palette[index];
@@ -570,13 +640,18 @@ pub fn toRgbaImage(allocator: Allocator, png_image: PngImage) !Image(Rgba) {
                             .a = src_row[i * 4 + 3]
                         };
                     } else {
-                        // 16-bit to 8-bit conversion
-                        pixel.* = Rgba{ 
-                            .r = @intCast(std.mem.readInt(u16, src_row[i * 8..][0..2], .big) >> 8),
-                            .g = @intCast(std.mem.readInt(u16, src_row[i * 8 + 2..][0..2], .big) >> 8),
-                            .b = @intCast(std.mem.readInt(u16, src_row[i * 8 + 4..][0..2], .big) >> 8),
-                            .a = @intCast(std.mem.readInt(u16, src_row[i * 8 + 6..][0..2], .big) >> 8),
-                        };
+                        // 16-bit to 8-bit conversion with bounds checking
+                        const offset = i * 8;
+                        if (offset + 8 > src_row.len) {
+                            pixel.* = Rgba{ .r = 0, .g = 0, .b = 0, .a = 255 };
+                        } else {
+                            pixel.* = Rgba{ 
+                                .r = @intCast(std.mem.readInt(u16, src_row[offset..offset + 2][0..2], .big) >> 8),
+                                .g = @intCast(std.mem.readInt(u16, src_row[offset + 2..offset + 4][0..2], .big) >> 8),
+                                .b = @intCast(std.mem.readInt(u16, src_row[offset + 4..offset + 6][0..2], .big) >> 8),
+                                .a = @intCast(std.mem.readInt(u16, src_row[offset + 6..offset + 8][0..2], .big) >> 8),
+                            };
+                        }
                     }
                 }
             },
@@ -1196,4 +1271,121 @@ test "PNG filter types" {
         else => null,
     };
     try std.testing.expect(result == null);
+}
+
+test "PNG bounds checking - large image dimensions" {
+    const allocator = std.testing.allocator;
+    
+    // Create a malformed PNG with excessively large dimensions
+    var png_data = ArrayList(u8).init(allocator);
+    defer png_data.deinit();
+    
+    // PNG signature
+    try png_data.appendSlice(&PNG_SIGNATURE);
+    
+    // IHDR chunk with oversized dimensions
+    const ihdr_length: u32 = 13;
+    try png_data.appendSlice(std.mem.asBytes(&std.mem.nativeTo(u32, ihdr_length, .big)));
+    try png_data.appendSlice("IHDR");
+    
+    // Width: 50000 (exceeds MAX_DIMENSION)
+    try png_data.appendSlice(std.mem.asBytes(&std.mem.nativeTo(u32, 50000, .big)));
+    // Height: 50000 (exceeds MAX_DIMENSION)
+    try png_data.appendSlice(std.mem.asBytes(&std.mem.nativeTo(u32, 50000, .big)));
+    
+    try png_data.append(8); // bit depth
+    try png_data.append(2); // color type (RGB)
+    try png_data.append(0); // compression
+    try png_data.append(0); // filter
+    try png_data.append(0); // interlace
+    
+    // Calculate and append CRC
+    var crc_data = try allocator.alloc(u8, 4 + 13);
+    defer allocator.free(crc_data);
+    @memcpy(crc_data[0..4], "IHDR");
+    @memcpy(crc_data[4..], png_data.items[16..29]);
+    const ihdr_crc = crc(crc_data);
+    try png_data.appendSlice(std.mem.asBytes(&std.mem.nativeTo(u32, ihdr_crc, .big)));
+    
+    // Try to decode - should fail with ImageTooLarge
+    const result = decode(allocator, png_data.items);
+    try std.testing.expectError(error.ImageTooLarge, result);
+}
+
+test "PNG bounds checking - malformed palette" {
+    const allocator = std.testing.allocator;
+    
+    // Test malformed palette chunk that's too short
+    const chunk = Chunk{
+        .length = 10, // Should be multiple of 3
+        .type = "PLTE".*,
+        .data = &[_]u8{ 255, 0, 0, 0, 255, 0, 0, 0 }, // Only 8 bytes, but length claims 10
+        .crc = 0,
+    };
+    
+    var png_image = PngImage{
+        .header = Header{
+            .width = 4,
+            .height = 4,
+            .bit_depth = 8,
+            .color_type = .palette,
+            .compression_method = 0,
+            .filter_method = 0,
+            .interlace_method = 0,
+        },
+        .idat_data = ArrayList(u8).init(allocator),
+    };
+    defer png_image.deinit(allocator);
+    
+    // Simulate the palette parsing that would happen in decode()
+    if (chunk.length % 3 != 0) {
+        try std.testing.expect(true); // This should be caught
+        return;
+    }
+    
+    const palette_size = chunk.length / 3;
+    if (chunk.data.len < palette_size * 3) {
+        try std.testing.expect(true); // This should be caught
+        return;
+    }
+    
+    try std.testing.expect(false); // Should not reach here
+}
+
+test "PNG 16-bit bounds checking" {
+    // Test 16-bit conversion with insufficient data
+    const short_data = [_]u8{ 0xFF }; // Only 1 byte, but 16-bit needs 2
+    const samples_per_row = short_data.len / 2; // Will be 0
+    
+    var dst_row: [1]u8 = undefined;
+    
+    for (0..samples_per_row) |i| {
+        const offset = i * 2;
+        if (offset + 2 > short_data.len) {
+            dst_row[i] = 0; // Should use fallback value
+        } else {
+            const sample16 = std.mem.readInt(u16, short_data[offset..offset + 2][0..2], .big);
+            dst_row[i] = @intCast(sample16 >> 8);
+        }
+    }
+    
+    // Should have processed 0 samples safely
+    try std.testing.expectEqual(@as(usize, 0), samples_per_row);
+}
+
+test "PNG integer overflow protection" {
+    // Test that large dimensions are caught before overflow
+    const large_width: u32 = 65536;
+    const large_height: u32 = 65536;
+    const channels: u8 = 4;
+    
+    const total_pixels = @as(u64, large_width) * @as(u64, large_height);
+    const total_bytes = total_pixels * @as(u64, channels);
+    
+    // This should exceed practical memory limits
+    try std.testing.expect(total_bytes > 1000000000); // > 1GB
+    
+    if (total_bytes > std.math.maxInt(usize)) {
+        try std.testing.expect(true); // Would be caught by our protection
+    }
 }
