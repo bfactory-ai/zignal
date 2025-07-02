@@ -313,8 +313,12 @@ pub fn decode(allocator: Allocator, png_data: []const u8) !PngImage {
     return png_image;
 }
 
-// Convert PNG image data to Zignal Image types
-pub fn toImage(allocator: Allocator, png_image: PngImage) !Image(u8) {
+// Convert PNG image data to its most natural Zignal Image type
+fn toNativeImage(allocator: Allocator, png_image: PngImage) !union(enum) {
+    grayscale: Image(u8),
+    rgb: Image(Rgb),
+    rgba: Image(Rgba),
+} {
     // Decompress IDAT data
     const decompressed = try deflate.zlibDecompress(allocator, png_image.idat_data.items);
     defer allocator.free(decompressed);
@@ -322,127 +326,33 @@ pub fn toImage(allocator: Allocator, png_image: PngImage) !Image(u8) {
     // Apply row defiltering
     try defilterScanlines(decompressed, png_image.header);
 
-    // Convert to Image format
-    const width = png_image.header.width;
-    const height = png_image.header.height;
-    const channels = png_image.header.channels();
-    const scanline_bytes = png_image.header.scanlineBytes();
-
-    // Create output image with overflow protection
-    const total_pixels = @as(u64, width) * @as(u64, height);
-    const total_bytes = total_pixels * @as(u64, channels);
-    if (total_bytes > std.math.maxInt(usize)) {
-        return error.ImageTooLarge;
-    }
-    var output_data = try allocator.alloc(u8, @intCast(total_bytes));
-
-    // Copy pixel data, skipping filter bytes
-    for (0..height) |y| {
-        const src_row_start = y * (scanline_bytes + 1) + 1; // +1 to skip filter byte
-        const dst_row_start = y * width * channels;
-
-        const src_row = decompressed[src_row_start .. src_row_start + scanline_bytes];
-        const dst_row = output_data[dst_row_start .. dst_row_start + width * channels];
-
-        // Handle different bit depths and color types
-        switch (png_image.header.bit_depth) {
-            8 => {
-                // Simple case: 8-bit channels
-                switch (png_image.header.color_type) {
-                    .grayscale => @memcpy(dst_row, src_row),
-                    .rgb => @memcpy(dst_row, src_row),
-                    .rgba => @memcpy(dst_row, src_row),
-                    .grayscale_alpha => @memcpy(dst_row, src_row),
-                    .palette => {
-                        // Convert palette indices to RGB
-                        if (png_image.palette == null) return error.MissingPalette;
-                        const palette = png_image.palette.?;
-
-                        for (src_row, 0..) |index, i| {
-                            if (index >= palette.len) return error.InvalidPaletteIndex;
-                            if (i * 3 + 2 >= dst_row.len) return error.InvalidScanlineData;
-                            const rgb = palette[index];
-                            dst_row[i * 3] = rgb[0];
-                            dst_row[i * 3 + 1] = rgb[1];
-                            dst_row[i * 3 + 2] = rgb[2];
-                        }
-                    },
-                }
-            },
-            16 => {
-                // 16-bit channels - convert to 8-bit for now
-                const samples_per_row = src_row.len / 2;
-                for (0..samples_per_row) |i| {
-                    const offset = i * 2;
-                    if (offset + 2 > src_row.len) {
-                        dst_row[i] = 0;
-                    } else {
-                        const sample16 = std.mem.readInt(u16, src_row[offset .. offset + 2][0..2], .big);
-                        dst_row[i] = @intCast(sample16 >> 8); // Simple conversion
-                    }
-                }
-            },
-            1, 2, 4 => {
-                // Sub-byte bit depths - unpack bits
-                const bits_per_pixel = png_image.header.bit_depth;
-                const pixels_per_byte = 8 / bits_per_pixel;
-                const mask = (@as(u8, 1) << @intCast(bits_per_pixel)) - 1;
-
-                for (0..width) |x| {
-                    const byte_index = x / pixels_per_byte;
-                    const pixel_index = x % pixels_per_byte;
-                    const bit_offset: u3 = @intCast((pixels_per_byte - 1 - pixel_index) * bits_per_pixel);
-                    const pixel_value = (src_row[byte_index] >> bit_offset) & mask;
-
-                    // Scale to 8-bit
-                    const scale_factor = 255 / mask;
-                    dst_row[x] = pixel_value * scale_factor;
-                }
-            },
-            else => return error.UnsupportedBitDepth,
-        }
-    }
-
-    return Image(u8).init(height, width, output_data);
-}
-
-pub fn toRgbImage(allocator: Allocator, png_image: PngImage) !Image(Rgb) {
-    // Decompress IDAT data
-    const decompressed = try deflate.zlibDecompress(allocator, png_image.idat_data.items);
-    defer allocator.free(decompressed);
-
-    // Apply row defiltering
-    try defilterScanlines(decompressed, png_image.header);
-
-    // Convert to RGB Image format
     const width = png_image.header.width;
     const height = png_image.header.height;
     const scanline_bytes = png_image.header.scanlineBytes();
 
-    // Create output image with overflow protection
-    const total_pixels = @as(u64, width) * @as(u64, height);
-    if (total_pixels > std.math.maxInt(usize)) {
-        return error.ImageTooLarge;
-    }
-    var output_data = try allocator.alloc(Rgb, @intCast(total_pixels));
+    // Determine native format and convert accordingly
+    switch (png_image.header.color_type) {
+        .grayscale, .grayscale_alpha => {
+            // Create grayscale image
+            const total_pixels = @as(u64, width) * @as(u64, height);
+            if (total_pixels > std.math.maxInt(usize)) {
+                return error.ImageTooLarge;
+            }
+            var output_data = try allocator.alloc(u8, @intCast(total_pixels));
 
-    // Copy and convert pixel data
-    for (0..height) |y| {
-        const src_row_start = y * (scanline_bytes + 1) + 1; // +1 to skip filter byte
-        const dst_row_start = y * width;
+            for (0..height) |y| {
+                const src_row_start = y * (scanline_bytes + 1) + 1;
+                const dst_row_start = y * width;
+                const src_row = decompressed[src_row_start .. src_row_start + scanline_bytes];
+                const dst_row = output_data[dst_row_start .. dst_row_start + width];
 
-        const src_row = decompressed[src_row_start .. src_row_start + scanline_bytes];
-        const dst_row = output_data[dst_row_start .. dst_row_start + width];
-
-        switch (png_image.header.color_type) {
-            .grayscale => {
-                // Convert grayscale to RGB
                 for (dst_row, 0..) |*pixel, i| {
                     const gray = switch (png_image.header.bit_depth) {
-                        8 => src_row[i],
+                        8 => if (png_image.header.color_type == .grayscale_alpha) src_row[i * 2] else src_row[i],
                         16 => blk: {
-                            if (i * 2 + 1 >= src_row.len) break :blk 0;
-                            break :blk @as(u8, @intCast(std.mem.readInt(u16, src_row[i * 2 .. i * 2 + 2][0..2], .big) >> 8));
+                            const offset = if (png_image.header.color_type == .grayscale_alpha) i * 4 else i * 2;
+                            if (offset + 1 >= src_row.len) break :blk 0;
+                            break :blk @as(u8, @intCast(std.mem.readInt(u16, src_row[offset .. offset + 2][0..2], .big) >> 8));
                         },
                         1, 2, 4 => blk: {
                             const bits_per_pixel = png_image.header.bit_depth;
@@ -458,16 +368,31 @@ pub fn toRgbImage(allocator: Allocator, png_image: PngImage) !Image(Rgb) {
                         },
                         else => 0,
                     };
-                    pixel.* = Rgb{ .r = gray, .g = gray, .b = gray };
+                    pixel.* = gray;
                 }
-            },
-            .rgb => {
-                // Direct RGB copy
+            }
+
+            return .{ .grayscale = Image(u8).init(height, width, output_data) };
+        },
+        .rgb => {
+            // Create RGB image
+            const total_pixels = @as(u64, width) * @as(u64, height);
+            if (total_pixels > std.math.maxInt(usize)) {
+                return error.ImageTooLarge;
+            }
+            var output_data = try allocator.alloc(Rgb, @intCast(total_pixels));
+
+            for (0..height) |y| {
+                const src_row_start = y * (scanline_bytes + 1) + 1;
+                const dst_row_start = y * width;
+                const src_row = decompressed[src_row_start .. src_row_start + scanline_bytes];
+                const dst_row = output_data[dst_row_start .. dst_row_start + width];
+
                 for (dst_row, 0..) |*pixel, i| {
                     if (png_image.header.bit_depth == 8) {
                         pixel.* = Rgb{ .r = src_row[i * 3], .g = src_row[i * 3 + 1], .b = src_row[i * 3 + 2] };
                     } else {
-                        // 16-bit to 8-bit conversion with bounds checking
+                        // 16-bit to 8-bit conversion
                         const offset = i * 6;
                         if (offset + 6 > src_row.len) {
                             pixel.* = Rgb{ .r = 0, .g = 0, .b = 0 };
@@ -480,145 +405,29 @@ pub fn toRgbImage(allocator: Allocator, png_image: PngImage) !Image(Rgb) {
                         }
                     }
                 }
-            },
-            .palette => {
-                // Convert palette to RGB
-                if (png_image.palette == null) return error.MissingPalette;
-                const palette = png_image.palette.?;
+            }
 
-                for (dst_row, 0..) |*pixel, i| {
-                    if (i >= src_row.len) return error.InvalidScanlineData;
-                    const index = src_row[i];
-                    if (index >= palette.len) return error.InvalidPaletteIndex;
-                    const rgb = palette[index];
-                    pixel.* = Rgb{ .r = rgb[0], .g = rgb[1], .b = rgb[2] };
-                }
-            },
-            .grayscale_alpha => {
-                // Convert grayscale+alpha to RGB (ignore alpha for now)
-                for (dst_row, 0..) |*pixel, i| {
-                    const gray = src_row[i * 2];
-                    pixel.* = Rgb{ .r = gray, .g = gray, .b = gray };
-                }
-            },
-            .rgba => {
-                // Convert RGBA to RGB (ignore alpha)
-                for (dst_row, 0..) |*pixel, i| {
-                    pixel.* = Rgb{ .r = src_row[i * 4], .g = src_row[i * 4 + 1], .b = src_row[i * 4 + 2] };
-                }
-            },
-        }
-    }
+            return .{ .rgb = Image(Rgb).init(height, width, output_data) };
+        },
+        .rgba => {
+            // Create RGBA image
+            const total_pixels = @as(u64, width) * @as(u64, height);
+            if (total_pixels > std.math.maxInt(usize)) {
+                return error.ImageTooLarge;
+            }
+            var output_data = try allocator.alloc(Rgba, @intCast(total_pixels));
 
-    return Image(Rgb).init(height, width, output_data);
-}
+            for (0..height) |y| {
+                const src_row_start = y * (scanline_bytes + 1) + 1;
+                const dst_row_start = y * width;
+                const src_row = decompressed[src_row_start .. src_row_start + scanline_bytes];
+                const dst_row = output_data[dst_row_start .. dst_row_start + width];
 
-pub fn toRgbaImage(allocator: Allocator, png_image: PngImage) !Image(Rgba) {
-    // Decompress IDAT data
-    const decompressed = try deflate.zlibDecompress(allocator, png_image.idat_data.items);
-    defer allocator.free(decompressed);
-
-    // Apply row defiltering
-    try defilterScanlines(decompressed, png_image.header);
-
-    // Convert to RGBA Image format
-    const width = png_image.header.width;
-    const height = png_image.header.height;
-    const scanline_bytes = png_image.header.scanlineBytes();
-
-    // Create output image with overflow protection
-    const total_pixels = @as(u64, width) * @as(u64, height);
-    if (total_pixels > std.math.maxInt(usize)) {
-        return error.ImageTooLarge;
-    }
-    var output_data = try allocator.alloc(Rgba, @intCast(total_pixels));
-
-    // Copy and convert pixel data
-    for (0..height) |y| {
-        const src_row_start = y * (scanline_bytes + 1) + 1; // +1 to skip filter byte
-        const dst_row_start = y * width;
-
-        const src_row = decompressed[src_row_start .. src_row_start + scanline_bytes];
-        const dst_row = output_data[dst_row_start .. dst_row_start + width];
-
-        switch (png_image.header.color_type) {
-            .grayscale => {
-                // Convert grayscale to RGBA
-                for (dst_row, 0..) |*pixel, i| {
-                    const gray = switch (png_image.header.bit_depth) {
-                        8 => src_row[i],
-                        16 => blk: {
-                            if (i * 2 + 1 >= src_row.len) break :blk 0;
-                            break :blk @as(u8, @intCast(std.mem.readInt(u16, src_row[i * 2 .. i * 2 + 2][0..2], .big) >> 8));
-                        },
-                        1, 2, 4 => blk: {
-                            const bits_per_pixel = png_image.header.bit_depth;
-                            const pixels_per_byte = 8 / bits_per_pixel;
-                            const mask = (@as(u8, 1) << @intCast(bits_per_pixel)) - 1;
-                            const byte_idx = i / pixels_per_byte;
-                            if (byte_idx >= src_row.len) break :blk 0;
-                            const pixel_idx = i % pixels_per_byte;
-                            const bit_offset: u3 = @intCast((pixels_per_byte - 1 - pixel_idx) * bits_per_pixel);
-                            const pixel_value = (src_row[byte_idx] >> bit_offset) & mask;
-                            const scale_factor = 255 / mask;
-                            break :blk pixel_value * scale_factor;
-                        },
-                        else => 0,
-                    };
-                    pixel.* = Rgba{ .r = gray, .g = gray, .b = gray, .a = 255 };
-                }
-            },
-            .rgb => {
-                // Convert RGB to RGBA
-                for (dst_row, 0..) |*pixel, i| {
-                    if (png_image.header.bit_depth == 8) {
-                        pixel.* = Rgba{ .r = src_row[i * 3], .g = src_row[i * 3 + 1], .b = src_row[i * 3 + 2], .a = 255 };
-                    } else {
-                        // 16-bit to 8-bit conversion with bounds checking
-                        const offset = i * 6;
-                        if (offset + 6 > src_row.len) {
-                            pixel.* = Rgba{ .r = 0, .g = 0, .b = 0, .a = 255 };
-                        } else {
-                            pixel.* = Rgba{ .r = @intCast(std.mem.readInt(u16, src_row[offset .. offset + 2][0..2], .big) >> 8), .g = @intCast(std.mem.readInt(u16, src_row[offset + 2 .. offset + 4][0..2], .big) >> 8), .b = @intCast(std.mem.readInt(u16, src_row[offset + 4 .. offset + 6][0..2], .big) >> 8), .a = 255 };
-                        }
-                    }
-                }
-            },
-            .palette => {
-                // Convert palette to RGBA
-                if (png_image.palette == null) return error.MissingPalette;
-                const palette = png_image.palette.?;
-
-                for (dst_row, 0..) |*pixel, i| {
-                    if (i >= src_row.len) return error.InvalidScanlineData;
-                    const index = src_row[i];
-                    if (index >= palette.len) return error.InvalidPaletteIndex;
-                    const rgb = palette[index];
-
-                    // Check for transparency
-                    const alpha = if (png_image.transparency) |trans|
-                        if (index < trans.len) trans[index] else 255
-                    else
-                        255;
-
-                    pixel.* = Rgba{ .r = rgb[0], .g = rgb[1], .b = rgb[2], .a = alpha };
-                }
-            },
-            .grayscale_alpha => {
-                // Convert grayscale+alpha to RGBA
-                for (dst_row, 0..) |*pixel, i| {
-                    const gray = src_row[i * 2];
-                    const alpha = src_row[i * 2 + 1];
-                    pixel.* = Rgba{ .r = gray, .g = gray, .b = gray, .a = alpha };
-                }
-            },
-            .rgba => {
-                // Direct RGBA copy
                 for (dst_row, 0..) |*pixel, i| {
                     if (png_image.header.bit_depth == 8) {
                         pixel.* = Rgba{ .r = src_row[i * 4], .g = src_row[i * 4 + 1], .b = src_row[i * 4 + 2], .a = src_row[i * 4 + 3] };
                     } else {
-                        // 16-bit to 8-bit conversion with bounds checking
+                        // 16-bit to 8-bit conversion
                         const offset = i * 8;
                         if (offset + 8 > src_row.len) {
                             pixel.* = Rgba{ .r = 0, .g = 0, .b = 0, .a = 255 };
@@ -632,11 +441,39 @@ pub fn toRgbaImage(allocator: Allocator, png_image: PngImage) !Image(Rgba) {
                         }
                     }
                 }
-            },
-        }
-    }
+            }
 
-    return Image(Rgba).init(height, width, output_data);
+            return .{ .rgba = Image(Rgba).init(height, width, output_data) };
+        },
+        .palette => {
+            // Convert palette to RGB
+            if (png_image.palette == null) return error.MissingPalette;
+            const palette = png_image.palette.?;
+
+            const total_pixels = @as(u64, width) * @as(u64, height);
+            if (total_pixels > std.math.maxInt(usize)) {
+                return error.ImageTooLarge;
+            }
+            var output_data = try allocator.alloc(Rgb, @intCast(total_pixels));
+
+            for (0..height) |y| {
+                const src_row_start = y * (scanline_bytes + 1) + 1;
+                const dst_row_start = y * width;
+                const src_row = decompressed[src_row_start .. src_row_start + scanline_bytes];
+                const dst_row = output_data[dst_row_start .. dst_row_start + width];
+
+                for (dst_row, 0..) |*pixel, i| {
+                    if (i >= src_row.len) return error.InvalidScanlineData;
+                    const index = src_row[i];
+                    if (index >= palette.len) return error.InvalidPaletteIndex;
+                    const rgb = palette[index];
+                    pixel.* = Rgb{ .r = rgb[0], .g = rgb[1], .b = rgb[2] };
+                }
+            }
+
+            return .{ .rgb = Image(Rgb).init(height, width, output_data) };
+        },
+    }
 }
 
 // High-level API functions
@@ -650,27 +487,34 @@ pub fn loadPng(comptime T: type, allocator: Allocator, file_path: []const u8) !I
     defer png_image.deinit(allocator);
 
     // Load the PNG in its native format first, then convert to requested type
-    switch (png_image.header.color_type) {
-        .grayscale, .grayscale_alpha => {
-            var native_image = try toImage(allocator, png_image);
-            defer native_image.deinit(allocator);
-            return native_image.convert(T, allocator);
+    var native_image = try toNativeImage(allocator, png_image);
+    switch (native_image) {
+        .grayscale => |*img| {
+            if (T == u8) {
+                // Direct return without conversion - no extra allocation needed
+                return img.*;
+            } else {
+                defer img.deinit(allocator);
+                return img.convert(T, allocator);
+            }
         },
-        .rgb => {
-            var native_image = try toRgbImage(allocator, png_image);
-            defer native_image.deinit(allocator);
-            return native_image.convert(T, allocator);
+        .rgb => |*img| {
+            if (T == Rgb) {
+                // Direct return without conversion - no extra allocation needed
+                return img.*;
+            } else {
+                defer img.deinit(allocator);
+                return img.convert(T, allocator);
+            }
         },
-        .rgba => {
-            var native_image = try toRgbaImage(allocator, png_image);
-            defer native_image.deinit(allocator);
-            return native_image.convert(T, allocator);
-        },
-        .palette => {
-            // Palette images are converted to RGB internally, then converted to target type
-            var native_image = try toRgbImage(allocator, png_image);
-            defer native_image.deinit(allocator);
-            return native_image.convert(T, allocator);
+        .rgba => |*img| {
+            if (T == Rgba) {
+                // Direct return without conversion - no extra allocation needed
+                return img.*;
+            } else {
+                defer img.deinit(allocator);
+                return img.convert(T, allocator);
+            }
         },
     }
 }
@@ -1074,7 +918,11 @@ test "PNG round-trip encoding/decoding" {
     try std.testing.expectEqual(@as(u8, 8), decoded_png.header.bit_depth);
 
     // Convert back to Image
-    var decoded_image = try toRgbImage(allocator, decoded_png);
+    const native_image = try toNativeImage(allocator, decoded_png);
+    var decoded_image = switch (native_image) {
+        .rgb => |*img| img.*,
+        else => @panic("Expected RGB image for this test"),
+    };
     defer decoded_image.deinit(allocator);
 
     // Verify dimensions
