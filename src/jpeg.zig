@@ -357,8 +357,8 @@ pub const JpegDecoder = struct {
         return error.InvalidHuffmanCode;
     }
 
-    // Decode DC coefficient
-    pub fn decodeDC(self: *JpegDecoder, table: *const HuffmanTable, prev_dc: i32) !i32 {
+    // Decode DC coefficient with overflow protection
+    pub fn decodeDC(self: *JpegDecoder, table: *const HuffmanTable, prev_dc: i64) !i64 {
         const symbol = try self.decodeHuffmanSymbol(table);
         
         if (symbol == 0) {
@@ -368,11 +368,11 @@ pub const JpegDecoder = struct {
         if (symbol > 11) return error.InvalidDCValue;
         
         const bits = try self.bit_reader.getBits(@intCast(symbol));
-        var diff: i32 = @intCast(bits);
+        var diff: i64 = @intCast(bits);
         
         // Convert from unsigned to signed
         if (bits < (@as(u32, 1) << @intCast(symbol - 1))) {
-            diff = @as(i32, @intCast(bits)) - @as(i32, @intCast((@as(u32, 1) << @intCast(symbol)) - 1));
+            diff = @as(i64, @intCast(bits)) - @as(i64, @intCast((@as(u32, 1) << @intCast(symbol)) - 1));
         }
         
         return prev_dc + diff;
@@ -431,7 +431,7 @@ pub const JpegDecoder = struct {
     }
 
     // Decode a single 8x8 block
-    pub fn decodeBlock(self: *JpegDecoder, component_idx: usize, prev_dc: i32) ![64]i32 {
+    pub fn decodeBlock(self: *JpegDecoder, component_idx: usize, prev_dc: *i64) ![64]i32 {
         var block: [64]i32 = .{0} ** 64;
         
         // Find which scan component corresponds to this component
@@ -447,46 +447,59 @@ pub const JpegDecoder = struct {
         
         // Decode DC coefficient
         const dc_table = self.dc_tables[scan_comp.dc_table_id] orelse return error.MissingHuffmanTable;
-        block[0] = try self.decodeDC(&dc_table, prev_dc);
+        prev_dc.* = try self.decodeDC(&dc_table, prev_dc.*);
+        block[0] = @intCast(std.math.clamp(prev_dc.*, std.math.minInt(i32), std.math.maxInt(i32)));
         
         // Decode AC coefficients
         const ac_table = self.ac_tables[scan_comp.ac_table_id] orelse return error.MissingHuffmanTable;
         try self.decodeAC(&ac_table, &block);
         
-        // Dequantize
+        // Dequantize with overflow protection
         const quant_table = self.quant_tables[self.components[component_idx].quant_table_id] orelse return error.MissingQuantTable;
         for (0..64) |i| {
-            block[ZIGZAG_ORDER[i]] *= @intCast(quant_table[i]);
+            const zigzag_idx = ZIGZAG_ORDER[i];
+            const coeff = block[zigzag_idx];
+            const quant_val = @as(i32, @intCast(quant_table[i]));
+            
+            // Perform multiplication with overflow checking
+            if (coeff != 0) {
+                const result = @as(i64, coeff) * @as(i64, quant_val);
+                // Clamp to i32 range to prevent overflow
+                if (result > std.math.maxInt(i32)) {
+                    block[zigzag_idx] = std.math.maxInt(i32);
+                } else if (result < std.math.minInt(i32)) {
+                    block[zigzag_idx] = std.math.minInt(i32);
+                } else {
+                    block[zigzag_idx] = @intCast(result);
+                }
+            }
         }
         
         return block;
     }
 
-    // Decode MCU (Minimum Coded Unit)
-    pub fn decodeMCU(self: *JpegDecoder, mcu_blocks: [][]i32, dc_values: []i32) !void {
-        var block_idx: usize = 0;
-        
+    // Decode MCU (Minimum Coded Unit) with proper chroma subsampling support
+    pub fn decodeMCU(self: *JpegDecoder, mcu_data: *[4][][64]i32, dc_values: []i64) !void {
         for (0..self.num_components) |comp_idx| {
             const comp = self.components[comp_idx];
             const blocks_h = comp.h_sampling;
             const blocks_v = comp.v_sampling;
             
+            var block_idx: usize = 0;
             for (0..blocks_v) |_| {
                 for (0..blocks_h) |_| {
-                    var block = try self.decodeBlock(comp_idx, dc_values[comp_idx]);
-                    dc_values[comp_idx] = block[0]; // Update DC value
+                    var block = try self.decodeBlock(comp_idx, &dc_values[comp_idx]);
                     
                     // Apply IDCT
                     idct8x8(&block);
                     
-                    // Level shift for color components
-                    if (self.num_components == 3) {
-                        for (&block) |*val| {
-                            val.* += 128;
-                        }
+                    // Level shift for color components (add 128 to shift from [-128,127] to [0,255])
+                    for (&block) |*val| {
+                        val.* += 128;
                     }
                     
-                    @memcpy(mcu_blocks[block_idx], &block);
+                    // Store the decoded block
+                    mcu_data[comp_idx][block_idx] = block;
                     block_idx += 1;
                 }
             }
@@ -720,35 +733,35 @@ fn generateHuffmanTables(table: *HuffmanTable) !void {
 const IDCT_SCALE = 2048; // 2^11 for fixed-point arithmetic
 const IDCT_HALF = 1024;  // IDCT_SCALE / 2
 
-// Fast integer IDCT based on Loeffler algorithm
+// Fast integer IDCT based on Loeffler algorithm with overflow protection
 fn idct8x8(block: *[64]i32) void {
-    var temp: [64]i32 = undefined;
+    var temp: [64]i64 = undefined; // Use i64 for intermediate calculations
     
     // Process rows
     for (0..8) |i| {
         const row_offset = i * 8;
         
-        // Even part
-        const tmp0 = block[row_offset + 0];
-        const tmp1 = block[row_offset + 2];
-        const tmp2 = block[row_offset + 4];
-        const tmp3 = block[row_offset + 6];
+        // Even part - convert to i64
+        const tmp0 = @as(i64, block[row_offset + 0]);
+        const tmp1 = @as(i64, block[row_offset + 2]);
+        const tmp2 = @as(i64, block[row_offset + 4]);
+        const tmp3 = @as(i64, block[row_offset + 6]);
         
         const tmp10 = tmp0 + tmp2;
         const tmp11 = tmp0 - tmp2;
         const tmp13 = tmp1 + tmp3;
-        const tmp12 = mulFixedPoint(tmp1 - tmp3, 1414) - tmp13; // 1.414213562
+        const tmp12 = mulFixedPoint64(tmp1 - tmp3, 1414) - tmp13; // 1.414213562
         
         const e0 = tmp10 + tmp13;
         const e3 = tmp10 - tmp13;
         const e1 = tmp11 + tmp12;
         const e2 = tmp11 - tmp12;
         
-        // Odd part
-        const tmp4 = block[row_offset + 1];
-        const tmp5 = block[row_offset + 3];
-        const tmp6 = block[row_offset + 5];
-        const tmp7 = block[row_offset + 7];
+        // Odd part - convert to i64
+        const tmp4 = @as(i64, block[row_offset + 1]);
+        const tmp5 = @as(i64, block[row_offset + 3]);
+        const tmp6 = @as(i64, block[row_offset + 5]);
+        const tmp7 = @as(i64, block[row_offset + 7]);
         
         const z13 = tmp6 + tmp5;
         const z10 = tmp6 - tmp5;
@@ -756,11 +769,11 @@ fn idct8x8(block: *[64]i32) void {
         const z12 = tmp4 - tmp7;
         
         const tmp7_new = z11 + z13;
-        const tmp11_new = mulFixedPoint(z11 - z13, 1414); // 1.414213562
+        const tmp11_new = mulFixedPoint64(z11 - z13, 1414); // 1.414213562
         
-        const z5 = mulFixedPoint(z10 + z12, 1847); // 1.847759065
-        const tmp10_new = mulFixedPoint(z12, 1082) - z5; // 1.082392200
-        const tmp12_new = mulFixedPoint(z10, -2613) + z5; // -2.613125930
+        const z5 = mulFixedPoint64(z10 + z12, 1847); // 1.847759065
+        const tmp10_new = mulFixedPoint64(z12, 1082) - z5; // 1.082392200
+        const tmp12_new = mulFixedPoint64(z10, -2613) + z5; // -2.613125930
         
         const tmp6_new = tmp12_new - tmp7_new;
         const tmp5_new = tmp11_new - tmp6_new;
@@ -788,7 +801,7 @@ fn idct8x8(block: *[64]i32) void {
         const tmp10 = tmp0 + tmp2;
         const tmp11 = tmp0 - tmp2;
         const tmp13 = tmp1 + tmp3;
-        const tmp12 = mulFixedPoint(tmp1 - tmp3, 1414) - tmp13;
+        const tmp12 = mulFixedPoint64(tmp1 - tmp3, 1414) - tmp13;
         
         const e0 = tmp10 + tmp13;
         const e3 = tmp10 - tmp13;
@@ -807,25 +820,25 @@ fn idct8x8(block: *[64]i32) void {
         const z12 = tmp4 - tmp7;
         
         const tmp7_new = z11 + z13;
-        const tmp11_new = mulFixedPoint(z11 - z13, 1414);
+        const tmp11_new = mulFixedPoint64(z11 - z13, 1414);
         
-        const z5 = mulFixedPoint(z10 + z12, 1847);
-        const tmp10_new = mulFixedPoint(z12, 1082) - z5;
-        const tmp12_new = mulFixedPoint(z10, -2613) + z5;
+        const z5 = mulFixedPoint64(z10 + z12, 1847);
+        const tmp10_new = mulFixedPoint64(z12, 1082) - z5;
+        const tmp12_new = mulFixedPoint64(z10, -2613) + z5;
         
         const tmp6_new = tmp12_new - tmp7_new;
         const tmp5_new = tmp11_new - tmp6_new;
         const tmp4_new = tmp10_new + tmp5_new;
         
         // Final output with rounding and shifting
-        block[i + 0 * 8] = descale(e0 + tmp7_new);
-        block[i + 7 * 8] = descale(e0 - tmp7_new);
-        block[i + 1 * 8] = descale(e1 + tmp6_new);
-        block[i + 6 * 8] = descale(e1 - tmp6_new);
-        block[i + 2 * 8] = descale(e2 + tmp5_new);
-        block[i + 5 * 8] = descale(e2 - tmp5_new);
-        block[i + 4 * 8] = descale(e3 + tmp4_new);
-        block[i + 3 * 8] = descale(e3 - tmp4_new);
+        block[i + 0 * 8] = descale64(e0 + tmp7_new);
+        block[i + 7 * 8] = descale64(e0 - tmp7_new);
+        block[i + 1 * 8] = descale64(e1 + tmp6_new);
+        block[i + 6 * 8] = descale64(e1 - tmp6_new);
+        block[i + 2 * 8] = descale64(e2 + tmp5_new);
+        block[i + 5 * 8] = descale64(e2 - tmp5_new);
+        block[i + 4 * 8] = descale64(e3 + tmp4_new);
+        block[i + 3 * 8] = descale64(e3 - tmp4_new);
     }
 }
 
@@ -834,10 +847,21 @@ fn mulFixedPoint(a: i32, b: i32) i32 {
     return @divTrunc(a * b + IDCT_HALF, IDCT_SCALE);
 }
 
+// 64-bit fixed-point multiplication with rounding
+fn mulFixedPoint64(a: i64, b: i64) i64 {
+    return @divTrunc(a * b + IDCT_HALF, IDCT_SCALE);
+}
+
 // Descale and clamp to valid range
 fn descale(x: i32) i32 {
     const shifted = @divTrunc(x + 8, 16); // Round and shift by 4 bits
     return shifted;
+}
+
+// 64-bit descale and clamp to valid range
+fn descale64(x: i64) i32 {
+    const shifted = @divTrunc(x + 8, 16); // Round and shift by 4 bits
+    return @intCast(std.math.clamp(shifted, -2048, 2047)); // Clamp to prevent overflow
 }
 
 // YCbCr to RGB conversion
@@ -868,6 +892,137 @@ fn clampU8(value: i32) u8 {
     return @intCast(value);
 }
 
+// Upsample chroma component for 4:2:0 subsampling
+fn upsampleChroma420(input: []const [64]i32, output: *[256]i32, h_blocks: u4, v_blocks: u4) void {
+    // For 4:2:0, input is typically 1 block (8x8), output should be 16x16
+    assert(h_blocks == 1 and v_blocks == 1);
+    assert(input.len == 1);
+    
+    const src_block = &input[0];
+    
+    // Upsample from 8x8 to 16x16 using nearest neighbor
+    for (0..16) |dst_y| {
+        for (0..16) |dst_x| {
+            const src_y = dst_y / 2; // Map to source coordinate
+            const src_x = dst_x / 2;
+            const src_idx = src_y * 8 + src_x;
+            const dst_idx = dst_y * 16 + dst_x;
+            output[dst_idx] = src_block[src_idx];
+        }
+    }
+}
+
+// Convert MCU to pixels with proper chroma subsampling handling
+fn convertMCUToPixels(comptime T: type, 
+                     mcu_data: *const [4][][64]i32, 
+                     components: []const Component, 
+                     num_components: u8,
+                     max_h: u4, 
+                     max_v: u4, 
+                     img: *Image(T), 
+                     mcu_x: usize, 
+                     mcu_y: usize, 
+                     img_width: u16, 
+                     img_height: u16) void {
+    
+    if (num_components == 1) {
+        // Grayscale - simple case
+        const y_blocks = mcu_data[0];
+        var block_idx: usize = 0;
+        
+        for (0..components[0].v_sampling) |block_v| {
+            for (0..components[0].h_sampling) |block_h| {
+                const block = &y_blocks[block_idx];
+                
+                for (0..8) |y| {
+                    for (0..8) |x| {
+                        const px = mcu_x * (@as(usize, max_h) * 8) + block_h * 8 + x;
+                        const py = mcu_y * (@as(usize, max_v) * 8) + block_v * 8 + y;
+                        
+                        if (px < img_width and py < img_height) {
+                            const gray = clampU8(block[y * 8 + x]);
+                            const rgb = Rgb{ .r = gray, .g = gray, .b = gray };
+                            img.at(py, px).* = convertColor(T, rgb);
+                        }
+                    }
+                }
+                block_idx += 1;
+            }
+        }
+    } else if (num_components == 3) {
+        // Color image with potential chroma subsampling
+        const y_component = &components[0];
+        const cb_component = &components[1];
+        const cr_component = &components[2];
+        
+        // Check if this is 4:2:0 subsampling
+        if (y_component.h_sampling == 2 and y_component.v_sampling == 2 and
+            cb_component.h_sampling == 1 and cb_component.v_sampling == 1 and
+            cr_component.h_sampling == 1 and cr_component.v_sampling == 1) {
+            
+            // 4:2:0 subsampling - need to upsample chroma
+            var cb_upsampled: [256]i32 = undefined; // 16x16
+            var cr_upsampled: [256]i32 = undefined; // 16x16
+            
+            upsampleChroma420(mcu_data[1], &cb_upsampled, cb_component.h_sampling, cb_component.v_sampling);
+            upsampleChroma420(mcu_data[2], &cr_upsampled, cr_component.h_sampling, cr_component.v_sampling);
+            
+            // Now convert Y (2x2 blocks) with upsampled chroma
+            var y_block_idx: usize = 0;
+            for (0..2) |block_v| { // Y has 2x2 blocks
+                for (0..2) |block_h| {
+                    const y_block = &mcu_data[0][y_block_idx];
+                    
+                    for (0..8) |y| {
+                        for (0..8) |x| {
+                            const px = mcu_x * 16 + block_h * 8 + x; // MCU is 16x16 for 4:2:0
+                            const py = mcu_y * 16 + block_v * 8 + y;
+                            
+                            if (px < img_width and py < img_height) {
+                                const y_val = y_block[y * 8 + x];
+                                
+                                // Get corresponding chroma values (upsampled)
+                                const chroma_idx = (block_v * 8 + y) * 16 + (block_h * 8 + x);
+                                const cb_val = cb_upsampled[chroma_idx];
+                                const cr_val = cr_upsampled[chroma_idx];
+                                
+                                const rgb = ycbcrToRgb(y_val, cb_val, cr_val);
+                                img.at(py, px).* = convertColor(T, rgb);
+                            }
+                        }
+                    }
+                    y_block_idx += 1;
+                }
+            }
+        } else if (y_component.h_sampling == 1 and y_component.v_sampling == 1 and
+                   cb_component.h_sampling == 1 and cb_component.v_sampling == 1 and
+                   cr_component.h_sampling == 1 and cr_component.v_sampling == 1) {
+            
+            // 4:4:4 - no subsampling, all components have same resolution
+            const y_block = &mcu_data[0][0];
+            const cb_block = &mcu_data[1][0]; 
+            const cr_block = &mcu_data[2][0];
+            
+            for (0..8) |y| {
+                for (0..8) |x| {
+                    const px = mcu_x * 8 + x;
+                    const py = mcu_y * 8 + y;
+                    
+                    if (px < img_width and py < img_height) {
+                        const rgb = ycbcrToRgb(
+                            y_block[y * 8 + x],
+                            cb_block[y * 8 + x],
+                            cr_block[y * 8 + x]
+                        );
+                        img.at(py, px).* = convertColor(T, rgb);
+                    }
+                }
+            }
+        }
+        // TODO: Add support for 4:2:2 and other subsampling modes
+    }
+}
+
 // Decode entire image
 pub fn decodeImage(comptime T: type) !Image(T) {
     // This function would be called after parsing all markers
@@ -893,28 +1048,29 @@ pub fn loadJpeg(comptime T: type, allocator: Allocator, file_path: []const u8) !
     var img = try Image(T).initAlloc(allocator, decoder.height, decoder.width);
     errdefer img.deinit(allocator);
     
-    // Decode image data
-    const max_h = decoder.components[0].h_sampling;
-    const max_v = decoder.components[0].v_sampling;
-    
-    // Allocate MCU blocks
-    var total_blocks: usize = 0;
+    // Calculate max sampling factors
+    var max_h: u4 = 0;
+    var max_v: u4 = 0;
     for (0..decoder.num_components) |i| {
-        total_blocks += decoder.components[i].h_sampling * decoder.components[i].v_sampling;
+        max_h = @max(max_h, decoder.components[i].h_sampling);
+        max_v = @max(max_v, decoder.components[i].v_sampling);
     }
     
-    var mcu_blocks = try allocator.alloc([]i32, total_blocks);
-    defer allocator.free(mcu_blocks);
-    
-    for (0..total_blocks) |i| {
-        mcu_blocks[i] = try allocator.alloc(i32, 64);
+    // Allocate MCU blocks organized by component
+    var mcu_data: [4][][64]i32 = undefined; // Max 4 components
+    defer {
+        for (0..decoder.num_components) |i| {
+            allocator.free(mcu_data[i]);
+        }
     }
-    defer for (mcu_blocks) |block| {
-        allocator.free(block);
-    };
+    
+    for (0..decoder.num_components) |i| {
+        const blocks_per_component = @as(usize, decoder.components[i].h_sampling) * decoder.components[i].v_sampling;
+        mcu_data[i] = try allocator.alloc([64]i32, blocks_per_component);
+    }
     
     // DC values for each component
-    var dc_values = [_]i32{0} ** 4;
+    var dc_values = [_]i64{0} ** 4;
     
     // Decode MCUs
     var mcu_count: usize = 0;
@@ -922,57 +1078,17 @@ pub fn loadJpeg(comptime T: type, allocator: Allocator, file_path: []const u8) !
     
     for (0..decoder.mcu_height_in_blocks) |mcu_y| {
         for (0..decoder.mcu_width_in_blocks) |mcu_x| {
-            try decoder.decodeMCU(mcu_blocks, &dc_values);
+            try decoder.decodeMCU(&mcu_data, &dc_values);
             
-            // Convert MCU blocks to pixels
-            if (decoder.num_components == 1) {
-                // Grayscale
-                const block = mcu_blocks[0];
-                for (0..8) |y| {
-                    for (0..8) |x| {
-                        const px = mcu_x * 8 + x;
-                        const py = mcu_y * 8 + y;
-                        if (px < decoder.width and py < decoder.height) {
-                            const gray = clampU8(block[y * 8 + x]);
-                            const rgb = Rgb{ .r = gray, .g = gray, .b = gray };
-                            img.at(py, px).* = convertColor(T, rgb);
-                        }
-                    }
-                }
-            } else if (decoder.num_components == 3) {
-                // YCbCr color image
-                // For now, handle only 4:4:4 (no subsampling)
-                if (max_h == 1 and max_v == 1) {
-                    const y_block = mcu_blocks[0];
-                    const cb_block = mcu_blocks[1];
-                    const cr_block = mcu_blocks[2];
-                    
-                    for (0..8) |y| {
-                        for (0..8) |x| {
-                            const px = mcu_x * 8 + x;
-                            const py = mcu_y * 8 + y;
-                            if (px < decoder.width and py < decoder.height) {
-                                const rgb = ycbcrToRgb(
-                                    y_block[y * 8 + x],
-                                    cb_block[y * 8 + x],
-                                    cr_block[y * 8 + x]
-                                );
-                                img.at(py, px).* = convertColor(T, rgb);
-                            }
-                        }
-                    }
-                } else {
-                    // TODO: Handle chroma subsampling
-                    return error.UnsupportedJpegFormat;
-                }
-            }
+            // Convert MCU to pixels using the new chroma subsampling-aware function
+            convertMCUToPixels(T, &mcu_data, decoder.components[0..decoder.num_components], decoder.num_components, max_h, max_v, &img, mcu_x, mcu_y, decoder.width, decoder.height);
             
             mcu_count += 1;
             
             // Handle restart markers if needed
             if (decoder.restart_interval > 0 and mcu_count % decoder.restart_interval == 0 and mcu_count < total_mcus) {
                 // Reset DC values
-                dc_values = [_]i32{0} ** 4;
+                dc_values = [_]i64{0} ** 4;
                 // TODO: Find and skip restart marker in bit stream
             }
         }
