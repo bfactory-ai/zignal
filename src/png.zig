@@ -10,7 +10,7 @@ const ArrayList = std.ArrayList;
 const Image = @import("image.zig").Image;
 const Rgb = @import("color.zig").Rgb;
 const Rgba = @import("color.zig").Rgba;
-const convert = @import("color.zig").convert;
+const convertColor = @import("color.zig").convertColor;
 const deflate = @import("deflate.zig");
 
 // PNG signature: 8 bytes that identify a PNG file
@@ -686,7 +686,7 @@ pub fn encodeImage(comptime T: type, allocator: Allocator, image: Image(T)) ![]u
 
             // Convert each pixel to RGB
             for (image.data, 0..) |pixel, i| {
-                rgb_image.data[i] = convert(Rgb, pixel);
+                rgb_image.data[i] = convertColor(Rgb, pixel);
             }
 
             const image_bytes = rgb_image.asBytes();
