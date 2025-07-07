@@ -148,7 +148,7 @@ fn MatrixImpl(comptime T: type, comptime StorageStrategy: type) type {
             var result: Self = .{ .storage = .{} };
             for (0..result.storage.rowCount()) |r| {
                 for (0..result.storage.colCount()) |c| {
-                    result.items[r][c] = value;
+                    result.storage.set(r, c, value);
                 }
             }
             return result;
@@ -161,9 +161,9 @@ fn MatrixImpl(comptime T: type, comptime StorageStrategy: type) type {
             for (0..result.storage.rowCount()) |r| {
                 for (0..result.storage.colCount()) |c| {
                     if (r == c) {
-                        result.items[r][c] = 1;
+                        result.storage.set(r, c, 1);
                     } else {
-                        result.items[r][c] = 0;
+                        result.storage.set(r, c, 0);
                     }
                 }
             }
@@ -179,7 +179,7 @@ fn MatrixImpl(comptime T: type, comptime StorageStrategy: type) type {
             var result: Self = .{ .storage = .{} };
             for (0..result.storage.rowCount()) |r| {
                 for (0..result.storage.colCount()) |c| {
-                    result.items[r][c] = rand.float(T);
+                    result.storage.set(r, c, rand.float(T));
                 }
             }
             return result;
@@ -190,7 +190,7 @@ fn MatrixImpl(comptime T: type, comptime StorageStrategy: type) type {
             var accum: T = 0;
             for (0..self.storage.rowCount()) |r| {
                 for (0..self.storage.colCount()) |c| {
-                    accum += self.items[r][c];
+                    accum += self.storage.at(r, c);
                 }
             }
             return accum;
@@ -201,7 +201,7 @@ fn MatrixImpl(comptime T: type, comptime StorageStrategy: type) type {
             var result: Self = .{ .storage = .{} };
             for (0..self.storage.rowCount()) |r| {
                 for (0..self.storage.colCount()) |c| {
-                    result.items[r][c] = value * self.items[r][c];
+                    result.storage.set(r, c, value * self.storage.at(r, c));
                 }
             }
             return result;
@@ -212,7 +212,7 @@ fn MatrixImpl(comptime T: type, comptime StorageStrategy: type) type {
             var result: Self = .{ .storage = .{} };
             for (0..self.storage.rowCount()) |r| {
                 for (0..self.storage.colCount()) |c| {
-                    result.items[r][c] = unaryFn(self.items[r][c]);
+                    result.storage.set(r, c, unaryFn(self.storage.at(r, c)));
                 }
             }
             return result;
@@ -224,7 +224,7 @@ fn MatrixImpl(comptime T: type, comptime StorageStrategy: type) type {
             var result: Self = .{ .storage = .{} };
             for (0..self.storage.rowCount()) |r| {
                 for (0..self.storage.colCount()) |c| {
-                    result.items[r][c] = self.items[r][c] * other.storage.at(r, c);
+                    result.storage.set(r, c, self.storage.at(r, c) * other.storage.at(r, c));
                 }
             }
             return result;
@@ -241,7 +241,7 @@ fn MatrixImpl(comptime T: type, comptime StorageStrategy: type) type {
             var result: Self = .{ .storage = .{} };
             for (0..self.storage.rowCount()) |r| {
                 for (0..self.storage.colCount()) |c| {
-                    result.items[0][c] = self.items[r][c];
+                    result.storage.set(0, c, self.storage.at(r, c));
                 }
             }
             return result;
@@ -253,7 +253,28 @@ fn MatrixImpl(comptime T: type, comptime StorageStrategy: type) type {
             var result: Self = .{ .storage = .{} };
             for (0..self.storage.rowCount()) |r| {
                 for (0..self.storage.colCount()) |c| {
-                    result.items[r][0] = self.items[r][c];
+                    result.storage.set(r, 0, self.storage.at(r, c));
+                }
+            }
+            return result;
+        }
+        
+        /// Performs the dot (or internal product) of two dynamic matrices.
+        pub fn dot(self: Self, other: Self) !Self {
+            // Check dimension compatibility
+            assert(self.storage.colCount() == other.storage.rowCount());
+            
+            // Create result matrix
+            var result = try Self.init(self.storage.allocator, self.storage.rowCount(), other.storage.colCount());
+            
+            // Perform matrix multiplication
+            for (0..self.storage.rowCount()) |r| {
+                for (0..other.storage.colCount()) |c| {
+                    var accum: T = 0;
+                    for (0..self.storage.colCount()) |k| {
+                        accum += self.storage.at(r, k) * other.storage.at(k, c);
+                    }
+                    result.storage.set(r, c, accum);
                 }
             }
             return result;
@@ -264,6 +285,20 @@ fn MatrixImpl(comptime T: type, comptime StorageStrategy: type) type {
 /// Creates a dynamic matrix with runtime dimensions
 pub fn DynamicMatrix(comptime T: type) type {
     return MatrixImpl(T, DynamicStorage(T));
+}
+
+/// Helper function to check if a matrix type is dynamic by checking for storage field
+fn isDynamicMatrix(comptime MatrixType: type) bool {
+    // Simple approach: check if type has 'storage' field (dynamic) vs 'items' field (static)
+    const type_info = @typeInfo(MatrixType);
+    if (type_info != .@"struct") return false;
+    
+    for (type_info.@"struct".fields) |field| {
+        if (std.mem.eql(u8, field.name, "storage")) {
+            return true; // Has storage field, must be dynamic
+        }
+    }
+    return false; // No storage field, must be static
 }
 
 /// Creates a Matrix with elements of type T and size rows times cols.
@@ -468,7 +503,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             for (0..rows) |r| {
                 for (0..other.cols) |c| {
                     for (0..cols) |k| {
-                        result.items[r][c] = result.items[r][c] + self.items[r][k] * other.items[k][c];
+                        result.items[r][c] += self.items[r][k] * other.items[k][c];
                     }
                 }
             }
@@ -752,7 +787,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
         pub fn setItems(self: *Self, items: [rows][cols]T) void {
             for (0..rows) |r| {
                 for (0..cols) |c| {
-                    self.storage.set(r, c, items[r][c]);
+                    self.items[r][c] = items[r][c];
                 }
             }
         }
@@ -908,29 +943,71 @@ test "format" {
     try std.testing.expect(std.mem.eql(u8, result_single, expected_single));
 }
 
-// test "dynamic matrix basic operations" {
-//     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-//     defer arena.deinit();
-//     
-//     var dyn_matrix = try DynamicMatrix(f32).init(arena.allocator(), 2, 3);
-//     defer dyn_matrix.deinit();
-//     
-//     // Test basic set/get operations
-//     dyn_matrix.set(0, 0, 1.0);
-//     dyn_matrix.set(0, 1, 2.0);
-//     dyn_matrix.set(0, 2, 3.0);
-//     dyn_matrix.set(1, 0, 4.0);
-//     dyn_matrix.set(1, 1, 5.0);
-//     dyn_matrix.set(1, 2, 6.0);
-//     
-//     try expectEqual(dyn_matrix.at(0, 0), 1.0);
-//     try expectEqual(dyn_matrix.at(1, 2), 6.0);
-//     
-//     // Test shape
-//     const shape = dyn_matrix.shape();
-//     try expectEqual(shape[0], 2);
-//     try expectEqual(shape[1], 3);
-//     
-//     // Test sum
-//     try expectEqual(dyn_matrix.sum(), 21.0);
-// }
+test "dynamic matrix basic operations" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    
+    var dyn_matrix = try DynamicMatrix(f32).init(arena.allocator(), 2, 3);
+    defer dyn_matrix.deinit();
+    
+    // Test basic set/get operations
+    dyn_matrix.storage.set(0, 0, 1.0);
+    dyn_matrix.storage.set(0, 1, 2.0);
+    dyn_matrix.storage.set(0, 2, 3.0);
+    dyn_matrix.storage.set(1, 0, 4.0);
+    dyn_matrix.storage.set(1, 1, 5.0);
+    dyn_matrix.storage.set(1, 2, 6.0);
+    
+    try expectEqual(@as(f32, 1.0), dyn_matrix.storage.at(0, 0));
+    try expectEqual(@as(f32, 6.0), dyn_matrix.storage.at(1, 2));
+    
+    // Test dimensions
+    try expectEqual(@as(usize, 2), dyn_matrix.storage.rowCount());
+    try expectEqual(@as(usize, 3), dyn_matrix.storage.colCount());
+    
+    // Test sum
+    try expectEqual(@as(f32, 21.0), dyn_matrix.sum());
+}
+
+test "dynamic matrix dot product" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    
+    // Create two dynamic matrices for multiplication
+    var a = try DynamicMatrix(f64).init(arena.allocator(), 2, 3);
+    defer a.deinit();
+    var b = try DynamicMatrix(f64).init(arena.allocator(), 3, 2);
+    defer b.deinit();
+    
+    // Set values for matrix A (2x3)
+    a.storage.set(0, 0, 1.0);
+    a.storage.set(0, 1, 2.0);
+    a.storage.set(0, 2, 3.0);
+    a.storage.set(1, 0, 4.0);
+    a.storage.set(1, 1, 5.0);
+    a.storage.set(1, 2, 6.0);
+    
+    // Set values for matrix B (3x2)
+    b.storage.set(0, 0, 7.0);
+    b.storage.set(0, 1, 8.0);
+    b.storage.set(1, 0, 9.0);
+    b.storage.set(1, 1, 10.0);
+    b.storage.set(2, 0, 11.0);
+    b.storage.set(2, 1, 12.0);
+    
+    // Multiply A * B should result in 2x2 matrix
+    var result = try a.dot(b);
+    defer result.deinit();
+    
+    // Verify result dimensions
+    try expectEqual(@as(usize, 2), result.storage.rowCount());
+    try expectEqual(@as(usize, 2), result.storage.colCount());
+    
+    // Verify result values
+    // A * B = [1*7+2*9+3*11  1*8+2*10+3*12] = [58  64]
+    //         [4*7+5*9+6*11  4*8+5*10+6*12]   [139 154]
+    try expectEqual(@as(f64, 58.0), result.storage.at(0, 0));
+    try expectEqual(@as(f64, 64.0), result.storage.at(0, 1));
+    try expectEqual(@as(f64, 139.0), result.storage.at(1, 0));
+    try expectEqual(@as(f64, 154.0), result.storage.at(1, 1));
+}
