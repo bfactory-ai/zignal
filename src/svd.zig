@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const Matrix = @import("matrix.zig").Matrix;
+const SMatrix = @import("matrix.zig").SMatrix;
 
 const SvdMode = enum {
     no_u,
@@ -43,18 +43,18 @@ pub fn svd(
     comptime T: type,
     comptime rows: usize,
     comptime cols: usize,
-    a: Matrix(T, rows, cols),
+    a: SMatrix(T, rows, cols),
     comptime options: SvdOptions,
-) struct { Matrix(T, rows, rows), Matrix(T, cols, 1), Matrix(T, cols, cols), usize } {
+) struct { SMatrix(T, rows, rows), SMatrix(T, cols, 1), SMatrix(T, cols, cols), usize } {
     comptime std.debug.assert(rows >= cols);
     var eps: T = std.math.floatEps(T);
     const tol: T = std.math.floatMin(T) / eps;
     const m = rows;
     const n = cols;
-    var u = comptime if (options.mode == .full_u) Matrix(T, m, m){} else Matrix(T, m, n){};
-    var v: Matrix(T, n, n) = .{};
-    var q: Matrix(T, n, 1) = .{};
-    var e: Matrix(T, n, 1) = .{};
+    var u = comptime if (options.mode == .full_u) SMatrix(T, m, m){} else SMatrix(T, m, n){};
+    var v: SMatrix(T, n, n) = .{};
+    var q: SMatrix(T, n, 1) = .{};
+    var e: SMatrix(T, n, 1) = .{};
     var l: usize = 0;
     var retval: usize = 0;
     var c: T = undefined;
@@ -352,7 +352,7 @@ test "svd basic" {
     const m: usize = 5;
     const n: usize = 4;
     // Example matrix taken from Wikipedia
-    const a: Matrix(f64, m, n) = .{
+    const a: SMatrix(f64, m, n) = .{
         .items = .{
             .{ 1, 0, 0, 0 },
             .{ 0, 0, 0, 2 },
@@ -362,10 +362,10 @@ test "svd basic" {
         },
     };
     const res = svd(f64, m, n, a, .{ .with_u = true, .with_v = true, .mode = .full_u });
-    const u: *const Matrix(f64, m, m) = &res[0];
-    const q: *const Matrix(f64, n, 1) = &res[1];
-    const v: *const Matrix(f64, n, n) = &res[2];
-    var w: Matrix(f64, m, n) = .initAll(0);
+    const u: *const SMatrix(f64, m, m) = &res[0];
+    const q: *const SMatrix(f64, n, 1) = &res[1];
+    const v: *const SMatrix(f64, n, n) = &res[2];
+    var w: SMatrix(f64, m, n) = .initAll(0);
     // build the diagonal matrix from q.
     for (0..q.rows) |i| {
         w.items[i][i] = q.at(i, 0).*;
@@ -379,7 +379,7 @@ test "svd basic" {
         }
     }
     // check for orhonormality of u and v
-    const id_m: Matrix(f64, m, m) = .identity();
+    const id_m: SMatrix(f64, m, m) = .identity();
     const uut = u.dot(u.transpose());
     for (u.items) |row| {
         const vec: @Vector(m, f64) = row;
@@ -391,7 +391,7 @@ test "svd basic" {
             try std.testing.expectApproxEqAbs(uut.at(i, j).*, id_m.at(i, j).*, 1e-15);
         }
     }
-    const id_n: Matrix(f64, n, n) = .identity();
+    const id_n: SMatrix(f64, n, n) = .identity();
     const vvt = v.dot(v.transpose());
     for (v.items) |row| {
         const vec: @Vector(n, f64) = row;
@@ -408,7 +408,7 @@ test "svd basic" {
 test "svd modes" {
     const m: usize = 4;
     const n: usize = 4;
-    const a: Matrix(f64, m, n) = .{
+    const a: SMatrix(f64, m, n) = .{
         .items = .{
             .{ 2, 1, 0, 0 },
             .{ 1, 2, 1, 0 },
@@ -447,7 +447,7 @@ test "svd modes" {
 
 test "svd identity matrix" {
     const n: usize = 3;
-    const a: Matrix(f64, n, n) = .identity();
+    const a: SMatrix(f64, n, n) = .identity();
 
     const res = svd(f64, n, n, a, .{ .with_u = true, .with_v = true, .mode = .full_u });
     const q = res[1];
@@ -462,7 +462,7 @@ test "svd identity matrix" {
 test "svd singular matrix" {
     const m: usize = 3;
     const n: usize = 3;
-    const a: Matrix(f64, m, n) = .{
+    const a: SMatrix(f64, m, n) = .{
         .items = .{
             .{ 1, 2, 3 },
             .{ 2, 4, 6 },

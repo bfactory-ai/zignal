@@ -1,7 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-const Matrix = @import("../matrix.zig").Matrix;
+const Matrix = @import("../matrix.zig").SMatrix;
 const Point2d = @import("points.zig").Point2d;
 const svd = @import("../svd.zig").svd;
 

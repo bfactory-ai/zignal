@@ -26,8 +26,8 @@ pub const ConvexHull = geometry.ConvexHull;
 pub const Image = @import("image.zig").Image;
 
 const matrix = @import("matrix.zig");
+pub const SMatrix = matrix.SMatrix;
 pub const Matrix = matrix.Matrix;
-pub const DynamicMatrix = matrix.DynamicMatrix;
 pub const OpsBuilder = matrix.OpsBuilder;
 pub const meta = @import("meta.zig");
 pub const perlin = @import("perlin.zig");
