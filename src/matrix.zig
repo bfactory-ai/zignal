@@ -378,7 +378,6 @@ pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) typ
         ) !void {
             _ = fmt;
 
-
             // First pass: calculate the maximum width needed for each column
             var col_widths: [cols]usize = [_]usize{0} ** cols;
 
@@ -388,22 +387,7 @@ pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) typ
                     var temp_buf: [64]u8 = undefined;
                     const formatted = if (options.precision) |precision|
                         switch (precision) {
-                            0 => formatNumber(T, temp_buf[0..], "{d:.0}", self.items[r][c]),
-                            1 => formatNumber(T, temp_buf[0..], "{d:.1}", self.items[r][c]),
-                            2 => formatNumber(T, temp_buf[0..], "{d:.2}", self.items[r][c]),
-                            3 => formatNumber(T, temp_buf[0..], "{d:.3}", self.items[r][c]),
-                            4 => formatNumber(T, temp_buf[0..], "{d:.4}", self.items[r][c]),
-                            5 => formatNumber(T, temp_buf[0..], "{d:.5}", self.items[r][c]),
-                            6 => formatNumber(T, temp_buf[0..], "{d:.6}", self.items[r][c]),
-                            7 => formatNumber(T, temp_buf[0..], "{d:.7}", self.items[r][c]),
-                            8 => formatNumber(T, temp_buf[0..], "{d:.8}", self.items[r][c]),
-                            9 => formatNumber(T, temp_buf[0..], "{d:.9}", self.items[r][c]),
-                            10 => formatNumber(T, temp_buf[0..], "{d:.10}", self.items[r][c]),
-                            11 => formatNumber(T, temp_buf[0..], "{d:.11}", self.items[r][c]),
-                            12 => formatNumber(T, temp_buf[0..], "{d:.12}", self.items[r][c]),
-                            13 => formatNumber(T, temp_buf[0..], "{d:.13}", self.items[r][c]),
-                            14 => formatNumber(T, temp_buf[0..], "{d:.14}", self.items[r][c]),
-                            15 => formatNumber(T, temp_buf[0..], "{d:.15}", self.items[r][c]),
+                            inline 0...15 => |p| formatNumber(T, temp_buf[0..], std.fmt.comptimePrint("{{d:.{d}}}", .{p}), self.items[r][c]),
                             else => formatNumber(T, temp_buf[0..], "{d}", self.items[r][c]),
                         }
                     else
@@ -420,22 +404,7 @@ pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) typ
                     var temp_buf: [64]u8 = undefined;
                     const formatted = if (options.precision) |precision|
                         switch (precision) {
-                            0 => formatNumber(T, temp_buf[0..], "{d:.0}", self.items[r][c]),
-                            1 => formatNumber(T, temp_buf[0..], "{d:.1}", self.items[r][c]),
-                            2 => formatNumber(T, temp_buf[0..], "{d:.2}", self.items[r][c]),
-                            3 => formatNumber(T, temp_buf[0..], "{d:.3}", self.items[r][c]),
-                            4 => formatNumber(T, temp_buf[0..], "{d:.4}", self.items[r][c]),
-                            5 => formatNumber(T, temp_buf[0..], "{d:.5}", self.items[r][c]),
-                            6 => formatNumber(T, temp_buf[0..], "{d:.6}", self.items[r][c]),
-                            7 => formatNumber(T, temp_buf[0..], "{d:.7}", self.items[r][c]),
-                            8 => formatNumber(T, temp_buf[0..], "{d:.8}", self.items[r][c]),
-                            9 => formatNumber(T, temp_buf[0..], "{d:.9}", self.items[r][c]),
-                            10 => formatNumber(T, temp_buf[0..], "{d:.10}", self.items[r][c]),
-                            11 => formatNumber(T, temp_buf[0..], "{d:.11}", self.items[r][c]),
-                            12 => formatNumber(T, temp_buf[0..], "{d:.12}", self.items[r][c]),
-                            13 => formatNumber(T, temp_buf[0..], "{d:.13}", self.items[r][c]),
-                            14 => formatNumber(T, temp_buf[0..], "{d:.14}", self.items[r][c]),
-                            15 => formatNumber(T, temp_buf[0..], "{d:.15}", self.items[r][c]),
+                            inline 0...15 => |p| formatNumber(T, temp_buf[0..], std.fmt.comptimePrint("{{d:.{d}}}", .{p}), self.items[r][c]),
                             else => formatNumber(T, temp_buf[0..], "{d}", self.items[r][c]),
                         }
                     else
@@ -603,7 +572,6 @@ pub fn Matrix(comptime T: type) type {
         ) !void {
             _ = fmt;
 
-
             // Use a fixed-size array for column widths (should be sufficient for most cases)
             // For very large matrices, this will just work with default alignment
             var col_widths_buffer: [256]usize = undefined;
@@ -612,7 +580,7 @@ pub fn Matrix(comptime T: type) type {
                 @memset(col_widths_buffer[0..], 0);
                 break :blk col_widths_buffer[0..0];
             };
-            
+
             if (col_widths.len > 0) {
                 @memset(col_widths, 0);
 
@@ -623,22 +591,7 @@ pub fn Matrix(comptime T: type) type {
                         var temp_buf: [64]u8 = undefined;
                         const formatted = if (options.precision) |precision|
                             switch (precision) {
-                                0 => formatNumber(T, temp_buf[0..], "{d:.0}", self.at(r, c).*),
-                                1 => formatNumber(T, temp_buf[0..], "{d:.1}", self.at(r, c).*),
-                                2 => formatNumber(T, temp_buf[0..], "{d:.2}", self.at(r, c).*),
-                                3 => formatNumber(T, temp_buf[0..], "{d:.3}", self.at(r, c).*),
-                                4 => formatNumber(T, temp_buf[0..], "{d:.4}", self.at(r, c).*),
-                                5 => formatNumber(T, temp_buf[0..], "{d:.5}", self.at(r, c).*),
-                                6 => formatNumber(T, temp_buf[0..], "{d:.6}", self.at(r, c).*),
-                                7 => formatNumber(T, temp_buf[0..], "{d:.7}", self.at(r, c).*),
-                                8 => formatNumber(T, temp_buf[0..], "{d:.8}", self.at(r, c).*),
-                                9 => formatNumber(T, temp_buf[0..], "{d:.9}", self.at(r, c).*),
-                                10 => formatNumber(T, temp_buf[0..], "{d:.10}", self.at(r, c).*),
-                                11 => formatNumber(T, temp_buf[0..], "{d:.11}", self.at(r, c).*),
-                                12 => formatNumber(T, temp_buf[0..], "{d:.12}", self.at(r, c).*),
-                                13 => formatNumber(T, temp_buf[0..], "{d:.13}", self.at(r, c).*),
-                                14 => formatNumber(T, temp_buf[0..], "{d:.14}", self.at(r, c).*),
-                                15 => formatNumber(T, temp_buf[0..], "{d:.15}", self.at(r, c).*),
+                                inline 0...15 => |p| formatNumber(T, temp_buf[0..], std.fmt.comptimePrint("{{d:.{d}}}", .{p}), self.at(r, c).*),
                                 else => formatNumber(T, temp_buf[0..], "{d}", self.at(r, c).*),
                             }
                         else
@@ -656,22 +609,7 @@ pub fn Matrix(comptime T: type) type {
                     var temp_buf: [64]u8 = undefined;
                     const formatted = if (options.precision) |precision|
                         switch (precision) {
-                            0 => formatNumber(T, temp_buf[0..], "{d:.0}", self.at(r, c).*),
-                            1 => formatNumber(T, temp_buf[0..], "{d:.1}", self.at(r, c).*),
-                            2 => formatNumber(T, temp_buf[0..], "{d:.2}", self.at(r, c).*),
-                            3 => formatNumber(T, temp_buf[0..], "{d:.3}", self.at(r, c).*),
-                            4 => formatNumber(T, temp_buf[0..], "{d:.4}", self.at(r, c).*),
-                            5 => formatNumber(T, temp_buf[0..], "{d:.5}", self.at(r, c).*),
-                            6 => formatNumber(T, temp_buf[0..], "{d:.6}", self.at(r, c).*),
-                            7 => formatNumber(T, temp_buf[0..], "{d:.7}", self.at(r, c).*),
-                            8 => formatNumber(T, temp_buf[0..], "{d:.8}", self.at(r, c).*),
-                            9 => formatNumber(T, temp_buf[0..], "{d:.9}", self.at(r, c).*),
-                            10 => formatNumber(T, temp_buf[0..], "{d:.10}", self.at(r, c).*),
-                            11 => formatNumber(T, temp_buf[0..], "{d:.11}", self.at(r, c).*),
-                            12 => formatNumber(T, temp_buf[0..], "{d:.12}", self.at(r, c).*),
-                            13 => formatNumber(T, temp_buf[0..], "{d:.13}", self.at(r, c).*),
-                            14 => formatNumber(T, temp_buf[0..], "{d:.14}", self.at(r, c).*),
-                            15 => formatNumber(T, temp_buf[0..], "{d:.15}", self.at(r, c).*),
+                            inline 0...15 => |p| formatNumber(T, temp_buf[0..], std.fmt.comptimePrint("{{d:.{d}}}", .{p}), self.at(r, c).*),
                             else => formatNumber(T, temp_buf[0..], "{d}", self.at(r, c).*),
                         }
                     else
