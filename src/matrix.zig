@@ -29,8 +29,8 @@ pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) typ
         comptime rows: usize = rows,
         comptime cols: usize = cols,
 
-        // Allow direct .items field initialization for compatibility
-        pub fn setFromItems(items: [rows][cols]T) Self {
+        /// Initialize a SMatrix with the given items.
+        pub fn init(items: [rows][cols]T) Self {
             var result: Self = .{};
             for (0..rows) |r| {
                 for (0..cols) |c| {
@@ -444,26 +444,6 @@ pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) typ
                 }
             }
             return result;
-        }
-
-        // Support direct .items initialization for compatibility
-        pub fn init(items: [rows][cols]T) Self {
-            var result: Self = .{};
-            for (0..rows) |r| {
-                for (0..cols) |c| {
-                    result.items[r][c] = items[r][c];
-                }
-            }
-            return result;
-        }
-
-        // Allow direct .items field initialization
-        pub fn setItems(self: *Self, items: [rows][cols]T) void {
-            for (0..rows) |r| {
-                for (0..cols) |c| {
-                    self.items[r][c] = items[r][c];
-                }
-            }
         }
     };
 }
