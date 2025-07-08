@@ -10,18 +10,14 @@ const builtin = @import("builtin");
 const Point2d = @import("geometry/points.zig").Point2d;
 const Point3d = @import("geometry/points.zig").Point3d;
 
-/// Helper function to format numbers with fallback to truncation
+/// Helper function to format numbers with fallback to scientific notation
 fn formatNumber(comptime T: type, buf: []u8, comptime format_str: []const u8, value: T) []const u8 {
-    return std.fmt.bufPrint(buf, format_str, .{value}) catch blk: {
-        // If formatting fails, truncate and add ellipsis
-        if (buf.len >= 4) {
-            const truncated = std.fmt.bufPrint(buf[0 .. buf.len - 3], "{d}", .{value}) catch buf[0 .. buf.len - 3];
-            @memcpy(buf[truncated.len .. truncated.len + 3], "...");
-            break :blk buf[0 .. truncated.len + 3];
-        } else {
-            // Buffer too small even for ellipsis
-            break :blk "...";
-        }
+    return std.fmt.bufPrint(buf, format_str, .{value}) catch {
+        // If formatting fails (number too large), try scientific notation
+        return std.fmt.bufPrint(buf, "{}", .{value}) catch {
+            // If even scientific notation fails, use a fallback
+            return "ERR";
+        };
     };
 }
 
