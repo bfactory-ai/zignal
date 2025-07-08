@@ -82,13 +82,13 @@ pub fn svd(
         l = i + 1;
 
         for (i..m) |j| {
-            s += u.at(j, i) * u.at(j, i);
+            s += u.at(j, i).* * u.at(j, i).*;
         }
 
         if (s < tol) {
             g = 0;
         } else {
-            f = u.at(i, i);
+            f = u.at(i, i).*;
             g = if (f < 0) @sqrt(s) else -@sqrt(s);
             h = f * g - s;
             u.items[i][i] = f - g;
@@ -96,12 +96,12 @@ pub fn svd(
             for (l..n) |j| {
                 s = 0;
                 for (i..m) |k| {
-                    s += u.at(k, i) * u.at(k, j);
+                    s += u.at(k, i).* * u.at(k, j).*;
                 }
                 f = s / h;
 
                 for (i..m) |k| {
-                    u.items[k][j] += f * u.at(k, i);
+                    u.items[k][j] += f * u.at(k, i).*;
                 }
             }
         }
@@ -110,32 +110,32 @@ pub fn svd(
         s = 0;
 
         for (l..n) |j| {
-            s += u.at(i, j) * u.at(i, j);
+            s += u.at(i, j).* * u.at(i, j).*;
         }
 
         if (s < tol) {
             g = 0;
         } else {
-            f = u.at(i, i + 1);
+            f = u.at(i, i + 1).*;
             g = if (f < 0) @sqrt(s) else -@sqrt(s);
             h = f * g - s;
             u.items[i][i + 1] = f - g;
 
             for (l..n) |j| {
-                e.items[j][0] = u.at(i, j) / h;
+                e.items[j][0] = u.at(i, j).* / h;
             }
 
             for (l..m) |j| {
                 s = 0;
                 for (l..n) |k| {
-                    s += u.at(j, k) * u.at(i, k);
+                    s += u.at(j, k).* * u.at(i, k).*;
                 }
                 for (l..n) |k| {
-                    u.items[j][k] += s * e.at(k, 0);
+                    u.items[j][k] += s * e.at(k, 0).*;
                 }
             }
         }
-        y = @abs(q.at(i, 0)) + @abs(e.at(i, 0));
+        y = @abs(q.at(i, 0).*) + @abs(e.at(i, 0).*);
         if (y > x) {
             x = y;
         }
@@ -146,17 +146,17 @@ pub fn svd(
         for (0..n) |ri| {
             const i = n - 1 - ri;
             if (g != 0) {
-                h = u.at(i, i + 1) * g;
+                h = u.at(i, i + 1).* * g;
                 for (l..n) |j| {
-                    v.items[j][i] = u.at(i, j) / h;
+                    v.items[j][i] = u.at(i, j).* / h;
                 }
                 for (l..n) |j| {
                     s = 0;
                     for (l..n) |k| {
-                        s += u.at(i, k) * v.at(k, j);
+                        s += u.at(i, k).* * v.at(k, j).*;
                     }
                     for (l..n) |k| {
-                        v.items[k][j] += s * v.at(k, i);
+                        v.items[k][j] += s * v.at(k, i).*;
                     }
                 }
             }
@@ -165,7 +165,7 @@ pub fn svd(
                 v.items[j][i] = 0;
             }
             v.items[i][i] = 1;
-            g = e.at(i, 0);
+            g = e.at(i, 0).*;
             l = i;
         }
     }
@@ -186,21 +186,21 @@ pub fn svd(
         for (0..n) |ri| {
             const i = n - 1 - ri;
             l = i + 1;
-            g = q.at(i, 0);
+            g = q.at(i, 0).*;
 
             for (l..u.cols) |j| {
                 u.items[i][j] = 0;
             }
             if (g != 0) {
-                h = u.at(i, i) * g;
+                h = u.at(i, i).* * g;
                 for (l..u.cols) |j| {
                     s = 0;
                     for (l..m) |k| {
-                        s += u.at(k, i) * u.at(k, j);
+                        s += u.at(k, i).* * u.at(k, j).*;
                     }
                     f = s / h;
                     for (i..m) |k| {
-                        u.items[k][j] += f * u.at(k, i);
+                        u.items[k][j] += f * u.at(k, i).*;
                     }
                 }
                 for (i..m) |j| {
@@ -226,10 +226,10 @@ pub fn svd(
             .test_splitting => {
                 for (0..k + 1) |rl| {
                     l = k - rl;
-                    if (@abs(e.at(l, 0)) <= eps) {
+                    if (@abs(e.at(l, 0).*) <= eps) {
                         continue :svd_state .test_convergence;
                     }
-                    if (@abs(q.at(l - 1, 0)) <= eps) {
+                    if (@abs(q.at(l - 1, 0).*) <= eps) {
                         continue :svd_state .cancellation;
                     }
                 }
@@ -242,21 +242,21 @@ pub fn svd(
                 s = 1;
                 const l1 = l - 1;
                 for (l..k + 1) |i| {
-                    f = s * e.at(i, 0);
+                    f = s * e.at(i, 0).*;
                     e.items[i][0] *= c;
 
                     if (@abs(f) <= eps) {
                         continue :svd_state .test_convergence;
                     }
-                    g = q.at(i, 0);
+                    g = q.at(i, 0).*;
                     h = @sqrt(f * f + g * g);
                     q.items[i][0] = h;
                     c = g / h;
                     s = -f / h;
                     if (options.mode != .no_u) {
                         for (0..m) |j| {
-                            y = u.at(j, l1);
-                            z = u.at(j, i);
+                            y = u.at(j, l1).*;
+                            z = u.at(j, i).*;
                             u.items[j][l1] = y * c + z * s;
                             u.items[j][i] = -y * s + z * c;
                         }
@@ -266,7 +266,7 @@ pub fn svd(
             },
 
             .test_convergence => {
-                z = q.at(k, 0);
+                z = q.at(k, 0).*;
                 if (l == k) {
                     continue :svd_state .convergence_check;
                 }
@@ -276,10 +276,10 @@ pub fn svd(
                     retval = k;
                     break :svd_state;
                 }
-                x = q.at(l, 0);
-                y = q.at(k - 1, 0);
-                g = e.at(k - 1, 0);
-                h = e.at(k, 0);
+                x = q.at(l, 0).*;
+                y = q.at(k - 1, 0).*;
+                g = e.at(k - 1, 0).*;
+                h = e.at(k, 0).*;
                 f = ((y - z) * (y + z) + (g - h) * (g + h)) / (2 * h * y);
                 g = @sqrt(f * f + 1.0);
                 f = ((x - z) * (x + z) + h * (y / (if (f < 0) (f - g) else (f + g)) - h)) / x;
@@ -288,8 +288,8 @@ pub fn svd(
                 c = 1;
                 s = 1;
                 for (l + 1..k + 1) |i| {
-                    g = e.at(i, 0);
-                    y = q.at(i, 0);
+                    g = e.at(i, 0).*;
+                    y = q.at(i, 0).*;
                     h = s * g;
                     g *= c;
                     z = @sqrt(f * f + h * h);
@@ -302,8 +302,8 @@ pub fn svd(
                     y *= c;
                     if (options.with_v) {
                         for (0..n) |j| {
-                            x = v.at(j, i - 1);
-                            z = v.at(j, i);
+                            x = v.at(j, i - 1).*;
+                            z = v.at(j, i).*;
                             v.items[j][i - 1] = x * c + z * s;
                             v.items[j][i] = -x * s + z * c;
                         }
@@ -318,8 +318,8 @@ pub fn svd(
                     x = -s * g + c * y;
                     if (options.mode != .no_u) {
                         for (0..m) |j| {
-                            y = u.at(j, i - 1);
-                            z = u.at(j, i);
+                            y = u.at(j, i - 1).*;
+                            z = u.at(j, i).*;
                             u.items[j][i - 1] = y * c + z * s;
                             u.items[j][i] = -y * s + z * c;
                         }
@@ -337,7 +337,7 @@ pub fn svd(
                     q.items[k][0] = -z;
                     if (options.with_v) {
                         for (0..n) |j| {
-                            v.items[j][k] = -v.at(j, k);
+                            v.items[j][k] = -v.at(j, k).*;
                         }
                     }
                 }
@@ -368,14 +368,14 @@ test "svd basic" {
     var w: Matrix(f64, m, n) = .initAll(0);
     // build the diagonal matrix from q.
     for (0..q.rows) |i| {
-        w.items[i][i] = q.at(i, 0);
+        w.items[i][i] = q.at(i, 0).*;
     }
     // check decomposition
     const tol = @sqrt(std.math.floatEps(f64));
     const b = u.dot(w.dot(v.transpose()));
     for (0..m) |i| {
         for (0..n) |j| {
-            try std.testing.expectApproxEqRel(a.at(i, j), b.at(i, j), tol);
+            try std.testing.expectApproxEqRel(a.at(i, j).*, b.at(i, j).*, tol);
         }
     }
     // check for orhonormality of u and v
@@ -388,7 +388,7 @@ test "svd basic" {
     }
     for (0..m) |i| {
         for (0..m) |j| {
-            try std.testing.expectApproxEqAbs(uut.at(i, j), id_m.at(i, j), 1e-15);
+            try std.testing.expectApproxEqAbs(uut.at(i, j).*, id_m.at(i, j).*, 1e-15);
         }
     }
     const id_n: Matrix(f64, n, n) = .identity();
@@ -400,7 +400,7 @@ test "svd basic" {
     }
     for (0..n) |i| {
         for (0..n) |j| {
-            try std.testing.expectApproxEqAbs(vvt.at(i, j), id_n.at(i, j), 1e-15);
+            try std.testing.expectApproxEqAbs(vvt.at(i, j).*, id_n.at(i, j).*, 1e-15);
         }
     }
 }
@@ -436,8 +436,8 @@ test "svd modes" {
     // Singular values should be the same across modes
     const tol = @sqrt(std.math.floatEps(f64));
     for (0..n) |i| {
-        try std.testing.expectApproxEqRel(q_no_u.at(i, 0), q_skinny.at(i, 0), tol);
-        try std.testing.expectApproxEqRel(q_skinny.at(i, 0), q_full.at(i, 0), tol);
+        try std.testing.expectApproxEqRel(q_no_u.at(i, 0).*, q_skinny.at(i, 0).*, tol);
+        try std.testing.expectApproxEqRel(q_skinny.at(i, 0).*, q_full.at(i, 0).*, tol);
     }
 
     // Check matrix dimensions
@@ -455,7 +455,7 @@ test "svd identity matrix" {
     // Identity matrix should have all singular values equal to 1
     const tol = @sqrt(std.math.floatEps(f64));
     for (0..n) |i| {
-        try std.testing.expectApproxEqRel(q.at(i, 0), 1.0, tol);
+        try std.testing.expectApproxEqRel(q.at(i, 0).*, 1.0, tol);
     }
 }
 
@@ -477,7 +477,7 @@ test "svd singular matrix" {
     const tol = @sqrt(std.math.floatEps(f64));
     var zero_count: usize = 0;
     for (0..n) |i| {
-        if (q.at(i, 0) < tol) {
+        if (q.at(i, 0).* < tol) {
             zero_count += 1;
         }
     }

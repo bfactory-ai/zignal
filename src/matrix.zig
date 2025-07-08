@@ -35,18 +35,11 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             return .{ rows, cols };
         }
 
-        /// Retrieves the element at position row, col in the matrix.
-        pub inline fn at(self: Self, row: usize, col: usize) T {
+        /// Retrieves a pointer to the element at position row, col in the matrix.
+        pub inline fn at(self: anytype, row: usize, col: usize) @TypeOf(&self.items[row][col]) {
             assert(row < rows);
             assert(col < cols);
-            return self.items[row][col];
-        }
-
-        /// Sets the element at row, col to val.
-        pub inline fn set(self: *Self, row: usize, col: usize, val: T) void {
-            assert(row < rows);
-            assert(col < cols);
-            self.items[row][col] = val;
+            return &self.items[row][col];
         }
 
         /// Returns a matrix with all elements set to value.
@@ -308,13 +301,13 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             comptime assert(rows == cols);
             return switch (rows) {
                 1 => self.item(),
-                2 => self.at(0, 0) * self.at(1, 1) - self.at(0, 1) * self.at(1, 0),
-                3 => self.at(0, 0) * self.at(1, 1) * self.at(2, 2) +
-                    self.at(0, 1) * self.at(1, 2) * self.at(2, 0) +
-                    self.at(0, 2) * self.at(1, 0) * self.at(2, 1) -
-                    self.at(0, 2) * self.at(1, 1) * self.at(2, 0) -
-                    self.at(0, 1) * self.at(1, 0) * self.at(2, 2) -
-                    self.at(0, 0) * self.at(1, 2) * self.at(2, 1),
+                2 => self.at(0, 0).* * self.at(1, 1).* - self.at(0, 1).* * self.at(1, 0).*,
+                3 => self.at(0, 0).* * self.at(1, 1).* * self.at(2, 2).* +
+                    self.at(0, 1).* * self.at(1, 2).* * self.at(2, 0).* +
+                    self.at(0, 2).* * self.at(1, 0).* * self.at(2, 1).* -
+                    self.at(0, 2).* * self.at(1, 1).* * self.at(2, 0).* -
+                    self.at(0, 1).* * self.at(1, 0).* * self.at(2, 2).* -
+                    self.at(0, 0).* * self.at(1, 2).* * self.at(2, 1).*,
                 else => @compileError("Matrix(T).determinant() is not implemented for sizes above 3"),
             };
         }
@@ -328,23 +321,23 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             var inv: Self = .{};
             switch (rows) {
-                1 => inv.set(0, 0, 1 / det),
+                1 => inv.at(0, 0).* = 1 / det,
                 2 => {
-                    inv.set(0, 0, self.at(1, 1) / det);
-                    inv.set(0, 1, -self.at(0, 1) / det);
-                    inv.set(1, 0, -self.at(1, 0) / det);
-                    inv.set(1, 1, self.at(0, 0) / det);
+                    inv.at(0, 0).* = self.at(1, 1).* / det;
+                    inv.at(0, 1).* = -self.at(0, 1).* / det;
+                    inv.at(1, 0).* = -self.at(1, 0).* / det;
+                    inv.at(1, 1).* = self.at(0, 0).* / det;
                 },
                 3 => {
-                    inv.set(0, 0, (self.at(1, 1) * self.at(2, 2) - self.at(1, 2) * self.at(2, 1)) / det);
-                    inv.set(0, 1, (self.at(0, 2) * self.at(2, 1) - self.at(0, 1) * self.at(2, 2)) / det);
-                    inv.set(0, 2, (self.at(0, 1) * self.at(1, 2) - self.at(0, 2) * self.at(1, 1)) / det);
-                    inv.set(1, 0, (self.at(1, 2) * self.at(2, 0) - self.at(1, 0) * self.at(2, 2)) / det);
-                    inv.set(1, 1, (self.at(0, 0) * self.at(2, 2) - self.at(0, 2) * self.at(2, 0)) / det);
-                    inv.set(1, 2, (self.at(0, 2) * self.at(1, 0) - self.at(0, 0) * self.at(1, 2)) / det);
-                    inv.set(2, 0, (self.at(1, 0) * self.at(2, 1) - self.at(1, 1) * self.at(2, 0)) / det);
-                    inv.set(2, 1, (self.at(0, 1) * self.at(2, 0) - self.at(0, 0) * self.at(2, 1)) / det);
-                    inv.set(2, 2, (self.at(0, 0) * self.at(1, 1) - self.at(0, 1) * self.at(1, 0)) / det);
+                    inv.at(0, 0).* = (self.at(1, 1).* * self.at(2, 2).* - self.at(1, 2).* * self.at(2, 1).*) / det;
+                    inv.at(0, 1).* = (self.at(0, 2).* * self.at(2, 1).* - self.at(0, 1).* * self.at(2, 2).*) / det;
+                    inv.at(0, 2).* = (self.at(0, 1).* * self.at(1, 2).* - self.at(0, 2).* * self.at(1, 1).*) / det;
+                    inv.at(1, 0).* = (self.at(1, 2).* * self.at(2, 0).* - self.at(1, 0).* * self.at(2, 2).*) / det;
+                    inv.at(1, 1).* = (self.at(0, 0).* * self.at(2, 2).* - self.at(0, 2).* * self.at(2, 0).*) / det;
+                    inv.at(1, 2).* = (self.at(0, 2).* * self.at(1, 0).* - self.at(0, 0).* * self.at(1, 2).*) / det;
+                    inv.at(2, 0).* = (self.at(1, 0).* * self.at(2, 1).* - self.at(1, 1).* * self.at(2, 0).*) / det;
+                    inv.at(2, 1).* = (self.at(0, 1).* * self.at(2, 0).* - self.at(0, 0).* * self.at(2, 1).*) / det;
+                    inv.at(2, 2).* = (self.at(0, 0).* * self.at(1, 1).* - self.at(0, 1).* * self.at(1, 0).*) / det;
                 },
                 else => @compileError("Matrix(T).inverse() is not implemented for sizes above 3"),
             }
@@ -532,17 +525,10 @@ pub fn DynamicMatrix(comptime T: type) type {
         }
 
         /// Retrieves the element at position row, col in the matrix.
-        pub inline fn at(self: Self, row: usize, col: usize) T {
+        pub inline fn at(self: Self, row: usize, col: usize) *T {
             assert(row < self.rows);
             assert(col < self.cols);
-            return self.data[row * self.cols + col];
-        }
-
-        /// Sets the element at row, col to val.
-        pub inline fn set(self: *Self, row: usize, col: usize, val: T) void {
-            assert(row < self.rows);
-            assert(col < self.cols);
-            self.data[row * self.cols + col] = val;
+            return &self.data[row * self.cols + col];
         }
 
         /// Returns a matrix with all elements set to value.
@@ -634,9 +620,9 @@ pub fn DynamicMatrix(comptime T: type) type {
                 for (0..other.cols) |c| {
                     var accum: T = 0;
                     for (0..self.cols) |k| {
-                        accum += self.at(r, k) * other.at(k, c);
+                        accum += self.at(r, k).* * other.at(k, c).*;
                     }
-                    result.set(r, c, accum);
+                    result.at(r, c).* = accum;
                 }
             }
             return result;
@@ -647,7 +633,7 @@ pub fn DynamicMatrix(comptime T: type) type {
             var result = try init(self.allocator, self.cols, self.rows);
             for (0..self.rows) |r| {
                 for (0..self.cols) |c| {
-                    result.set(c, r, self.at(r, c));
+                    result.at(c, r).* = self.at(r, c).*;
                 }
             }
             return result;
@@ -736,9 +722,9 @@ test "identity" {
     for (0..eye.rows) |r| {
         for (0..eye.cols) |c| {
             if (r == c) {
-                try expectEqual(eye.at(r, c), 1);
+                try expectEqual(eye.at(r, c).*, 1);
             } else {
-                try expectEqual(eye.at(r, c), 0);
+                try expectEqual(eye.at(r, c).*, 0);
             }
         }
     }
@@ -766,7 +752,7 @@ test "scale" {
     try expectEqualDeep(a.shape(), b.shape());
     for (0..a.rows) |r| {
         for (0..a.cols) |c| {
-            try expectEqual(std.math.pi * a.at(r, c), b.at(r, c));
+            try expectEqual(std.math.pi * a.at(r, c).*, b.at(r, c).*);
         }
     }
 }
@@ -784,7 +770,7 @@ test "apply" {
     try expectEqualDeep(a.shape(), b.shape());
     for (0..a.rows) |r| {
         for (0..a.cols) |c| {
-            try expectEqual(@sin(a.at(r, c)), b.at(r, c));
+            try expectEqual(@sin(a.at(r, c).*), b.at(r, c).*);
         }
     }
 }
@@ -800,14 +786,14 @@ test "norm" {
     }.f;
     try expectEqual(matrix.nuclearNorm(), matrix.apply(f).sum());
 
-    matrix.set(2, 3, 1000000);
+    matrix.at(2, 3).* = 1000000;
     try expectEqual(matrix.maxNorm(), 1000000);
 
     matrix = matrix.offset(10);
-    matrix.set(2, 3, -5);
+    matrix.at(2, 3).* = -5;
     try expectEqual(matrix.minNorm(), 5);
 
-    matrix.set(2, 3, 0);
+    matrix.at(2, 3).* = 0;
     try expectEqual(matrix.sparseNorm(), 11);
 }
 
@@ -822,50 +808,50 @@ test "sum" {
 
 test "inverse" {
     var a: Matrix(f32, 2, 2) = .{};
-    a.set(0, 0, -1);
-    a.set(0, 1, 1.5);
-    a.set(1, 0, 1);
-    a.set(1, 1, -1);
+    a.at(0, 0).* = -1;
+    a.at(0, 1).* = 1.5;
+    a.at(1, 0).* = 1;
+    a.at(1, 1).* = -1;
     try expectEqual(a.determinant(), -0.5);
     var a_i: Matrix(f32, 2, 2) = .{};
-    a_i.set(0, 0, 2);
-    a_i.set(0, 1, 3);
-    a_i.set(1, 0, 2);
-    a_i.set(1, 1, 2);
+    a_i.at(0, 0).* = 2;
+    a_i.at(0, 1).* = 3;
+    a_i.at(1, 0).* = 2;
+    a_i.at(1, 1).* = 2;
     try expectEqualDeep(a.inverse(), a_i);
     var b: Matrix(f32, 3, 3) = .{};
-    b.set(0, 0, 1);
-    b.set(0, 1, 2);
-    b.set(0, 2, 3);
-    b.set(1, 0, 4);
-    b.set(1, 1, 5);
-    b.set(1, 2, 6);
-    b.set(2, 0, 7);
-    b.set(2, 1, 2);
-    b.set(2, 2, 9);
+    b.at(0, 0).* = 1;
+    b.at(0, 1).* = 2;
+    b.at(0, 2).* = 3;
+    b.at(1, 0).* = 4;
+    b.at(1, 1).* = 5;
+    b.at(1, 2).* = 6;
+    b.at(2, 0).* = 7;
+    b.at(2, 1).* = 2;
+    b.at(2, 2).* = 9;
     try expectEqual(b.determinant(), -36);
     var b_i: Matrix(f32, 3, 3) = .{};
-    b_i.set(0, 0, -11.0 / 12.0);
-    b_i.set(0, 1, 1.0 / 3.0);
-    b_i.set(0, 2, 1.0 / 12.0);
-    b_i.set(1, 0, -1.0 / 6.0);
-    b_i.set(1, 1, 1.0 / 3.0);
-    b_i.set(1, 2, -1.0 / 6.0);
-    b_i.set(2, 0, 3.0 / 4.0);
-    b_i.set(2, 1, -1.0 / 3.0);
-    b_i.set(2, 2, 1.0 / 12.0);
+    b_i.at(0, 0).* = -11.0 / 12.0;
+    b_i.at(0, 1).* = 1.0 / 3.0;
+    b_i.at(0, 2).* = 1.0 / 12.0;
+    b_i.at(1, 0).* = -1.0 / 6.0;
+    b_i.at(1, 1).* = 1.0 / 3.0;
+    b_i.at(1, 2).* = -1.0 / 6.0;
+    b_i.at(2, 0).* = 3.0 / 4.0;
+    b_i.at(2, 1).* = -1.0 / 3.0;
+    b_i.at(2, 2).* = 1.0 / 12.0;
     try expectEqualDeep(b.inverse().?, b_i);
 }
 
 test "format" {
     // Test 2x3 matrix with known values
     var m: Matrix(f32, 2, 3) = .{};
-    m.set(0, 0, 1.23);
-    m.set(0, 1, -4.5);
-    m.set(0, 2, 7.0);
-    m.set(1, 0, 10.1);
-    m.set(1, 1, 0.0);
-    m.set(1, 2, -5.67);
+    m.at(0, 0).* = 1.23;
+    m.at(0, 1).* = -4.5;
+    m.at(0, 2).* = 7.0;
+    m.at(1, 0).* = 10.1;
+    m.at(1, 1).* = 0.0;
+    m.at(1, 2).* = -5.67;
 
     // Test default formatting (scientific notation)
     var buffer: [256]u8 = undefined;
@@ -891,7 +877,7 @@ test "format" {
 
     // Test 1x1 matrix
     var m_single: Matrix(f64, 1, 1) = .{};
-    m_single.set(0, 0, 3.14159);
+    m_single.at(0, 0).* = 3.14159;
     stream.reset();
     try std.fmt.format(stream.writer(), "{:.3}", .{m_single});
     const result_single = stream.getWritten();
@@ -907,15 +893,15 @@ test "dynamic matrix basic operations" {
     defer dyn_matrix.deinit();
 
     // Test basic set/get operations
-    dyn_matrix.set(0, 0, 1.0);
-    dyn_matrix.set(0, 1, 2.0);
-    dyn_matrix.set(0, 2, 3.0);
-    dyn_matrix.set(1, 0, 4.0);
-    dyn_matrix.set(1, 1, 5.0);
-    dyn_matrix.set(1, 2, 6.0);
+    dyn_matrix.at(0, 0).* = 1.0;
+    dyn_matrix.at(0, 1).* = 2.0;
+    dyn_matrix.at(0, 2).* = 3.0;
+    dyn_matrix.at(1, 0).* = 4.0;
+    dyn_matrix.at(1, 1).* = 5.0;
+    dyn_matrix.at(1, 2).* = 6.0;
 
-    try expectEqual(@as(f32, 1.0), dyn_matrix.at(0, 0));
-    try expectEqual(@as(f32, 6.0), dyn_matrix.at(1, 2));
+    try expectEqual(@as(f32, 1.0), dyn_matrix.at(0, 0).*);
+    try expectEqual(@as(f32, 6.0), dyn_matrix.at(1, 2).*);
 
     // Test dimensions
     const shape = dyn_matrix.shape();
@@ -937,20 +923,20 @@ test "dynamic matrix dot product" {
     defer b.deinit();
 
     // Set values for matrix A (2x3)
-    a.set(0, 0, 1.0);
-    a.set(0, 1, 2.0);
-    a.set(0, 2, 3.0);
-    a.set(1, 0, 4.0);
-    a.set(1, 1, 5.0);
-    a.set(1, 2, 6.0);
+    a.at(0, 0).* = 1.0;
+    a.at(0, 1).* = 2.0;
+    a.at(0, 2).* = 3.0;
+    a.at(1, 0).* = 4.0;
+    a.at(1, 1).* = 5.0;
+    a.at(1, 2).* = 6.0;
 
     // Set values for matrix B (3x2)
-    b.set(0, 0, 7.0);
-    b.set(0, 1, 8.0);
-    b.set(1, 0, 9.0);
-    b.set(1, 1, 10.0);
-    b.set(2, 0, 11.0);
-    b.set(2, 1, 12.0);
+    b.at(0, 0).* = 7.0;
+    b.at(0, 1).* = 8.0;
+    b.at(1, 0).* = 9.0;
+    b.at(1, 1).* = 10.0;
+    b.at(2, 0).* = 11.0;
+    b.at(2, 1).* = 12.0;
 
     // Multiply A * B should result in 2x2 matrix
     var result = try a.dot(b);
@@ -964,10 +950,10 @@ test "dynamic matrix dot product" {
     // Verify result values
     // A * B = [1*7+2*9+3*11  1*8+2*10+3*12] = [58  64]
     //         [4*7+5*9+6*11  4*8+5*10+6*12]   [139 154]
-    try expectEqual(@as(f64, 58.0), result.at(0, 0));
-    try expectEqual(@as(f64, 64.0), result.at(0, 1));
-    try expectEqual(@as(f64, 139.0), result.at(1, 0));
-    try expectEqual(@as(f64, 154.0), result.at(1, 1));
+    try expectEqual(@as(f64, 58.0), result.at(0, 0).*);
+    try expectEqual(@as(f64, 64.0), result.at(0, 1).*);
+    try expectEqual(@as(f64, 139.0), result.at(1, 0).*);
+    try expectEqual(@as(f64, 154.0), result.at(1, 1).*);
 }
 
 test "matrix operations as data" {
@@ -977,17 +963,17 @@ test "matrix operations as data" {
     // Create test matrices
     var a = try DynamicMatrix(f32).init(arena.allocator(), 2, 2);
     defer a.deinit();
-    a.set(0, 0, 1.0);
-    a.set(0, 1, 2.0);
-    a.set(1, 0, 3.0);
-    a.set(1, 1, 4.0);
+    a.at(0, 0).* = 1.0;
+    a.at(0, 1).* = 2.0;
+    a.at(1, 0).* = 3.0;
+    a.at(1, 1).* = 4.0;
 
     var b = try DynamicMatrix(f32).init(arena.allocator(), 2, 2);
     defer b.deinit();
-    b.set(0, 0, 2.0);
-    b.set(0, 1, 0.0);
-    b.set(1, 0, 0.0);
-    b.set(1, 1, 2.0);
+    b.at(0, 0).* = 2.0;
+    b.at(0, 1).* = 0.0;
+    b.at(1, 0).* = 0.0;
+    b.at(1, 1).* = 2.0;
 
     // Define operations as data
     const ops = [_]MatrixOp(f32){
@@ -1001,10 +987,10 @@ test "matrix operations as data" {
     defer result.deinit();
 
     // Verify result - same as before
-    try expectEqual(@as(f32, 1.0), result.at(0, 0));
-    try expectEqual(@as(f32, 3.0), result.at(0, 1));
-    try expectEqual(@as(f32, 2.0), result.at(1, 0));
-    try expectEqual(@as(f32, 4.0), result.at(1, 1));
+    try expectEqual(@as(f32, 1.0), result.at(0, 0).*);
+    try expectEqual(@as(f32, 3.0), result.at(0, 1).*);
+    try expectEqual(@as(f32, 2.0), result.at(1, 0).*);
+    try expectEqual(@as(f32, 4.0), result.at(1, 1).*);
 }
 
 test "static matrix direct chaining" {
@@ -1023,10 +1009,10 @@ test "static matrix direct chaining" {
     const result = a.dot(b).transpose().scale(0.5);
 
     // Verify result - same computation as dynamic version
-    try expectEqual(@as(f32, 1.0), result.at(0, 0));
-    try expectEqual(@as(f32, 3.0), result.at(0, 1));
-    try expectEqual(@as(f32, 2.0), result.at(1, 0));
-    try expectEqual(@as(f32, 4.0), result.at(1, 1));
+    try expectEqual(@as(f32, 1.0), result.at(0, 0).*);
+    try expectEqual(@as(f32, 3.0), result.at(0, 1).*);
+    try expectEqual(@as(f32, 2.0), result.at(1, 0).*);
+    try expectEqual(@as(f32, 4.0), result.at(1, 1).*);
 }
 
 test "dynamic vs static matrix identical results" {
@@ -1047,17 +1033,17 @@ test "dynamic vs static matrix identical results" {
     // Create identical dynamic matrices
     var dynamic_a = try DynamicMatrix(f32).init(arena.allocator(), 2, 2);
     defer dynamic_a.deinit();
-    dynamic_a.set(0, 0, 1.0);
-    dynamic_a.set(0, 1, 2.0);
-    dynamic_a.set(1, 0, 3.0);
-    dynamic_a.set(1, 1, 4.0);
+    dynamic_a.at(0, 0).* = 1.0;
+    dynamic_a.at(0, 1).* = 2.0;
+    dynamic_a.at(1, 0).* = 3.0;
+    dynamic_a.at(1, 1).* = 4.0;
 
     var dynamic_b = try DynamicMatrix(f32).init(arena.allocator(), 2, 2);
     defer dynamic_b.deinit();
-    dynamic_b.set(0, 0, 2.0);
-    dynamic_b.set(0, 1, 0.0);
-    dynamic_b.set(1, 0, 0.0);
-    dynamic_b.set(1, 1, 2.0);
+    dynamic_b.at(0, 0).* = 2.0;
+    dynamic_b.at(0, 1).* = 0.0;
+    dynamic_b.at(1, 0).* = 0.0;
+    dynamic_b.at(1, 1).* = 2.0;
 
     // Static matrix chaining API
     const static_result = static_a.dot(static_b).transpose().scale(0.5);
@@ -1074,7 +1060,7 @@ test "dynamic vs static matrix identical results" {
     // Verify both approaches give identical results
     for (0..2) |r| {
         for (0..2) |c| {
-            try expectEqual(static_result.at(r, c), dynamic_result.at(r, c));
+            try expectEqual(static_result.at(r, c).*, dynamic_result.at(r, c).*);
         }
     }
 }

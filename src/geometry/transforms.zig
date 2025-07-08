@@ -63,7 +63,7 @@ pub fn SimilarityTransform(comptime T: type) type {
             sigma_from /= num_points;
             sigma_to /= num_points;
             cov = cov.scale(1.0 / num_points);
-            const det_cov = cov.at(0, 0) * cov.at(1, 1) - cov.at(0, 1) * cov.at(1, 0);
+            const det_cov = cov.at(0, 0).* * cov.at(1, 1).* - cov.at(0, 1).* * cov.at(1, 0).*;
             const result = svd(
                 T,
                 cov.rows,
@@ -72,16 +72,16 @@ pub fn SimilarityTransform(comptime T: type) type {
                 .{ .with_u = true, .with_v = true, .mode = .skinny_u },
             );
             const u: *const Matrix(T, 2, 2) = &result[0];
-            const d: Matrix(T, 2, 2) = .{ .items = .{ .{ result[1].at(0, 0), 0 }, .{ 0, result[1].at(1, 0) } } };
+            const d: Matrix(T, 2, 2) = .{ .items = .{ .{ result[1].at(0, 0).*, 0 }, .{ 0, result[1].at(1, 0).* } } };
             const v: *const Matrix(T, 2, 2) = &result[2];
-            const det_u = u.at(0, 0) * u.at(1, 1) - u.at(0, 1) * u.at(1, 0);
-            const det_v = v.at(0, 0) * v.at(1, 1) - v.at(0, 1) * v.at(1, 0);
+            const det_u = u.at(0, 0).* * u.at(1, 1).* - u.at(0, 1).* * u.at(1, 0).*;
+            const det_v = v.at(0, 0).* * v.at(1, 1).* - v.at(0, 1).* * v.at(1, 0).*;
             var s: Matrix(T, cov.rows, cov.cols) = .identity();
             if (det_cov < 0 or (det_cov == 0 and det_u * det_v < 0)) {
-                if (d.at(1, 1) < d.at(0, 0)) {
-                    s.set(1, 1, -1);
+                if (d.at(1, 1).* < d.at(0, 0).*) {
+                    s.at(1, 1).* = -1;
                 } else {
-                    s.set(0, 0, -1);
+                    s.at(0, 0).* = -1;
                 }
             }
             const r = u.dot(s.dot(v.transpose()));
@@ -129,12 +129,12 @@ pub fn AffineTransform(comptime T: type) type {
             var p: Matrix(T, 3, from_points.len) = .{};
             var q: Matrix(T, 2, to_points.len) = .{};
             for (0..from_points.len) |i| {
-                p.set(0, i, from_points[i].x);
-                p.set(1, i, from_points[i].y);
-                p.set(2, i, 1);
+                p.at(0, i).* = from_points[i].x;
+                p.at(1, i).* = from_points[i].y;
+                p.at(2, i).* = 1;
 
-                q.set(0, i, to_points[i].x);
-                q.set(1, i, to_points[i].y);
+                q.at(0, i).* = to_points[i].x;
+                q.at(1, i).* = to_points[i].y;
             }
             const m = q.dot(p.inverse().?);
             self.matrix = m.getSubMatrix(0, 0, 2, 2);
@@ -162,8 +162,8 @@ pub fn ProjectiveTransform(comptime T: type) type {
         pub fn project(self: Self, point: Point2d(T)) Point2d(T) {
             const src = Matrix(T, 3, 1){ .items = .{ .{point.x}, .{point.y}, .{1} } };
             var dst = self.matrix.dot(src);
-            if (dst.at(2, 0) != 0) {
-                dst = dst.scale(1 / dst.at(2, 0));
+            if (dst.at(2, 0).* != 0) {
+                dst = dst.scale(1 / dst.at(2, 0).*);
             }
             return dst.toPoint2d();
         }
@@ -182,10 +182,10 @@ pub fn ProjectiveTransform(comptime T: type) type {
             for (0..from_points.len) |i| {
                 const f = Matrix(T, 1, 3){ .items = .{.{ from_points[i].x, from_points[i].y, 1 }} };
                 const t = Matrix(T, 1, 3){ .items = .{.{ to_points[i].x, to_points[i].y, 1 }} };
-                b.setSubMatrix(0, 0, f.scale(t.at(0, 1)));
+                b.setSubMatrix(0, 0, f.scale(t.at(0, 1).*));
                 b.setSubMatrix(1, 0, f);
-                b.setSubMatrix(0, 3, f.scale(-t.at(0, 0)));
-                b.setSubMatrix(1, 6, f.scale(-t.at(0, 0)));
+                b.setSubMatrix(0, 3, f.scale(-t.at(0, 0).*));
+                b.setSubMatrix(1, 6, f.scale(-t.at(0, 0).*));
                 accum = accum.add(b.transpose().dot(b));
             }
             const u, const q, _, _ = svd(
@@ -198,10 +198,10 @@ pub fn ProjectiveTransform(comptime T: type) type {
             // TODO: Check the retval from svd (result[3]) for convergence errors.
             // If svd fails to converge, the resulting transform matrix might be unstable.
             self.matrix = blk: {
-                var min: T = q.at(0, 0);
+                var min: T = q.at(0, 0).*;
                 var idx: usize = 0;
                 for (1..q.rows) |i| {
-                    const val = q.at(i, 0);
+                    const val = q.at(i, 0).*;
                     if (val < min) {
                         min = val;
                         idx = i;
@@ -263,7 +263,7 @@ test "projection4" {
     };
     for (0..transform.matrix.rows) |r| {
         for (0..transform.matrix.cols) |c| {
-            try std.testing.expectApproxEqAbs(transform.matrix.at(r, c), matrix.at(r, c), 1e-3);
+            try std.testing.expectApproxEqAbs(transform.matrix.at(r, c).*, matrix.at(r, c).*, 1e-3);
         }
     }
     for (from_points, to_points) |f, t| {
@@ -317,7 +317,7 @@ test "projection8" {
     const tol = std.math.sqrt(std.math.floatEps(T));
     for (0..transform.matrix.rows) |r| {
         for (0..transform.matrix.cols) |c| {
-            try std.testing.expectApproxEqAbs(transform.matrix.at(r, c), matrix.at(r, c), tol);
+            try std.testing.expectApproxEqAbs(transform.matrix.at(r, c).*, matrix.at(r, c).*, tol);
         }
     }
     for (0..from_points.len) |i| {
