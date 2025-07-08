@@ -36,14 +36,14 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
         }
 
         /// Retrieves the element at position row, col in the matrix.
-        pub fn at(self: Self, row: usize, col: usize) T {
+        pub inline fn at(self: Self, row: usize, col: usize) T {
             assert(row < rows);
             assert(col < cols);
             return self.items[row][col];
         }
 
         /// Sets the element at row, col to val.
-        pub fn set(self: *Self, row: usize, col: usize, val: T) void {
+        pub inline fn set(self: *Self, row: usize, col: usize, val: T) void {
             assert(row < rows);
             assert(col < cols);
             self.items[row][col] = val;
@@ -532,14 +532,14 @@ pub fn DynamicMatrix(comptime T: type) type {
         }
 
         /// Retrieves the element at position row, col in the matrix.
-        pub fn at(self: Self, row: usize, col: usize) T {
+        pub inline fn at(self: Self, row: usize, col: usize) T {
             assert(row < self.rows);
             assert(col < self.cols);
             return self.data[row * self.cols + col];
         }
 
         /// Sets the element at row, col to val.
-        pub fn set(self: *Self, row: usize, col: usize, val: T) void {
+        pub inline fn set(self: *Self, row: usize, col: usize, val: T) void {
             assert(row < self.rows);
             assert(col < self.cols);
             self.data[row * self.cols + col] = val;
