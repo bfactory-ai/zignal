@@ -10,297 +10,6 @@ const builtin = @import("builtin");
 const Point2d = @import("geometry/points.zig").Point2d;
 const Point3d = @import("geometry/points.zig").Point3d;
 
-/// Storage strategy for static matrices with compile-time known dimensions
-fn StaticStorage(comptime T: type, comptime rows: usize, comptime cols: usize) type {
-    assert(@typeInfo(T) == .float);
-    return struct {
-        items: [rows][cols]T = undefined,
-        
-        pub fn at(self: @This(), row: usize, col: usize) T {
-            assert(row < rows);
-            assert(col < cols);
-            return self.items[row][col];
-        }
-        
-        pub fn set(self: *@This(), row: usize, col: usize, val: T) void {
-            assert(row < rows);
-            assert(col < cols);
-            self.items[row][col] = val;
-        }
-        
-        pub fn rowCount(self: @This()) usize {
-            _ = self;
-            return rows;
-        }
-        
-        pub fn colCount(self: @This()) usize {
-            _ = self;
-            return cols;
-        }
-        
-        // Allow direct access to items
-        pub fn getItems(self: *@This()) *[rows][cols]T {
-            return &self.items;
-        }
-    };
-}
-
-/// Storage strategy for dynamic matrices with runtime dimensions
-fn DynamicStorage(comptime T: type) type {
-    assert(@typeInfo(T) == .float);
-    return struct {
-        items: [][]T,
-        row_count: usize,
-        col_count: usize,
-        allocator: std.mem.Allocator,
-        
-        pub fn init(allocator: std.mem.Allocator, row_count: usize, col_count: usize) !@This() {
-            var self = @This(){
-                .allocator = allocator,
-                .row_count = row_count,
-                .col_count = col_count,
-                .items = undefined,
-            };
-            
-            self.items = try allocator.alloc([]T, row_count);
-            for (0..row_count) |i| {
-                self.items[i] = try allocator.alloc(T, col_count);
-            }
-            return self;
-        }
-        
-        pub fn deinit(self: *@This()) void {
-            for (self.items) |row| {
-                self.allocator.free(row);
-            }
-            self.allocator.free(self.items);
-        }
-        
-        pub fn at(self: @This(), row: usize, col: usize) T {
-            assert(row < self.row_count);
-            assert(col < self.col_count);
-            return self.items[row][col];
-        }
-        
-        pub fn set(self: *@This(), row: usize, col: usize, val: T) void {
-            assert(row < self.row_count);
-            assert(col < self.col_count);
-            self.items[row][col] = val;
-        }
-        
-        pub fn rowCount(self: @This()) usize {
-            return self.row_count;
-        }
-        
-        pub fn colCount(self: @This()) usize {
-            return self.col_count;
-        }
-        
-        pub fn createSimilar(self: @This(), new_rows: usize, new_cols: usize) !DynamicStorage(T) {
-            return DynamicStorage(T).init(self.allocator, new_rows, new_cols);
-        }
-    };
-}
-
-/// Generic matrix implementation that works with any storage strategy
-fn MatrixImpl(comptime T: type, comptime StorageStrategy: type) type {
-    assert(@typeInfo(T) == .float);
-    return struct {
-        const Self = @This();
-        storage: StorageStrategy,
-        
-        /// Returns the rows and columns as a struct.
-        pub fn shape(self: Self) struct { usize, usize } {
-            return .{
-                self.storage.rowCount(),
-                self.storage.colCount(),
-            };
-        }
-        
-        /// Retrieves the element at position row, col in the matrix.
-        /// Panics if `row` or `col` are out of bounds (if runtime safety is enabled).
-        pub fn at(self: Self, row: usize, col: usize) T {
-            return self.storage.at(row, col);
-        }
-        
-        /// Sets the element at row, col to val.
-        /// Panics if `row` or `col` are out of bounds (if runtime safety is enabled).
-        pub fn set(self: *Self, row: usize, col: usize, val: T) void {
-            self.storage.set(row, col, val);
-        }
-        
-        /// Initialize a dynamic matrix with allocator and dimensions (only available for DynamicStorage)
-        pub fn init(allocator: std.mem.Allocator, row_count: usize, col_count: usize) !Self {
-            // This will only compile for DynamicStorage types
-            return Self{
-                .storage = try StorageStrategy.init(allocator, row_count, col_count),
-            };
-        }
-        
-        /// Deinitialize a dynamic matrix (only available for DynamicStorage)
-        pub fn deinit(self: *Self) void {
-            // This will only compile for DynamicStorage types
-            self.storage.deinit();
-        }
-        
-        /// Returns a matrix with all elements set to value.
-        pub fn initAll(value: T) Self {
-            var result: Self = .{ .storage = .{} };
-            for (0..result.storage.rowCount()) |r| {
-                for (0..result.storage.colCount()) |c| {
-                    result.storage.set(r, c, value);
-                }
-            }
-            return result;
-        }
-        
-        /// Returns an identity-like matrix. For square matrices, this is the standard identity matrix.
-        /// For non-square matrices, it has 1s on the main diagonal (min(rows,cols)) and 0s elsewhere.
-        pub fn identity() Self {
-            var result: Self = .{ .storage = .{} };
-            for (0..result.storage.rowCount()) |r| {
-                for (0..result.storage.colCount()) |c| {
-                    if (r == c) {
-                        result.storage.set(r, c, 1);
-                    } else {
-                        result.storage.set(r, c, 0);
-                    }
-                }
-            }
-            return result;
-        }
-        
-        /// Returns a matrix filled with random floating-point numbers of type `T` using the provided `seed`.
-        /// If `seed` is `null`, a seed is generated from the current system time.
-        pub fn random(seed: ?u64) Self {
-            const s: u64 = seed orelse @truncate(@as(u128, @bitCast(std.time.nanoTimestamp())));
-            var prng: std.Random.DefaultPrng = .init(s);
-            var rand = prng.random();
-            var result: Self = .{ .storage = .{} };
-            for (0..result.storage.rowCount()) |r| {
-                for (0..result.storage.colCount()) |c| {
-                    result.storage.set(r, c, rand.float(T));
-                }
-            }
-            return result;
-        }
-        
-        /// Sums all the elements in a matrix.
-        pub fn sum(self: Self) T {
-            var accum: T = 0;
-            for (0..self.storage.rowCount()) |r| {
-                for (0..self.storage.colCount()) |c| {
-                    accum += self.storage.at(r, c);
-                }
-            }
-            return accum;
-        }
-        
-        /// Scales all matrix values.
-        pub fn scale(self: Self, value: T) Self {
-            var result: Self = .{ .storage = .{} };
-            for (0..self.storage.rowCount()) |r| {
-                for (0..self.storage.colCount()) |c| {
-                    result.storage.set(r, c, value * self.storage.at(r, c));
-                }
-            }
-            return result;
-        }
-        
-        /// Applies a unary function to all matrix values.
-        pub fn apply(self: Self, comptime unaryFn: fn (arg: T) T) Self {
-            var result: Self = .{ .storage = .{} };
-            for (0..self.storage.rowCount()) |r| {
-                for (0..self.storage.colCount()) |c| {
-                    result.storage.set(r, c, unaryFn(self.storage.at(r, c)));
-                }
-            }
-            return result;
-        }
-        
-        /// Performs pointwise multiplication.
-        /// Both `self` and `other` must have the same dimensions.
-        pub fn times(self: Self, other: Self) Self {
-            var result: Self = .{ .storage = .{} };
-            for (0..self.storage.rowCount()) |r| {
-                for (0..self.storage.colCount()) |c| {
-                    result.storage.set(r, c, self.storage.at(r, c) * other.storage.at(r, c));
-                }
-            }
-            return result;
-        }
-        
-        /// Computes the Frobenius norm of the matrix as the square root of the sum of its squared values.
-        pub fn frobeniusNorm(self: Self) T {
-            return @sqrt(self.times(self).sum());
-        }
-        
-        /// Sums all the elements in rows.
-        pub fn sumRows(self: Self) Self {
-            // This is a simplified version - in the full implementation we'd return different dimensions
-            var result: Self = .{ .storage = .{} };
-            for (0..self.storage.rowCount()) |r| {
-                for (0..self.storage.colCount()) |c| {
-                    result.storage.set(0, c, self.storage.at(r, c));
-                }
-            }
-            return result;
-        }
-        
-        /// Sums all the elements in columns.
-        pub fn sumCols(self: Self) Self {
-            // This is a simplified version - in the full implementation we'd return different dimensions  
-            var result: Self = .{ .storage = .{} };
-            for (0..self.storage.rowCount()) |r| {
-                for (0..self.storage.colCount()) |c| {
-                    result.storage.set(r, 0, self.storage.at(r, c));
-                }
-            }
-            return result;
-        }
-        
-        /// Performs the dot (or internal product) of two dynamic matrices.
-        pub fn dot(self: Self, other: Self) !Self {
-            // Check dimension compatibility
-            assert(self.storage.colCount() == other.storage.rowCount());
-            
-            // Create result matrix
-            var result = try Self.init(self.storage.allocator, self.storage.rowCount(), other.storage.colCount());
-            
-            // Perform matrix multiplication
-            for (0..self.storage.rowCount()) |r| {
-                for (0..other.storage.colCount()) |c| {
-                    var accum: T = 0;
-                    for (0..self.storage.colCount()) |k| {
-                        accum += self.storage.at(r, k) * other.storage.at(k, c);
-                    }
-                    result.storage.set(r, c, accum);
-                }
-            }
-            return result;
-        }
-    };
-}
-
-/// Creates a dynamic matrix with runtime dimensions
-pub fn DynamicMatrix(comptime T: type) type {
-    return MatrixImpl(T, DynamicStorage(T));
-}
-
-/// Helper function to check if a matrix type is dynamic by checking for storage field
-fn isDynamicMatrix(comptime MatrixType: type) bool {
-    // Simple approach: check if type has 'storage' field (dynamic) vs 'items' field (static)
-    const type_info = @typeInfo(MatrixType);
-    if (type_info != .@"struct") return false;
-    
-    for (type_info.@"struct".fields) |field| {
-        if (std.mem.eql(u8, field.name, "storage")) {
-            return true; // Has storage field, must be dynamic
-        }
-    }
-    return false; // No storage field, must be static
-}
-
 /// Creates a Matrix with elements of type T and size rows times cols.
 pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type {
     return struct {
@@ -308,7 +17,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
         items: [rows][cols]T = undefined,
         comptime rows: usize = rows,
         comptime cols: usize = cols,
-        
+
         // Allow direct .items field initialization for compatibility
         pub fn setFromItems(items: [rows][cols]T) Self {
             var result: Self = .{};
@@ -319,27 +28,27 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return result;
         }
-        
+
         /// Returns the rows and columns as a struct.
         pub fn shape(self: Self) struct { usize, usize } {
             _ = self;
             return .{ rows, cols };
         }
-        
+
         /// Retrieves the element at position row, col in the matrix.
         pub fn at(self: Self, row: usize, col: usize) T {
             assert(row < rows);
             assert(col < cols);
             return self.items[row][col];
         }
-        
+
         /// Sets the element at row, col to val.
         pub fn set(self: *Self, row: usize, col: usize, val: T) void {
             assert(row < rows);
             assert(col < cols);
             self.items[row][col] = val;
         }
-        
+
         /// Returns a matrix with all elements set to value.
         pub fn initAll(value: T) Self {
             var result: Self = .{};
@@ -350,7 +59,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return result;
         }
-        
+
         /// Returns an identity-like matrix.
         pub fn identity() Self {
             var result: Self = .{};
@@ -365,7 +74,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return result;
         }
-        
+
         /// Returns a matrix filled with random floating-point numbers.
         pub fn random(seed: ?u64) Self {
             const s: u64 = seed orelse @truncate(@as(u128, @bitCast(std.time.nanoTimestamp())));
@@ -379,7 +88,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return result;
         }
-        
+
         /// Sums all the elements in a matrix.
         pub fn sum(self: Self) T {
             var accum: T = 0;
@@ -390,7 +99,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return accum;
         }
-        
+
         /// Scales all matrix values.
         pub fn scale(self: Self, value: T) Self {
             var result: Self = .{};
@@ -401,7 +110,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return result;
         }
-        
+
         /// Applies a unary function to all matrix values.
         pub fn apply(self: Self, comptime unaryFn: fn (arg: T) T) Self {
             var result: Self = .{};
@@ -412,7 +121,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return result;
         }
-        
+
         /// Adds an offset to all matrix values.
         pub fn offset(self: Self, value: T) Self {
             var result: Self = .{};
@@ -423,7 +132,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return result;
         }
-        
+
         /// Performs pointwise multiplication.
         pub fn times(self: Self, other: Self) Self {
             var result: Self = .{};
@@ -434,12 +143,12 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return result;
         }
-        
+
         /// Computes the Frobenius norm of the matrix.
         pub fn frobeniusNorm(self: Self) T {
             return @sqrt(self.times(self).sum());
         }
-        
+
         /// Computes the nuclear norm of the matrix as sum of the absolute values of all elements.
         pub fn nuclearNorm(self: Self) T {
             var accum: T = 0;
@@ -450,13 +159,13 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return accum;
         }
-        
+
         /// If the matrix only contains one element, it returns it, otherwise it fails to compile.
         pub fn item(self: Self) T {
             comptime assert(rows == 1 and cols == 1);
             return self.items[0][0];
         }
-        
+
         /// Computes the L-infinity norm (maximum absolute value among all elements) of the matrix.
         pub fn maxNorm(self: Self) T {
             var result: T = -std.math.inf(T);
@@ -470,7 +179,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return result;
         }
-        
+
         /// Computes the minimum absolute value among all elements of the matrix.
         pub fn minNorm(self: Self) T {
             var result: T = std.math.inf(T);
@@ -484,7 +193,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return result;
         }
-        
+
         /// Computes the L0 norm, which is the count of non-zero elements in the matrix.
         pub fn sparseNorm(self: Self) T {
             var count: T = 0;
@@ -495,7 +204,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return count;
         }
-        
+
         /// Performs the dot (or internal product) of two matrices.
         pub fn dot(self: Self, other: anytype) Matrix(T, rows, other.cols) {
             comptime assert(cols == other.rows);
@@ -509,7 +218,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return result;
         }
-        
+
         /// Adds a matrix.
         pub fn add(self: Self, other: Self) Self {
             var result: Self = .{};
@@ -520,7 +229,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return result;
         }
-        
+
         /// Sets the sub-matrix at position row, col to sub_matrix.
         pub fn setSubMatrix(self: *Self, row: usize, col: usize, matrix: anytype) void {
             assert(matrix.rows + row <= rows);
@@ -531,7 +240,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
                 }
             }
         }
-        
+
         /// Transposes the matrix.
         pub fn transpose(self: Self) Matrix(T, cols, rows) {
             var result: Matrix(T, cols, rows) = .{};
@@ -542,7 +251,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return result;
         }
-        
+
         /// Returns a new matrix which is a copy of the specified rectangular region of `self`.
         pub fn getSubMatrix(
             self: Self,
@@ -563,7 +272,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return result;
         }
-        
+
         /// Returns the elements in the column as a column Matrix.
         pub fn getCol(self: Self, col: usize) Matrix(T, rows, 1) {
             assert(col < cols);
@@ -573,7 +282,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return result;
         }
-        
+
         /// Returns a new matrix with dimensions `new_rows` x `new_cols`, containing the same elements
         /// as `self` interpreted in row-major order.
         pub fn reshape(self: Self, comptime new_rows: usize, comptime new_cols: usize) Matrix(T, new_rows, new_cols) {
@@ -587,15 +296,13 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return result;
         }
-        
+
         /// Converts a column matrix into a Point2d.
         pub fn toPoint2d(self: Self) Point2d(T) {
             comptime assert(rows >= 2 and cols == 1);
             return .{ .x = self.items[0][0], .y = self.items[1][0] };
         }
-        
-        
-        
+
         /// Computes the determinant of self if it's a square matrix.
         pub fn determinant(self: Self) T {
             comptime assert(rows == cols);
@@ -611,7 +318,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
                 else => @compileError("Matrix(T).determinant() is not implemented for sizes above 3"),
             };
         }
-        
+
         /// Computes the inverse of self if it's a square matrix.
         pub fn inverse(self: Self) ?Self {
             comptime assert(rows == cols);
@@ -643,7 +350,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return inv;
         }
-        
+
         /// Formats the matrix for pretty printing with configurable precision.
         pub fn format(
             self: Self,
@@ -749,7 +456,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
                 }
             }
         }
-        
+
         /// Sums all the elements in rows.
         pub fn sumRows(self: Self) Matrix(T, 1, cols) {
             var result: Matrix(T, 1, cols) = .initAll(0);
@@ -760,7 +467,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return result;
         }
-        
+
         /// Sums all the elements in columns.
         pub fn sumCols(self: Self) Matrix(T, rows, 1) {
             var result: Matrix(T, rows, 1) = .initAll(0);
@@ -771,7 +478,7 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return result;
         }
-        
+
         // Support direct .items initialization for compatibility
         pub fn init(items: [rows][cols]T) Self {
             var result: Self = .{};
@@ -782,13 +489,363 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             }
             return result;
         }
-        
+
         // Allow direct .items field initialization
         pub fn setItems(self: *Self, items: [rows][cols]T) void {
             for (0..rows) |r| {
                 for (0..cols) |c| {
                     self.items[r][c] = items[r][c];
                 }
+            }
+        }
+    };
+}
+
+/// Dynamic matrix with runtime dimensions using flat array storage
+pub fn DynamicMatrix(comptime T: type) type {
+    assert(@typeInfo(T) == .float);
+    return struct {
+        const Self = @This();
+
+        data: []T,
+        rows: usize,
+        cols: usize,
+        allocator: std.mem.Allocator,
+
+        pub fn init(allocator: std.mem.Allocator, rows: usize, cols: usize) !Self {
+            const data = try allocator.alloc(T, rows * cols);
+            return Self{
+                .data = data,
+                .rows = rows,
+                .cols = cols,
+                .allocator = allocator,
+            };
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.allocator.free(self.data);
+        }
+
+        /// Returns the rows and columns as a struct.
+        pub fn shape(self: Self) struct { usize, usize } {
+            return .{ self.rows, self.cols };
+        }
+
+        /// Retrieves the element at position row, col in the matrix.
+        pub fn at(self: Self, row: usize, col: usize) T {
+            assert(row < self.rows);
+            assert(col < self.cols);
+            return self.data[row * self.cols + col];
+        }
+
+        /// Sets the element at row, col to val.
+        pub fn set(self: *Self, row: usize, col: usize, val: T) void {
+            assert(row < self.rows);
+            assert(col < self.cols);
+            self.data[row * self.cols + col] = val;
+        }
+
+        /// Returns a matrix with all elements set to value.
+        pub fn initAll(allocator: std.mem.Allocator, rows: usize, cols: usize, value: T) !Self {
+            var result = try init(allocator, rows, cols);
+            for (0..rows * cols) |i| {
+                result.data[i] = value;
+            }
+            return result;
+        }
+
+        /// Returns an identity-like matrix.
+        pub fn identity(allocator: std.mem.Allocator, rows: usize, cols: usize) !Self {
+            var result = try init(allocator, rows, cols);
+            for (0..rows) |r| {
+                for (0..cols) |c| {
+                    if (r == c) {
+                        result.set(r, c, 1);
+                    } else {
+                        result.set(r, c, 0);
+                    }
+                }
+            }
+            return result;
+        }
+
+        /// Returns a matrix filled with random floating-point numbers.
+        pub fn random(allocator: std.mem.Allocator, rows: usize, cols: usize, seed: ?u64) !Self {
+            const s: u64 = seed orelse @truncate(@as(u128, @bitCast(std.time.nanoTimestamp())));
+            var prng: std.Random.DefaultPrng = .init(s);
+            var rand = prng.random();
+            var result = try init(allocator, rows, cols);
+            for (0..rows * cols) |i| {
+                result.data[i] = rand.float(T);
+            }
+            return result;
+        }
+
+        /// Sums all the elements in a matrix.
+        pub fn sum(self: Self) T {
+            var accum: T = 0;
+            for (self.data) |val| {
+                accum += val;
+            }
+            return accum;
+        }
+
+        /// Scales all matrix values.
+        pub fn scale(self: Self, value: T) !Self {
+            var result = try init(self.allocator, self.rows, self.cols);
+            for (0..self.data.len) |i| {
+                result.data[i] = value * self.data[i];
+            }
+            return result;
+        }
+
+        /// Applies a unary function to all matrix values.
+        pub fn apply(self: Self, comptime unaryFn: fn (arg: T) T) !Self {
+            var result = try init(self.allocator, self.rows, self.cols);
+            for (0..self.data.len) |i| {
+                result.data[i] = unaryFn(self.data[i]);
+            }
+            return result;
+        }
+
+        /// Performs pointwise multiplication.
+        pub fn times(self: Self, other: Self) !Self {
+            assert(self.rows == other.rows and self.cols == other.cols);
+            var result = try init(self.allocator, self.rows, self.cols);
+            for (0..self.data.len) |i| {
+                result.data[i] = self.data[i] * other.data[i];
+            }
+            return result;
+        }
+
+        /// Computes the Frobenius norm of the matrix.
+        pub fn frobeniusNorm(self: Self) !T {
+            const squared = try self.times(self);
+            defer squared.deinit();
+            return @sqrt(squared.sum());
+        }
+
+        /// Performs the dot (matrix multiplication) of two dynamic matrices.
+        pub fn dot(self: Self, other: Self) !Self {
+            assert(self.cols == other.rows);
+            var result = try init(self.allocator, self.rows, other.cols);
+
+            for (0..self.rows) |r| {
+                for (0..other.cols) |c| {
+                    var accum: T = 0;
+                    for (0..self.cols) |k| {
+                        accum += self.at(r, k) * other.at(k, c);
+                    }
+                    result.set(r, c, accum);
+                }
+            }
+            return result;
+        }
+
+        /// Transposes the matrix.
+        pub fn transpose(self: Self) !Self {
+            var result = try init(self.allocator, self.cols, self.rows);
+            for (0..self.rows) |r| {
+                for (0..self.cols) |c| {
+                    result.set(c, r, self.at(r, c));
+                }
+            }
+            return result;
+        }
+
+        /// Adds two matrices.
+        pub fn add(self: Self, other: Self) !Self {
+            assert(self.rows == other.rows and self.cols == other.cols);
+            var result = try init(self.allocator, self.rows, self.cols);
+            for (0..self.data.len) |i| {
+                result.data[i] = self.data[i] + other.data[i];
+            }
+            return result;
+        }
+
+        /// Sums all the elements in rows, returning a 1×cols matrix.
+        pub fn sumRows(self: Self) !Self {
+            var result = try init(self.allocator, 1, self.cols);
+            for (0..self.cols) |c| {
+                var accum: T = 0;
+                for (0..self.rows) |r| {
+                    accum += self.at(r, c);
+                }
+                result.set(0, c, accum);
+            }
+            return result;
+        }
+
+        /// Sums all the elements in columns, returning a rows×1 matrix.
+        pub fn sumCols(self: Self) !Self {
+            var result = try init(self.allocator, self.rows, 1);
+            for (0..self.rows) |r| {
+                var accum: T = 0;
+                for (0..self.cols) |c| {
+                    accum += self.at(r, c);
+                }
+                result.set(r, 0, accum);
+            }
+            return result;
+        }
+    };
+}
+
+/// Matrix builder for chained operations with optimized execution
+pub fn MatrixBuilder(comptime T: type) type {
+    assert(@typeInfo(T) == .float);
+
+    const Operation = union(enum) {
+        load: *const DynamicMatrix(T),
+        dot: usize, // index of other matrix in operations
+        transpose,
+        scale: T,
+        add: usize, // index of other matrix in operations
+        times: usize, // index of other matrix in operations
+    };
+
+    return struct {
+        const Self = @This();
+
+        allocator: std.mem.Allocator,
+        operations: std.ArrayList(Operation),
+
+        pub fn init(allocator: std.mem.Allocator) Self {
+            return Self{
+                .allocator = allocator,
+                .operations = std.ArrayList(Operation).init(allocator),
+            };
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.operations.deinit();
+        }
+
+        /// Load a matrix as the starting point
+        pub fn load(self: *Self, matrix: *const DynamicMatrix(T)) !*Self {
+            try self.operations.append(.{ .load = matrix });
+            return self;
+        }
+
+        /// Chain a dot product (matrix multiplication)
+        pub fn dot(self: *Self, other: *const DynamicMatrix(T)) !*Self {
+            try self.operations.append(.{ .load = other });
+            const other_index = self.operations.items.len - 1;
+            try self.operations.append(.{ .dot = other_index });
+            return self;
+        }
+
+        /// Chain a transpose operation
+        pub fn transpose(self: *Self) !*Self {
+            try self.operations.append(.transpose);
+            return self;
+        }
+
+        /// Chain a scale operation
+        pub fn scale(self: *Self, value: T) !*Self {
+            try self.operations.append(.{ .scale = value });
+            return self;
+        }
+
+        /// Chain an addition operation
+        pub fn add(self: *Self, other: *const DynamicMatrix(T)) !*Self {
+            try self.operations.append(.{ .load = other });
+            const other_index = self.operations.items.len - 1;
+            try self.operations.append(.{ .add = other_index });
+            return self;
+        }
+
+        /// Chain a pointwise multiplication operation
+        pub fn times(self: *Self, other: *const DynamicMatrix(T)) !*Self {
+            try self.operations.append(.{ .load = other });
+            const other_index = self.operations.items.len - 1;
+            try self.operations.append(.{ .times = other_index });
+            return self;
+        }
+
+        /// Execute the chained operations and return the final result
+        pub fn execute(self: *Self) !DynamicMatrix(T) {
+            if (self.operations.items.len == 0) {
+                return error.NoOperations;
+            }
+
+            // Simple execution - could be optimized later
+            var matrices = std.ArrayList(?DynamicMatrix(T)).init(self.allocator);
+            defer {
+                for (matrices.items) |*maybe_matrix| {
+                    if (maybe_matrix.*) |*matrix| {
+                        matrix.deinit();
+                    }
+                }
+                matrices.deinit();
+            }
+
+            var current_result: ?DynamicMatrix(T) = null;
+            defer if (current_result) |*result| result.deinit();
+
+            for (self.operations.items, 0..) |operation, i| {
+                switch (operation) {
+                    .load => |matrix| {
+                        // Create a copy of the loaded matrix
+                        const copy = try DynamicMatrix(T).init(self.allocator, matrix.rows, matrix.cols);
+                        @memcpy(copy.data, matrix.data);
+                        try matrices.resize(i + 1);
+                        matrices.items[i] = copy;
+                        if (current_result == null) {
+                            current_result = try DynamicMatrix(T).init(self.allocator, matrix.rows, matrix.cols);
+                            @memcpy(current_result.?.data, matrix.data);
+                        }
+                    },
+                    .dot => |other_index| {
+                        if (current_result == null or matrices.items[other_index] == null) {
+                            return error.InvalidOperation;
+                        }
+                        const new_result = try current_result.?.dot(matrices.items[other_index].?);
+                        current_result.?.deinit();
+                        current_result = new_result;
+                    },
+                    .transpose => {
+                        if (current_result == null) {
+                            return error.InvalidOperation;
+                        }
+                        const new_result = try current_result.?.transpose();
+                        current_result.?.deinit();
+                        current_result = new_result;
+                    },
+                    .scale => |value| {
+                        if (current_result == null) {
+                            return error.InvalidOperation;
+                        }
+                        const new_result = try current_result.?.scale(value);
+                        current_result.?.deinit();
+                        current_result = new_result;
+                    },
+                    .add => |other_index| {
+                        if (current_result == null or matrices.items[other_index] == null) {
+                            return error.InvalidOperation;
+                        }
+                        const new_result = try current_result.?.add(matrices.items[other_index].?);
+                        current_result.?.deinit();
+                        current_result = new_result;
+                    },
+                    .times => |other_index| {
+                        if (current_result == null or matrices.items[other_index] == null) {
+                            return error.InvalidOperation;
+                        }
+                        const new_result = try current_result.?.times(matrices.items[other_index].?);
+                        current_result.?.deinit();
+                        current_result = new_result;
+                    },
+                }
+            }
+
+            if (current_result) |result| {
+                // Transfer ownership by creating a new matrix and copying data
+                const final_result = try DynamicMatrix(T).init(self.allocator, result.rows, result.cols);
+                @memcpy(final_result.data, result.data);
+                return final_result;
+            } else {
+                return error.NoResult;
             }
         }
     };
@@ -886,30 +943,50 @@ test "sum" {
 
 test "inverse" {
     var a: Matrix(f32, 2, 2) = .{};
-    a.set(0, 0, -1); a.set(0, 1, 1.5);
-    a.set(1, 0, 1); a.set(1, 1, -1);
+    a.set(0, 0, -1);
+    a.set(0, 1, 1.5);
+    a.set(1, 0, 1);
+    a.set(1, 1, -1);
     try expectEqual(a.determinant(), -0.5);
     var a_i: Matrix(f32, 2, 2) = .{};
-    a_i.set(0, 0, 2); a_i.set(0, 1, 3);
-    a_i.set(1, 0, 2); a_i.set(1, 1, 2);
+    a_i.set(0, 0, 2);
+    a_i.set(0, 1, 3);
+    a_i.set(1, 0, 2);
+    a_i.set(1, 1, 2);
     try expectEqualDeep(a.inverse(), a_i);
     var b: Matrix(f32, 3, 3) = .{};
-    b.set(0, 0, 1); b.set(0, 1, 2); b.set(0, 2, 3);
-    b.set(1, 0, 4); b.set(1, 1, 5); b.set(1, 2, 6);
-    b.set(2, 0, 7); b.set(2, 1, 2); b.set(2, 2, 9);
+    b.set(0, 0, 1);
+    b.set(0, 1, 2);
+    b.set(0, 2, 3);
+    b.set(1, 0, 4);
+    b.set(1, 1, 5);
+    b.set(1, 2, 6);
+    b.set(2, 0, 7);
+    b.set(2, 1, 2);
+    b.set(2, 2, 9);
     try expectEqual(b.determinant(), -36);
     var b_i: Matrix(f32, 3, 3) = .{};
-    b_i.set(0, 0, -11.0 / 12.0); b_i.set(0, 1, 1.0 / 3.0); b_i.set(0, 2, 1.0 / 12.0);
-    b_i.set(1, 0, -1.0 / 6.0); b_i.set(1, 1, 1.0 / 3.0); b_i.set(1, 2, -1.0 / 6.0);
-    b_i.set(2, 0, 3.0 / 4.0); b_i.set(2, 1, -1.0 / 3.0); b_i.set(2, 2, 1.0 / 12.0);
+    b_i.set(0, 0, -11.0 / 12.0);
+    b_i.set(0, 1, 1.0 / 3.0);
+    b_i.set(0, 2, 1.0 / 12.0);
+    b_i.set(1, 0, -1.0 / 6.0);
+    b_i.set(1, 1, 1.0 / 3.0);
+    b_i.set(1, 2, -1.0 / 6.0);
+    b_i.set(2, 0, 3.0 / 4.0);
+    b_i.set(2, 1, -1.0 / 3.0);
+    b_i.set(2, 2, 1.0 / 12.0);
     try expectEqualDeep(b.inverse().?, b_i);
 }
 
 test "format" {
     // Test 2x3 matrix with known values
     var m: Matrix(f32, 2, 3) = .{};
-    m.set(0, 0, 1.23); m.set(0, 1, -4.5); m.set(0, 2, 7.0);
-    m.set(1, 0, 10.1); m.set(1, 1, 0.0); m.set(1, 2, -5.67);
+    m.set(0, 0, 1.23);
+    m.set(0, 1, -4.5);
+    m.set(0, 2, 7.0);
+    m.set(1, 0, 10.1);
+    m.set(1, 1, 0.0);
+    m.set(1, 2, -5.67);
 
     // Test default formatting (scientific notation)
     var buffer: [256]u8 = undefined;
@@ -946,25 +1023,26 @@ test "format" {
 test "dynamic matrix basic operations" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    
+
     var dyn_matrix = try DynamicMatrix(f32).init(arena.allocator(), 2, 3);
     defer dyn_matrix.deinit();
-    
+
     // Test basic set/get operations
-    dyn_matrix.storage.set(0, 0, 1.0);
-    dyn_matrix.storage.set(0, 1, 2.0);
-    dyn_matrix.storage.set(0, 2, 3.0);
-    dyn_matrix.storage.set(1, 0, 4.0);
-    dyn_matrix.storage.set(1, 1, 5.0);
-    dyn_matrix.storage.set(1, 2, 6.0);
-    
-    try expectEqual(@as(f32, 1.0), dyn_matrix.storage.at(0, 0));
-    try expectEqual(@as(f32, 6.0), dyn_matrix.storage.at(1, 2));
-    
+    dyn_matrix.set(0, 0, 1.0);
+    dyn_matrix.set(0, 1, 2.0);
+    dyn_matrix.set(0, 2, 3.0);
+    dyn_matrix.set(1, 0, 4.0);
+    dyn_matrix.set(1, 1, 5.0);
+    dyn_matrix.set(1, 2, 6.0);
+
+    try expectEqual(@as(f32, 1.0), dyn_matrix.at(0, 0));
+    try expectEqual(@as(f32, 6.0), dyn_matrix.at(1, 2));
+
     // Test dimensions
-    try expectEqual(@as(usize, 2), dyn_matrix.storage.rowCount());
-    try expectEqual(@as(usize, 3), dyn_matrix.storage.colCount());
-    
+    const shape = dyn_matrix.shape();
+    try expectEqual(@as(usize, 2), shape[0]);
+    try expectEqual(@as(usize, 3), shape[1]);
+
     // Test sum
     try expectEqual(@as(f32, 21.0), dyn_matrix.sum());
 }
@@ -972,42 +1050,85 @@ test "dynamic matrix basic operations" {
 test "dynamic matrix dot product" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    
+
     // Create two dynamic matrices for multiplication
     var a = try DynamicMatrix(f64).init(arena.allocator(), 2, 3);
     defer a.deinit();
     var b = try DynamicMatrix(f64).init(arena.allocator(), 3, 2);
     defer b.deinit();
-    
+
     // Set values for matrix A (2x3)
-    a.storage.set(0, 0, 1.0);
-    a.storage.set(0, 1, 2.0);
-    a.storage.set(0, 2, 3.0);
-    a.storage.set(1, 0, 4.0);
-    a.storage.set(1, 1, 5.0);
-    a.storage.set(1, 2, 6.0);
-    
+    a.set(0, 0, 1.0);
+    a.set(0, 1, 2.0);
+    a.set(0, 2, 3.0);
+    a.set(1, 0, 4.0);
+    a.set(1, 1, 5.0);
+    a.set(1, 2, 6.0);
+
     // Set values for matrix B (3x2)
-    b.storage.set(0, 0, 7.0);
-    b.storage.set(0, 1, 8.0);
-    b.storage.set(1, 0, 9.0);
-    b.storage.set(1, 1, 10.0);
-    b.storage.set(2, 0, 11.0);
-    b.storage.set(2, 1, 12.0);
-    
+    b.set(0, 0, 7.0);
+    b.set(0, 1, 8.0);
+    b.set(1, 0, 9.0);
+    b.set(1, 1, 10.0);
+    b.set(2, 0, 11.0);
+    b.set(2, 1, 12.0);
+
     // Multiply A * B should result in 2x2 matrix
     var result = try a.dot(b);
     defer result.deinit();
-    
+
     // Verify result dimensions
-    try expectEqual(@as(usize, 2), result.storage.rowCount());
-    try expectEqual(@as(usize, 2), result.storage.colCount());
-    
+    const shape = result.shape();
+    try expectEqual(@as(usize, 2), shape[0]);
+    try expectEqual(@as(usize, 2), shape[1]);
+
     // Verify result values
     // A * B = [1*7+2*9+3*11  1*8+2*10+3*12] = [58  64]
     //         [4*7+5*9+6*11  4*8+5*10+6*12]   [139 154]
-    try expectEqual(@as(f64, 58.0), result.storage.at(0, 0));
-    try expectEqual(@as(f64, 64.0), result.storage.at(0, 1));
-    try expectEqual(@as(f64, 139.0), result.storage.at(1, 0));
-    try expectEqual(@as(f64, 154.0), result.storage.at(1, 1));
+    try expectEqual(@as(f64, 58.0), result.at(0, 0));
+    try expectEqual(@as(f64, 64.0), result.at(0, 1));
+    try expectEqual(@as(f64, 139.0), result.at(1, 0));
+    try expectEqual(@as(f64, 154.0), result.at(1, 1));
+}
+
+test "matrix builder chained operations" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    // Create test matrices
+    var a = try DynamicMatrix(f32).init(arena.allocator(), 2, 2);
+    defer a.deinit();
+    a.set(0, 0, 1.0);
+    a.set(0, 1, 2.0);
+    a.set(1, 0, 3.0);
+    a.set(1, 1, 4.0);
+
+    var b = try DynamicMatrix(f32).init(arena.allocator(), 2, 2);
+    defer b.deinit();
+    b.set(0, 0, 2.0);
+    b.set(0, 1, 0.0);
+    b.set(1, 0, 0.0);
+    b.set(1, 1, 2.0);
+
+    // Test chained operations: (a * b).transpose().scale(0.5)
+    var builder = MatrixBuilder(f32).init(arena.allocator());
+    defer builder.deinit();
+
+    // Using the builder chain API
+    var result = try (try (try (try (try builder
+        .load(&a))
+        .dot(&b))
+        .transpose())
+        .scale(0.5))
+        .execute();
+    defer result.deinit();
+
+    // Verify result
+    // a * b = [2, 4; 6, 8]
+    // transposed = [2, 6; 4, 8]
+    // scaled by 0.5 = [1, 3; 2, 4]
+    try expectEqual(@as(f32, 1.0), result.at(0, 0));
+    try expectEqual(@as(f32, 3.0), result.at(0, 1));
+    try expectEqual(@as(f32, 2.0), result.at(1, 0));
+    try expectEqual(@as(f32, 4.0), result.at(1, 1));
 }
