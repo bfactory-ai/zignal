@@ -691,7 +691,7 @@ pub fn DynamicMatrix(comptime T: type) type {
     };
 }
 
-/// Matrix operation types - each operation is data, not a method call
+/// Matrix operation types for dynamic matrices
 pub fn MatrixOp(comptime T: type) type {
     return union(enum) {
         dot: *const DynamicMatrix(T),
@@ -700,7 +700,7 @@ pub fn MatrixOp(comptime T: type) type {
         add: *const DynamicMatrix(T),
         times: *const DynamicMatrix(T),
 
-        /// Execute this operation on a matrix
+        /// Execute this operation on a dynamic matrix
         pub fn apply(self: @This(), input: DynamicMatrix(T)) !DynamicMatrix(T) {
             return switch (self) {
                 .dot => |other| try input.dot(other.*),
@@ -713,7 +713,7 @@ pub fn MatrixOp(comptime T: type) type {
     };
 }
 
-/// Execute a sequence of matrix operations
+/// Execute a sequence of operations on dynamic matrices
 pub fn executeOps(comptime T: type, start_matrix: DynamicMatrix(T), ops: []const MatrixOp(T)) !DynamicMatrix(T) {
     var current = start_matrix;
     var is_first = true;
@@ -1001,6 +1001,28 @@ test "matrix operations as data" {
     defer result.deinit();
 
     // Verify result - same as before
+    try expectEqual(@as(f32, 1.0), result.at(0, 0));
+    try expectEqual(@as(f32, 3.0), result.at(0, 1));
+    try expectEqual(@as(f32, 2.0), result.at(1, 0));
+    try expectEqual(@as(f32, 4.0), result.at(1, 1));
+}
+
+test "static matrix direct chaining" {
+    // Create static test matrices
+    const a = Matrix(f32, 2, 2).init(.{
+        .{ 1.0, 2.0 },
+        .{ 3.0, 4.0 },
+    });
+
+    const b = Matrix(f32, 2, 2).init(.{
+        .{ 2.0, 0.0 },
+        .{ 0.0, 2.0 },
+    });
+
+    // Direct chaining - clean and simple!
+    const result = a.dot(b).transpose().scale(0.5);
+
+    // Verify result - same computation as dynamic version
     try expectEqual(@as(f32, 1.0), result.at(0, 0));
     try expectEqual(@as(f32, 3.0), result.at(0, 1));
     try expectEqual(@as(f32, 2.0), result.at(1, 0));
