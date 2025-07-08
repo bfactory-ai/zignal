@@ -10,6 +10,21 @@ const builtin = @import("builtin");
 const Point2d = @import("geometry/points.zig").Point2d;
 const Point3d = @import("geometry/points.zig").Point3d;
 
+/// Helper function to format numbers with fallback to truncation
+fn formatNumber(comptime T: type, buf: []u8, comptime format_str: []const u8, value: T) []const u8 {
+    return std.fmt.bufPrint(buf, format_str, .{value}) catch blk: {
+        // If formatting fails, truncate and add ellipsis
+        if (buf.len >= 4) {
+            const truncated = std.fmt.bufPrint(buf[0 .. buf.len - 3], "{d}", .{value}) catch buf[0 .. buf.len - 3];
+            @memcpy(buf[truncated.len .. truncated.len + 3], "...");
+            break :blk buf[0 .. truncated.len + 3];
+        } else {
+            // Buffer too small even for ellipsis
+            break :blk "...";
+        }
+    };
+}
+
 /// Creates a static matrix with elements of type T and size rows times cols.
 pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) type {
     return struct {
@@ -363,22 +378,6 @@ pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) typ
         ) !void {
             _ = fmt;
 
-            // Helper function to format a number with fallback to truncation
-            const formatNumber = struct {
-                fn format(buf: []u8, comptime format_str: []const u8, value: T) []const u8 {
-                    return std.fmt.bufPrint(buf, format_str, .{value}) catch blk: {
-                        // If formatting fails, truncate and add ellipsis
-                        if (buf.len >= 4) {
-                            const truncated = std.fmt.bufPrint(buf[0 .. buf.len - 3], "{d}", .{value}) catch buf[0 .. buf.len - 3];
-                            @memcpy(buf[truncated.len .. truncated.len + 3], "...");
-                            break :blk buf[0 .. truncated.len + 3];
-                        } else {
-                            // Buffer too small even for ellipsis
-                            break :blk "...";
-                        }
-                    };
-                }
-            }.format;
 
             // First pass: calculate the maximum width needed for each column
             var col_widths: [cols]usize = [_]usize{0} ** cols;
@@ -389,26 +388,26 @@ pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) typ
                     var temp_buf: [64]u8 = undefined;
                     const formatted = if (options.precision) |precision|
                         switch (precision) {
-                            0 => formatNumber(temp_buf[0..], "{d:.0}", self.items[r][c]),
-                            1 => formatNumber(temp_buf[0..], "{d:.1}", self.items[r][c]),
-                            2 => formatNumber(temp_buf[0..], "{d:.2}", self.items[r][c]),
-                            3 => formatNumber(temp_buf[0..], "{d:.3}", self.items[r][c]),
-                            4 => formatNumber(temp_buf[0..], "{d:.4}", self.items[r][c]),
-                            5 => formatNumber(temp_buf[0..], "{d:.5}", self.items[r][c]),
-                            6 => formatNumber(temp_buf[0..], "{d:.6}", self.items[r][c]),
-                            7 => formatNumber(temp_buf[0..], "{d:.7}", self.items[r][c]),
-                            8 => formatNumber(temp_buf[0..], "{d:.8}", self.items[r][c]),
-                            9 => formatNumber(temp_buf[0..], "{d:.9}", self.items[r][c]),
-                            10 => formatNumber(temp_buf[0..], "{d:.10}", self.items[r][c]),
-                            11 => formatNumber(temp_buf[0..], "{d:.11}", self.items[r][c]),
-                            12 => formatNumber(temp_buf[0..], "{d:.12}", self.items[r][c]),
-                            13 => formatNumber(temp_buf[0..], "{d:.13}", self.items[r][c]),
-                            14 => formatNumber(temp_buf[0..], "{d:.14}", self.items[r][c]),
-                            15 => formatNumber(temp_buf[0..], "{d:.15}", self.items[r][c]),
-                            else => formatNumber(temp_buf[0..], "{d}", self.items[r][c]),
+                            0 => formatNumber(T, temp_buf[0..], "{d:.0}", self.items[r][c]),
+                            1 => formatNumber(T, temp_buf[0..], "{d:.1}", self.items[r][c]),
+                            2 => formatNumber(T, temp_buf[0..], "{d:.2}", self.items[r][c]),
+                            3 => formatNumber(T, temp_buf[0..], "{d:.3}", self.items[r][c]),
+                            4 => formatNumber(T, temp_buf[0..], "{d:.4}", self.items[r][c]),
+                            5 => formatNumber(T, temp_buf[0..], "{d:.5}", self.items[r][c]),
+                            6 => formatNumber(T, temp_buf[0..], "{d:.6}", self.items[r][c]),
+                            7 => formatNumber(T, temp_buf[0..], "{d:.7}", self.items[r][c]),
+                            8 => formatNumber(T, temp_buf[0..], "{d:.8}", self.items[r][c]),
+                            9 => formatNumber(T, temp_buf[0..], "{d:.9}", self.items[r][c]),
+                            10 => formatNumber(T, temp_buf[0..], "{d:.10}", self.items[r][c]),
+                            11 => formatNumber(T, temp_buf[0..], "{d:.11}", self.items[r][c]),
+                            12 => formatNumber(T, temp_buf[0..], "{d:.12}", self.items[r][c]),
+                            13 => formatNumber(T, temp_buf[0..], "{d:.13}", self.items[r][c]),
+                            14 => formatNumber(T, temp_buf[0..], "{d:.14}", self.items[r][c]),
+                            15 => formatNumber(T, temp_buf[0..], "{d:.15}", self.items[r][c]),
+                            else => formatNumber(T, temp_buf[0..], "{d}", self.items[r][c]),
                         }
                     else
-                        formatNumber(temp_buf[0..], "{}", self.items[r][c]);
+                        formatNumber(T, temp_buf[0..], "{}", self.items[r][c]);
                     col_widths[c] = @max(col_widths[c], formatted.len);
                 }
             }
@@ -421,26 +420,26 @@ pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) typ
                     var temp_buf: [64]u8 = undefined;
                     const formatted = if (options.precision) |precision|
                         switch (precision) {
-                            0 => formatNumber(temp_buf[0..], "{d:.0}", self.items[r][c]),
-                            1 => formatNumber(temp_buf[0..], "{d:.1}", self.items[r][c]),
-                            2 => formatNumber(temp_buf[0..], "{d:.2}", self.items[r][c]),
-                            3 => formatNumber(temp_buf[0..], "{d:.3}", self.items[r][c]),
-                            4 => formatNumber(temp_buf[0..], "{d:.4}", self.items[r][c]),
-                            5 => formatNumber(temp_buf[0..], "{d:.5}", self.items[r][c]),
-                            6 => formatNumber(temp_buf[0..], "{d:.6}", self.items[r][c]),
-                            7 => formatNumber(temp_buf[0..], "{d:.7}", self.items[r][c]),
-                            8 => formatNumber(temp_buf[0..], "{d:.8}", self.items[r][c]),
-                            9 => formatNumber(temp_buf[0..], "{d:.9}", self.items[r][c]),
-                            10 => formatNumber(temp_buf[0..], "{d:.10}", self.items[r][c]),
-                            11 => formatNumber(temp_buf[0..], "{d:.11}", self.items[r][c]),
-                            12 => formatNumber(temp_buf[0..], "{d:.12}", self.items[r][c]),
-                            13 => formatNumber(temp_buf[0..], "{d:.13}", self.items[r][c]),
-                            14 => formatNumber(temp_buf[0..], "{d:.14}", self.items[r][c]),
-                            15 => formatNumber(temp_buf[0..], "{d:.15}", self.items[r][c]),
-                            else => formatNumber(temp_buf[0..], "{d}", self.items[r][c]),
+                            0 => formatNumber(T, temp_buf[0..], "{d:.0}", self.items[r][c]),
+                            1 => formatNumber(T, temp_buf[0..], "{d:.1}", self.items[r][c]),
+                            2 => formatNumber(T, temp_buf[0..], "{d:.2}", self.items[r][c]),
+                            3 => formatNumber(T, temp_buf[0..], "{d:.3}", self.items[r][c]),
+                            4 => formatNumber(T, temp_buf[0..], "{d:.4}", self.items[r][c]),
+                            5 => formatNumber(T, temp_buf[0..], "{d:.5}", self.items[r][c]),
+                            6 => formatNumber(T, temp_buf[0..], "{d:.6}", self.items[r][c]),
+                            7 => formatNumber(T, temp_buf[0..], "{d:.7}", self.items[r][c]),
+                            8 => formatNumber(T, temp_buf[0..], "{d:.8}", self.items[r][c]),
+                            9 => formatNumber(T, temp_buf[0..], "{d:.9}", self.items[r][c]),
+                            10 => formatNumber(T, temp_buf[0..], "{d:.10}", self.items[r][c]),
+                            11 => formatNumber(T, temp_buf[0..], "{d:.11}", self.items[r][c]),
+                            12 => formatNumber(T, temp_buf[0..], "{d:.12}", self.items[r][c]),
+                            13 => formatNumber(T, temp_buf[0..], "{d:.13}", self.items[r][c]),
+                            14 => formatNumber(T, temp_buf[0..], "{d:.14}", self.items[r][c]),
+                            15 => formatNumber(T, temp_buf[0..], "{d:.15}", self.items[r][c]),
+                            else => formatNumber(T, temp_buf[0..], "{d}", self.items[r][c]),
                         }
                     else
-                        formatNumber(temp_buf[0..], "{}", self.items[r][c]);
+                        formatNumber(T, temp_buf[0..], "{}", self.items[r][c]);
 
                     // Right-align the number within the column width
                     const padding = col_widths[c] - formatted.len;
@@ -593,6 +592,107 @@ pub fn Matrix(comptime T: type) type {
                 squared_sum += val * val;
             }
             return @sqrt(squared_sum);
+        }
+
+        /// Formats the matrix for pretty printing with configurable precision.
+        pub fn format(
+            self: Self,
+            comptime fmt: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            _ = fmt;
+
+
+            // Use a fixed-size array for column widths (should be sufficient for most cases)
+            // For very large matrices, this will just work with default alignment
+            var col_widths_buffer: [256]usize = undefined;
+            const col_widths = if (self.cols <= 256) col_widths_buffer[0..self.cols] else blk: {
+                // For very wide matrices, skip column width calculation
+                @memset(col_widths_buffer[0..], 0);
+                break :blk col_widths_buffer[0..0];
+            };
+            
+            if (col_widths.len > 0) {
+                @memset(col_widths, 0);
+
+                // First pass: calculate the maximum width needed for each column
+                for (0..self.rows) |r| {
+                    for (0..self.cols) |c| {
+                        // Create a temporary buffer to measure the width of this element
+                        var temp_buf: [64]u8 = undefined;
+                        const formatted = if (options.precision) |precision|
+                            switch (precision) {
+                                0 => formatNumber(T, temp_buf[0..], "{d:.0}", self.at(r, c).*),
+                                1 => formatNumber(T, temp_buf[0..], "{d:.1}", self.at(r, c).*),
+                                2 => formatNumber(T, temp_buf[0..], "{d:.2}", self.at(r, c).*),
+                                3 => formatNumber(T, temp_buf[0..], "{d:.3}", self.at(r, c).*),
+                                4 => formatNumber(T, temp_buf[0..], "{d:.4}", self.at(r, c).*),
+                                5 => formatNumber(T, temp_buf[0..], "{d:.5}", self.at(r, c).*),
+                                6 => formatNumber(T, temp_buf[0..], "{d:.6}", self.at(r, c).*),
+                                7 => formatNumber(T, temp_buf[0..], "{d:.7}", self.at(r, c).*),
+                                8 => formatNumber(T, temp_buf[0..], "{d:.8}", self.at(r, c).*),
+                                9 => formatNumber(T, temp_buf[0..], "{d:.9}", self.at(r, c).*),
+                                10 => formatNumber(T, temp_buf[0..], "{d:.10}", self.at(r, c).*),
+                                11 => formatNumber(T, temp_buf[0..], "{d:.11}", self.at(r, c).*),
+                                12 => formatNumber(T, temp_buf[0..], "{d:.12}", self.at(r, c).*),
+                                13 => formatNumber(T, temp_buf[0..], "{d:.13}", self.at(r, c).*),
+                                14 => formatNumber(T, temp_buf[0..], "{d:.14}", self.at(r, c).*),
+                                15 => formatNumber(T, temp_buf[0..], "{d:.15}", self.at(r, c).*),
+                                else => formatNumber(T, temp_buf[0..], "{d}", self.at(r, c).*),
+                            }
+                        else
+                            formatNumber(T, temp_buf[0..], "{}", self.at(r, c).*);
+                        col_widths[c] = @max(col_widths[c], formatted.len);
+                    }
+                }
+            }
+
+            // Second pass: format and write the matrix with proper alignment
+            for (0..self.rows) |r| {
+                try writer.writeAll("[ ");
+                for (0..self.cols) |c| {
+                    // Format the number with specified precision
+                    var temp_buf: [64]u8 = undefined;
+                    const formatted = if (options.precision) |precision|
+                        switch (precision) {
+                            0 => formatNumber(T, temp_buf[0..], "{d:.0}", self.at(r, c).*),
+                            1 => formatNumber(T, temp_buf[0..], "{d:.1}", self.at(r, c).*),
+                            2 => formatNumber(T, temp_buf[0..], "{d:.2}", self.at(r, c).*),
+                            3 => formatNumber(T, temp_buf[0..], "{d:.3}", self.at(r, c).*),
+                            4 => formatNumber(T, temp_buf[0..], "{d:.4}", self.at(r, c).*),
+                            5 => formatNumber(T, temp_buf[0..], "{d:.5}", self.at(r, c).*),
+                            6 => formatNumber(T, temp_buf[0..], "{d:.6}", self.at(r, c).*),
+                            7 => formatNumber(T, temp_buf[0..], "{d:.7}", self.at(r, c).*),
+                            8 => formatNumber(T, temp_buf[0..], "{d:.8}", self.at(r, c).*),
+                            9 => formatNumber(T, temp_buf[0..], "{d:.9}", self.at(r, c).*),
+                            10 => formatNumber(T, temp_buf[0..], "{d:.10}", self.at(r, c).*),
+                            11 => formatNumber(T, temp_buf[0..], "{d:.11}", self.at(r, c).*),
+                            12 => formatNumber(T, temp_buf[0..], "{d:.12}", self.at(r, c).*),
+                            13 => formatNumber(T, temp_buf[0..], "{d:.13}", self.at(r, c).*),
+                            14 => formatNumber(T, temp_buf[0..], "{d:.14}", self.at(r, c).*),
+                            15 => formatNumber(T, temp_buf[0..], "{d:.15}", self.at(r, c).*),
+                            else => formatNumber(T, temp_buf[0..], "{d}", self.at(r, c).*),
+                        }
+                    else
+                        formatNumber(T, temp_buf[0..], "{}", self.at(r, c).*);
+
+                    // Right-align the number within the column width
+                    const padding = col_widths[c] - formatted.len;
+                    for (0..padding) |_| {
+                        try writer.writeAll(" ");
+                    }
+                    try writer.writeAll(formatted);
+
+                    if (c < self.cols - 1) {
+                        try writer.writeAll("  "); // Two spaces between columns
+                    }
+                }
+                try writer.writeAll(" ]");
+                if (r < self.rows - 1) {
+                    try writer.writeAll("\n");
+                }
+            }
         }
     };
 }
