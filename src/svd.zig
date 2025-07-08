@@ -352,15 +352,13 @@ test "svd basic" {
     const m: usize = 5;
     const n: usize = 4;
     // Example matrix taken from Wikipedia
-    const a: SMatrix(f64, m, n) = .{
-        .items = .{
-            .{ 1, 0, 0, 0 },
-            .{ 0, 0, 0, 2 },
-            .{ 0, 3, 0, 0 },
-            .{ 0, 0, 0, 0 },
-            .{ 2, 0, 0, 0 },
-        },
-    };
+    const a: SMatrix(f64, m, n) = .init(.{
+        .{ 1, 0, 0, 0 },
+        .{ 0, 0, 0, 2 },
+        .{ 0, 3, 0, 0 },
+        .{ 0, 0, 0, 0 },
+        .{ 2, 0, 0, 0 },
+    });
     const res = svd(f64, m, n, a, .{ .with_u = true, .with_v = true, .mode = .full_u });
     const u: *const SMatrix(f64, m, m) = &res[0];
     const q: *const SMatrix(f64, n, 1) = &res[1];
@@ -408,14 +406,12 @@ test "svd basic" {
 test "svd modes" {
     const m: usize = 4;
     const n: usize = 4;
-    const a: SMatrix(f64, m, n) = .{
-        .items = .{
-            .{ 2, 1, 0, 0 },
-            .{ 1, 2, 1, 0 },
-            .{ 0, 1, 2, 1 },
-            .{ 0, 0, 1, 2 },
-        },
-    };
+    const a: SMatrix(f64, m, n) = .init(.{
+        .{ 2, 1, 0, 0 },
+        .{ 1, 2, 1, 0 },
+        .{ 0, 1, 2, 1 },
+        .{ 0, 0, 1, 2 },
+    });
 
     // Test no_u mode
     const res_no_u = svd(f64, m, n, a, .{ .with_u = false, .with_v = true, .mode = .no_u });
@@ -462,13 +458,11 @@ test "svd identity matrix" {
 test "svd singular matrix" {
     const m: usize = 3;
     const n: usize = 3;
-    const a: SMatrix(f64, m, n) = .{
-        .items = .{
-            .{ 1, 2, 3 },
-            .{ 2, 4, 6 },
-            .{ 1, 2, 3 },
-        },
-    };
+    const a: SMatrix(f64, m, n) = .init(.{
+        .{ 1, 2, 3 },
+        .{ 2, 4, 6 },
+        .{ 1, 2, 3 },
+    });
 
     const res = svd(f64, m, n, a, .{ .with_u = true, .with_v = true, .mode = .full_u });
     const q = res[1];

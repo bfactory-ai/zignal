@@ -23,7 +23,7 @@ pub fn SimilarityTransform(comptime T: type) type {
 
         /// Projects the given point using the similarity transform.
         pub fn project(self: Self, point: Point2d(T)) Point2d(T) {
-            const src = SMatrix(T, 2, 1){ .items = .{ .{point.x}, .{point.y} } };
+            const src: SMatrix(T, 2, 1) = .init(.{ .{point.x}, .{point.y} });
             return self.matrix.dot(src).add(self.bias).toPoint2d();
         }
 
@@ -56,8 +56,8 @@ pub fn SimilarityTransform(comptime T: type) type {
                 sigma_from += from.x * from.x + from.y * from.y;
                 sigma_to += to.x * to.x + to.y * to.y;
 
-                const from_mat: SMatrix(T, 1, 2) = .{ .items = .{.{ from.x, from.y }} };
-                const to_mat: SMatrix(T, 2, 1) = .{ .items = .{ .{to.x}, .{to.y} } };
+                const from_mat: SMatrix(T, 1, 2) = .init(.{.{ from.x, from.y }});
+                const to_mat: SMatrix(T, 2, 1) = .init(.{ .{to.x}, .{to.y} });
                 cov = cov.add(to_mat.dot(from_mat));
             }
             sigma_from /= num_points;
@@ -72,7 +72,7 @@ pub fn SimilarityTransform(comptime T: type) type {
                 .{ .with_u = true, .with_v = true, .mode = .skinny_u },
             );
             const u: *const SMatrix(T, 2, 2) = &result[0];
-            const d: SMatrix(T, 2, 2) = .{ .items = .{ .{ result[1].at(0, 0).*, 0 }, .{ 0, result[1].at(1, 0).* } } };
+            const d: SMatrix(T, 2, 2) = .init(.{ .{ result[1].at(0, 0).*, 0 }, .{ 0, result[1].at(1, 0).* } });
             const v: *const SMatrix(T, 2, 2) = &result[2];
             const det_u = u.at(0, 0).* * u.at(1, 1).* - u.at(0, 1).* * u.at(1, 0).*;
             const det_v = v.at(0, 0).* * v.at(1, 1).* - v.at(0, 1).* * v.at(1, 0).*;
@@ -89,8 +89,8 @@ pub fn SimilarityTransform(comptime T: type) type {
             if (sigma_from != 0) {
                 c = 1.0 / sigma_from * d.dot(s).trace();
             }
-            const m_from: SMatrix(T, 2, 1) = .{ .items = .{ .{mean_from.x}, .{mean_from.y} } };
-            const m_to: SMatrix(T, 2, 1) = .{ .items = .{ .{mean_to.x}, .{mean_to.y} } };
+            const m_from: SMatrix(T, 2, 1) = .init(.{ .{mean_from.x}, .{mean_from.y} });
+            const m_to: SMatrix(T, 2, 1) = .init(.{ .{mean_to.x}, .{mean_to.y} });
             self.matrix = r.scale(c);
             self.bias = m_to.add(r.dot(m_from).scale(-c));
         }
@@ -115,7 +115,7 @@ pub fn AffineTransform(comptime T: type) type {
 
         /// Projects the given point using the affine transform.
         pub fn project(self: Self, point: Point2d(T)) Point2d(T) {
-            const src: SMatrix(T, 2, 1) = .{ .items = .{ .{point.x}, .{point.y} } };
+            const src: SMatrix(T, 2, 1) = .init(.{ .{point.x}, .{point.y} });
             return self.matrix.dot(src).add(self.bias).toPoint2d();
         }
 
@@ -160,7 +160,7 @@ pub fn ProjectiveTransform(comptime T: type) type {
 
         /// Projects the given point using the projective transform
         pub fn project(self: Self, point: Point2d(T)) Point2d(T) {
-            const src = SMatrix(T, 3, 1){ .items = .{ .{point.x}, .{point.y}, .{1} } };
+            const src: SMatrix(T, 3, 1) = .init(.{ .{point.x}, .{point.y}, .{1} });
             var dst = self.matrix.dot(src);
             if (dst.at(2, 0).* != 0) {
                 dst = dst.scale(1 / dst.at(2, 0).*);
@@ -180,8 +180,8 @@ pub fn ProjectiveTransform(comptime T: type) type {
             var accum: SMatrix(T, 9, 9) = .initAll(0);
             var b: SMatrix(T, 2, 9) = .initAll(0);
             for (0..from_points.len) |i| {
-                const f = SMatrix(T, 1, 3){ .items = .{.{ from_points[i].x, from_points[i].y, 1 }} };
-                const t = SMatrix(T, 1, 3){ .items = .{.{ to_points[i].x, to_points[i].y, 1 }} };
+                const f: SMatrix(T, 1, 3) = .init(.{.{ from_points[i].x, from_points[i].y, 1 }});
+                const t: SMatrix(T, 1, 3) = .init(.{.{ to_points[i].x, to_points[i].y, 1 }});
                 b.setSubMatrix(0, 0, f.scale(t.at(0, 1).*));
                 b.setSubMatrix(1, 0, f);
                 b.setSubMatrix(0, 3, f.scale(-t.at(0, 0).*));
@@ -226,8 +226,8 @@ test "affine3" {
         .{ .x = 1, .y = 0 },
     };
     const tf: AffineTransform(f64) = .init(from_points[0..3].*, to_points[0..3].*);
-    const matrix: SMatrix(T, 2, 2) = .{ .items = .{ .{ 0, 1 }, .{ -1, 0 } } };
-    const bias: SMatrix(T, 2, 1) = .{ .items = .{ .{0}, .{1} } };
+    const matrix: SMatrix(T, 2, 2) = .init(.{ .{ 0, 1 }, .{ -1, 0 } });
+    const bias: SMatrix(T, 2, 1) = .init(.{ .{0}, .{1} });
     try std.testing.expectEqualDeep(tf.matrix, matrix);
     try std.testing.expectEqualDeep(tf.bias, bias);
 
@@ -254,13 +254,11 @@ test "projection4" {
         .{ .x = 488.08315277, .y = 272.79547691 },
     };
     const transform: ProjectiveTransform(T) = .init(from_points, to_points);
-    const matrix: SMatrix(T, 3, 3) = .{
-        .items = .{
-            .{ -5.9291612941280800e-03, 7.0341614664190845e-03, -8.9922894648198459e-01 },
-            .{ -2.8361695646354147e-03, 2.9060176209597761e-03, -4.3735741833190661e-01 },
-            .{ -1.0156215756801098e-05, 1.3270311721030187e-05, -2.1603199531972065e-03 },
-        },
-    };
+    const matrix: SMatrix(T, 3, 3) = .init(.{
+        .{ -5.9291612941280800e-03, 7.0341614664190845e-03, -8.9922894648198459e-01 },
+        .{ -2.8361695646354147e-03, 2.9060176209597761e-03, -4.3735741833190661e-01 },
+        .{ -1.0156215756801098e-05, 1.3270311721030187e-05, -2.1603199531972065e-03 },
+    });
     for (0..transform.matrix.rows) |r| {
         for (0..transform.matrix.cols) |c| {
             try std.testing.expectApproxEqAbs(transform.matrix.at(r, c).*, matrix.at(r, c).*, 1e-3);
@@ -309,11 +307,11 @@ test "projection8" {
         .{ .x = 395.29974365, .y = 401.73685455 },
     };
     const transform: ProjectiveTransform(T) = .init(from_points, to_points);
-    const matrix = SMatrix(T, 3, 3){ .items = .{
+    const matrix: SMatrix(T, 3, 3) = .init(.{
         .{ 7.9497770144471079e-05, 8.6315632819330035e-04, -6.3240797603906806e-01 },
         .{ 3.9739851020393160e-04, 6.4356336568222570e-04, -7.7463154396817901e-01 },
         .{ 1.0207719920241196e-06, 2.6961794891002063e-06, -2.1907681782918601e-03 },
-    } };
+    });
     const tol = std.math.sqrt(std.math.floatEps(T));
     for (0..transform.matrix.rows) |r| {
         for (0..transform.matrix.cols) |c| {
