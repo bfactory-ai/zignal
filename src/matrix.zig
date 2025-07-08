@@ -851,6 +851,45 @@ pub fn MatrixBuilder(comptime T: type) type {
     };
 }
 
+/// Matrix operation types - each operation is data, not a method call
+pub fn MatrixOp(comptime T: type) type {
+    return union(enum) {
+        dot: *const DynamicMatrix(T),
+        transpose,
+        scale: T,
+        add: *const DynamicMatrix(T),
+        times: *const DynamicMatrix(T),
+
+        /// Execute this operation on a matrix
+        pub fn apply(self: @This(), input: DynamicMatrix(T)) !DynamicMatrix(T) {
+            return switch (self) {
+                .dot => |other| try input.dot(other.*),
+                .transpose => try input.transpose(),
+                .scale => |value| try input.scale(value),
+                .add => |other| try input.add(other.*),
+                .times => |other| try input.times(other.*),
+            };
+        }
+    };
+}
+
+/// Execute a sequence of matrix operations
+pub fn executeOps(comptime T: type, start_matrix: DynamicMatrix(T), ops: []const MatrixOp(T)) !DynamicMatrix(T) {
+    var current = start_matrix;
+    var is_first = true;
+
+    for (ops) |op| {
+        const next = try op.apply(current);
+        if (!is_first) {
+            current.deinit(); // Clean up intermediate result
+        }
+        current = next;
+        is_first = false;
+    }
+
+    return current;
+}
+
 test "identity" {
     const eye: Matrix(f32, 3, 3) = .identity();
     try expectEqual(eye.sum(), 3);
@@ -1091,7 +1130,8 @@ test "dynamic matrix dot product" {
     try expectEqual(@as(f64, 154.0), result.at(1, 1));
 }
 
-test "matrix builder chained operations" {
+
+test "matrix operations as data" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
@@ -1110,23 +1150,18 @@ test "matrix builder chained operations" {
     b.set(1, 0, 0.0);
     b.set(1, 1, 2.0);
 
-    // Test chained operations: (a * b).transpose().scale(0.5)
-    var builder = MatrixBuilder(f32).init(arena.allocator());
-    defer builder.deinit();
+    // Define operations as data
+    const ops = [_]MatrixOp(f32){
+        .{ .dot = &b },
+        .transpose,
+        .{ .scale = 0.5 },
+    };
 
-    // Using the builder chain API
-    var result = try (try (try (try (try builder
-        .load(&a))
-        .dot(&b))
-        .transpose())
-        .scale(0.5))
-        .execute();
+    // Execute all operations with a single try
+    var result = try executeOps(f32, a, &ops);
     defer result.deinit();
 
-    // Verify result
-    // a * b = [2, 4; 6, 8]
-    // transposed = [2, 6; 4, 8]
-    // scaled by 0.5 = [1, 3; 2, 4]
+    // Verify result - same as before
     try expectEqual(@as(f32, 1.0), result.at(0, 0));
     try expectEqual(@as(f32, 3.0), result.at(0, 1));
     try expectEqual(@as(f32, 2.0), result.at(1, 0));
