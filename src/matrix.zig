@@ -296,6 +296,16 @@ pub fn Matrix(comptime T: type, comptime rows: usize, comptime cols: usize) type
             return .{ .x = self.items[0][0], .y = self.items[1][0] };
         }
 
+        /// Computes the trace (sum of diagonal elements) of a square matrix.
+        pub fn trace(self: Self) T {
+            comptime assert(rows == cols);
+            var result: T = 0;
+            for (0..rows) |i| {
+                result += self.items[i][i];
+            }
+            return result;
+        }
+
         /// Computes the determinant of self if it's a square matrix.
         pub fn determinant(self: Self) T {
             comptime assert(rows == cols);
@@ -576,144 +586,106 @@ pub fn DynamicMatrix(comptime T: type) type {
             return accum;
         }
 
-        /// Scales all matrix values.
-        pub fn scale(self: Self, value: T) !Self {
-            var result = try init(self.allocator, self.rows, self.cols);
-            for (0..self.data.len) |i| {
-                result.data[i] = value * self.data[i];
-            }
-            return result;
-        }
-
-        /// Applies a unary function to all matrix values.
-        pub fn apply(self: Self, comptime unaryFn: fn (arg: T) T) !Self {
-            var result = try init(self.allocator, self.rows, self.cols);
-            for (0..self.data.len) |i| {
-                result.data[i] = unaryFn(self.data[i]);
-            }
-            return result;
-        }
-
-        /// Performs pointwise multiplication.
-        pub fn times(self: Self, other: Self) !Self {
-            assert(self.rows == other.rows and self.cols == other.cols);
-            var result = try init(self.allocator, self.rows, self.cols);
-            for (0..self.data.len) |i| {
-                result.data[i] = self.data[i] * other.data[i];
-            }
-            return result;
-        }
-
         /// Computes the Frobenius norm of the matrix.
-        pub fn frobeniusNorm(self: Self) !T {
-            const squared = try self.times(self);
-            defer squared.deinit();
-            return @sqrt(squared.sum());
-        }
-
-        /// Performs the dot (matrix multiplication) of two dynamic matrices.
-        pub fn dot(self: Self, other: Self) !Self {
-            assert(self.cols == other.rows);
-            var result = try init(self.allocator, self.rows, other.cols);
-
-            for (0..self.rows) |r| {
-                for (0..other.cols) |c| {
-                    var accum: T = 0;
-                    for (0..self.cols) |k| {
-                        accum += self.at(r, k).* * other.at(k, c).*;
-                    }
-                    result.at(r, c).* = accum;
-                }
+        pub fn frobeniusNorm(self: Self) T {
+            var squared_sum: T = 0;
+            for (self.data) |val| {
+                squared_sum += val * val;
             }
-            return result;
-        }
-
-        /// Transposes the matrix.
-        pub fn transpose(self: Self) !Self {
-            var result = try init(self.allocator, self.cols, self.rows);
-            for (0..self.rows) |r| {
-                for (0..self.cols) |c| {
-                    result.at(c, r).* = self.at(r, c).*;
-                }
-            }
-            return result;
-        }
-
-        /// Adds two matrices.
-        pub fn add(self: Self, other: Self) !Self {
-            assert(self.rows == other.rows and self.cols == other.cols);
-            var result = try init(self.allocator, self.rows, self.cols);
-            for (0..self.data.len) |i| {
-                result.data[i] = self.data[i] + other.data[i];
-            }
-            return result;
-        }
-
-        /// Sums all the elements in rows, returning a 1×cols matrix.
-        pub fn sumRows(self: Self) !Self {
-            var result = try init(self.allocator, 1, self.cols);
-            for (0..self.cols) |c| {
-                var accum: T = 0;
-                for (0..self.rows) |r| {
-                    accum += self.at(r, c);
-                }
-                result.set(0, c, accum);
-            }
-            return result;
-        }
-
-        /// Sums all the elements in columns, returning a rows×1 matrix.
-        pub fn sumCols(self: Self) !Self {
-            var result = try init(self.allocator, self.rows, 1);
-            for (0..self.rows) |r| {
-                var accum: T = 0;
-                for (0..self.cols) |c| {
-                    accum += self.at(r, c);
-                }
-                result.set(r, 0, accum);
-            }
-            return result;
+            return @sqrt(squared_sum);
         }
     };
 }
 
-/// Matrix operation types for dynamic matrices
-pub fn MatrixOp(comptime T: type) type {
-    return union(enum) {
-        dot: *const DynamicMatrix(T),
-        transpose,
-        scale: T,
-        add: *const DynamicMatrix(T),
-        times: *const DynamicMatrix(T),
+/// Builder for chaining matrix operations with in-place modifications
+pub fn OpsBuilder(comptime T: type) type {
+    assert(@typeInfo(T) == .float);
+    return struct {
+        const Self = @This();
 
-        /// Execute this operation on a dynamic matrix
-        pub fn apply(self: @This(), input: DynamicMatrix(T)) !DynamicMatrix(T) {
-            return switch (self) {
-                .dot => |other| try input.dot(other.*),
-                .transpose => try input.transpose(),
-                .scale => |value| try input.scale(value),
-                .add => |other| try input.add(other.*),
-                .times => |other| try input.times(other.*),
+        result: DynamicMatrix(T),
+        allocator: std.mem.Allocator,
+        consumed: bool = false,
+
+        /// Initialize builder with a copy of the input matrix
+        pub fn init(allocator: std.mem.Allocator, matrix: DynamicMatrix(T)) !Self {
+            const result = try DynamicMatrix(T).init(allocator, matrix.rows, matrix.cols);
+            @memcpy(result.data, matrix.data);
+            return Self{
+                .result = result,
+                .allocator = allocator,
             };
         }
-    };
-}
 
-/// Execute a sequence of operations on dynamic matrices
-pub fn executeOps(comptime T: type, start_matrix: DynamicMatrix(T), ops: []const MatrixOp(T)) !DynamicMatrix(T) {
-    var current = start_matrix;
-    var is_first = true;
-
-    for (ops) |op| {
-        const next = try op.apply(current);
-        if (!is_first) {
-            current.deinit(); // Clean up intermediate result
+        /// Clean up the builder (only if exec() was not called)
+        pub fn deinit(self: *Self) void {
+            if (!self.consumed) {
+                self.result.deinit();
+            }
         }
-        current = next;
-        is_first = false;
-    }
 
-    return current;
+        /// Add another matrix element-wise
+        pub fn add(self: *Self, other: DynamicMatrix(T)) !void {
+            assert(self.result.rows == other.rows and self.result.cols == other.cols);
+            for (0..self.result.data.len) |i| {
+                self.result.data[i] += other.data[i];
+            }
+        }
+
+        /// Scale all elements by a value
+        pub fn scale(self: *Self, value: T) !void {
+            for (0..self.result.data.len) |i| {
+                self.result.data[i] *= value;
+            }
+        }
+
+        /// Transpose the matrix
+        pub fn transpose(self: *Self) !void {
+            var transposed = try DynamicMatrix(T).init(self.allocator, self.result.cols, self.result.rows);
+            for (0..self.result.rows) |r| {
+                for (0..self.result.cols) |c| {
+                    transposed.at(c, r).* = self.result.at(r, c).*;
+                }
+            }
+            self.result.deinit();
+            self.result = transposed;
+        }
+
+        /// Perform element-wise multiplication
+        pub fn times(self: *Self, other: DynamicMatrix(T)) !void {
+            assert(self.result.rows == other.rows and self.result.cols == other.cols);
+            for (0..self.result.data.len) |i| {
+                self.result.data[i] *= other.data[i];
+            }
+        }
+
+        /// Matrix multiplication (dot product) - changes dimensions
+        pub fn dot(self: *Self, other: DynamicMatrix(T)) !void {
+            assert(self.result.cols == other.rows);
+            var new_result = try DynamicMatrix(T).init(self.allocator, self.result.rows, other.cols);
+
+            for (0..self.result.rows) |r| {
+                for (0..other.cols) |c| {
+                    var accum: T = 0;
+                    for (0..self.result.cols) |k| {
+                        accum += self.result.at(r, k).* * other.at(k, c).*;
+                    }
+                    new_result.at(r, c).* = accum;
+                }
+            }
+
+            self.result.deinit();
+            self.result = new_result;
+        }
+
+        /// Execute and return the final result, transferring ownership
+        pub fn exec(self: *Self) !DynamicMatrix(T) {
+            const final_result = self.result;
+            // Mark as consumed to prevent deinit from freeing it
+            self.consumed = true;
+            return final_result;
+        }
+    };
 }
 
 test "identity" {
@@ -890,7 +862,6 @@ test "dynamic matrix basic operations" {
     defer arena.deinit();
 
     var dyn_matrix = try DynamicMatrix(f32).init(arena.allocator(), 2, 3);
-    defer dyn_matrix.deinit();
 
     // Test basic set/get operations
     dyn_matrix.at(0, 0).* = 1.0;
@@ -912,15 +883,13 @@ test "dynamic matrix basic operations" {
     try expectEqual(@as(f32, 21.0), dyn_matrix.sum());
 }
 
-test "dynamic matrix dot product" {
+test "dynamic matrix with OpsBuilder dot product" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
     // Create two dynamic matrices for multiplication
     var a = try DynamicMatrix(f64).init(arena.allocator(), 2, 3);
-    defer a.deinit();
     var b = try DynamicMatrix(f64).init(arena.allocator(), 3, 2);
-    defer b.deinit();
 
     // Set values for matrix A (2x3)
     a.at(0, 0).* = 1.0;
@@ -938,9 +907,10 @@ test "dynamic matrix dot product" {
     b.at(2, 0).* = 11.0;
     b.at(2, 1).* = 12.0;
 
-    // Multiply A * B should result in 2x2 matrix
-    var result = try a.dot(b);
-    defer result.deinit();
+    // Multiply A * B using OpsBuilder
+    var ops = try OpsBuilder(f64).init(arena.allocator(), a);
+    try ops.dot(b);
+    const result = try ops.exec();
 
     // Verify result dimensions
     const shape = result.shape();
@@ -954,43 +924,6 @@ test "dynamic matrix dot product" {
     try expectEqual(@as(f64, 64.0), result.at(0, 1).*);
     try expectEqual(@as(f64, 139.0), result.at(1, 0).*);
     try expectEqual(@as(f64, 154.0), result.at(1, 1).*);
-}
-
-test "matrix operations as data" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-
-    // Create test matrices
-    var a = try DynamicMatrix(f32).init(arena.allocator(), 2, 2);
-    defer a.deinit();
-    a.at(0, 0).* = 1.0;
-    a.at(0, 1).* = 2.0;
-    a.at(1, 0).* = 3.0;
-    a.at(1, 1).* = 4.0;
-
-    var b = try DynamicMatrix(f32).init(arena.allocator(), 2, 2);
-    defer b.deinit();
-    b.at(0, 0).* = 2.0;
-    b.at(0, 1).* = 0.0;
-    b.at(1, 0).* = 0.0;
-    b.at(1, 1).* = 2.0;
-
-    // Define operations as data
-    const ops = [_]MatrixOp(f32){
-        .{ .dot = &b },
-        .transpose,
-        .{ .scale = 0.5 },
-    };
-
-    // Execute all operations with a single try
-    var result = try executeOps(f32, a, &ops);
-    defer result.deinit();
-
-    // Verify result - same as before
-    try expectEqual(@as(f32, 1.0), result.at(0, 0).*);
-    try expectEqual(@as(f32, 3.0), result.at(0, 1).*);
-    try expectEqual(@as(f32, 2.0), result.at(1, 0).*);
-    try expectEqual(@as(f32, 4.0), result.at(1, 1).*);
 }
 
 test "static matrix direct chaining" {
@@ -1015,11 +948,65 @@ test "static matrix direct chaining" {
     try expectEqual(@as(f32, 4.0), result.at(1, 1).*);
 }
 
-test "dynamic vs static matrix identical results" {
+test "OpsBuilder basic operations" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    // Create identical static matrices
+    // Create test matrix
+    var matrix = try DynamicMatrix(f32).init(arena.allocator(), 2, 2);
+    matrix.at(0, 0).* = 1.0;
+    matrix.at(0, 1).* = 2.0;
+    matrix.at(1, 0).* = 3.0;
+    matrix.at(1, 1).* = 4.0;
+
+    // Test scale operation
+    var ops = try OpsBuilder(f32).init(arena.allocator(), matrix);
+    try ops.scale(2.0);
+    const result = try ops.exec();
+
+    try expectEqual(@as(f32, 2.0), result.at(0, 0).*);
+    try expectEqual(@as(f32, 4.0), result.at(0, 1).*);
+    try expectEqual(@as(f32, 6.0), result.at(1, 0).*);
+    try expectEqual(@as(f32, 8.0), result.at(1, 1).*);
+}
+
+test "OpsBuilder with add and times" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    // Create test matrices
+    var a = try DynamicMatrix(f32).init(arena.allocator(), 2, 3);
+    for (0..6) |i| {
+        a.data[i] = @floatFromInt(i + 1);
+    }
+
+    var b = try DynamicMatrix(f32).init(arena.allocator(), 2, 3);
+    for (0..6) |i| {
+        b.data[i] = 2.0;
+    }
+
+    // Test add operation
+    var ops1 = try OpsBuilder(f32).init(arena.allocator(), a);
+    try ops1.add(b);
+    const result1 = try ops1.exec();
+
+    try expectEqual(@as(f32, 3.0), result1.at(0, 0).*);
+    try expectEqual(@as(f32, 8.0), result1.at(1, 2).*);
+
+    // Test times (element-wise multiplication)
+    var ops2 = try OpsBuilder(f32).init(arena.allocator(), a);
+    try ops2.times(b);
+    const result2 = try ops2.exec();
+
+    try expectEqual(@as(f32, 2.0), result2.at(0, 0).*);
+    try expectEqual(@as(f32, 12.0), result2.at(1, 2).*);
+}
+
+test "OpsBuilder vs static matrix chaining" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    // Create static matrices
     const static_a = Matrix(f32, 2, 2).init(.{
         .{ 1.0, 2.0 },
         .{ 3.0, 4.0 },
@@ -1032,14 +1019,12 @@ test "dynamic vs static matrix identical results" {
 
     // Create identical dynamic matrices
     var dynamic_a = try DynamicMatrix(f32).init(arena.allocator(), 2, 2);
-    defer dynamic_a.deinit();
     dynamic_a.at(0, 0).* = 1.0;
     dynamic_a.at(0, 1).* = 2.0;
     dynamic_a.at(1, 0).* = 3.0;
     dynamic_a.at(1, 1).* = 4.0;
 
     var dynamic_b = try DynamicMatrix(f32).init(arena.allocator(), 2, 2);
-    defer dynamic_b.deinit();
     dynamic_b.at(0, 0).* = 2.0;
     dynamic_b.at(0, 1).* = 0.0;
     dynamic_b.at(1, 0).* = 0.0;
@@ -1048,16 +1033,14 @@ test "dynamic vs static matrix identical results" {
     // Static matrix chaining API
     const static_result = static_a.dot(static_b).transpose().scale(0.5);
 
-    // Dynamic matrix ops API
-    const ops = [_]MatrixOp(f32){
-        .{ .dot = &dynamic_b },
-        .transpose,
-        .{ .scale = 0.5 },
-    };
-    var dynamic_result = try executeOps(f32, dynamic_a, &ops);
-    defer dynamic_result.deinit();
+    // Using OpsBuilder for dynamic matrices
+    var ops_builder = try OpsBuilder(f32).init(arena.allocator(), dynamic_a);
+    try ops_builder.dot(dynamic_b);
+    try ops_builder.transpose();
+    try ops_builder.scale(0.5);
+    const dynamic_result = try ops_builder.exec();
 
-    // Verify both approaches give identical results
+    // Verify both give same results
     for (0..2) |r| {
         for (0..2) |c| {
             try expectEqual(static_result.at(r, c).*, dynamic_result.at(r, c).*);
