@@ -1028,3 +1028,53 @@ test "static matrix direct chaining" {
     try expectEqual(@as(f32, 2.0), result.at(1, 0));
     try expectEqual(@as(f32, 4.0), result.at(1, 1));
 }
+
+test "dynamic vs static matrix identical results" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    // Create identical static matrices
+    const static_a = Matrix(f32, 2, 2).init(.{
+        .{ 1.0, 2.0 },
+        .{ 3.0, 4.0 },
+    });
+
+    const static_b = Matrix(f32, 2, 2).init(.{
+        .{ 2.0, 0.0 },
+        .{ 0.0, 2.0 },
+    });
+
+    // Create identical dynamic matrices
+    var dynamic_a = try DynamicMatrix(f32).init(arena.allocator(), 2, 2);
+    defer dynamic_a.deinit();
+    dynamic_a.set(0, 0, 1.0);
+    dynamic_a.set(0, 1, 2.0);
+    dynamic_a.set(1, 0, 3.0);
+    dynamic_a.set(1, 1, 4.0);
+
+    var dynamic_b = try DynamicMatrix(f32).init(arena.allocator(), 2, 2);
+    defer dynamic_b.deinit();
+    dynamic_b.set(0, 0, 2.0);
+    dynamic_b.set(0, 1, 0.0);
+    dynamic_b.set(1, 0, 0.0);
+    dynamic_b.set(1, 1, 2.0);
+
+    // Static matrix chaining API
+    const static_result = static_a.dot(static_b).transpose().scale(0.5);
+
+    // Dynamic matrix ops API
+    const ops = [_]MatrixOp(f32){
+        .{ .dot = &dynamic_b },
+        .transpose,
+        .{ .scale = 0.5 },
+    };
+    var dynamic_result = try executeOps(f32, dynamic_a, &ops);
+    defer dynamic_result.deinit();
+
+    // Verify both approaches give identical results
+    for (0..2) |r| {
+        for (0..2) |c| {
+            try expectEqual(static_result.at(r, c), dynamic_result.at(r, c));
+        }
+    }
+}
