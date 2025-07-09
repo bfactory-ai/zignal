@@ -141,23 +141,35 @@ pub fn AffineTransform(comptime T: type) type {
                 q.at(0, i).* = to_points[i].x;
                 q.at(1, i).* = to_points[i].y;
             }
-            // Calculate p inverse and m = q * p^-1
-            const p_inv_opt = try p.inverse();
-            if (p_inv_opt == null) {
-                return error.SingularMatrix;
-            }
-            var p_inv = p_inv_opt.?;
+            // Use OpsBuilder to perform matrix operations
+            var p_ops = try OpsBuilder(T).init(self.allocator, p);
+            defer p_ops.deinit();
+
+            // Invert p
+            try p_ops.inverse();
+            var p_inv = p_ops.toOwned();
             defer p_inv.deinit();
-            
-            var m = try q.dot(p_inv);
+
+            // Calculate m = q * p^-1
+            var q_ops = try OpsBuilder(T).init(self.allocator, q);
+            defer q_ops.deinit();
+            try q_ops.dot(p_inv);
+            var m = q_ops.toOwned();
             defer m.deinit();
-            
-            // Extract the 2x2 matrix and bias column from the result
-            var sub_matrix = try m.getSubMatrix(0, 0, 2, 2);
+
+            // Extract the 2x2 matrix
+            var m_ops1 = try OpsBuilder(T).init(self.allocator, m);
+            defer m_ops1.deinit();
+            try m_ops1.subMatrix(0, 0, 2, 2);
+            var sub_matrix = m_ops1.toOwned();
             defer sub_matrix.deinit();
             self.matrix = sub_matrix.toSMatrix(2, 2);
-            
-            var bias_col = try m.getCol(2);
+
+            // Extract the bias column
+            var m_ops2 = try OpsBuilder(T).init(self.allocator, m);
+            defer m_ops2.deinit();
+            try m_ops2.col(2);
+            var bias_col = m_ops2.toOwned();
             defer bias_col.deinit();
             self.bias = bias_col.toSMatrix(2, 1);
         }
@@ -228,7 +240,7 @@ pub fn ProjectiveTransform(comptime T: type) type {
                         idx = i;
                     }
                 }
-                break :blk u.getCol(idx).reshape(3, 3);
+                break :blk u.col(idx).reshape(3, 3);
             };
         }
     };
