@@ -608,6 +608,136 @@ pub fn Matrix(comptime T: type) type {
                 }
             }
         }
+
+        /// Performs matrix multiplication (dot product) with another matrix
+        pub fn dot(self: Self, other: Matrix(T)) !Matrix(T) {
+            assert(self.cols == other.rows);
+            var result = try Matrix(T).init(self.allocator, self.rows, other.cols);
+            
+            for (0..self.rows) |r| {
+                for (0..other.cols) |c| {
+                    var accum: T = 0;
+                    for (0..self.cols) |k| {
+                        accum += self.at(r, k).* * other.at(k, c).*;
+                    }
+                    result.at(r, c).* = accum;
+                }
+            }
+            
+            return result;
+        }
+
+        /// Returns a submatrix of the given dimensions starting at row_begin, col_begin
+        pub fn getSubMatrix(self: Self, row_begin: usize, col_begin: usize, row_count: usize, col_count: usize) !Matrix(T) {
+            assert(row_begin + row_count <= self.rows);
+            assert(col_begin + col_count <= self.cols);
+            
+            var result = try Matrix(T).init(self.allocator, row_count, col_count);
+            
+            for (0..row_count) |r| {
+                for (0..col_count) |c| {
+                    result.at(r, c).* = self.at(row_begin + r, col_begin + c).*;
+                }
+            }
+            
+            return result;
+        }
+
+        /// Returns the elements in the specified column as a column matrix
+        pub fn getCol(self: Self, col: usize) !Matrix(T) {
+            assert(col < self.cols);
+            
+            var result = try Matrix(T).init(self.allocator, self.rows, 1);
+            
+            for (0..self.rows) |r| {
+                result.at(r, 0).* = self.at(r, col).*;
+            }
+            
+            return result;
+        }
+
+        /// Computes the determinant of the matrix (only for square matrices up to 3x3)
+        pub fn determinant(self: Self) T {
+            assert(self.rows == self.cols);
+            
+            return switch (self.rows) {
+                1 => self.at(0, 0).*,
+                2 => self.at(0, 0).* * self.at(1, 1).* - self.at(0, 1).* * self.at(1, 0).*,
+                3 => self.at(0, 0).* * self.at(1, 1).* * self.at(2, 2).* +
+                    self.at(0, 1).* * self.at(1, 2).* * self.at(2, 0).* +
+                    self.at(0, 2).* * self.at(1, 0).* * self.at(2, 1).* -
+                    self.at(0, 2).* * self.at(1, 1).* * self.at(2, 0).* -
+                    self.at(0, 1).* * self.at(1, 0).* * self.at(2, 2).* -
+                    self.at(0, 0).* * self.at(1, 2).* * self.at(2, 1).*,
+                else => blk: {
+                    std.debug.panic("Matrix.determinant() is not implemented for sizes above 3x3", .{});
+                    break :blk 0;
+                },
+            };
+        }
+
+        /// Computes the inverse of the matrix (only for square matrices up to 3x3)
+        pub fn inverse(self: Self) !?Matrix(T) {
+            assert(self.rows == self.cols);
+            
+            const det = self.determinant();
+            if (det == 0) {
+                return null;
+            }
+            
+            var inv = try Matrix(T).init(self.allocator, self.rows, self.cols);
+            
+            switch (self.rows) {
+                1 => inv.at(0, 0).* = 1 / det,
+                2 => {
+                    inv.at(0, 0).* = self.at(1, 1).* / det;
+                    inv.at(0, 1).* = -self.at(0, 1).* / det;
+                    inv.at(1, 0).* = -self.at(1, 0).* / det;
+                    inv.at(1, 1).* = self.at(0, 0).* / det;
+                },
+                3 => {
+                    inv.at(0, 0).* = (self.at(1, 1).* * self.at(2, 2).* - self.at(1, 2).* * self.at(2, 1).*) / det;
+                    inv.at(0, 1).* = (self.at(0, 2).* * self.at(2, 1).* - self.at(0, 1).* * self.at(2, 2).*) / det;
+                    inv.at(0, 2).* = (self.at(0, 1).* * self.at(1, 2).* - self.at(0, 2).* * self.at(1, 1).*) / det;
+                    inv.at(1, 0).* = (self.at(1, 2).* * self.at(2, 0).* - self.at(1, 0).* * self.at(2, 2).*) / det;
+                    inv.at(1, 1).* = (self.at(0, 0).* * self.at(2, 2).* - self.at(0, 2).* * self.at(2, 0).*) / det;
+                    inv.at(1, 2).* = (self.at(0, 2).* * self.at(1, 0).* - self.at(0, 0).* * self.at(1, 2).*) / det;
+                    inv.at(2, 0).* = (self.at(1, 0).* * self.at(2, 1).* - self.at(1, 1).* * self.at(2, 0).*) / det;
+                    inv.at(2, 1).* = (self.at(0, 1).* * self.at(2, 0).* - self.at(0, 0).* * self.at(2, 1).*) / det;
+                    inv.at(2, 2).* = (self.at(0, 0).* * self.at(1, 1).* - self.at(0, 1).* * self.at(1, 0).*) / det;
+                },
+                else => {
+                    std.debug.panic("Matrix.inverse() is not implemented for sizes above 3x3", .{});
+                },
+            }
+            
+            return inv;
+        }
+
+        /// Converts a Matrix to a static SMatrix with the given dimensions
+        pub fn toSMatrix(self: Self, comptime rows: usize, comptime cols: usize) SMatrix(T, rows, cols) {
+            assert(self.rows == rows);
+            assert(self.cols == cols);
+            
+            var result: SMatrix(T, rows, cols) = .{};
+            for (0..rows) |r| {
+                for (0..cols) |c| {
+                    result.at(r, c).* = self.at(r, c).*;
+                }
+            }
+            return result;
+        }
+
+        /// Creates a Matrix from a static SMatrix
+        pub fn fromSMatrix(allocator: std.mem.Allocator, smatrix: anytype) !Matrix(T) {
+            var result = try Matrix(T).init(allocator, smatrix.rows, smatrix.cols);
+            for (0..smatrix.rows) |r| {
+                for (0..smatrix.cols) |c| {
+                    result.at(r, c).* = smatrix.at(r, c).*;
+                }
+            }
+            return result;
+        }
     };
 }
 

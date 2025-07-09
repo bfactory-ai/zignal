@@ -2,8 +2,10 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const SMatrix = @import("../matrix.zig").SMatrix;
-const Point2d = @import("points.zig").Point2d;
+const Matrix = @import("../matrix.zig").Matrix;
+const OpsBuilder = @import("../matrix.zig").OpsBuilder;
 const svd = @import("../svd.zig").svd;
+const Point2d = @import("points.zig").Point2d;
 
 /// Applies a similarity transform to a point.  By default, it will be initialized to the identity
 /// function.  Use the fit method to update the transform to map between two sets of points.
@@ -104,12 +106,16 @@ pub fn AffineTransform(comptime T: type) type {
         const Self = @This();
         matrix: SMatrix(T, 2, 2),
         bias: SMatrix(T, 2, 1),
-        pub const identity: Self = .{ .matrix = .identity(), .bias = .initAll(0) };
+        allocator: std.mem.Allocator,
 
         /// Finds the best affine transform that maps between the two given sets of points.
-        pub fn init(from_points: [3]Point2d(T), to_points: [3]Point2d(T)) Self {
-            var transform: AffineTransform(T) = .identity;
-            transform.find(from_points, to_points);
+        pub fn init(allocator: std.mem.Allocator, from_points: []const Point2d(T), to_points: []const Point2d(T)) !Self {
+            var transform: AffineTransform(T) = .{
+                .matrix = SMatrix(T, 2, 2).identity(),
+                .bias = SMatrix(T, 2, 1).initAll(0),
+                .allocator = allocator,
+            };
+            try transform.find(from_points, to_points);
             return transform;
         }
 
@@ -120,14 +126,13 @@ pub fn AffineTransform(comptime T: type) type {
         }
 
         /// Finds the best affine transform that maps between the two given sets of points.
-        /// Requires exactly 3 pairs of points.
-        pub fn find(self: *Self, from_points: [3]Point2d(T), to_points: [3]Point2d(T)) void {
-            // Affine transform is uniquely defined by 3 non-collinear points.
-            // The init function takes [3]Point2d which enforces this at compile time for fixed arrays.
-            assert(from_points.len == 3);
-            assert(to_points.len == 3);
-            var p: SMatrix(T, 3, from_points.len) = .{};
-            var q: SMatrix(T, 2, to_points.len) = .{};
+        pub fn find(self: *Self, from_points: []const Point2d(T), to_points: []const Point2d(T)) !void {
+            assert(from_points.len == to_points.len);
+            assert(from_points.len >= 3);
+            var p = try Matrix(T).init(self.allocator, 3, from_points.len);
+            defer p.deinit();
+            var q = try Matrix(T).init(self.allocator, 2, to_points.len);
+            defer q.deinit();
             for (0..from_points.len) |i| {
                 p.at(0, i).* = from_points[i].x;
                 p.at(1, i).* = from_points[i].y;
@@ -136,9 +141,25 @@ pub fn AffineTransform(comptime T: type) type {
                 q.at(0, i).* = to_points[i].x;
                 q.at(1, i).* = to_points[i].y;
             }
-            const m = q.dot(p.inverse().?);
-            self.matrix = m.getSubMatrix(0, 0, 2, 2);
-            self.bias = m.getCol(2);
+            // Calculate p inverse and m = q * p^-1
+            const p_inv_opt = try p.inverse();
+            if (p_inv_opt == null) {
+                return error.SingularMatrix;
+            }
+            var p_inv = p_inv_opt.?;
+            defer p_inv.deinit();
+            
+            var m = try q.dot(p_inv);
+            defer m.deinit();
+            
+            // Extract the 2x2 matrix and bias column from the result
+            var sub_matrix = try m.getSubMatrix(0, 0, 2, 2);
+            defer sub_matrix.deinit();
+            self.matrix = sub_matrix.toSMatrix(2, 2);
+            
+            var bias_col = try m.getCol(2);
+            defer bias_col.deinit();
+            self.bias = bias_col.toSMatrix(2, 1);
         }
     };
 }
@@ -225,13 +246,13 @@ test "affine3" {
         .{ .x = 1, .y = 1 },
         .{ .x = 1, .y = 0 },
     };
-    const tf: AffineTransform(f64) = .init(from_points[0..3].*, to_points[0..3].*);
+    const tf = try AffineTransform(f64).init(std.testing.allocator, from_points[0..3], to_points[0..3]);
     const matrix: SMatrix(T, 2, 2) = .init(.{ .{ 0, 1 }, .{ -1, 0 } });
     const bias: SMatrix(T, 2, 1) = .init(.{ .{0}, .{1} });
     try std.testing.expectEqualDeep(tf.matrix, matrix);
     try std.testing.expectEqualDeep(tf.bias, bias);
 
-    const itf: AffineTransform(f64) = .init(to_points[0..3].*, from_points[0..3].*);
+    const itf = try AffineTransform(f64).init(std.testing.allocator, to_points[0..3], from_points[0..3]);
     for (from_points, to_points) |f, t| {
         try std.testing.expectEqualDeep(tf.project(f), t);
         try std.testing.expectEqualDeep(itf.project(t), f);
