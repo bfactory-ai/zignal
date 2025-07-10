@@ -387,73 +387,56 @@ fn grayscaleDistributionMatch(src_matrix: *Matrix(f64), ref_matrix: Matrix(f64))
     }
 }
 
-/// Computes the feature distribution matching for grayscale images
+/// Helper: Convert grayscale image to matrix
+fn grayscaleImageToMatrix(image: Image(u8), matrix: *Matrix(f64)) void {
+    var i: usize = 0;
+    for (0..image.rows) |r| {
+        for (0..image.cols) |c| {
+            const p = image.at(r, c);
+            matrix.at(i, 0).* = @as(f64, @floatFromInt(p.*)) / 255.0;
+            i += 1;
+        }
+    }
+}
+
+/// Helper: Convert matrix back to grayscale image with reference mean
+fn grayscaleMatrixToImage(matrix: Matrix(f64), image: Image(u8), ref_mean: f64) void {
+    var i: usize = 0;
+    for (0..image.rows) |r| {
+        for (0..image.cols) |c| {
+            const val = clamp(matrix.at(i, 0).* + ref_mean, 0, 1);
+            image.at(r, c).* = @intFromFloat(@round(255.0 * val));
+            i += 1;
+        }
+    }
+}
+
+/// Computes the feature distribution matching for grayscale images using unified helper functions
 fn featureDistributionMatchGrayscale(
     gpa: std.mem.Allocator,
     src_img: Image(u8),
     ref_img: Image(u8),
 ) !void {
     const src_size = src_img.rows * src_img.cols;
-    var src = try Matrix(f64).init(gpa, src_size, 1);
-    defer src.deinit();
+    var src_matrix = try Matrix(f64).init(gpa, src_size, 1);
+    defer src_matrix.deinit();
     const ref_size = ref_img.rows * ref_img.cols;
-    var ref = try Matrix(f64).init(gpa, ref_size, 1);
-    defer ref.deinit();
+    var ref_matrix = try Matrix(f64).init(gpa, ref_size, 1);
+    defer ref_matrix.deinit();
 
-    // 1. reshape - convert grayscale pixels to normalized values
-    var i: usize = 0;
-    for (0..src_img.rows) |r| {
-        for (0..src_img.cols) |c| {
-            const p = src_img.at(r, c);
-            src.at(i, 0).* = @as(f64, @floatFromInt(p.*)) / 255.0;
-            i += 1;
-        }
-    }
-    i = 0;
-    for (0..ref_img.rows) |r| {
-        for (0..ref_img.cols) |c| {
-            const p = ref_img.at(r, c);
-            ref.at(i, 0).* = @as(f64, @floatFromInt(p.*)) / 255.0;
-            i += 1;
-        }
-    }
+    // 1. Convert grayscale images to matrices
+    grayscaleImageToMatrix(src_img, &src_matrix);
+    grayscaleImageToMatrix(ref_img, &ref_matrix);
 
-    // 2. center using the helper function
-    var src_mean: f64 = 0;
-    for (0..src.rows) |r| {
-        src_mean += src.at(r, 0).*;
-    }
-    src_mean /= @floatFromInt(src.rows);
-    for (0..src.rows) |r| {
-        src.at(r, 0).* -= src_mean;
-    }
+    // 2. Center using the shared helper function (only first column)
+    _ = centerImage(&src_matrix, 1);
+    const ref_mean = centerImage(&ref_matrix, 1)[0];
 
-    var ref_mean: f64 = 0;
-    for (0..ref.rows) |r| {
-        ref_mean += ref.at(r, 0).*;
-    }
-    ref_mean /= @floatFromInt(ref.rows);
-    for (0..ref.rows) |r| {
-        ref.at(r, 0).* -= ref_mean;
-    }
+    // 3-4. Use the shared grayscale distribution matching function
+    grayscaleDistributionMatch(&src_matrix, ref_matrix);
 
-    // 3-4. Use the reusable grayscale distribution matching function
-    grayscaleDistributionMatch(&src, ref);
-
-    // 5. add reference mean
-    for (0..src.rows) |r| {
-        src.at(r, 0).* += ref_mean;
-    }
-
-    // 6. reshape back to image
-    i = 0;
-    for (0..src_img.rows) |r| {
-        for (0..src_img.cols) |c| {
-            const val = clamp(src.at(i, 0).*, 0, 1);
-            src_img.at(r, c).* = @intFromFloat(@round(255.0 * val));
-            i += 1;
-        }
-    }
+    // 5-6. Convert back to image using shared helper
+    grayscaleMatrixToImage(src_matrix, src_img, ref_mean);
 }
 
 test "FDM mean and covariance matching" {
