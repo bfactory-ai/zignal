@@ -80,52 +80,7 @@ pub fn featureDistributionMatch(
         return featureDistributionMatchGrayscale(gpa, src_img, ref_img);
     }
 
-    // Check if this is effectively a grayscale image (all RGB channels identical)
-    // If so, use the grayscale algorithm instead to avoid singular matrix issues
-    var is_grayscale = true;
-    for (src_img.data) |pixel| {
-        if (pixel.r != pixel.g or pixel.g != pixel.b) {
-            is_grayscale = false;
-            break;
-        }
-    }
-    if (is_grayscale) {
-        for (ref_img.data) |pixel| {
-            if (pixel.r != pixel.g or pixel.g != pixel.b) {
-                is_grayscale = false;
-                break;
-            }
-        }
-    }
-
-    if (is_grayscale) {
-        // Convert to grayscale images and use the grayscale algorithm
-        var src_gray = try Image(u8).initAlloc(gpa, src_img.rows, src_img.cols);
-        defer src_gray.deinit(gpa);
-        var ref_gray = try Image(u8).initAlloc(gpa, ref_img.rows, ref_img.cols);
-        defer ref_gray.deinit(gpa);
-
-        for (src_img.data, 0..) |pixel, i| {
-            src_gray.data[i] = pixel.r; // All channels are the same
-        }
-        for (ref_img.data, 0..) |pixel, i| {
-            ref_gray.data[i] = pixel.r; // All channels are the same
-        }
-
-        try featureDistributionMatchGrayscale(gpa, src_gray, ref_gray);
-
-        // Copy back to the original image
-        for (src_gray.data, 0..) |gray_val, i| {
-            src_img.data[i].r = gray_val;
-            src_img.data[i].g = gray_val;
-            src_img.data[i].b = gray_val;
-            // Keep original alpha if T == Rgba
-            if (T == Rgba) {
-                // Alpha remains unchanged
-            }
-        }
-        return;
-    }
+    // Use unified algorithm that handles both grayscale and color cases
 
     // 1.) reshape to feature matrix (H*W,C) and detect if grayscale
     const src_size = src_img.rows * src_img.cols;
@@ -138,9 +93,8 @@ pub fn featureDistributionMatch(
     defer feature_mat_ref.deinit();
     const ref_is_grayscale = getFeatureMatrix(T, ref_img, &feature_mat_ref);
 
-    const both_grayscale = src_is_grayscale and ref_is_grayscale;
-
-    if (both_grayscale) {
+    // Use the especialized grayscale algorithm if both images are grayscale
+    if (src_is_grayscale and ref_is_grayscale) {
         // Use simplified 1D algorithm for grayscale images
         // 2.) center (subtract mean) - only first column
         _ = centerImage(&feature_mat_src, 1)[0];
@@ -153,7 +107,7 @@ pub fn featureDistributionMatch(
         const reference_mean = [_]f64{ ref_mean, 0, 0 };
         reshapeToImage(T, feature_mat_src, src_img, reference_mean, true);
     } else {
-        // Use full 3D algorithm for color images
+        // Use full 3D algorithm - handles mixed grayscale/color cases correctly
         // 2.) center (subtract mean)
         _ = centerImage(&feature_mat_src, 3);
         const reference_mean = centerImage(&feature_mat_ref, 3);
@@ -253,7 +207,13 @@ fn whitening(
     for (0..whitening_matrix.rows) |r| {
         for (0..whitening_matrix.cols) |c| {
             if (r == c) {
-                whitening_matrix.at(r, c).* = 1 / @sqrt(res[1].items[r][0]);
+                const eigenval = res[1].items[r][0];
+                // Avoid division by zero or very small numbers
+                if (eigenval > 1e-10) {
+                    whitening_matrix.at(r, c).* = 1 / @sqrt(eigenval);
+                } else {
+                    whitening_matrix.at(r, c).* = 0;
+                }
             } else {
                 whitening_matrix.at(r, c).* = 0;
             }
@@ -311,7 +271,13 @@ fn covarianceTransformation(
     for (0..ref_transform.rows) |r| {
         for (0..ref_transform.cols) |c| {
             if (r == c) {
-                ref_transform.at(r, c).* = @sqrt(ref_res[1].items[r][0]);
+                const ref_eigenval = ref_res[1].items[r][0];
+                // Protect against non-positive eigenvalues
+                if (ref_eigenval > std.math.floatEps(f64)) {
+                    ref_transform.at(r, c).* = @sqrt(ref_eigenval);
+                } else {
+                    ref_transform.at(r, c).* = 0;
+                }
             } else {
                 ref_transform.at(r, c).* = 0;
             }
