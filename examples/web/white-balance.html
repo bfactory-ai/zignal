@@ -86,7 +86,13 @@
             }
             if (rgbaPtr !== null) {
               let rgba = new Uint8ClampedArray(wasmExports.memory.buffer, rgbaPtr, rgbaSize);
-              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+              
+              // Mirror the camera image horizontally
+              ctx.save();
+              ctx.scale(-1, 1);
+              ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+              ctx.restore();
+              
               if (isBalanced) {
                 let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                 rgba.set(imageData.data);
