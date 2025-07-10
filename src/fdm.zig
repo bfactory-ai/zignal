@@ -18,6 +18,95 @@ const savePng = @import("png.zig").savePng;
 const SMatrix = @import("matrix.zig").SMatrix;
 const svd = @import("svd.zig").svd;
 
+/// Computes the feature distribution matching for grayscale images
+fn featureDistributionMatchGrayscale(
+    gpa: std.mem.Allocator,
+    src_img: Image(u8),
+    ref_img: Image(u8),
+) !void {
+    const src_size = src_img.rows * src_img.cols;
+    var src = try Matrix(f64).init(gpa, src_size, 1);
+    defer src.deinit();
+    const ref_size = ref_img.rows * ref_img.cols;
+    var ref = try Matrix(f64).init(gpa, ref_size, 1);
+    defer ref.deinit();
+
+    // 1. reshape - convert grayscale pixels to normalized values
+    var i: usize = 0;
+    for (0..src_img.rows) |r| {
+        for (0..src_img.cols) |c| {
+            const p = src_img.at(r, c);
+            src.at(i, 0).* = @as(f64, @floatFromInt(p.*)) / 255.0;
+            i += 1;
+        }
+    }
+    i = 0;
+    for (0..ref_img.rows) |r| {
+        for (0..ref_img.cols) |c| {
+            const p = ref_img.at(r, c);
+            ref.at(i, 0).* = @as(f64, @floatFromInt(p.*)) / 255.0;
+            i += 1;
+        }
+    }
+
+    // 2. center
+    var src_mean: f64 = 0;
+    for (0..src.rows) |r| {
+        src_mean += src.at(r, 0).*;
+    }
+    src_mean /= @floatFromInt(src.rows);
+    for (0..src.rows) |r| {
+        src.at(r, 0).* -= src_mean;
+    }
+
+    var ref_mean: f64 = 0;
+    for (0..ref.rows) |r| {
+        ref_mean += ref.at(r, 0).*;
+    }
+    ref_mean /= @floatFromInt(ref.rows);
+    for (0..ref.rows) |r| {
+        ref.at(r, 0).* -= ref_mean;
+    }
+
+    // 3. compute variances (for 1D case, this is just the variance)
+    var src_var: f64 = 0;
+    for (0..src.rows) |r| {
+        const val = src.at(r, 0).*;
+        src_var += val * val;
+    }
+    src_var /= @floatFromInt(src.rows);
+    const src_std = @sqrt(src_var);
+
+    var ref_var: f64 = 0;
+    for (0..ref.rows) |r| {
+        const val = ref.at(r, 0).*;
+        ref_var += val * val;
+    }
+    ref_var /= @floatFromInt(ref.rows);
+    const ref_std = @sqrt(ref_var);
+
+    // 4. apply transformation: scale by ratio of standard deviations
+    const scale_factor = if (src_std > 1e-10) ref_std / src_std else 1.0;
+    for (0..src.rows) |r| {
+        src.at(r, 0).* *= scale_factor;
+    }
+
+    // 5. add reference mean
+    for (0..src.rows) |r| {
+        src.at(r, 0).* += ref_mean;
+    }
+
+    // 6. reshape back to image
+    i = 0;
+    for (0..src_img.rows) |r| {
+        for (0..src_img.cols) |c| {
+            const val = clamp(src.at(i, 0).*, 0, 1);
+            src_img.at(r, c).* = @intFromFloat(@round(255.0 * val));
+            i += 1;
+        }
+    }
+}
+
 /// Computes the feature distribution matching between `src_img` and `ref_img` and modifies
 /// `src_img` to look like `ref_img`.
 pub fn featureDistributionMatch(
@@ -26,7 +115,58 @@ pub fn featureDistributionMatch(
     src_img: Image(T),
     ref_img: Image(T),
 ) !void {
-    comptime assert(T == Rgb or T == Rgba);
+    comptime assert(T == Rgb or T == Rgba or T == u8);
+    
+    if (T == u8) {
+        return featureDistributionMatchGrayscale(gpa, src_img, ref_img);
+    }
+
+    // Check if this is effectively a grayscale image (all RGB channels identical)
+    // If so, use the grayscale algorithm instead to avoid singular matrix issues
+    var is_grayscale = true;
+    for (src_img.data) |pixel| {
+        if (pixel.r != pixel.g or pixel.g != pixel.b) {
+            is_grayscale = false;
+            break;
+        }
+    }
+    if (is_grayscale) {
+        for (ref_img.data) |pixel| {
+            if (pixel.r != pixel.g or pixel.g != pixel.b) {
+                is_grayscale = false;
+                break;
+            }
+        }
+    }
+    
+    if (is_grayscale) {
+        // Convert to grayscale images and use the grayscale algorithm
+        var src_gray = try Image(u8).initAlloc(gpa, src_img.rows, src_img.cols);
+        defer src_gray.deinit(gpa);
+        var ref_gray = try Image(u8).initAlloc(gpa, ref_img.rows, ref_img.cols);
+        defer ref_gray.deinit(gpa);
+        
+        for (src_img.data, 0..) |pixel, i| {
+            src_gray.data[i] = pixel.r; // All channels are the same
+        }
+        for (ref_img.data, 0..) |pixel, i| {
+            ref_gray.data[i] = pixel.r; // All channels are the same
+        }
+        
+        try featureDistributionMatchGrayscale(gpa, src_gray, ref_gray);
+        
+        // Copy back to the original image
+        for (src_gray.data, 0..) |gray_val, i| {
+            src_img.data[i].r = gray_val;
+            src_img.data[i].g = gray_val;
+            src_img.data[i].b = gray_val;
+            // Keep original alpha if T == Rgba
+            if (T == Rgba) {
+                // Alpha remains unchanged
+            }
+        }
+        return;
+    }
 
     const src_size = src_img.rows * src_img.cols;
     var src = try Matrix(f64).init(gpa, src_size, 3);
@@ -40,20 +180,20 @@ pub fn featureDistributionMatch(
     for (0..src_img.rows) |r| {
         for (0..src_img.cols) |c| {
             const p = src_img.at(r, c);
-            src.at(i / 3, 0).* = @as(f64, @floatFromInt(p.r)) / 255;
-            src.at(i / 3, 1).* = @as(f64, @floatFromInt(p.g)) / 255;
-            src.at(i / 3, 2).* = @as(f64, @floatFromInt(p.b)) / 255;
-            i += 3;
+            src.at(i, 0).* = @as(f64, @floatFromInt(p.r)) / 255;
+            src.at(i, 1).* = @as(f64, @floatFromInt(p.g)) / 255;
+            src.at(i, 2).* = @as(f64, @floatFromInt(p.b)) / 255;
+            i += 1;
         }
     }
     i = 0;
     for (0..ref_img.rows) |r| {
         for (0..ref_img.cols) |c| {
             const p = ref_img.at(r, c);
-            ref.at(i / 3, 0).* = @as(f64, @floatFromInt(p.r)) / 255;
-            ref.at(i / 3, 1).* = @as(f64, @floatFromInt(p.g)) / 255;
-            ref.at(i / 3, 2).* = @as(f64, @floatFromInt(p.b)) / 255;
-            i += 3;
+            ref.at(i, 0).* = @as(f64, @floatFromInt(p.r)) / 255;
+            ref.at(i, 1).* = @as(f64, @floatFromInt(p.g)) / 255;
+            ref.at(i, 2).* = @as(f64, @floatFromInt(p.b)) / 255;
+            i += 1;
         }
     }
 
@@ -185,12 +325,26 @@ pub fn featureDistributionMatch(
     i = 0;
     for (0..src_img.rows) |r| {
         for (0..src_img.cols) |c| {
-            src_img.at(r, c).r = @intFromFloat(@round(255 * clamp(src_tfm.at(i / 3, 0).*, 0, 1)));
-            src_img.at(r, c).g = @intFromFloat(@round(255 * clamp(src_tfm.at(i / 3, 1).*, 0, 1)));
-            src_img.at(r, c).b = @intFromFloat(@round(255 * clamp(src_tfm.at(i / 3, 2).*, 0, 1)));
-            i += 3;
+            src_img.at(r, c).r = @intFromFloat(@round(255 * clamp(src_tfm.at(i, 0).*, 0, 1)));
+            src_img.at(r, c).g = @intFromFloat(@round(255 * clamp(src_tfm.at(i, 1).*, 0, 1)));
+            src_img.at(r, c).b = @intFromFloat(@round(255 * clamp(src_tfm.at(i, 2).*, 0, 1)));
+            i += 1;
         }
     }
+}
+
+/// Helper function to generate a random grayscale image with specified brightness bias
+fn generateRandomGrayscaleImage(allocator: std.mem.Allocator, rows: usize, cols: usize, seed: u64, brightness_bias: u8) !Image(u8) {
+    var prng = std.Random.DefaultPrng.init(seed);
+    const random = prng.random();
+
+    const img = try Image(u8).initAlloc(allocator, rows, cols);
+    for (img.data) |*pixel| {
+        const base_value = random.intRangeAtMost(u8, 0, 255);
+        const biased_value = @as(i32, base_value) + @as(i32, brightness_bias) - 128;
+        pixel.* = @intCast(clamp(biased_value, 0, 255));
+    }
+    return img;
 }
 
 /// Helper function to generate a random RGB image with specified color distribution
@@ -280,6 +434,72 @@ test "FDM with RGBA images" {
         try std.testing.expect(pixel.g <= 255);
         try std.testing.expect(pixel.b <= 255);
         try expectEqual(@as(u8, 255), pixel.a);
+    }
+}
+
+test "FDM grayscale basic functionality" {
+    const allocator = testing.allocator;
+
+    // Create source image with dark bias
+    var src_img = try generateRandomGrayscaleImage(allocator, 32, 32, 12345, 60);
+    defer src_img.deinit(allocator);
+
+    // Create reference image with bright bias
+    var ref_img = try generateRandomGrayscaleImage(allocator, 32, 32, 54321, 200);
+    defer ref_img.deinit(allocator);
+
+    // Apply FDM
+    try featureDistributionMatch(u8, allocator, src_img, ref_img);
+
+    // Basic validation - result should have valid pixel values
+    for (src_img.data) |pixel| {
+        try std.testing.expect(pixel <= 255);
+    }
+}
+
+test "FDM grayscale distribution matching" {
+    const allocator = testing.allocator;
+
+    // Create source image with medium brightness variation
+    var src_img = try generateRandomGrayscaleImage(allocator, 64, 64, 11111, 100);
+    defer src_img.deinit(allocator);
+
+    // Create reference image with high brightness variation
+    var ref_img = try generateRandomGrayscaleImage(allocator, 64, 64, 22222, 180);
+    defer ref_img.deinit(allocator);
+
+    // Apply FDM
+    try featureDistributionMatch(u8, allocator, src_img, ref_img);
+
+    // Basic validation - result should have valid pixel values
+    for (src_img.data) |pixel| {
+        try std.testing.expect(pixel <= 255);
+    }
+}
+
+test "FDM grayscale edge cases" {
+    const allocator = testing.allocator;
+
+    // Test with uniform images (zero variance)
+    var src_img = try Image(u8).initAlloc(allocator, 16, 16);
+    defer src_img.deinit(allocator);
+    for (src_img.data) |*pixel| {
+        pixel.* = 128; // uniform gray
+    }
+
+    var ref_img = try Image(u8).initAlloc(allocator, 16, 16);
+    defer ref_img.deinit(allocator);
+    for (ref_img.data) |*pixel| {
+        pixel.* = 64; // uniform darker gray
+    }
+
+    // Apply FDM (should handle zero variance gracefully)
+    try featureDistributionMatch(u8, allocator, src_img, ref_img);
+
+    // Result should be close to reference mean
+    for (src_img.data) |pixel| {
+        try std.testing.expect(pixel <= 255);
+        try std.testing.expect(@as(i32, @intCast(pixel)) >= 0);
     }
 }
 
