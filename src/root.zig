@@ -72,8 +72,9 @@ pub const Point3d = geometry.Point3d;
 pub const pointInTriangle = geometry.pointInTriangle;
 pub const findBarycenter = geometry.findBarycenter;
 
-const jpeg = @import("jpeg.zig");
+pub const jpeg = @import("jpeg.zig");
 pub const loadJpeg = jpeg.loadJpeg;
+pub const loadJpegBlockBased = jpeg.loadJpegBlockBased;
 
 pub const svd = @import("svd.zig").svd;
 pub const SvdMode = @import("svd.zig").SvdMode;
