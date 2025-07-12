@@ -118,11 +118,11 @@ const RgbFloat = struct {
     b: f64,
 
     /// Creates RgbFloat from 8-bit RGB components by normalizing to [0.0, 1.0] range.
-    pub fn fromRgb(r: u8, g: u8, b: u8) RgbFloat {
+    pub fn fromRgb(rgb: Rgb) RgbFloat {
         return .{
-            .r = @as(f64, @floatFromInt(r)) / 255,
-            .g = @as(f64, @floatFromInt(g)) / 255,
-            .b = @as(f64, @floatFromInt(b)) / 255,
+            .r = @as(f64, @floatFromInt(rgb.r)) / 255,
+            .g = @as(f64, @floatFromInt(rgb.g)) / 255,
+            .b = @as(f64, @floatFromInt(rgb.b)) / 255,
         };
     }
 
@@ -143,18 +143,18 @@ const RgbFloat = struct {
 /// - Lightness as average of max and min
 /// - Saturation based on delta and lightness
 pub fn rgbToHsl(rgb: Rgb) Hsl {
-    const rgb_float = RgbFloat.fromRgb(rgb.r, rgb.g, rgb.b);
-    const min = @min(rgb_float.r, @min(rgb_float.g, rgb_float.b));
-    const max = @max(rgb_float.r, @max(rgb_float.g, rgb_float.b));
+    const rgbf = RgbFloat.fromRgb(rgb);
+    const min = @min(rgbf.r, @min(rgbf.g, rgbf.b));
+    const max = @max(rgbf.r, @max(rgbf.g, rgbf.b));
     const delta = max - min;
 
     const hue = if (delta == 0) 0 else blk: {
-        if (max == rgb_float.r) {
-            break :blk (rgb_float.g - rgb_float.b) / delta;
-        } else if (max == rgb_float.g) {
-            break :blk 2 + (rgb_float.b - rgb_float.r) / delta;
+        if (max == rgbf.r) {
+            break :blk (rgbf.g - rgbf.b) / delta;
+        } else if (max == rgbf.g) {
+            break :blk 2 + (rgbf.b - rgbf.r) / delta;
         } else {
-            break :blk 4 + (rgb_float.r - rgb_float.g) / delta;
+            break :blk 4 + (rgbf.r - rgbf.g) / delta;
         }
     };
 
@@ -216,12 +216,12 @@ pub fn hslToRgb(hsl: Hsl) Rgb {
 /// - Then converting XYZ to Lab using cube root transformations
 /// - Normalizing by D65 illuminant reference white point
 pub fn rgbToLab(rgb: Rgb) Lab {
-    const rgb_float = RgbFloat.fromRgb(rgb.r, rgb.g, rgb.b);
+    const rgbf = RgbFloat.fromRgb(rgb);
 
     // Convert to XYZ first
-    const r = gammaToLinear(rgb_float.r);
-    const g = gammaToLinear(rgb_float.g);
-    const b = gammaToLinear(rgb_float.b);
+    const r = gammaToLinear(rgbf.r);
+    const g = gammaToLinear(rgbf.g);
+    const b = gammaToLinear(rgbf.b);
 
     const x = (r * 0.4124 + g * 0.3576 + b * 0.1805) * 100;
     const y = (r * 0.2126 + g * 0.7152 + b * 0.0722) * 100;
@@ -318,19 +318,19 @@ pub fn labToHsl(lab: Lab) Hsl {
 /// - Saturation based on delta between max and min
 /// - Hue calculated from which component is maximum
 pub fn rgbToHsv(rgb: Rgb) Hsv {
-    const rgb_float = RgbFloat.fromRgb(rgb.r, rgb.g, rgb.b);
-    const min = @min(rgb_float.r, @min(rgb_float.g, rgb_float.b));
-    const max = @max(rgb_float.r, @max(rgb_float.g, rgb_float.b));
+    const rgbf = RgbFloat.fromRgb(rgb);
+    const min = @min(rgbf.r, @min(rgbf.g, rgbf.b));
+    const max = @max(rgbf.r, @max(rgbf.g, rgbf.b));
     const delta = max - min;
 
     return .{
         .h = if (delta == 0) 0 else blk: {
-            if (max == rgb_float.r) {
-                break :blk @mod((rgb_float.g - rgb_float.b) / delta * 60, 360);
-            } else if (max == rgb_float.g) {
-                break :blk @mod(120 + (rgb_float.b - rgb_float.r) / delta * 60, 360);
+            if (max == rgbf.r) {
+                break :blk @mod((rgbf.g - rgbf.b) / delta * 60, 360);
+            } else if (max == rgbf.g) {
+                break :blk @mod(120 + (rgbf.b - rgbf.r) / delta * 60, 360);
             } else {
-                break :blk @mod(240 + (rgb_float.r - rgb_float.g) / delta * 60, 360);
+                break :blk @mod(240 + (rgbf.r - rgbf.g) / delta * 60, 360);
             }
         },
         .s = if (max == 0) 0 else (delta / max) * 100,
@@ -391,10 +391,10 @@ pub fn hsvToLab(hsv: Hsv) Lab {
 /// - Matrix multiplication with sRGB to XYZ transformation matrix
 /// - Scaling by 100 for standard XYZ range
 pub fn rgbToXyz(rgb: Rgb) Xyz {
-    const rgb_float = RgbFloat.fromRgb(rgb.r, rgb.g, rgb.b);
-    const r = gammaToLinear(rgb_float.r);
-    const g = gammaToLinear(rgb_float.g);
-    const b = gammaToLinear(rgb_float.b);
+    const rgbf = RgbFloat.fromRgb(rgb);
+    const r = gammaToLinear(rgbf.r);
+    const g = gammaToLinear(rgbf.g);
+    const b = gammaToLinear(rgbf.b);
 
     return .{
         .x = (r * 0.4124 + g * 0.3576 + b * 0.1805) * 100,
@@ -610,18 +610,16 @@ pub fn xybToOklab(xyb: Xyb) Oklab {
 
 /// Converts RGB to Ycbcr using ITU-R BT.601 coefficients.
 pub fn rgbToYcbcr(rgb: Rgb) Ycbcr {
-    const r_f = @as(f32, @floatFromInt(rgb.r));
-    const g_f = @as(f32, @floatFromInt(rgb.g));
-    const b_f = @as(f32, @floatFromInt(rgb.b));
+    const rgbf: RgbFloat = .fromRgb(rgb);
 
     // ITU-R BT.601 coefficients
     const Kr = 0.299;
     const Kg = 0.587;
     const Kb = 0.114;
 
-    const y = Kr * r_f + Kg * g_f + Kb * b_f;
-    const cb = 0.5 * (b_f - y) / (1.0 - Kb);
-    const cr = 0.5 * (r_f - y) / (1.0 - Kr);
+    const y = Kr * rgbf.r + Kg * rgbf.g + Kb * rgbf.b;
+    const cb = 0.5 * (rgbf.b - y) / (1.0 - Kb);
+    const cr = 0.5 * (rgbf.r - y) / (1.0 - Kr);
 
     return .{
         .y = y,
