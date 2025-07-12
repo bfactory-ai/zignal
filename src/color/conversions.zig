@@ -17,11 +17,12 @@ const Rgb = @import("Rgb.zig");
 const Rgba = @import("Rgba.zig").Rgba;
 const Xyb = @import("Xyb.zig");
 const Xyz = @import("Xyz.zig");
+const Ycbcr = @import("Ycbcr.zig");
 
 /// Returns true if, and only if, `T` is a known color.
 pub fn isColor(comptime T: type) bool {
     return switch (T) {
-        u8, Rgb, Rgba, Hsl, Hsv, Lab, Xyz, Lms, Oklab, Xyb => true,
+        u8, Rgb, Rgba, Hsl, Hsv, Lab, Xyz, Lms, Oklab, Xyb, Ycbcr => true,
         else => false,
     };
 }
@@ -81,6 +82,11 @@ pub fn convertColor(comptime T: type, color: anytype) T {
             Xyb => color,
             u8 => Rgb.fromGray(color).toXyb(),
             inline else => color.toXyb(),
+        },
+        Ycbcr => switch (ColorType) {
+            Ycbcr => color,
+            u8 => Ycbcr.fromRgb(Rgb.fromGray(color)),
+            inline else => color.toYcbcr(),
         },
         else => @compileError("Unsupported color " ++ @typeName(T)),
     };
@@ -600,4 +606,46 @@ pub fn xybToLms(xyb: Xyb) Lms {
 
 pub fn xybToOklab(xyb: Xyb) Oklab {
     return lmsToOklab(xybToLms(xyb));
+}
+
+/// Converts RGB to Ycbcr using ITU-R BT.601 coefficients.
+pub fn rgbToYcbcr(rgb: Rgb) Ycbcr {
+    const r_f = @as(f32, @floatFromInt(rgb.r));
+    const g_f = @as(f32, @floatFromInt(rgb.g));
+    const b_f = @as(f32, @floatFromInt(rgb.b));
+
+    // ITU-R BT.601 coefficients
+    const Kr = 0.299;
+    const Kg = 0.587;
+    const Kb = 0.114;
+
+    const y = Kr * r_f + Kg * g_f + Kb * b_f;
+    const cb = 0.5 * (b_f - y) / (1.0 - Kb);
+    const cr = 0.5 * (r_f - y) / (1.0 - Kr);
+
+    return .{
+        .y = y,
+        .cb = cb,
+        .cr = cr,
+    };
+}
+
+/// Converts Ycbcr to RGB using ITU-R BT.601 coefficients.
+/// Preserves exact precision used in JPEG decoder for perfect reconstruction.
+pub fn ycbcrToRgb(ycbcr: Ycbcr) Rgb {
+    // Conversion coefficients derived from BT.601
+    const Cr_to_R = 1.402;
+    const Cb_to_B = 1.772;
+    const Cr_to_G = 0.714136;
+    const Cb_to_G = 0.344136;
+
+    const r_f = ycbcr.y + ycbcr.cr * Cr_to_R;
+    const g_f = ycbcr.y - ycbcr.cb * Cb_to_G - ycbcr.cr * Cr_to_G;
+    const b_f = ycbcr.y + ycbcr.cb * Cb_to_B;
+
+    return .{
+        .r = @intFromFloat(@max(0, @min(255, @round(r_f)))),
+        .g = @intFromFloat(@max(0, @min(255, @round(g_f)))),
+        .b = @intFromFloat(@max(0, @min(255, @round(b_f)))),
+    };
 }

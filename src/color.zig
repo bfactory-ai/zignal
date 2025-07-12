@@ -19,6 +19,7 @@ pub const Rgb = @import("color/Rgb.zig");
 pub const Rgba = @import("color/Rgba.zig").Rgba;
 pub const Xyb = @import("color/Xyb.zig");
 pub const Xyz = @import("color/Xyz.zig");
+pub const Ycbcr = @import("color/Ycbcr.zig");
 
 // ============================================================================
 // TESTS

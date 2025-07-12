@@ -10,6 +10,7 @@ const ArrayList = std.ArrayList;
 const Image = @import("image.zig").Image;
 const Rgb = @import("color.zig").Rgb;
 const Rgba = @import("color.zig").Rgba;
+const Ycbcr = @import("color.zig").Ycbcr;
 const convertColor = @import("color.zig").convertColor;
 
 // JPEG markers
@@ -801,33 +802,6 @@ fn idct8x8(block: *[64]i32) void {
     }
 }
 
-// YCbCr to RGB conversion
-fn ycbcrToRgb(y: i32, cb: i32, cr: i32) Rgb {
-    // Convert from JPEG YCbCr to RGB using ITU-R BT.601 coefficients
-    // Y, Cb, Cr are in range [-128, 127] after IDCT
-    const y_f = @as(f32, @floatFromInt(y));
-    const cb_f = @as(f32, @floatFromInt(cb));
-    const cr_f = @as(f32, @floatFromInt(cr));
-
-    // Use ITU-R BT.601 coefficients
-    const r_f = y_f + 1.402 * cr_f;
-    const g_f = y_f - 0.344136 * cb_f - 0.714136 * cr_f;
-    const b_f = y_f + 1.772 * cb_f;
-
-    return Rgb{
-        .r = clampU8(@intFromFloat(@round(r_f))),
-        .g = clampU8(@intFromFloat(@round(g_f))),
-        .b = clampU8(@intFromFloat(@round(b_f))),
-    };
-}
-
-// Clamp value to u8 range
-fn clampU8(value: i32) u8 {
-    if (value < 0) return 0;
-    if (value > 255) return 255;
-    return @intCast(value);
-}
-
 // Upsample chroma component for 4:2:0 subsampling using bilinear interpolation
 fn upsampleChroma420(input: []const [64]i32, output: *[256]i32, h_blocks: u4, v_blocks: u4, max_h: u4, max_v: u4) void {
     // For 4:2:0, input is typically 1 block (8x8), output should be max_h*8 x max_v*8
@@ -918,7 +892,7 @@ fn ycbcrToRgbAllBlocks(decoder: *JpegDecoder) !void {
         for (decoder.block_storage.?, 0..) |*block_set, idx| {
             for (0..64) |i| {
                 const y_val = block_set[0][i];
-                const rgb_val = clampU8(y_val);
+                const rgb_val: u8 = @intCast(std.math.clamp(y_val + 128, 0, 255));
                 decoder.rgb_storage.?[idx][0][i] = rgb_val; // R
                 decoder.rgb_storage.?[idx][1][i] = rgb_val; // G
                 decoder.rgb_storage.?[idx][2][i] = rgb_val; // B
@@ -989,7 +963,9 @@ fn ycbcrToRgbAllBlocks(decoder: *JpegDecoder) !void {
                         const cr_interp_x1 = cr01 * (1.0 - fx) + cr11 * fx;
                         const Cr = @as(i32, @intFromFloat(@round(cr_interp_x0 * (1.0 - fy) + cr_interp_x1 * fy)));
 
-                        const rgb = ycbcrToRgb(Y, Cb, Cr);
+                        // Convert JPEG YCbCr (Y in [-128,127]) to standard Ycbcr (Y in [0,255])
+                        const ycbcr = Ycbcr{ .y = @as(f32, @floatFromInt(Y + 128)), .cb = @as(f32, @floatFromInt(Cb)), .cr = @as(f32, @floatFromInt(Cr)) };
+                        const rgb = ycbcr.toRgb();
 
                         // Store RGB in separate storage to avoid overwriting chroma data
                         decoder.rgb_storage.?[y_block_index][0][pixel_idx] = rgb.r;
@@ -1225,23 +1201,26 @@ test "BitReader basic operations" {
     try testing.expectEqual(@as(u16, 0b01010101), bits3);
 }
 
-test "YCbCr to RGB conversion" {
+test "Ycbcr to RGB conversion" {
     const testing = std.testing;
 
-    // Test grayscale (Y=128, Cb=128, Cr=128)
-    const gray = ycbcrToRgb(128, 128, 128);
+    // Test grayscale - JPEG Y=0 becomes standard Y=128
+    const gray_ycbcr = Ycbcr{ .y = 128, .cb = 0, .cr = 0 };
+    const gray = gray_ycbcr.toRgb();
     try testing.expectEqual(@as(u8, 128), gray.r);
     try testing.expectEqual(@as(u8, 128), gray.g);
     try testing.expectEqual(@as(u8, 128), gray.b);
 
-    // Test white (Y=255, Cb=128, Cr=128)
-    const white = ycbcrToRgb(255, 128, 128);
+    // Test white - standard Y=255
+    const white_ycbcr = Ycbcr{ .y = 255, .cb = 0, .cr = 0 };
+    const white = white_ycbcr.toRgb();
     try testing.expectEqual(@as(u8, 255), white.r);
     try testing.expectEqual(@as(u8, 255), white.g);
     try testing.expectEqual(@as(u8, 255), white.b);
 
-    // Test black (Y=0, Cb=128, Cr=128)
-    const black = ycbcrToRgb(0, 128, 128);
+    // Test black - standard Y=0
+    const black_ycbcr = Ycbcr{ .y = 0, .cb = 0, .cr = 0 };
+    const black = black_ycbcr.toRgb();
     try testing.expectEqual(@as(u8, 0), black.r);
     try testing.expectEqual(@as(u8, 0), black.g);
     try testing.expectEqual(@as(u8, 0), black.b);
