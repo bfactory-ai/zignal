@@ -942,11 +942,11 @@
       const cb = parseFloat(document.getElementById("ycbcr-cb").value);
       const cr = parseFloat(document.getElementById("ycbcr-cr").value);
       if (y < 0) document.getElementById("ycbcr-y").value = 0;
-      if (cb < -128) document.getElementById("ycbcr-cb").value = -128;
-      if (cr < -128) document.getElementById("ycbcr-cr").value = -128;
+      if (cb < 0) document.getElementById("ycbcr-cb").value = 0;
+      if (cr < 0) document.getElementById("ycbcr-cr").value = 0;
       if (y > 255) document.getElementById("ycbcr-y").value = 255;
-      if (cb > 127) document.getElementById("ycbcr-cb").value = 127;
-      if (cr > 127) document.getElementById("ycbcr-cr").value = 127;
+      if (cb > 255) document.getElementById("ycbcr-cb").value = 255;
+      if (cr > 255) document.getElementById("ycbcr-cr").value = 255;
       ycbcr2rgb(y, cb, cr);
       ycbcr2hsl(y, cb, cr);
       ycbcr2hsv(y, cb, cr);
