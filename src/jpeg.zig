@@ -1204,22 +1204,22 @@ test "BitReader basic operations" {
 test "Ycbcr to RGB conversion" {
     const testing = std.testing;
 
-    // Test grayscale - JPEG Y=0 becomes standard Y=128
-    const gray_ycbcr: Ycbcr = .{ .y = 128, .cb = 0, .cr = 0 };
+    // Test grayscale - standard Y=128
+    const gray_ycbcr: Ycbcr = .{ .y = 128, .cb = 128, .cr = 128 };
     const gray = gray_ycbcr.toRgb();
     try testing.expectEqual(@as(u8, 128), gray.r);
     try testing.expectEqual(@as(u8, 128), gray.g);
     try testing.expectEqual(@as(u8, 128), gray.b);
 
     // Test white - standard Y=255
-    const white_ycbcr: Ycbcr = .{ .y = 255, .cb = 0, .cr = 0 };
+    const white_ycbcr: Ycbcr = .{ .y = 255, .cb = 128, .cr = 128 };
     const white = white_ycbcr.toRgb();
     try testing.expectEqual(@as(u8, 255), white.r);
     try testing.expectEqual(@as(u8, 255), white.g);
     try testing.expectEqual(@as(u8, 255), white.b);
 
     // Test black - standard Y=0
-    const black_ycbcr: Ycbcr = .{ .y = 0, .cb = 0, .cr = 0 };
+    const black_ycbcr: Ycbcr = .{ .y = 0, .cb = 128, .cr = 128 };
     const black = black_ycbcr.toRgb();
     try testing.expectEqual(@as(u8, 0), black.r);
     try testing.expectEqual(@as(u8, 0), black.g);
