@@ -609,17 +609,17 @@ pub fn xybToOklab(xyb: Xyb) Oklab {
 }
 
 /// Converts RGB to Ycbcr using ITU-R BT.601 coefficients.
+/// All components in [0, 255] range, with Cb/Cr having 128 as neutral (Wikipedia standard).
 pub fn rgbToYcbcr(rgb: Rgb) Ycbcr {
-    const rgbf: RgbFloat = .fromRgb(rgb);
+    const r = @as(f32, @floatFromInt(rgb.r));
+    const g = @as(f32, @floatFromInt(rgb.g));
+    const b = @as(f32, @floatFromInt(rgb.b));
 
-    // ITU-R BT.601 coefficients
-    const Kr = 0.299;
-    const Kg = 0.587;
-    const Kb = 0.114;
-
-    const y = Kr * rgbf.r + Kg * rgbf.g + Kb * rgbf.b;
-    const cb = 0.5 * (rgbf.b - y) / (1.0 - Kb);
-    const cr = 0.5 * (rgbf.r - y) / (1.0 - Kr);
+    // Wikipedia/JPEG standard YCbCr conversion
+    // Based on ITU-R BT.601 coefficients
+    const y = 0.299 * r + 0.587 * g + 0.114 * b;
+    const cb = 128.0 + (-0.169 * r - 0.331 * g + 0.5 * b);
+    const cr = 128.0 + (0.5 * r - 0.419 * g - 0.081 * b);
 
     return .{
         .y = y,
@@ -629,17 +629,13 @@ pub fn rgbToYcbcr(rgb: Rgb) Ycbcr {
 }
 
 /// Converts Ycbcr to RGB using ITU-R BT.601 coefficients.
-/// Preserves exact precision used in JPEG decoder for perfect reconstruction.
+/// Expects all components in [0, 255] range, with Cb/Cr having 128 as neutral (Wikipedia standard).
 pub fn ycbcrToRgb(ycbcr: Ycbcr) Rgb {
-    // Conversion coefficients derived from BT.601
-    const Cr_to_R = 1.402;
-    const Cb_to_B = 1.772;
-    const Cr_to_G = 0.714136;
-    const Cb_to_G = 0.344136;
-
-    const r_f = ycbcr.y + ycbcr.cr * Cr_to_R;
-    const g_f = ycbcr.y - ycbcr.cb * Cb_to_G - ycbcr.cr * Cr_to_G;
-    const b_f = ycbcr.y + ycbcr.cb * Cb_to_B;
+    // Wikipedia/JPEG standard YCbCr to RGB conversion
+    // Based on ITU-R BT.601 coefficients
+    const r_f = ycbcr.y + 1.402 * (ycbcr.cr - 128.0);
+    const g_f = ycbcr.y - 0.344136 * (ycbcr.cb - 128.0) - 0.714136 * (ycbcr.cr - 128.0);
+    const b_f = ycbcr.y + 1.772 * (ycbcr.cb - 128.0);
 
     return .{
         .r = @intFromFloat(@max(0, @min(255, @round(r_f)))),

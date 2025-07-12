@@ -44,6 +44,7 @@ pub const Lab = color.Lab;
 pub const Lms = color.Lms;
 pub const Oklab = color.Oklab;
 pub const Xyb = color.Xyb;
+pub const Ycbcr = color.Ycbcr;
 
 const geometry = @import("geometry.zig");
 pub const Rectangle = geometry.Rectangle;

@@ -963,8 +963,8 @@ fn ycbcrToRgbAllBlocks(decoder: *JpegDecoder) !void {
                         const cr_interp_x1 = cr01 * (1.0 - fx) + cr11 * fx;
                         const Cr = @as(i32, @intFromFloat(@round(cr_interp_x0 * (1.0 - fy) + cr_interp_x1 * fy)));
 
-                        // Convert JPEG YCbCr (Y in [-128,127]) to standard Ycbcr (Y in [0,255])
-                        const ycbcr: Ycbcr = .{ .y = @as(f32, @floatFromInt(Y + 128)), .cb = @as(f32, @floatFromInt(Cb)), .cr = @as(f32, @floatFromInt(Cr)) };
+                        // Convert JPEG YCbCr to Wikipedia standard - try without Y offset since image is too bright
+                        const ycbcr: Ycbcr = .{ .y = @as(f32, @floatFromInt(Y)), .cb = @as(f32, @floatFromInt(Cb + 128)), .cr = @as(f32, @floatFromInt(Cr + 128)) };
                         const rgb = ycbcr.toRgb();
 
                         // Store RGB in separate storage to avoid overwriting chroma data

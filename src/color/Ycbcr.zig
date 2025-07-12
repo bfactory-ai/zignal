@@ -18,17 +18,17 @@ const Xyz = @import("Xyz.zig");
 
 /// Y component (luma/brightness) in range [0, 255]
 y: f32,
-/// Cb component (blue-difference chroma) in range [-128, 127]
+/// Cb component (blue-difference chroma) in range [0, 255] (128 = neutral)
 cb: f32,
-/// Cr component (red-difference chroma) in range [-128, 127]
+/// Cr component (red-difference chroma) in range [0, 255] (128 = neutral)
 cr: f32,
 
 const Ycbcr = @This();
 
 
 /// Common Ycbcr values
-pub const black: Ycbcr = .{ .y = 16, .cb = 0, .cr = 0 };
-pub const white: Ycbcr = .{ .y = 235, .cb = 0, .cr = 0 };
+pub const black: Ycbcr = .{ .y = 0, .cb = 128, .cr = 128 };
+pub const white: Ycbcr = .{ .y = 255, .cb = 128, .cr = 128 };
 
 /// Formats the Ycbcr color for display. Use "color" format for ANSI color output.
 pub fn format(self: Ycbcr, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
