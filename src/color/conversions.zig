@@ -609,30 +609,24 @@ pub fn xybToOklab(xyb: Xyb) Oklab {
 }
 
 /// Converts RGB to Ycbcr using ITU-R BT.601 coefficients.
-/// All components in [0, 255] range, with Cb/Cr having 128 as neutral (Wikipedia standard).
+/// All components in [0, 255] range, with Cb/Cr having 128 as neutral.
 pub fn rgbToYcbcr(rgb: Rgb) Ycbcr {
-    const r = @as(f32, @floatFromInt(rgb.r));
-    const g = @as(f32, @floatFromInt(rgb.g));
-    const b = @as(f32, @floatFromInt(rgb.b));
+    const rgbf: RgbFloat = .fromRgb(rgb);
 
-    // Wikipedia/JPEG standard YCbCr conversion
-    // Based on ITU-R BT.601 coefficients
-    const y = 0.299 * r + 0.587 * g + 0.114 * b;
-    const cb = 128.0 + (-0.169 * r - 0.331 * g + 0.5 * b);
-    const cr = 128.0 + (0.5 * r - 0.419 * g - 0.081 * b);
+    const y = 0.299 * rgbf.r + 0.587 * rgbf.g + 0.114 * rgbf.b;
+    const cb = 128.0 + (-0.169 * rgbf.r - 0.331 * rgbf.g + 0.5 * rgbf.b);
+    const cr = 128.0 + (0.5 * rgbf.r - 0.419 * rgbf.g - 0.081 * rgbf.b);
 
     return .{
-        .y = y,
-        .cb = cb,
-        .cr = cr,
+        .y = @floatCast(y),
+        .cb = @floatCast(cb),
+        .cr = @floatCast(cr),
     };
 }
 
 /// Converts Ycbcr to RGB using ITU-R BT.601 coefficients.
-/// Expects all components in [0, 255] range, with Cb/Cr having 128 as neutral (Wikipedia standard).
+/// Expects all components in [0, 255] range, with Cb/Cr having 128 as neutral.
 pub fn ycbcrToRgb(ycbcr: Ycbcr) Rgb {
-    // Wikipedia/JPEG standard YCbCr to RGB conversion
-    // Based on ITU-R BT.601 coefficients
     const r_f = ycbcr.y + 1.402 * (ycbcr.cr - 128.0);
     const g_f = ycbcr.y - 0.344136 * (ycbcr.cb - 128.0) - 0.714136 * (ycbcr.cr - 128.0);
     const b_f = ycbcr.y + 1.772 * (ycbcr.cb - 128.0);
