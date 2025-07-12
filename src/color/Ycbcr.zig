@@ -25,7 +25,6 @@ cr: f32,
 
 const Ycbcr = @This();
 
-
 /// Common Ycbcr values
 pub const black: Ycbcr = .{ .y = 0, .cb = 128, .cr = 128 };
 pub const white: Ycbcr = .{ .y = 255, .cb = 128, .cr = 128 };

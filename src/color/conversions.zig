@@ -611,16 +611,18 @@ pub fn xybToOklab(xyb: Xyb) Oklab {
 /// Converts RGB to Ycbcr using ITU-R BT.601 coefficients.
 /// All components in [0, 255] range, with Cb/Cr having 128 as neutral.
 pub fn rgbToYcbcr(rgb: Rgb) Ycbcr {
-    const rgbf: RgbFloat = .fromRgb(rgb);
+    const r = @as(f32, @floatFromInt(rgb.r));
+    const g = @as(f32, @floatFromInt(rgb.g));
+    const b = @as(f32, @floatFromInt(rgb.b));
 
-    const y = 0.299 * rgbf.r + 0.587 * rgbf.g + 0.114 * rgbf.b;
-    const cb = 128.0 + (-0.169 * rgbf.r - 0.331 * rgbf.g + 0.5 * rgbf.b);
-    const cr = 128.0 + (0.5 * rgbf.r - 0.419 * rgbf.g - 0.081 * rgbf.b);
+    const y = 0.299 * r + 0.587 * g + 0.114 * b;
+    const cb = 128.0 + (-0.169 * r - 0.331 * g + 0.5 * b);
+    const cr = 128.0 + (0.5 * r - 0.419 * g - 0.081 * b);
 
     return .{
-        .y = @floatCast(y),
-        .cb = @floatCast(cb),
-        .cr = @floatCast(cr),
+        .y = y,
+        .cb = cb,
+        .cr = cr,
     };
 }
 
