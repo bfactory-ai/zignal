@@ -809,10 +809,10 @@ fn ycbcrToRgb(y: i32, cb: i32, cr: i32) Rgb {
     const cb_f = @as(f32, @floatFromInt(cb));
     const cr_f = @as(f32, @floatFromInt(cr));
 
-    // Use exact ITU-R BT.601 coefficients
-    const r_f = y_f + 1.402 * cr_f + 128.0;
-    const g_f = y_f - 0.344136 * cb_f - 0.714136 * cr_f + 128.0;
-    const b_f = y_f + 1.772 * cb_f + 128.0;
+    // Use ITU-R BT.601 coefficients
+    const r_f = y_f + 1.402 * cr_f;
+    const g_f = y_f - 0.344136 * cb_f - 0.714136 * cr_f;
+    const b_f = y_f + 1.772 * cb_f;
 
     return Rgb{
         .r = clampU8(@intFromFloat(@round(r_f))),
@@ -897,6 +897,14 @@ fn idctAllBlocks(decoder: *JpegDecoder) void {
     for (decoder.block_storage.?) |*block_set| {
         for (0..decoder.num_components) |comp_idx| {
             idct8x8(&block_set[comp_idx]);
+
+            // Apply level shift (+128) only to Y component (component 0)
+            // Cb and Cr components stay centered around 0
+            if (comp_idx == 0) {
+                for (0..64) |i| {
+                    block_set[comp_idx][i] += 128;
+                }
+            }
         }
     }
 }
@@ -909,7 +917,7 @@ fn ycbcrToRgbAllBlocks(decoder: *JpegDecoder) !void {
         // Grayscale - just copy Y to all RGB channels
         for (decoder.block_storage.?, 0..) |*block_set, idx| {
             for (0..64) |i| {
-                const y_val = block_set[0][i] + 128;
+                const y_val = block_set[0][i];
                 const rgb_val = clampU8(y_val);
                 decoder.rgb_storage.?[idx][0][i] = rgb_val; // R
                 decoder.rgb_storage.?[idx][1][i] = rgb_val; // G
