@@ -7,11 +7,11 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 
+const convertColor = @import("color.zig").convertColor;
 const Image = @import("image.zig").Image;
 const Rgb = @import("color.zig").Rgb;
 const Rgba = @import("color.zig").Rgba;
 const Ycbcr = @import("color.zig").Ycbcr;
-const convertColor = @import("color.zig").convertColor;
 
 // JPEG markers
 const Marker = enum(u16) {
@@ -964,7 +964,7 @@ fn ycbcrToRgbAllBlocks(decoder: *JpegDecoder) !void {
                         const Cr = @as(i32, @intFromFloat(@round(cr_interp_x0 * (1.0 - fy) + cr_interp_x1 * fy)));
 
                         // Convert JPEG YCbCr (Y in [-128,127]) to standard Ycbcr (Y in [0,255])
-                        const ycbcr = Ycbcr{ .y = @as(f32, @floatFromInt(Y + 128)), .cb = @as(f32, @floatFromInt(Cb)), .cr = @as(f32, @floatFromInt(Cr)) };
+                        const ycbcr: Ycbcr = .{ .y = @as(f32, @floatFromInt(Y + 128)), .cb = @as(f32, @floatFromInt(Cb)), .cr = @as(f32, @floatFromInt(Cr)) };
                         const rgb = ycbcr.toRgb();
 
                         // Store RGB in separate storage to avoid overwriting chroma data
@@ -1205,21 +1205,21 @@ test "Ycbcr to RGB conversion" {
     const testing = std.testing;
 
     // Test grayscale - JPEG Y=0 becomes standard Y=128
-    const gray_ycbcr = Ycbcr{ .y = 128, .cb = 0, .cr = 0 };
+    const gray_ycbcr: Ycbcr = .{ .y = 128, .cb = 0, .cr = 0 };
     const gray = gray_ycbcr.toRgb();
     try testing.expectEqual(@as(u8, 128), gray.r);
     try testing.expectEqual(@as(u8, 128), gray.g);
     try testing.expectEqual(@as(u8, 128), gray.b);
 
     // Test white - standard Y=255
-    const white_ycbcr = Ycbcr{ .y = 255, .cb = 0, .cr = 0 };
+    const white_ycbcr: Ycbcr = .{ .y = 255, .cb = 0, .cr = 0 };
     const white = white_ycbcr.toRgb();
     try testing.expectEqual(@as(u8, 255), white.r);
     try testing.expectEqual(@as(u8, 255), white.g);
     try testing.expectEqual(@as(u8, 255), white.b);
 
     // Test black - standard Y=0
-    const black_ycbcr = Ycbcr{ .y = 0, .cb = 0, .cr = 0 };
+    const black_ycbcr: Ycbcr = .{ .y = 0, .cb = 0, .cr = 0 };
     const black = black_ycbcr.toRgb();
     try testing.expectEqual(@as(u8, 0), black.r);
     try testing.expectEqual(@as(u8, 0), black.g);
