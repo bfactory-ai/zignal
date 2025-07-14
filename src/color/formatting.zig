@@ -35,7 +35,7 @@ pub fn formatColor(
 
         // Start with ANSI escape codes
         try writer.print(
-            "\x1b[1m\x1b[38;2;{};{};{}m\x1b[48;2;{};{};{}m{s}{{ ",
+            "\x1b[1m\x1b[38;2;{d};{d};{d}m\x1b[48;2;{d};{d};{d}m{s}{{ ",
             .{ fg, fg, fg, rgb.r, rgb.g, rgb.b, type_name },
         );
     } else {
@@ -51,9 +51,9 @@ pub fn formatColor(
         // Format the field value appropriately
         const value = @field(self, field.name);
         switch (field.type) {
-            u8 => try writer.print("{}", .{value}),
+            u8 => try writer.print("{any}", .{value}),
             f64 => try writer.print("{d:.2}", .{value}), // 2 decimal places for floats
-            else => try writer.print("{}", .{value}),
+            else => try writer.print("{any}", .{value}),
         }
 
         if (i < fields.len - 1) {
