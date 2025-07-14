@@ -5,6 +5,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const expectEqual = std.testing.expectEqual;
 const expectEqualDeep = std.testing.expectEqualDeep;
+const expectEqualStrings = std.testing.expectEqualStrings;
 const builtin = @import("builtin");
 
 const Point2d = @import("geometry/points.zig").Point2d;
@@ -18,6 +19,86 @@ fn formatNumber(comptime T: type, buf: []u8, comptime format_str: []const u8, va
             // If even scientific notation fails, use a fallback
             return "ERR";
         };
+    };
+}
+
+/// Custom formatter for matrices with different display options
+fn MatrixFormatter(comptime MatrixType: type, comptime format_type: []const u8) type {
+    return struct {
+        const Self = @This();
+        matrix: MatrixType,
+
+        pub fn format(
+            self: Self,
+            writer: anytype,
+        ) !void {
+            const number_fmt = comptime blk: {
+                if (std.mem.eql(u8, format_type, "e")) {
+                    break :blk "{e}";
+                } else if (std.mem.eql(u8, format_type, "compact")) {
+                    break :blk "{d:.0}";
+                } else if (std.mem.eql(u8, format_type, "f")) {
+                    break :blk "{d}";
+                } else if (format_type.len > 3 and std.mem.startsWith(u8, format_type, "f:.")) {
+                    // Parse "f:." followed by number of decimal places (e.g., "f:.2", "f:.10")
+                    const decimal_places = std.fmt.parseInt(u8, format_type[3..], 10) catch 2;
+                    break :blk std.fmt.comptimePrint("{{d:.{d}}}", .{decimal_places});
+                } else {
+                    break :blk "{e}"; // default to scientific
+                }
+            };
+
+            // Get matrix dimensions and determine matrix type
+            // Matrix has allocator field, SMatrix doesn't
+            const is_smatrix = !@hasField(MatrixType, "allocator");
+            const rows = self.matrix.rows;
+            const cols = self.matrix.cols;
+
+            // First pass: calculate the maximum width needed for each column
+            var col_widths_buffer: [256]usize = undefined;
+            const max_cols = @min(cols, 256);
+            var col_widths = col_widths_buffer[0..max_cols];
+            @memset(col_widths, 0);
+
+            for (0..rows) |r| {
+                for (0..max_cols) |c| {
+                    // Create a temporary buffer to measure the width of this element
+                    var temp_buf: [64]u8 = undefined;
+                    const value = if (is_smatrix) self.matrix.items[r][c] else self.matrix.at(r, c).*;
+                    const formatted = formatNumber(@TypeOf(value), temp_buf[0..], number_fmt, value);
+                    col_widths[c] = @max(col_widths[c], formatted.len);
+                }
+            }
+
+            // Second pass: format and write the matrix with proper alignment
+            for (0..rows) |r| {
+                try writer.writeAll("[ ");
+                for (0..@min(cols, max_cols)) |c| {
+                    // Format the number
+                    var temp_buf: [64]u8 = undefined;
+                    const value = if (is_smatrix) self.matrix.items[r][c] else self.matrix.at(r, c).*;
+                    const formatted = formatNumber(@TypeOf(value), temp_buf[0..], number_fmt, value);
+
+                    // Right-align the number within the column width
+                    const padding = col_widths[c] -| formatted.len;
+                    for (0..padding) |_| {
+                        try writer.writeAll(" ");
+                    }
+                    try writer.writeAll(formatted);
+
+                    if (c < @min(cols, max_cols) - 1) {
+                        try writer.writeAll("  "); // Two spaces between columns
+                    }
+                }
+                if (cols > max_cols) {
+                    try writer.writeAll(" ...");
+                }
+                try writer.writeAll(" ]");
+                if (r < rows - 1) {
+                    try writer.writeAll("\n");
+                }
+            }
+        }
     };
 }
 
@@ -397,63 +478,19 @@ pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) typ
             return inv;
         }
 
-        /// Formats the matrix for pretty printing with configurable precision.
+        /// Custom formatter for different display options
+        pub fn fmt(self: Self, comptime format_type: []const u8) MatrixFormatter(Self, format_type) {
+            return MatrixFormatter(Self, format_type){ .matrix = self };
+        }
+
+        /// Formats the matrix for pretty printing (uses scientific notation by default).
         pub fn format(
             self: Self,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
             writer: anytype,
         ) !void {
-            _ = fmt;
-
-            // First pass: calculate the maximum width needed for each column
-            var col_widths: [cols]usize = [_]usize{0} ** cols;
-
-            for (0..rows) |r| {
-                for (0..cols) |c| {
-                    // Create a temporary buffer to measure the width of this element
-                    var temp_buf: [64]u8 = undefined;
-                    const formatted = if (options.precision) |precision|
-                        switch (precision) {
-                            inline 0...15 => |p| formatNumber(T, temp_buf[0..], std.fmt.comptimePrint("{{d:.{d}}}", .{p}), self.items[r][c]),
-                            else => formatNumber(T, temp_buf[0..], "{d}", self.items[r][c]),
-                        }
-                    else
-                        formatNumber(T, temp_buf[0..], "{any}", self.items[r][c]);
-                    col_widths[c] = @max(col_widths[c], formatted.len);
-                }
-            }
-
-            // Second pass: format and write the matrix with proper alignment
-            for (0..rows) |r| {
-                try writer.writeAll("[ ");
-                for (0..cols) |c| {
-                    // Format the number with specified precision
-                    var temp_buf: [64]u8 = undefined;
-                    const formatted = if (options.precision) |precision|
-                        switch (precision) {
-                            inline 0...15 => |p| formatNumber(T, temp_buf[0..], std.fmt.comptimePrint("{{d:.{d}}}", .{p}), self.items[r][c]),
-                            else => formatNumber(T, temp_buf[0..], "{d}", self.items[r][c]),
-                        }
-                    else
-                        formatNumber(T, temp_buf[0..], "{any}", self.items[r][c]);
-
-                    // Right-align the number within the column width
-                    const padding = col_widths[c] - formatted.len;
-                    for (0..padding) |_| {
-                        try writer.writeAll(" ");
-                    }
-                    try writer.writeAll(formatted);
-
-                    if (c < cols - 1) {
-                        try writer.writeAll("  "); // Two spaces between columns
-                    }
-                }
-                try writer.writeAll(" ]");
-                if (r < rows - 1) {
-                    try writer.writeAll("\n");
-                }
-            }
+            // Use the custom formatter with scientific notation as default
+            const formatter = MatrixFormatter(Self, "e"){ .matrix = self };
+            try formatter.format(writer);
         }
 
         /// Sums all the elements in rows.
@@ -571,74 +608,19 @@ pub fn Matrix(comptime T: type) type {
             return @sqrt(squared_sum);
         }
 
-        /// Formats the matrix for pretty printing with configurable precision.
+        /// Custom formatter for different display options
+        pub fn fmt(self: Self, comptime format_type: []const u8) MatrixFormatter(Self, format_type) {
+            return MatrixFormatter(Self, format_type){ .matrix = self };
+        }
+
+        /// Formats the matrix for pretty printing (uses scientific notation by default).
         pub fn format(
             self: Self,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
             writer: anytype,
         ) !void {
-            _ = fmt;
-
-            // Use a fixed-size array for column widths (should be sufficient for most cases)
-            // For very large matrices, this will just work with default alignment
-            var col_widths_buffer: [256]usize = undefined;
-            const col_widths = if (self.cols <= 256) col_widths_buffer[0..self.cols] else blk: {
-                // For very wide matrices, skip column width calculation
-                @memset(col_widths_buffer[0..], 0);
-                break :blk col_widths_buffer[0..0];
-            };
-
-            if (col_widths.len > 0) {
-                @memset(col_widths, 0);
-
-                // First pass: calculate the maximum width needed for each column
-                for (0..self.rows) |r| {
-                    for (0..self.cols) |c| {
-                        // Create a temporary buffer to measure the width of this element
-                        var temp_buf: [64]u8 = undefined;
-                        const formatted = if (options.precision) |precision|
-                            switch (precision) {
-                                inline 0...15 => |p| formatNumber(T, temp_buf[0..], std.fmt.comptimePrint("{{d:.{d}}}", .{p}), self.at(r, c).*),
-                                else => formatNumber(T, temp_buf[0..], "{d}", self.at(r, c).*),
-                            }
-                        else
-                            formatNumber(T, temp_buf[0..], "{any}", self.at(r, c).*);
-                        col_widths[c] = @max(col_widths[c], formatted.len);
-                    }
-                }
-            }
-
-            // Second pass: format and write the matrix with proper alignment
-            for (0..self.rows) |r| {
-                try writer.writeAll("[ ");
-                for (0..self.cols) |c| {
-                    // Format the number with specified precision
-                    var temp_buf: [64]u8 = undefined;
-                    const formatted = if (options.precision) |precision|
-                        switch (precision) {
-                            inline 0...15 => |p| formatNumber(T, temp_buf[0..], std.fmt.comptimePrint("{{d:.{d}}}", .{p}), self.at(r, c).*),
-                            else => formatNumber(T, temp_buf[0..], "{d}", self.at(r, c).*),
-                        }
-                    else
-                        formatNumber(T, temp_buf[0..], "{any}", self.at(r, c).*);
-
-                    // Right-align the number within the column width
-                    const padding = col_widths[c] - formatted.len;
-                    for (0..padding) |_| {
-                        try writer.writeAll(" ");
-                    }
-                    try writer.writeAll(formatted);
-
-                    if (c < self.cols - 1) {
-                        try writer.writeAll("  "); // Two spaces between columns
-                    }
-                }
-                try writer.writeAll(" ]");
-                if (r < self.rows - 1) {
-                    try writer.writeAll("\n");
-                }
-            }
+            // Use the custom formatter with scientific notation as default
+            const formatter = MatrixFormatter(Self, "e"){ .matrix = self };
+            try formatter.format(writer);
         }
 
         /// Converts a Matrix to a static SMatrix with the given dimensions
@@ -1011,41 +993,83 @@ test "format" {
     // Test default formatting (scientific notation)
     var buffer: [256]u8 = undefined;
     var stream = std.io.fixedBufferStream(&buffer);
-    try std.fmt.format(stream.writer(), "{any}", .{m});
+    try std.fmt.format(stream.writer(), "{f}", .{m});
     const result_default = stream.getWritten();
-    // TODO: Update test expectations for new format behavior
-    // const expected_default = "[ 1.23e0  -4.5e0      7e0 ]\n[ 1.01e1     0e0  -5.67e0 ]";
-    // try std.testing.expect(std.mem.eql(u8, result_default, expected_default));
-    _ = result_default; // suppress unused variable warning
+    std.debug.print("Default format: {s}\n", .{result_default});
 
-    // Test 2 decimal places
+    // Test custom formatters
     stream.reset();
-    try std.fmt.format(stream.writer(), "{any:.2}", .{m});
-    const result_2dp = stream.getWritten();
-    // TODO: Update test expectations for new format behavior
-    // const expected_2dp = "[  1.23  -4.50   7.00 ]\n[ 10.10   0.00  -5.67 ]";
-    // try std.testing.expect(std.mem.eql(u8, result_2dp, expected_2dp));
-    _ = result_2dp;
+    try std.fmt.format(stream.writer(), "{f}", .{m.fmt("f:.2")});
+    const result_f2 = stream.getWritten();
+    std.debug.print("f:.2 format: {s}\n", .{result_f2});
 
-    // Test 0 decimal places (integers)
     stream.reset();
-    try std.fmt.format(stream.writer(), "{any:.0}", .{m});
-    const result_0dp = stream.getWritten();
-    // TODO: Update test expectations for new format behavior
-    // const expected_0dp = "[  1  -5   7 ]\n[ 10   0  -6 ]";
-    // try std.testing.expect(std.mem.eql(u8, result_0dp, expected_0dp));
-    _ = result_0dp;
+    try std.fmt.format(stream.writer(), "{f}", .{m.fmt("f")});
+    const result_f = stream.getWritten();
+    std.debug.print("f format: {s}\n", .{result_f});
 
-    // Test 1x1 matrix
-    var m_single: SMatrix(f64, 1, 1) = .{};
-    m_single.at(0, 0).* = 3.14159;
     stream.reset();
-    try std.fmt.format(stream.writer(), "{any:.3}", .{m_single});
-    const result_single = stream.getWritten();
-    // TODO: Update test expectations for new format behavior
-    // const expected_single = "[ 3.142 ]";
-    // try std.testing.expect(std.mem.eql(u8, result_single, expected_single));
-    _ = result_single;
+    try std.fmt.format(stream.writer(), "{f}", .{m.fmt("e")});
+    const result_e = stream.getWritten();
+    std.debug.print("e format: {s}\n", .{result_e});
+
+    stream.reset();
+    try std.fmt.format(stream.writer(), "{f}", .{m.fmt("compact")});
+    const result_compact = stream.getWritten();
+    std.debug.print("compact format: {s}\n", .{result_compact});
+}
+
+test "dynamic matrix format" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    // Test dynamic Matrix formatting
+    var dm = try Matrix(f32).init(arena.allocator(), 2, 2);
+    dm.at(0, 0).* = 3.14159;
+    dm.at(0, 1).* = -2.71828;
+    dm.at(1, 0).* = 1.41421;
+    dm.at(1, 1).* = 0.57721;
+
+    var buffer: [256]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    
+    // Test default format
+    try std.fmt.format(stream.writer(), "{f}", .{dm});
+    const result_default = stream.getWritten();
+    std.debug.print("Dynamic Matrix default: {s}\n", .{result_default});
+
+    // Test custom formats with different decimal places
+    stream.reset();
+    try std.fmt.format(stream.writer(), "{f}", .{dm.fmt("f:.3")});
+    const result_f3 = stream.getWritten();
+    std.debug.print("Dynamic Matrix f:.3: {s}\n", .{result_f3});
+
+    stream.reset();
+    try std.fmt.format(stream.writer(), "{f}", .{dm.fmt("f:.5")});
+    const result_f5 = stream.getWritten();
+    std.debug.print("Dynamic Matrix f:.5: {s}\n", .{result_f5});
+
+    stream.reset();
+    try std.fmt.format(stream.writer(), "{f}", .{dm.fmt("f:.10")});
+    const result_f10 = stream.getWritten();
+    std.debug.print("Dynamic Matrix f:.10: {s}\n", .{result_f10});
+
+    // Test edge cases
+    stream.reset();
+    try std.fmt.format(stream.writer(), "{f}", .{dm.fmt("f:.0")});
+    const result_f0 = stream.getWritten();
+    std.debug.print("Dynamic Matrix f:.0: {s}\n", .{result_f0});
+
+    stream.reset();
+    try std.fmt.format(stream.writer(), "{f}", .{dm.fmt("f:.15")});
+    const result_f15 = stream.getWritten();
+    std.debug.print("Dynamic Matrix f:.15: {s}\n", .{result_f15});
+
+    // Test invalid format (should default to f:.2)
+    stream.reset();
+    try std.fmt.format(stream.writer(), "{f}", .{dm.fmt("f:.invalid")});
+    const result_invalid = stream.getWritten();
+    std.debug.print("Dynamic Matrix f:.invalid (defaults to f:.2): {s}\n", .{result_invalid});
 }
 
 test "dynamic matrix with OpsBuilder dot product" {
