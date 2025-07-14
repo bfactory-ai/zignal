@@ -22,82 +22,82 @@ fn formatNumber(comptime T: type, buf: []u8, comptime format_str: []const u8, va
     };
 }
 
-/// Custom formatter for matrices with different display options
-fn MatrixFormatter(comptime MatrixType: type, comptime format_type: []const u8) type {
+/// Generic matrix formatting function that works with both SMatrix and Matrix
+fn formatMatrix(matrix: anytype, comptime number_fmt: []const u8, writer: anytype) !void {
+    const MatrixType = @TypeOf(matrix);
+
+    // Matrix has allocator field, SMatrix doesn't
+    const is_smatrix = !@hasField(MatrixType, "allocator");
+    const rows = matrix.rows;
+    const cols = matrix.cols;
+
+    // First pass: calculate the maximum width needed for each column
+    var col_widths_buffer: [256]usize = undefined;
+    const max_cols = @min(cols, 256);
+    var col_widths = col_widths_buffer[0..max_cols];
+    @memset(col_widths, 0);
+
+    for (0..rows) |r| {
+        for (0..max_cols) |c| {
+            // Create a temporary buffer to measure the width of this element
+            var temp_buf: [64]u8 = undefined;
+            const value = if (is_smatrix) matrix.items[r][c] else matrix.at(r, c).*;
+            const formatted = formatNumber(@TypeOf(value), temp_buf[0..], number_fmt, value);
+            col_widths[c] = @max(col_widths[c], formatted.len);
+        }
+    }
+
+    // Second pass: format and write the matrix with proper alignment
+    for (0..rows) |r| {
+        try writer.writeAll("[ ");
+        for (0..@min(cols, max_cols)) |c| {
+            // Format the number
+            var temp_buf: [64]u8 = undefined;
+            const value = if (is_smatrix) matrix.items[r][c] else matrix.at(r, c).*;
+            const formatted = formatNumber(@TypeOf(value), temp_buf[0..], number_fmt, value);
+
+            // Right-align the number within the column width
+            const padding = col_widths[c] -| formatted.len;
+            for (0..padding) |_| {
+                try writer.writeAll(" ");
+            }
+            try writer.writeAll(formatted);
+
+            if (c < @min(cols, max_cols) - 1) {
+                try writer.writeAll("  "); // Two spaces between columns
+            }
+        }
+        if (cols > max_cols) {
+            try writer.writeAll(" ...");
+        }
+        try writer.writeAll(" ]");
+        if (r < rows - 1) {
+            try writer.writeAll("\n");
+        }
+    }
+}
+
+/// Decimal formatter with specified precision
+fn DecimalFormatter(comptime MatrixType: type, comptime precision: u8) type {
     return struct {
         const Self = @This();
         matrix: MatrixType,
 
-        pub fn format(
-            self: Self,
-            writer: anytype,
-        ) !void {
-            const number_fmt = comptime blk: {
-                if (std.mem.eql(u8, format_type, "e")) {
-                    break :blk "{e}";
-                } else if (std.mem.eql(u8, format_type, "compact")) {
-                    break :blk "{d:.0}";
-                } else if (std.mem.eql(u8, format_type, "f")) {
-                    break :blk "{d}";
-                } else if (format_type.len > 3 and std.mem.startsWith(u8, format_type, "f:.")) {
-                    // Parse "f:." followed by number of decimal places (e.g., "f:.2", "f:.10")
-                    const decimal_places = std.fmt.parseInt(u8, format_type[3..], 10) catch 2;
-                    break :blk std.fmt.comptimePrint("{{d:.{d}}}", .{decimal_places});
-                } else {
-                    break :blk "{e}"; // default to scientific
-                }
-            };
+        pub fn format(self: Self, writer: anytype) !void {
+            const number_fmt = std.fmt.comptimePrint("{{d:.{d}}}", .{precision});
+            try formatMatrix(self.matrix, number_fmt, writer);
+        }
+    };
+}
 
-            // Get matrix dimensions and determine matrix type
-            // Matrix has allocator field, SMatrix doesn't
-            const is_smatrix = !@hasField(MatrixType, "allocator");
-            const rows = self.matrix.rows;
-            const cols = self.matrix.cols;
+/// Scientific notation formatter
+fn ScientificFormatter(comptime MatrixType: type) type {
+    return struct {
+        const Self = @This();
+        matrix: MatrixType,
 
-            // First pass: calculate the maximum width needed for each column
-            var col_widths_buffer: [256]usize = undefined;
-            const max_cols = @min(cols, 256);
-            var col_widths = col_widths_buffer[0..max_cols];
-            @memset(col_widths, 0);
-
-            for (0..rows) |r| {
-                for (0..max_cols) |c| {
-                    // Create a temporary buffer to measure the width of this element
-                    var temp_buf: [64]u8 = undefined;
-                    const value = if (is_smatrix) self.matrix.items[r][c] else self.matrix.at(r, c).*;
-                    const formatted = formatNumber(@TypeOf(value), temp_buf[0..], number_fmt, value);
-                    col_widths[c] = @max(col_widths[c], formatted.len);
-                }
-            }
-
-            // Second pass: format and write the matrix with proper alignment
-            for (0..rows) |r| {
-                try writer.writeAll("[ ");
-                for (0..@min(cols, max_cols)) |c| {
-                    // Format the number
-                    var temp_buf: [64]u8 = undefined;
-                    const value = if (is_smatrix) self.matrix.items[r][c] else self.matrix.at(r, c).*;
-                    const formatted = formatNumber(@TypeOf(value), temp_buf[0..], number_fmt, value);
-
-                    // Right-align the number within the column width
-                    const padding = col_widths[c] -| formatted.len;
-                    for (0..padding) |_| {
-                        try writer.writeAll(" ");
-                    }
-                    try writer.writeAll(formatted);
-
-                    if (c < @min(cols, max_cols) - 1) {
-                        try writer.writeAll("  "); // Two spaces between columns
-                    }
-                }
-                if (cols > max_cols) {
-                    try writer.writeAll(" ...");
-                }
-                try writer.writeAll(" ]");
-                if (r < rows - 1) {
-                    try writer.writeAll("\n");
-                }
-            }
+        pub fn format(self: Self, writer: anytype) !void {
+            try formatMatrix(self.matrix, "{e}", writer);
         }
     };
 }
@@ -478,19 +478,19 @@ pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) typ
             return inv;
         }
 
-        /// Custom formatter for different display options
-        pub fn fmt(self: Self, comptime format_type: []const u8) MatrixFormatter(Self, format_type) {
-            return MatrixFormatter(Self, format_type){ .matrix = self };
+        /// Returns a formatter for decimal notation with specified precision
+        pub fn decimal(self: Self, comptime precision: u8) DecimalFormatter(Self, precision) {
+            return DecimalFormatter(Self, precision){ .matrix = self };
         }
 
-        /// Formats the matrix for pretty printing (uses scientific notation by default).
-        pub fn format(
-            self: Self,
-            writer: anytype,
-        ) !void {
-            // Use the custom formatter with scientific notation as default
-            const formatter = MatrixFormatter(Self, "e"){ .matrix = self };
-            try formatter.format(writer);
+        /// Returns a formatter for scientific notation
+        pub fn scientific(self: Self) ScientificFormatter(Self) {
+            return ScientificFormatter(Self){ .matrix = self };
+        }
+
+        /// Default formatting (scientific notation)
+        pub fn format(self: Self, writer: anytype) !void {
+            try formatMatrix(self, "{e}", writer);
         }
 
         /// Sums all the elements in rows.
@@ -608,19 +608,19 @@ pub fn Matrix(comptime T: type) type {
             return @sqrt(squared_sum);
         }
 
-        /// Custom formatter for different display options
-        pub fn fmt(self: Self, comptime format_type: []const u8) MatrixFormatter(Self, format_type) {
-            return MatrixFormatter(Self, format_type){ .matrix = self };
+        /// Returns a formatter for decimal notation with specified precision
+        pub fn decimal(self: Self, comptime precision: u8) DecimalFormatter(Self, precision) {
+            return DecimalFormatter(Self, precision){ .matrix = self };
         }
 
-        /// Formats the matrix for pretty printing (uses scientific notation by default).
-        pub fn format(
-            self: Self,
-            writer: anytype,
-        ) !void {
-            // Use the custom formatter with scientific notation as default
-            const formatter = MatrixFormatter(Self, "e"){ .matrix = self };
-            try formatter.format(writer);
+        /// Returns a formatter for scientific notation
+        pub fn scientific(self: Self) ScientificFormatter(Self) {
+            return ScientificFormatter(Self){ .matrix = self };
+        }
+
+        /// Default formatting (scientific notation)
+        pub fn format(self: Self, writer: anytype) !void {
+            try formatMatrix(self, "{e}", writer);
         }
 
         /// Converts a Matrix to a static SMatrix with the given dimensions
@@ -980,7 +980,7 @@ test "inverse" {
     try expectEqualDeep(b.inverse().?, b_i);
 }
 
-test "format" {
+test "static matrix format" {
     // Test 2x3 matrix with known values
     var m: SMatrix(f32, 2, 3) = .{};
     m.at(0, 0).* = 1.23;
@@ -990,33 +990,47 @@ test "format" {
     m.at(1, 1).* = 0.0;
     m.at(1, 2).* = -5.67;
 
-    // Test default formatting (scientific notation)
-    var buffer: [256]u8 = undefined;
+    var buffer: [512]u8 = undefined;
     var stream = std.io.fixedBufferStream(&buffer);
+
+    // Test default formatting (scientific notation)
     try std.fmt.format(stream.writer(), "{f}", .{m});
     const result_default = stream.getWritten();
-    std.debug.print("Default format: {s}\n", .{result_default});
+    const expected_default =
+        \\[ 1.23e0  -4.5e0      7e0 ]
+        \\[ 1.01e1     0e0  -5.67e0 ]
+    ;
+    try expectEqualStrings(expected_default, result_default);
 
-    // Test custom formatters
+    // Test decimal(2) formatting
     stream.reset();
-    try std.fmt.format(stream.writer(), "{f}", .{m.fmt("f:.2")});
-    const result_f2 = stream.getWritten();
-    std.debug.print("f:.2 format: {s}\n", .{result_f2});
+    try std.fmt.format(stream.writer(), "{f}", .{m.decimal(2)});
+    const result_decimal2 = stream.getWritten();
+    const expected_decimal2 =
+        \\[  1.23  -4.50   7.00 ]
+        \\[ 10.10   0.00  -5.67 ]
+    ;
+    try expectEqualStrings(expected_decimal2, result_decimal2);
 
+    // Test decimal(0) formatting
     stream.reset();
-    try std.fmt.format(stream.writer(), "{f}", .{m.fmt("f")});
-    const result_f = stream.getWritten();
-    std.debug.print("f format: {s}\n", .{result_f});
+    try std.fmt.format(stream.writer(), "{f}", .{m.decimal(0)});
+    const result_decimal0 = stream.getWritten();
+    const expected_decimal0 =
+        \\[  1  -5   7 ]
+        \\[ 10   0  -6 ]
+    ;
+    try expectEqualStrings(expected_decimal0, result_decimal0);
 
+    // Test scientific formatting
     stream.reset();
-    try std.fmt.format(stream.writer(), "{f}", .{m.fmt("e")});
-    const result_e = stream.getWritten();
-    std.debug.print("e format: {s}\n", .{result_e});
-
-    stream.reset();
-    try std.fmt.format(stream.writer(), "{f}", .{m.fmt("compact")});
-    const result_compact = stream.getWritten();
-    std.debug.print("compact format: {s}\n", .{result_compact});
+    try std.fmt.format(stream.writer(), "{f}", .{m.scientific()});
+    const result_scientific = stream.getWritten();
+    const expected_scientific =
+        \\[ 1.23e0  -4.5e0      7e0 ]
+        \\[ 1.01e1     0e0  -5.67e0 ]
+    ;
+    try expectEqualStrings(expected_scientific, result_scientific);
 }
 
 test "dynamic matrix format" {
@@ -1030,46 +1044,47 @@ test "dynamic matrix format" {
     dm.at(1, 0).* = 1.41421;
     dm.at(1, 1).* = 0.57721;
 
-    var buffer: [256]u8 = undefined;
+    var buffer: [512]u8 = undefined;
     var stream = std.io.fixedBufferStream(&buffer);
-    
-    // Test default format
+
+    // Test default format (scientific notation)
     try std.fmt.format(stream.writer(), "{f}", .{dm});
     const result_default = stream.getWritten();
-    std.debug.print("Dynamic Matrix default: {s}\n", .{result_default});
+    const expected_default =
+        \\[ 3.14159e0  -2.71828e0 ]
+        \\[ 1.41421e0   5.7721e-1 ]
+    ;
+    try expectEqualStrings(expected_default, result_default);
 
-    // Test custom formats with different decimal places
+    // Test decimal(3) formatting
     stream.reset();
-    try std.fmt.format(stream.writer(), "{f}", .{dm.fmt("f:.3")});
-    const result_f3 = stream.getWritten();
-    std.debug.print("Dynamic Matrix f:.3: {s}\n", .{result_f3});
+    try std.fmt.format(stream.writer(), "{f}", .{dm.decimal(3)});
+    const result_decimal3 = stream.getWritten();
+    const expected_decimal3 =
+        \\[ 3.142  -2.718 ]
+        \\[ 1.414   0.577 ]
+    ;
+    try expectEqualStrings(expected_decimal3, result_decimal3);
 
+    // Test decimal(0) formatting
     stream.reset();
-    try std.fmt.format(stream.writer(), "{f}", .{dm.fmt("f:.5")});
-    const result_f5 = stream.getWritten();
-    std.debug.print("Dynamic Matrix f:.5: {s}\n", .{result_f5});
+    try std.fmt.format(stream.writer(), "{f}", .{dm.decimal(0)});
+    const result_decimal0 = stream.getWritten();
+    const expected_decimal0 =
+        \\[ 3  -3 ]
+        \\[ 1   1 ]
+    ;
+    try expectEqualStrings(expected_decimal0, result_decimal0);
 
+    // Test scientific formatting
     stream.reset();
-    try std.fmt.format(stream.writer(), "{f}", .{dm.fmt("f:.10")});
-    const result_f10 = stream.getWritten();
-    std.debug.print("Dynamic Matrix f:.10: {s}\n", .{result_f10});
-
-    // Test edge cases
-    stream.reset();
-    try std.fmt.format(stream.writer(), "{f}", .{dm.fmt("f:.0")});
-    const result_f0 = stream.getWritten();
-    std.debug.print("Dynamic Matrix f:.0: {s}\n", .{result_f0});
-
-    stream.reset();
-    try std.fmt.format(stream.writer(), "{f}", .{dm.fmt("f:.15")});
-    const result_f15 = stream.getWritten();
-    std.debug.print("Dynamic Matrix f:.15: {s}\n", .{result_f15});
-
-    // Test invalid format (should default to f:.2)
-    stream.reset();
-    try std.fmt.format(stream.writer(), "{f}", .{dm.fmt("f:.invalid")});
-    const result_invalid = stream.getWritten();
-    std.debug.print("Dynamic Matrix f:.invalid (defaults to f:.2): {s}\n", .{result_invalid});
+    try std.fmt.format(stream.writer(), "{f}", .{dm.scientific()});
+    const result_scientific = stream.getWritten();
+    const expected_scientific =
+        \\[ 3.14159e0  -2.71828e0 ]
+        \\[ 1.41421e0   5.7721e-1 ]
+    ;
+    try expectEqualStrings(expected_scientific, result_scientific);
 }
 
 test "dynamic matrix with OpsBuilder dot product" {
