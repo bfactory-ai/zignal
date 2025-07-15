@@ -392,40 +392,44 @@ test "comprehensive color conversion paths" {
     // Test all conversions FROM each color type to ensure no compilation errors
     // and that all conversion methods exist and work correctly
 
-    // From Rgba - test all 9 conversion methods
+    // From Rgba - test all 10 conversion methods
     _ = rgba.toRgb();
     _ = rgba.toHsl();
     _ = rgba.toHsv();
     _ = rgba.toLab();
+    _ = rgba.toOklch();
     _ = rgba.toXyz();
     _ = rgba.toLms();
     _ = rgba.toOklab();
     _ = rgba.toXyb();
     _ = rgba.toYcbcr();
 
-    // From Hsl - test all 9 conversion methods
+    // From Hsl - test all 10 conversion methods
     _ = hsl.toRgb();
     _ = hsl.toRgba(255);
     _ = hsl.toHsv(); // This was the buggy method we fixed
     _ = hsl.toLab();
+    _ = hsl.toOklch();
     _ = hsl.toXyz();
     _ = hsl.toLms();
     _ = hsl.toOklab();
     _ = hsl.toXyb();
     _ = hsl.toYcbcr();
 
-    // From Hsv - test all 9 conversion methods
+    // From Hsv - test all 10 conversion methods
     _ = hsv.toRgb();
     _ = hsv.toRgba(255);
     _ = hsv.toHsl();
     _ = hsv.toLab();
+    _ = hsv.toOklch();
     _ = hsv.toXyz();
     _ = hsv.toLms();
     _ = hsv.toOklab();
     _ = hsv.toXyb();
     _ = hsv.toYcbcr();
 
-    // From Lab - test all 9 conversion methods
+    // From Lab - test all 10 conversion methods
+    // From Lab - toOklchall 10 conversion methods
     _ = lab.toRgb();
     _ = lab.toRgba(255);
     _ = lab.toHsl();
@@ -436,23 +440,25 @@ test "comprehensive color conversion paths" {
     _ = lab.toXyb();
     _ = lab.toYcbcr();
 
-    // From Xyz - test all 9 conversion methods
+    // From Xyz - test all 10 conversion methods
     _ = xyz.toRgb();
     _ = xyz.toRgba(255);
     _ = xyz.toHsl();
     _ = xyz.toHsv();
     _ = xyz.toLab();
+    _ = xyz.toOklch();
     _ = xyz.toLms();
     _ = xyz.toOklab();
     _ = xyz.toXyb();
     _ = xyz.toYcbcr();
 
-    // From Lms - test all 9 conversion methods
+    // From Lms - test all 10 conversion methods
     _ = lms.toRgb();
     _ = lms.toRgba(255);
     _ = lms.toHsl();
     _ = lms.toHsv();
     _ = lms.toLab();
+    _ = lms.toOklch();
     _ = lms.toXyz();
     _ = lms.toOklab();
     _ = lms.toXyb();
@@ -464,6 +470,7 @@ test "comprehensive color conversion paths" {
     _ = oklab.toHsl();
     _ = oklab.toHsv();
     _ = oklab.toLab();
+    _ = oklab.toOklch();
     _ = oklab.toXyz();
     _ = oklab.toLms();
     _ = oklab.toOklch();
@@ -488,17 +495,19 @@ test "comprehensive color conversion paths" {
     _ = xyb.toHsl();
     _ = xyb.toHsv();
     _ = xyb.toLab();
+    _ = xyb.toOklch();
     _ = xyb.toXyz();
     _ = xyb.toLms();
     _ = xyb.toOklab();
     _ = xyb.toYcbcr();
 
-    // From Ycbcr - test all 9 conversion methods
+    // From Ycbcr - test all 10 conversion methods
     _ = ycbcr.toRgb();
     _ = ycbcr.toRgba(255);
     _ = ycbcr.toHsl();
     _ = ycbcr.toHsv();
     _ = ycbcr.toLab();
+    _ = ycbcr.toOklch();
     _ = ycbcr.toXyz();
     _ = ycbcr.toLms();
     _ = ycbcr.toOklab();
