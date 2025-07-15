@@ -15,6 +15,7 @@ pub const Hsv = @import("color/Hsv.zig");
 pub const Lab = @import("color/Lab.zig");
 pub const Lms = @import("color/Lms.zig");
 pub const Oklab = @import("color/Oklab.zig");
+pub const Oklch = @import("color/Oklch.zig");
 pub const Rgb = @import("color/Rgb.zig");
 pub const Rgba = @import("color/Rgba.zig").Rgba;
 pub const Xyb = @import("color/Xyb.zig");
@@ -88,6 +89,14 @@ test "blend methods for all color types" {
         var oklab_color = Oklab{ .l = 0, .a = 0, .b = 0 }; // black
         oklab_color.blend(red_rgba);
         const result_rgb = oklab_color.toRgb();
+        try expectEqualDeep(result_rgb, expected_rgb);
+    }
+
+    // Test Oklch.blend
+    {
+        var oklch_color = Oklch{ .l = 0, .c = 0, .h = 0 }; // black
+        oklch_color.blend(red_rgba);
+        const result_rgb = oklch_color.toRgb();
         try expectEqualDeep(result_rgb, expected_rgb);
     }
 
@@ -321,6 +330,7 @@ test "color type validation" {
     try expectEqual(isColor(Xyz), true);
     try expectEqual(isColor(Lms), true);
     try expectEqual(isColor(Oklab), true);
+    try expectEqual(isColor(Oklch), true);
     try expectEqual(isColor(Xyb), true);
     try expectEqual(isColor(Ycbcr), true);
     try expectEqual(isColor(f32), false);
@@ -358,6 +368,7 @@ test "extended color space round trips" {
         try expectEqualDeep(original, original.toXyz().toRgb());
         try expectEqualDeep(original, original.toLms().toRgb());
         try expectEqualDeep(original, original.toOklab().toRgb());
+        try expectEqualDeep(original, original.toOklch().toRgb());
         try expectEqualDeep(original, original.toXyb().toRgb());
     }
 }
@@ -374,6 +385,7 @@ test "comprehensive color conversion paths" {
     const xyz = test_rgb.toXyz();
     const lms = test_rgb.toLms();
     const oklab = test_rgb.toOklab();
+    const oklch = test_rgb.toOklch();
     const xyb = test_rgb.toXyb();
     const ycbcr = test_rgb.toYcbcr();
 
@@ -446,7 +458,7 @@ test "comprehensive color conversion paths" {
     _ = lms.toXyb();
     _ = lms.toYcbcr();
 
-    // From Oklab - test all 9 conversion methods
+    // From Oklab - test all 10 conversion methods
     _ = oklab.toRgb();
     _ = oklab.toRgba(255);
     _ = oklab.toHsl();
@@ -454,10 +466,23 @@ test "comprehensive color conversion paths" {
     _ = oklab.toLab();
     _ = oklab.toXyz();
     _ = oklab.toLms();
+    _ = oklab.toOklch();
     _ = oklab.toXyb();
     _ = oklab.toYcbcr();
 
-    // From Xyb - test all 9 conversion methods
+    // From Oklch - test all 10 conversion methods
+    _ = oklch.toRgb();
+    _ = oklch.toRgba(255);
+    _ = oklch.toHsl();
+    _ = oklch.toHsv();
+    _ = oklch.toLab();
+    _ = oklch.toXyz();
+    _ = oklch.toLms();
+    _ = oklch.toOklab();
+    _ = oklch.toXyb();
+    _ = oklch.toYcbcr();
+
+    // From Xyb - test all 10 conversion methods
     _ = xyb.toRgb();
     _ = xyb.toRgba(255);
     _ = xyb.toHsl();
