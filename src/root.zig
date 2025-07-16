@@ -11,7 +11,7 @@
 //! - **Color Spaces**: RGB, HSL, HSV, XYZ, Lab, LCh, LMS, Oklab, Oklch, XYB conversions
 //! - **Geometry**: 2D/3D points, rectangles, transforms (affine, projective, similarity)
 //! - **Matrix Operations**: Linear algebra with SVD decomposition support
-//! - **Computer Vision**: Feature distribution matching, convex hull algorithms
+//! - **Computer Vision**: Feature distribution matching, convex hull algorithms, PCA
 //! - **Procedural Generation**: Perlin noise for textures and effects
 //!
 //! ## Architecture
@@ -92,3 +92,5 @@ pub const SvdOptions = @import("svd.zig").SvdOptions;
 pub const SvdResult = @import("svd.zig").SvdResult;
 
 pub const featureDistributionMatch = @import("fdm.zig").featureDistributionMatch;
+
+pub const PrincipalComponentAnalysis = @import("pca.zig").PrincipalComponentAnalysis;
