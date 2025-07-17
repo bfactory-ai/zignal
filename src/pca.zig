@@ -7,7 +7,7 @@
 //! ```zig
 //! // 2D geometric points
 //! const points_2d = [_]@Vector(2, f64){ .{1.0, 2.0}, .{3.0, 4.0}, .{5.0, 6.0} };
-//! var pca_2d = PCA(f64, 2).init(allocator);
+//! var pca_2d = PrincipalComponentAnalysis(f64, 2).init(allocator);
 //! try pca_2d.fit(&points_2d, null);
 //!
 //! // Project and reconstruct
@@ -35,7 +35,7 @@ const Rgba = @import("color.zig").Rgba;
 
 /// Principal Component Analysis for arbitrary-dimensional vectors.
 /// Uses SIMD-accelerated vector operations for optimal performance.
-pub fn PCA(comptime T: type, comptime dim: usize) type {
+pub fn PrincipalComponentAnalysis(comptime T: type, comptime dim: usize) type {
     assert(@typeInfo(T) == .float);
     assert(dim >= 1);
 
@@ -586,7 +586,7 @@ fn computeGramMatrix(allocator: Allocator, data: *Matrix(f64)) !Matrix(f64) {
 test "PCA initialization and cleanup" {
     const allocator = std.testing.allocator;
 
-    var pca = PCA(f64, 2).init(allocator);
+    var pca = PrincipalComponentAnalysis(f64, 2).init(allocator);
     defer pca.deinit();
 
     try std.testing.expectEqual(@as(usize, 0), pca.num_components);
@@ -603,7 +603,7 @@ test "PCA on 2D vectors" {
         .{ 7.0, 8.0 },
     };
 
-    var pca = PCA(f64, 2).init(allocator);
+    var pca = PrincipalComponentAnalysis(f64, 2).init(allocator);
     defer pca.deinit();
 
     try pca.fit(&vectors, null);
@@ -633,7 +633,7 @@ test "PCA on Point types" {
         Point2d(f64).init2d(1.0, 1.0),
     };
 
-    var pca = PCA(f64, 2).init(allocator);
+    var pca = PrincipalComponentAnalysis(f64, 2).init(allocator);
     defer pca.deinit();
 
     try pca.fitPoints(&points, 1);
@@ -662,7 +662,7 @@ test "PCA explained variance" {
         .{ 4.0, 0.0, 0.0 },
     };
 
-    var pca = PCA(f64, 3).init(allocator);
+    var pca = PrincipalComponentAnalysis(f64, 3).init(allocator);
     defer pca.deinit();
 
     try pca.fit(&vectors, null);
@@ -805,7 +805,7 @@ test "PCA on image color data with generic functions" {
     defer allocator.free(color_points);
 
     // Apply PCA to color data
-    var pca = PCA(f64, 3).init(allocator);
+    var pca = PrincipalComponentAnalysis(f64, 3).init(allocator);
     defer pca.deinit();
 
     try pca.fit(color_points, 1); // Keep only 1 component
