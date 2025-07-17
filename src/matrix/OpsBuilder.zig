@@ -2,7 +2,10 @@
 
 const std = @import("std");
 const assert = std.debug.assert;
+const expectEqual = std.testing.expectEqual;
+
 const Matrix = @import("Matrix.zig").Matrix;
+const SMatrix = @import("SMatrix.zig").SMatrix;
 
 /// Builder for chaining matrix operations with in-place modifications
 pub fn OpsBuilder(comptime T: type) type {
@@ -244,23 +247,44 @@ pub fn OpsBuilder(comptime T: type) type {
                 }
             } else {
                 // Initialize to zero
-                for (0..result.items.len) |i| {
-                    result.items[i] = 0;
-                }
+                @memset(result.items, 0);
             }
 
             // Skip computation if alpha is zero
             if (alpha != 0) {
-                // Perform matrix multiplication with optional transpositions
+                const vec_len = std.simd.suggestVectorLength(T) orelse 1;
+                const VecType = @Vector(vec_len, T);
+
                 for (0..a_rows) |i| {
                     for (0..b_cols) |j| {
                         var accumulator: T = 0;
-                        for (0..a_cols) |k| {
-                            // Get elements with potential transposition
+
+                        // SIMD loop - process vec_len elements at once
+                        var k: usize = 0;
+                        while (k + vec_len <= a_cols) : (k += vec_len) {
+                            var a_vec: VecType = undefined;
+                            var b_vec: VecType = undefined;
+
+                            // Load vectors with appropriate indexing based on transpose flags
+                            for (0..vec_len) |v| {
+                                const a_val = if (trans_a) self.result.at(k + v, i).* else self.result.at(i, k + v).*;
+                                const b_val = if (trans_b) other.at(j, k + v).* else other.at(k + v, j).*;
+                                a_vec[v] = a_val;
+                                b_vec[v] = b_val;
+                            }
+
+                            // Vectorized multiply-accumulate
+                            const prod_vec = a_vec * b_vec;
+                            accumulator += @reduce(.Add, prod_vec);
+                        }
+
+                        // Handle remainder elements with scalar code
+                        while (k < a_cols) : (k += 1) {
                             const a_val = if (trans_a) self.result.at(k, i).* else self.result.at(i, k).*;
                             const b_val = if (trans_b) other.at(j, k).* else other.at(k, j).*;
                             accumulator += a_val * b_val;
                         }
+
                         result.at(i, j).* += alpha * accumulator;
                     }
                 }
@@ -299,11 +323,8 @@ pub fn OpsBuilder(comptime T: type) type {
 }
 
 // Tests for OpsBuilder functionality
-const expectEqual = std.testing.expectEqual;
-const SMatrix = @import("SMatrix.zig").SMatrix;
-
 test "dynamic matrix with OpsBuilder dot product" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
 
     // Create two dynamic matrices for multiplication
@@ -346,7 +367,7 @@ test "dynamic matrix with OpsBuilder dot product" {
 }
 
 test "complex operation chaining" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
 
     // Test data
@@ -375,7 +396,7 @@ test "complex operation chaining" {
 }
 
 test "row and column extraction with OpsBuilder" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
 
     // Test data
@@ -388,7 +409,7 @@ test "row and column extraction with OpsBuilder" {
     // Test OpsBuilder row/col extraction on equivalent Matrix
     const dynamic_matrix = try test_matrix.toMatrix(arena.allocator());
 
-    var row_ops = try OpsBuilder(f32).init(arena.allocator(), dynamic_matrix);
+    var row_ops: OpsBuilder(f32) = try .init(arena.allocator(), dynamic_matrix);
     try row_ops.row(1);
     const dynamic_row = row_ops.toOwned();
     try expectEqual(@as(usize, 1), dynamic_row.rows);
@@ -396,7 +417,7 @@ test "row and column extraction with OpsBuilder" {
     try expectEqual(@as(f32, 3.0), dynamic_row.at(0, 0).*);
     try expectEqual(@as(f32, 4.0), dynamic_row.at(0, 1).*);
 
-    var col_ops = try OpsBuilder(f32).init(arena.allocator(), dynamic_matrix);
+    var col_ops: OpsBuilder(f32) = try .init(arena.allocator(), dynamic_matrix);
     try col_ops.col(1);
     const dynamic_col = col_ops.toOwned();
     try expectEqual(@as(usize, 3), dynamic_col.rows);
@@ -411,7 +432,7 @@ test "OpsBuilder gram and covariance matrices" {
     defer arena.deinit();
 
     // Create test matrix (3 samples × 2 features)
-    var data = try Matrix(f64).init(arena.allocator(), 3, 2);
+    var data: Matrix(f64) = try .init(arena.allocator(), 3, 2);
     data.at(0, 0).* = 1.0;
     data.at(0, 1).* = 2.0;
     data.at(1, 0).* = 3.0;
@@ -420,7 +441,7 @@ test "OpsBuilder gram and covariance matrices" {
     data.at(2, 1).* = 6.0;
 
     // Test Gram matrix (X * X^T) - should be 3×3
-    var gram_ops = try OpsBuilder(f64).init(arena.allocator(), data);
+    var gram_ops: OpsBuilder(f64) = try .init(arena.allocator(), data);
     try gram_ops.gram();
     const gram_result = gram_ops.toOwned();
 
@@ -434,7 +455,7 @@ test "OpsBuilder gram and covariance matrices" {
     try expectEqual(@as(f64, 17.0), gram_result.at(0, 2).*);
 
     // Test Covariance matrix (X^T * X) - should be 2×2
-    var cov_ops = try OpsBuilder(f64).init(arena.allocator(), data);
+    var cov_ops: OpsBuilder(f64) = try .init(arena.allocator(), data);
     try cov_ops.covariance();
     const cov_result = cov_ops.toOwned();
 
@@ -450,12 +471,61 @@ test "OpsBuilder gram and covariance matrices" {
     try expectEqual(@as(f64, 56.0), cov_result.at(1, 1).*);
 }
 
-test "OpsBuilder GEMM operations" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+test "OpsBuilder SIMD vs scalar GEMM equivalence" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
 
     // Create test matrices
-    var a = try Matrix(f32).init(arena.allocator(), 2, 3);
+    var a = try Matrix(f32).init(arena.allocator(), 4, 8);
+    var b = try Matrix(f32).init(arena.allocator(), 8, 6);
+
+    // Fill with test data
+    for (0..4) |i| {
+        for (0..8) |j| {
+            a.at(i, j).* = @as(f32, @floatFromInt(i * 8 + j + 1));
+        }
+    }
+
+    for (0..8) |i| {
+        for (0..6) |j| {
+            b.at(i, j).* = @as(f32, @floatFromInt(i * 6 + j + 1));
+        }
+    }
+
+    // Test using OpsBuilder (uses vectorized GEMM)
+    var ops: OpsBuilder(f32) = try .init(arena.allocator(), a);
+    try ops.dot(b);
+    const result = ops.toOwned();
+
+    // Test using manual matrix multiplication for comparison
+    var manual_result = try Matrix(f32).init(arena.allocator(), 4, 6);
+    @memset(manual_result.items, 0);
+
+    for (0..4) |i| {
+        for (0..6) |j| {
+            var sum: f32 = 0;
+            for (0..8) |k| {
+                sum += a.at(i, k).* * b.at(k, j).*;
+            }
+            manual_result.at(i, j).* = sum;
+        }
+    }
+
+    // Compare results - should be identical
+    for (0..4) |i| {
+        for (0..6) |j| {
+            const diff = @abs(result.at(i, j).* - manual_result.at(i, j).*);
+            try std.testing.expect(diff < 1e-5);
+        }
+    }
+}
+
+test "OpsBuilder GEMM operations" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    // Create test matrices
+    var a: Matrix(f32) = try .init(arena.allocator(), 2, 3);
     a.at(0, 0).* = 1.0;
     a.at(0, 1).* = 2.0;
     a.at(0, 2).* = 3.0;
@@ -463,7 +533,7 @@ test "OpsBuilder GEMM operations" {
     a.at(1, 1).* = 5.0;
     a.at(1, 2).* = 6.0;
 
-    var b = try Matrix(f32).init(arena.allocator(), 3, 2);
+    var b: Matrix(f32) = try .init(arena.allocator(), 3, 2);
     b.at(0, 0).* = 7.0;
     b.at(0, 1).* = 8.0;
     b.at(1, 0).* = 9.0;
@@ -471,14 +541,14 @@ test "OpsBuilder GEMM operations" {
     b.at(2, 0).* = 11.0;
     b.at(2, 1).* = 12.0;
 
-    var c = try Matrix(f32).init(arena.allocator(), 2, 2);
+    var c: Matrix(f32) = try .init(arena.allocator(), 2, 2);
     c.at(0, 0).* = 1.0;
     c.at(0, 1).* = 1.0;
     c.at(1, 0).* = 1.0;
     c.at(1, 1).* = 1.0;
 
     // Test basic matrix multiplication: A * B
-    var ops1 = try OpsBuilder(f32).init(arena.allocator(), a);
+    var ops1: OpsBuilder(f32) = try .init(arena.allocator(), a);
     try ops1.gemm(b, false, false, 1.0, 0.0, null);
     const result1 = ops1.toOwned();
 
@@ -488,7 +558,7 @@ test "OpsBuilder GEMM operations" {
     try expectEqual(@as(f32, 154.0), result1.at(1, 1).*); // 4*8 + 5*10 + 6*12
 
     // Test scaled multiplication: 2 * A * B
-    var ops2 = try OpsBuilder(f32).init(arena.allocator(), a);
+    var ops2: OpsBuilder(f32) = try .init(arena.allocator(), a);
     try ops2.gemm(b, false, false, 2.0, 0.0, null);
     const result2 = ops2.toOwned();
 
@@ -496,7 +566,7 @@ test "OpsBuilder GEMM operations" {
     try expectEqual(@as(f32, 128.0), result2.at(0, 1).*); // 2 * 64
 
     // Test accumulation: A * B + C
-    var ops3 = try OpsBuilder(f32).init(arena.allocator(), a);
+    var ops3: OpsBuilder(f32) = try .init(arena.allocator(), a);
     try ops3.gemm(b, false, false, 1.0, 1.0, c);
     const result3 = ops3.toOwned();
 
@@ -504,7 +574,7 @@ test "OpsBuilder GEMM operations" {
     try expectEqual(@as(f32, 65.0), result3.at(0, 1).*); // 64 + 1
 
     // Test Gram matrix using GEMM: A * A^T
-    var ops4 = try OpsBuilder(f32).init(arena.allocator(), a);
+    var ops4: OpsBuilder(f32) = try .init(arena.allocator(), a);
     try ops4.gemm(a, false, true, 1.0, 0.0, null);
     const gram = ops4.toOwned();
 
@@ -514,7 +584,7 @@ test "OpsBuilder GEMM operations" {
     try expectEqual(@as(f32, 32.0), gram.at(0, 1).*); // 1*4 + 2*5 + 3*6
 
     // Test covariance using GEMM: A^T * A
-    var ops5 = try OpsBuilder(f32).init(arena.allocator(), a);
+    var ops5: OpsBuilder(f32) = try .init(arena.allocator(), a);
     try ops5.gemm(a, true, false, 1.0, 0.0, null);
     const cov = ops5.toOwned();
 
@@ -525,17 +595,17 @@ test "OpsBuilder GEMM operations" {
 }
 
 test "OpsBuilder matrix operations: add, sub, scale, transpose" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
 
     // Test data
-    const static_matrix = SMatrix(f32, 2, 3).init(.{
+    const static_matrix: SMatrix(f32, 2, 3) = .init(.{
         .{ 1.0, 2.0, 3.0 },
         .{ 4.0, 5.0, 6.0 },
     });
 
     // Test operand matrix for add/sub operations
-    const static_operand = SMatrix(f32, 2, 3).init(.{
+    const static_operand: SMatrix(f32, 2, 3) = .init(.{
         .{ 0.5, 1.0, 1.5 },
         .{ 2.0, 2.5, 3.0 },
     });
@@ -549,24 +619,24 @@ test "OpsBuilder matrix operations: add, sub, scale, transpose" {
     const dynamic_matrix = try static_matrix.toMatrix(arena.allocator());
 
     // Test scale
-    var scale_ops = try OpsBuilder(f32).init(arena.allocator(), dynamic_matrix);
+    var scale_ops: OpsBuilder(f32) = try .init(arena.allocator(), dynamic_matrix);
     try scale_ops.scale(2.0);
     const dynamic_scaled = scale_ops.toOwned();
 
     // Test transpose
-    var transpose_ops = try OpsBuilder(f32).init(arena.allocator(), dynamic_matrix);
+    var transpose_ops: OpsBuilder(f32) = try .init(arena.allocator(), dynamic_matrix);
     try transpose_ops.transpose();
     const dynamic_transposed = transpose_ops.toOwned();
 
     // Test add
-    const add_matrix = try Matrix(f32).initAll(arena.allocator(), 2, 3, 1.0);
-    var add_ops = try OpsBuilder(f32).init(arena.allocator(), dynamic_matrix);
+    const add_matrix: Matrix(f32) = try .initAll(arena.allocator(), 2, 3, 1.0);
+    var add_ops: OpsBuilder(f32) = try .init(arena.allocator(), dynamic_matrix);
     try add_ops.add(add_matrix);
     const dynamic_added = add_ops.toOwned();
 
     // Test subtract
     const dynamic_operand = try static_operand.toMatrix(arena.allocator());
-    var sub_ops = try OpsBuilder(f32).init(arena.allocator(), dynamic_matrix);
+    var sub_ops: OpsBuilder(f32) = try .init(arena.allocator(), dynamic_matrix);
     try sub_ops.sub(dynamic_operand);
     const dynamic_subtracted = sub_ops.toOwned();
 
