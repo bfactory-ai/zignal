@@ -114,10 +114,3 @@ pub const colorPointsToImage = pca.colorPointsToImage;
 pub const imageToIntensityPoints = pca.imageToIntensityPoints;
 pub const intensityPointsToImage = pca.intensityPointsToImage;
 
-// Spatial-color point conversion (position + color information)
-pub const imageToSpatialColorPoints = pca.imageToSpatialColorPoints;
-pub const imageToSpatialIntensityPoints = pca.imageToSpatialIntensityPoints;
-
-// Utility functions for spatial-color points
-pub const extractColorFromSpatialColor = pca.extractColorFromSpatialColor;
-pub const extractSpatialFromSpatialColor = pca.extractSpatialFromSpatialColor;

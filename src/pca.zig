@@ -14,9 +14,9 @@
 //! const coeffs = try pca_2d.project(.{2.0, 3.0});
 //! const reconstructed = try pca_2d.reconstruct(coeffs);
 //!
-//! // Works with Point types too
-//! const geometric_points = [_]Point2d(f64){ Point2d(f64).init2d(1.0, 2.0), ... };
-//! try pca_2d.fitPoints(&geometric_points, null);
+//! // Convert Points to vectors if needed
+//! const point = Point2d(f64).init2d(1.0, 2.0);
+//! const coeffs = try pca_2d.project(point.asVector());
 //! ```
 
 const std = @import("std");
@@ -118,17 +118,6 @@ pub fn PrincipalComponentAnalysis(comptime T: type, comptime dim: usize) type {
             }
         }
 
-        /// Convenience method for fitting Point types
-        pub fn fitPoints(self: *Self, points: []const PointType, num_components: ?usize) !void {
-            var vectors = try self.allocator.alloc(Vec, points.len);
-            defer self.allocator.free(vectors);
-
-            for (points, 0..) |point, i| {
-                vectors[i] = point.asVector();
-            }
-
-            return self.fit(vectors, num_components);
-        }
 
         /// Project a vector onto the principal components.
         /// Returns the coefficients in PCA space.
@@ -151,29 +140,7 @@ pub fn PrincipalComponentAnalysis(comptime T: type, comptime dim: usize) type {
             return coefficients;
         }
 
-        /// Project a Point onto the principal components
-        pub fn projectPoint(self: Self, point: PointType) ![]T {
-            return self.project(point.asVector());
-        }
 
-        /// Project multiple vectors efficiently as a batch.
-        pub fn projectBatch(self: Self, vectors: []const Vec) !Matrix(T) {
-            if (self.num_components == 0) return error.NotFitted;
-
-            var projections = try Matrix(T).init(self.allocator, vectors.len, self.num_components);
-            errdefer projections.deinit();
-
-            for (vectors, 0..) |vector, i| {
-                const coeffs = try self.project(vector);
-                defer self.allocator.free(coeffs);
-
-                for (0..self.num_components) |j| {
-                    projections.at(i, j).* = coeffs[j];
-                }
-            }
-
-            return projections;
-        }
 
         /// Reconstruct a vector from PCA coefficients.
         pub fn reconstruct(self: Self, coefficients: []const T) !Vec {
@@ -194,62 +161,20 @@ pub fn PrincipalComponentAnalysis(comptime T: type, comptime dim: usize) type {
             return result;
         }
 
-        /// Reconstruct a Point from PCA coefficients
-        pub fn reconstructPoint(self: Self, coefficients: []const T) !PointType {
-            const vec = try self.reconstruct(coefficients);
-            return PointType.fromVector(vec);
-        }
 
         /// Get the mean vector
         pub fn getMean(self: Self) Vec {
             return self.mean;
         }
 
-        /// Get the mean as a Point
-        pub fn getMeanPoint(self: Self) PointType {
-            return PointType.fromVector(self.mean);
-        }
 
-        /// Get the proportion of variance explained by each component.
-        pub fn explainedVarianceRatio(self: Self) ![]T {
-            if (self.num_components == 0) return error.NotFitted;
 
-            var ratios = try self.allocator.alloc(T, self.num_components);
-
-            var total_variance: T = 0;
-            for (self.eigenvalues[0..self.num_components]) |eigenval| {
-                total_variance += eigenval;
-            }
-
-            if (total_variance > 0) {
-                for (self.eigenvalues[0..self.num_components], 0..) |eigenval, i| {
-                    ratios[i] = eigenval / total_variance;
-                }
-            } else {
-                @memset(ratios, 0);
-            }
-
-            return ratios;
-        }
-
-        /// Get cumulative variance explained.
-        pub fn cumulativeVarianceRatio(self: Self) ![]T {
-            const ratios = try self.explainedVarianceRatio();
-
-            var cumulative: T = 0;
-            for (ratios) |*ratio| {
-                cumulative += ratio.*;
-                ratio.* = cumulative;
-            }
-
-            return ratios;
-        }
 
         // Private helper methods
 
         fn computeComponentsFromCovariance(self: *Self, data_matrix: *Matrix(T), num_components: usize) !void {
             // Compute covariance matrix (X^T * X) / (n-1)
-            var cov_matrix = try computeCovarianceMatrix(self.allocator, data_matrix);
+            var cov_matrix = try computeScaledMatrixProduct(self.allocator, data_matrix, true);
             defer cov_matrix.deinit();
 
             const n = cov_matrix.rows;
@@ -299,7 +224,7 @@ pub fn PrincipalComponentAnalysis(comptime T: type, comptime dim: usize) type {
 
         fn computeComponentsFromGram(self: *Self, data_matrix: *Matrix(T), num_components: usize) !void {
             // Compute Gram matrix (X * X^T) / (n-1)
-            var gram_matrix = try computeGramMatrix(self.allocator, data_matrix);
+            var gram_matrix = try computeScaledMatrixProduct(self.allocator, data_matrix, false);
             defer gram_matrix.deinit();
 
             const n = gram_matrix.rows;
@@ -445,58 +370,7 @@ pub fn imageToIntensityPoints(allocator: Allocator, image: Image(u8)) ![]@Vector
     return points;
 }
 
-/// Generic function to convert any image to spatial-color points.
-/// Each pixel becomes a point with position (X, Y) + color information.
-/// Returns points of dimension 2 + number_of_color_channels.
-pub fn imageToSpatialColorPoints(comptime ColorType: type, allocator: Allocator, image: Image(ColorType)) ![]@Vector(2 + std.meta.fields(ColorType).len, f64) {
-    const num_color_channels = std.meta.fields(ColorType).len;
-    const total_dims = 2 + num_color_channels;
-    var points = try allocator.alloc(@Vector(total_dims, f64), image.data.len);
 
-    for (0..image.rows) |row| {
-        for (0..image.cols) |col| {
-            const idx = row * image.cols + col;
-            const pixel = image.data[idx];
-
-            var point: @Vector(total_dims, f64) = undefined;
-
-            // Set spatial coordinates (normalized)
-            point[0] = @as(f64, @floatFromInt(col)) / @as(f64, @floatFromInt(image.cols - 1));
-            point[1] = @as(f64, @floatFromInt(row)) / @as(f64, @floatFromInt(image.rows - 1));
-
-            // Set color channels using reflection
-            const color_point = colorToPoint(ColorType, pixel);
-            inline for (0..num_color_channels) |i| {
-                point[2 + i] = color_point[i];
-            }
-
-            points[idx] = point;
-        }
-    }
-
-    return points;
-}
-
-/// Convert a grayscale image to 3D spatial-intensity points (X, Y, I).
-/// Each pixel becomes a point with both position and intensity information.
-/// This is a convenience function equivalent to imageToSpatialColorPoints(u8, ...).
-pub fn imageToSpatialIntensityPoints(allocator: Allocator, image: Image(u8)) ![]@Vector(3, f64) {
-    var points = try allocator.alloc(@Vector(3, f64), image.data.len);
-
-    for (0..image.rows) |row| {
-        for (0..image.cols) |col| {
-            const idx = row * image.cols + col;
-            const pixel = image.data[idx];
-            points[idx] = .{
-                @as(f64, @floatFromInt(col)) / @as(f64, @floatFromInt(image.cols - 1)), // Normalized X
-                @as(f64, @floatFromInt(row)) / @as(f64, @floatFromInt(image.rows - 1)), // Normalized Y
-                @as(f64, @floatFromInt(pixel)) / 255.0, // Intensity
-            };
-        }
-    }
-
-    return points;
-}
 
 /// Convert intensity points back to a grayscale image.
 /// Reconstructs an image from 1D intensity points.
@@ -513,72 +387,43 @@ pub fn intensityPointsToImage(allocator: Allocator, points: []const @Vector(1, f
     return image;
 }
 
-/// Extract color components from spatial-color points.
-/// Returns just the color part (R, G, B) from 5D spatial-color points.
-pub fn extractColorFromSpatialColor(allocator: Allocator, spatial_points: []const @Vector(5, f64)) ![]@Vector(3, f64) {
-    var color_points = try allocator.alloc(@Vector(3, f64), spatial_points.len);
 
-    for (spatial_points, 0..) |point, i| {
-        color_points[i] = .{ point[2], point[3], point[4] }; // R, G, B
-    }
-
-    return color_points;
-}
-
-/// Extract spatial components from spatial-color points.
-/// Returns just the position part (X, Y) from 5D spatial-color points.
-pub fn extractSpatialFromSpatialColor(allocator: Allocator, spatial_points: []const @Vector(5, f64)) ![]@Vector(2, f64) {
-    var spatial_positions = try allocator.alloc(@Vector(2, f64), spatial_points.len);
-
-    for (spatial_points, 0..) |point, i| {
-        spatial_positions[i] = .{ point[0], point[1] }; // X, Y
-    }
-
-    return spatial_positions;
-}
 
 // Helper functions
 
-/// Compute covariance matrix (X^T * X) / (n-1)
-fn computeCovarianceMatrix(allocator: Allocator, data: *Matrix(f64)) !Matrix(f64) {
+/// Compute matrix product and scale by (n-1) for covariance or Gram matrices
+fn computeScaledMatrixProduct(allocator: Allocator, data: *Matrix(f64), transpose_first: bool) !Matrix(f64) {
     const n_samples = data.rows;
     const n_features = data.cols;
+    const scale = @as(f64, @floatFromInt(n_samples - 1));
 
-    var cov_matrix = try Matrix(f64).init(allocator, n_features, n_features);
-
-    // Compute X^T * X
-    for (0..n_features) |i| {
-        for (0..n_features) |j| {
-            var sum: f64 = 0;
-            for (0..n_samples) |k| {
-                sum += data.at(k, i).* * data.at(k, j).*;
+    if (transpose_first) {
+        // Compute X^T * X (covariance approach)
+        var result = try Matrix(f64).init(allocator, n_features, n_features);
+        for (0..n_features) |i| {
+            for (0..n_features) |j| {
+                var sum: f64 = 0;
+                for (0..n_samples) |k| {
+                    sum += data.at(k, i).* * data.at(k, j).*;
+                }
+                result.at(i, j).* = sum / scale;
             }
-            cov_matrix.at(i, j).* = sum / @as(f64, @floatFromInt(n_samples - 1));
         }
-    }
-
-    return cov_matrix;
-}
-
-/// Compute Gram matrix (X * X^T) / (n-1)
-fn computeGramMatrix(allocator: Allocator, data: *Matrix(f64)) !Matrix(f64) {
-    const n_samples = data.rows;
-    const n_features = data.cols;
-
-    var gram_matrix = try Matrix(f64).init(allocator, n_samples, n_samples);
-
-    // Compute X * X^T
-    for (0..n_samples) |i| {
-        for (0..n_samples) |j| {
-            var sum: f64 = 0;
-            for (0..n_features) |k| {
-                sum += data.at(i, k).* * data.at(j, k).*;
+        return result;
+    } else {
+        // Compute X * X^T (Gram approach)
+        var result = try Matrix(f64).init(allocator, n_samples, n_samples);
+        for (0..n_samples) |i| {
+            for (0..n_samples) |j| {
+                var sum: f64 = 0;
+                for (0..n_features) |k| {
+                    sum += data.at(i, k).* * data.at(j, k).*;
+                }
+                result.at(i, j).* = sum / scale;
             }
-            gram_matrix.at(i, j).* = sum / @as(f64, @floatFromInt(n_samples - 1));
         }
+        return result;
     }
-
-    return gram_matrix;
 }
 
 // Tests
@@ -622,68 +467,7 @@ test "PCA on 2D vectors" {
     try std.testing.expect(@abs(reconstructed[1] - 5.0) < 1e-10);
 }
 
-test "PCA on Point types" {
-    const allocator = std.testing.allocator;
 
-    // Create test points
-    const points = [_]Point2d(f64){
-        Point2d(f64).init2d(0.0, 0.0),
-        Point2d(f64).init2d(1.0, 0.0),
-        Point2d(f64).init2d(0.0, 1.0),
-        Point2d(f64).init2d(1.0, 1.0),
-    };
-
-    var pca = PrincipalComponentAnalysis(f64, 2).init(allocator);
-    defer pca.deinit();
-
-    try pca.fitPoints(&points, 1);
-
-    // Test Point projection and reconstruction
-    const test_point = Point2d(f64).init2d(0.5, 0.5);
-    const coeffs = try pca.projectPoint(test_point);
-    defer allocator.free(coeffs);
-
-    const reconstructed_point = try pca.reconstructPoint(coeffs);
-
-    // Should be approximately equal to mean point since we only kept 1 component
-    const mean_point = pca.getMeanPoint();
-    try std.testing.expect(@abs(reconstructed_point.x() - mean_point.x()) < 1e-10);
-    try std.testing.expect(@abs(reconstructed_point.y() - mean_point.y()) < 1e-10);
-}
-
-test "PCA explained variance" {
-    const allocator = std.testing.allocator;
-
-    // Create test vectors with clear variance structure
-    const vectors = [_]@Vector(3, f64){
-        .{ 1.0, 0.0, 0.0 },
-        .{ 2.0, 0.0, 0.0 },
-        .{ 3.0, 0.0, 0.0 },
-        .{ 4.0, 0.0, 0.0 },
-    };
-
-    var pca = PrincipalComponentAnalysis(f64, 3).init(allocator);
-    defer pca.deinit();
-
-    try pca.fit(&vectors, null);
-
-    // Check explained variance ratios
-    const ratios = try pca.explainedVarianceRatio();
-    defer allocator.free(ratios);
-
-    // Test that ratios sum to <= 1 (allowing for numerical precision)
-    var sum: f64 = 0;
-    for (ratios) |ratio| {
-        sum += ratio;
-    }
-    try std.testing.expect(sum <= 1.0001);
-
-    // Test cumulative variance
-    const cumulative = try pca.cumulativeVarianceRatio();
-    defer allocator.free(cumulative);
-
-    try std.testing.expect(cumulative[cumulative.len - 1] <= 1.0001);
-}
 
 test "Generic color to point conversion" {
     _ = std.testing.allocator;
@@ -754,41 +538,8 @@ test "Generic image to color points conversion" {
     try std.testing.expectEqual(image.data[0].b, reconstructed.data[0].b);
 }
 
-test "Generic spatial-color points conversion" {
-    const allocator = std.testing.allocator;
 
-    // Create a simple 2x2 RGB image
-    var image = try Image(Rgb).initAlloc(allocator, 2, 2);
-    defer image.deinit(allocator);
-
-    image.data[0] = Rgb{ .r = 255, .g = 0, .b = 0 }; // Top-left: Red
-    image.data[1] = Rgb{ .r = 0, .g = 255, .b = 0 }; // Top-right: Green
-    image.data[2] = Rgb{ .r = 0, .g = 0, .b = 255 }; // Bottom-left: Blue
-    image.data[3] = Rgb{ .r = 255, .g = 255, .b = 255 }; // Bottom-right: White
-
-    // Convert to spatial-color points using generic function
-    const spatial_points = try imageToSpatialColorPoints(Rgb, allocator, image);
-    defer allocator.free(spatial_points);
-
-    // Check that we have the right number of points
-    try std.testing.expectEqual(@as(usize, 4), spatial_points.len);
-
-    // Check first point (top-left): should be at (0, 0) with red color
-    try std.testing.expectEqual(@as(f64, 0.0), spatial_points[0][0]); // X
-    try std.testing.expectEqual(@as(f64, 0.0), spatial_points[0][1]); // Y
-    try std.testing.expectEqual(@as(f64, 1.0), spatial_points[0][2]); // R
-    try std.testing.expectEqual(@as(f64, 0.0), spatial_points[0][3]); // G
-    try std.testing.expectEqual(@as(f64, 0.0), spatial_points[0][4]); // B
-
-    // Check last point (bottom-right): should be at (1, 1) with white color
-    try std.testing.expectEqual(@as(f64, 1.0), spatial_points[3][0]); // X
-    try std.testing.expectEqual(@as(f64, 1.0), spatial_points[3][1]); // Y
-    try std.testing.expectEqual(@as(f64, 1.0), spatial_points[3][2]); // R
-    try std.testing.expectEqual(@as(f64, 1.0), spatial_points[3][3]); // G
-    try std.testing.expectEqual(@as(f64, 1.0), spatial_points[3][4]); // B
-}
-
-test "PCA on image color data with generic functions" {
+test "PCA on image color data" {
     const allocator = std.testing.allocator;
 
     // Create a simple gradient image
@@ -800,7 +551,7 @@ test "PCA on image color data with generic functions" {
     image.data[2] = Rgb{ .r = 170, .g = 170, .b = 170 }; // Light gray
     image.data[3] = Rgb{ .r = 255, .g = 255, .b = 255 }; // White
 
-    // Convert to color points using generic function
+    // Convert to color points
     const color_points = try imageToColorPoints(Rgb, allocator, image);
     defer allocator.free(color_points);
 
@@ -810,27 +561,13 @@ test "PCA on image color data with generic functions" {
 
     try pca.fit(color_points, 1); // Keep only 1 component
 
-    // Project all points
-    var projections = try pca.projectBatch(color_points);
-    defer projections.deinit();
-
-    // Reconstruct points
-    var reconstructed_points = try allocator.alloc(@Vector(3, f64), color_points.len);
-    defer allocator.free(reconstructed_points);
-
-    for (0..color_points.len) |i| {
-        const coeffs = try allocator.alloc(f64, 1);
-        coeffs[0] = projections.at(i, 0).*;
-        defer allocator.free(coeffs);
-
-        reconstructed_points[i] = try pca.reconstruct(coeffs);
-    }
-
-    // Convert back to image using generic function
-    var reconstructed_image = try colorPointsToImage(Rgb, allocator, reconstructed_points, 2, 2);
-    defer reconstructed_image.deinit(allocator);
-
-    // PCA with 1 component should preserve the main gradient direction
-    // All values should be close to the mean gray value since it's a grayscale gradient
-    try std.testing.expect(reconstructed_image.data.len == 4);
+    // Test basic functionality
+    try std.testing.expect(pca.num_components == 1);
+    
+    // Project and reconstruct a point
+    const coeffs = try pca.project(color_points[0]);
+    defer allocator.free(coeffs);
+    
+    const reconstructed = try pca.reconstruct(coeffs);
+    _ = reconstructed; // Just verify it works
 }

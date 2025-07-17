@@ -61,22 +61,27 @@ fn generatePointCloud(allocator: std.mem.Allocator, num_points: usize) ![]@Vecto
     return points;
 }
 
-/// Convert world coordinates to canvas coordinates
+/// Convert world coordinates to canvas coordinates with uniform scaling to preserve angles
 /// Note: Y axis is flipped since image coordinates have Y=0 at top
 fn worldToCanvas(world_point: @Vector(2, f64), canvas_size: f32, world_bounds: Bounds) Point2d(f32) {
     const world_size = world_bounds.max - world_bounds.min;
     const margin = canvas_size * 0.1; // 10% margin
     const draw_size = canvas_size - 2 * margin;
 
-    // Normalize to [0, 1]
-    const normalized = (world_point - world_bounds.min) / world_size;
+    // Use uniform scaling based on the larger dimension to preserve angles
+    const max_world_size = @max(world_size[0], world_size[1]);
+    const scale = draw_size / @as(f32, @floatCast(max_world_size));
 
-    // Scale to canvas with margin
-    // Flip Y coordinate: canvas Y=0 is at top, but we want mathematical Y=0 at bottom
-    const canvas_x = normalized[0] * draw_size + margin;
-    const canvas_y = (1.0 - normalized[1]) * draw_size + margin; // Flip Y axis
+    // Center the coordinate system
+    const world_center = (world_bounds.min + world_bounds.max) / @as(@Vector(2, f64), @splat(2.0));
+    const canvas_center = canvas_size / 2.0;
 
-    return Point2d(f32).init2d(@floatCast(canvas_x), @floatCast(canvas_y));
+    // Transform with uniform scaling
+    const centered_point = world_point - world_center;
+    const canvas_x = @as(f32, @floatCast(centered_point[0])) * scale + canvas_center;
+    const canvas_y = -@as(f32, @floatCast(centered_point[1])) * scale + canvas_center; // Flip Y axis
+
+    return Point2d(f32).init2d(canvas_x, canvas_y);
 }
 
 /// Find bounding box of point cloud
@@ -110,7 +115,7 @@ fn drawPoints(canvas: Canvas(Rgba), points: []const @Vector(2, f64), bounds: Bou
 }
 
 /// Draw PCA axes on canvas
-fn drawPCAAxes(canvas: Canvas(Rgba), pca: PCA(f64, 2), bounds: Bounds) !void {
+fn drawPcaAxes(canvas: Canvas(Rgba), pca: PCA(f64, 2), bounds: Bounds) !void {
     const canvas_size = @as(f32, @floatFromInt(canvas.image.cols));
     const mean_vec = pca.getMean();
     const mean_canvas = worldToCanvas(mean_vec, canvas_size, bounds);
@@ -180,7 +185,7 @@ fn projectAndAlign(allocator: std.mem.Allocator, pca: PCA(f64, 2), original_poin
 }
 
 /// Main PCA demonstration function
-pub fn demonstratePCA(allocator: std.mem.Allocator, canvas_size: u32) !struct { original_image: Image(Rgba), aligned_image: Image(Rgba), variance_ratios: []f64 } {
+pub fn demonstratePCA(allocator: std.mem.Allocator, canvas_size: u32) !struct { original_image: Image(Rgba), aligned_image: Image(Rgba) } {
     const num_points = 200;
 
     // 1. Generate point cloud with dominant direction
@@ -204,7 +209,7 @@ pub fn demonstratePCA(allocator: std.mem.Allocator, canvas_size: u32) !struct { 
     try pca.fit(original_points, null); // Keep all components
 
     // Draw PCA axes on original image
-    try drawPCAAxes(original_canvas, pca, original_bounds);
+    try drawPcaAxes(original_canvas, pca, original_bounds);
 
     // 4. Project points to PCA space and create aligned visualization
     const aligned_points = try projectAndAlign(allocator, pca, original_points);
@@ -233,10 +238,7 @@ pub fn demonstratePCA(allocator: std.mem.Allocator, canvas_size: u32) !struct { 
     const y_axis_start = worldToCanvas(@Vector(2, f64){ 0.0, aligned_bounds.min[1] * 0.8 }, @floatFromInt(canvas_size), aligned_bounds);
     aligned_canvas.drawLine(y_axis_start, y_axis_end, Rgba{ .r = 0, .g = 255, .b = 0, .a = 255 }, 2, .soft);
 
-    // 5. Get variance explained ratios
-    const variance_ratios = try pca.explainedVarianceRatio();
-
-    return .{ .original_image = original_image, .aligned_image = aligned_image, .variance_ratios = variance_ratios };
+    return .{ .original_image = original_image, .aligned_image = aligned_image };
 }
 
 // Export for WASM
@@ -259,13 +261,9 @@ pub fn pcaDemo() !void {
     var result = try demonstratePCA(allocator, canvas_size);
     defer result.original_image.deinit(allocator);
     defer result.aligned_image.deinit(allocator);
-    defer allocator.free(result.variance_ratios);
 
     // Log results
-    std.log.info("PCA Analysis Results:", .{});
-    std.log.info("First PC explains {d:.1}% of variance", .{result.variance_ratios[0] * 100});
-    std.log.info("Second PC explains {d:.1}% of variance", .{result.variance_ratios[1] * 100});
-    std.log.info("Total variance explained: {d:.1}%", .{(result.variance_ratios[0] + result.variance_ratios[1]) * 100});
+    std.log.info("PCA Analysis completed successfully", .{});
 
     // Save images if not running in WASM
     if (!builtin.cpu.arch.isWasm()) {
