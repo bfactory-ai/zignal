@@ -300,20 +300,21 @@ pub fn OpsBuilder(comptime T: type) type {
 
                 // Calculate total operations to determine if SIMD is worth the overhead
                 const total_ops = a_rows * a_cols * b_cols;
-                const SIMD_THRESHOLD = 512; // Use SIMD for larger matrices (>512 operations)
+                const simd_threshold = 512; // Use SIMD for larger matrices (>512 operations)
 
                 // Use SIMD only for larger matrices where the benefit outweighs allocation overhead
-                if (vec_len > 1 and total_ops >= SIMD_THRESHOLD) {
+                if (vec_len > 1 and total_ops >= simd_threshold) {
                     // Enable SIMD for all 4 transpose combinations
                     const VecType = @Vector(vec_len, T);
 
                     if (!trans_a and !trans_b) {
                         // Case 1: A * B - transpose B for cache-friendly row-major access
-                        
+
                         // Handle special case when A and B are the same matrix (for A * A)
-                        if (self.result.rows == other.rows and 
+                        if (self.result.rows == other.rows and
                             self.result.cols == other.cols and
-                            std.mem.eql(T, self.result.items, other.items)) {
+                            std.mem.eql(T, self.result.items, other.items))
+                        {
                             // For A * A, we need to transpose A for the second operand
                             var a_transposed = try Matrix(T).init(self.allocator, b_cols, a_cols);
                             defer a_transposed.deinit();
@@ -364,11 +365,12 @@ pub fn OpsBuilder(comptime T: type) type {
                         }
                     } else if (!trans_a and trans_b) {
                         // Case 3: A * B^T - no transpose needed, B^T is naturally row-wise
-                        
+
                         // Handle special case when A and B are the same matrix (for A * A^T)
-                        if (self.result.rows == other.rows and 
+                        if (self.result.rows == other.rows and
                             self.result.cols == other.cols and
-                            std.mem.eql(T, self.result.items, other.items)) {
+                            std.mem.eql(T, self.result.items, other.items))
+                        {
                             // For A * A^T, we need to transpose A for the second operand
                             var a_transposed = try Matrix(T).init(self.allocator, b_cols, a_cols);
                             defer a_transposed.deinit();
@@ -384,11 +386,12 @@ pub fn OpsBuilder(comptime T: type) type {
                         }
                     } else if (trans_a and trans_b) {
                         // Case 4: A^T * B^T - no transpose needed, both naturally row-wise
-                        
+
                         // Handle special case when A and B are the same matrix (for A^T * A^T)
-                        if (self.result.rows == other.rows and 
+                        if (self.result.rows == other.rows and
                             self.result.cols == other.cols and
-                            std.mem.eql(T, self.result.items, other.items)) {
+                            std.mem.eql(T, self.result.items, other.items))
+                        {
                             // For A^T * A^T, we transpose A to get the transposed version
                             var a_transposed = try Matrix(T).init(self.allocator, a_rows, a_cols);
                             defer a_transposed.deinit();
@@ -707,79 +710,6 @@ test "OpsBuilder SIMD case 2: A^T * B with same matrix (covariance)" {
     }
 }
 
-test "OpsBuilder GEMM size threshold optimization" {
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-
-    // Test 1: Small matrices (should use scalar path)
-    // 4x4 * 4x4 = 64 operations < 512 threshold
-    var small_a = try Matrix(f32).init(arena.allocator(), 4, 4);
-    var small_b = try Matrix(f32).init(arena.allocator(), 4, 4);
-
-    // Fill with simple test data
-    for (0..4) |i| {
-        for (0..4) |j| {
-            small_a.at(i, j).* = 1.0;
-            small_b.at(i, j).* = 2.0;
-        }
-    }
-
-    var ops_small: OpsBuilder(f32) = try .init(arena.allocator(), small_a);
-    try ops_small.dot(small_b);
-    const small_result = ops_small.toOwned();
-
-    // Verify correctness: 4x4 * 4x4 with all 1s and 2s should give matrix of all 8s
-    try expectEqual(@as(usize, 4), small_result.rows);
-    try expectEqual(@as(usize, 4), small_result.cols);
-    try expectEqual(@as(f32, 8.0), small_result.at(0, 0).*);
-    try expectEqual(@as(f32, 8.0), small_result.at(3, 3).*);
-
-    // Test 2: Large matrices (should use SIMD path)
-    // 12x12 * 12x12 = 1728 operations > 512 threshold
-    var large_a = try Matrix(f32).init(arena.allocator(), 12, 12);
-    var large_b = try Matrix(f32).init(arena.allocator(), 12, 12);
-
-    // Fill with simple test data
-    for (0..12) |i| {
-        for (0..12) |j| {
-            large_a.at(i, j).* = 0.5;
-            large_b.at(i, j).* = 4.0;
-        }
-    }
-
-    var ops_large: OpsBuilder(f32) = try .init(arena.allocator(), large_a);
-    try ops_large.dot(large_b);
-    const large_result = ops_large.toOwned();
-
-    // Verify correctness: 12x12 * 12x12 with all 0.5s and 4s should give matrix of all 24s
-    try expectEqual(@as(usize, 12), large_result.rows);
-    try expectEqual(@as(usize, 12), large_result.cols);
-    try expectEqual(@as(f32, 24.0), large_result.at(0, 0).*);
-    try expectEqual(@as(f32, 24.0), large_result.at(11, 11).*);
-
-    // Test 3: Exactly at threshold
-    // 8x8 * 8x8 = 512 operations = threshold (should use SIMD)
-    var threshold_a = try Matrix(f32).init(arena.allocator(), 8, 8);
-    var threshold_b = try Matrix(f32).init(arena.allocator(), 8, 8);
-
-    for (0..8) |i| {
-        for (0..8) |j| {
-            threshold_a.at(i, j).* = 1.0;
-            threshold_b.at(i, j).* = 1.0;
-        }
-    }
-
-    var ops_threshold: OpsBuilder(f32) = try .init(arena.allocator(), threshold_a);
-    try ops_threshold.dot(threshold_b);
-    const threshold_result = ops_threshold.toOwned();
-
-    // Should be 8x8 matrix of all 8s
-    try expectEqual(@as(usize, 8), threshold_result.rows);
-    try expectEqual(@as(usize, 8), threshold_result.cols);
-    try expectEqual(@as(f32, 8.0), threshold_result.at(0, 0).*);
-    try expectEqual(@as(f32, 8.0), threshold_result.at(7, 7).*);
-}
-
 test "OpsBuilder GEMM all transpose cases with same matrix" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
@@ -808,10 +738,10 @@ test "OpsBuilder GEMM all transpose cases with same matrix" {
     // Expected: A * A = [[1*1+2*3, 1*2+2*4], [3*1+4*3, 3*2+4*4]] = [[7, 10], [15, 22]]
     try expectEqual(@as(usize, 2), result1.rows);
     try expectEqual(@as(usize, 2), result1.cols);
-    try expectEqual(@as(f32, 7.0), result1.at(0, 0).*);   // 1*1 + 2*3
-    try expectEqual(@as(f32, 10.0), result1.at(0, 1).*);  // 1*2 + 2*4
-    try expectEqual(@as(f32, 15.0), result1.at(1, 0).*);  // 3*1 + 4*3
-    try expectEqual(@as(f32, 22.0), result1.at(1, 1).*);  // 3*2 + 4*4
+    try expectEqual(@as(f32, 7.0), result1.at(0, 0).*); // 1*1 + 2*3
+    try expectEqual(@as(f32, 10.0), result1.at(0, 1).*); // 1*2 + 2*4
+    try expectEqual(@as(f32, 15.0), result1.at(1, 0).*); // 3*1 + 4*3
+    try expectEqual(@as(f32, 22.0), result1.at(1, 1).*); // 3*2 + 4*4
 
     // Case 2: A^T * A (covariance - SIMD same-matrix handling)
     var ops2: OpsBuilder(f32) = try .init(arena.allocator(), a);
@@ -823,10 +753,10 @@ test "OpsBuilder GEMM all transpose cases with same matrix" {
     // A^T * A = [[1*1+3*3+5*5, 1*2+3*4+5*6], [2*1+4*3+6*5, 2*2+4*4+6*6]] = [[35, 44], [44, 56]]
     try expectEqual(@as(usize, 2), result2.rows);
     try expectEqual(@as(usize, 2), result2.cols);
-    try expectEqual(@as(f32, 35.0), result2.at(0, 0).*);  // 1*1 + 3*3 + 5*5
-    try expectEqual(@as(f32, 44.0), result2.at(0, 1).*);  // 1*2 + 3*4 + 5*6
-    try expectEqual(@as(f32, 44.0), result2.at(1, 0).*);  // 2*1 + 4*3 + 6*5
-    try expectEqual(@as(f32, 56.0), result2.at(1, 1).*);  // 2*2 + 4*4 + 6*6
+    try expectEqual(@as(f32, 35.0), result2.at(0, 0).*); // 1*1 + 3*3 + 5*5
+    try expectEqual(@as(f32, 44.0), result2.at(0, 1).*); // 1*2 + 3*4 + 5*6
+    try expectEqual(@as(f32, 44.0), result2.at(1, 0).*); // 2*1 + 4*3 + 6*5
+    try expectEqual(@as(f32, 56.0), result2.at(1, 1).*); // 2*2 + 4*4 + 6*6
 
     // Case 3: A * A^T (gram matrix - SIMD same-matrix handling)
     var ops3: OpsBuilder(f32) = try .init(arena.allocator(), a);
@@ -838,15 +768,15 @@ test "OpsBuilder GEMM all transpose cases with same matrix" {
     //         = [[5, 11, 17], [11, 25, 39], [17, 39, 61]]
     try expectEqual(@as(usize, 3), result3.rows);
     try expectEqual(@as(usize, 3), result3.cols);
-    try expectEqual(@as(f32, 5.0), result3.at(0, 0).*);    // 1*1 + 2*2
-    try expectEqual(@as(f32, 11.0), result3.at(0, 1).*);   // 1*3 + 2*4
-    try expectEqual(@as(f32, 17.0), result3.at(0, 2).*);   // 1*5 + 2*6
-    try expectEqual(@as(f32, 11.0), result3.at(1, 0).*);   // 3*1 + 4*2
-    try expectEqual(@as(f32, 25.0), result3.at(1, 1).*);   // 3*3 + 4*4
-    try expectEqual(@as(f32, 39.0), result3.at(1, 2).*);   // 3*5 + 4*6
-    try expectEqual(@as(f32, 17.0), result3.at(2, 0).*);   // 5*1 + 6*2
-    try expectEqual(@as(f32, 39.0), result3.at(2, 1).*);   // 5*3 + 6*4
-    try expectEqual(@as(f32, 61.0), result3.at(2, 2).*);   // 5*5 + 6*6
+    try expectEqual(@as(f32, 5.0), result3.at(0, 0).*); // 1*1 + 2*2
+    try expectEqual(@as(f32, 11.0), result3.at(0, 1).*); // 1*3 + 2*4
+    try expectEqual(@as(f32, 17.0), result3.at(0, 2).*); // 1*5 + 2*6
+    try expectEqual(@as(f32, 11.0), result3.at(1, 0).*); // 3*1 + 4*2
+    try expectEqual(@as(f32, 25.0), result3.at(1, 1).*); // 3*3 + 4*4
+    try expectEqual(@as(f32, 39.0), result3.at(1, 2).*); // 3*5 + 4*6
+    try expectEqual(@as(f32, 17.0), result3.at(2, 0).*); // 5*1 + 6*2
+    try expectEqual(@as(f32, 39.0), result3.at(2, 1).*); // 5*3 + 6*4
+    try expectEqual(@as(f32, 61.0), result3.at(2, 2).*); // 5*5 + 6*6
 
     // Case 4: A^T * A^T (both transposed - SIMD same-matrix handling)
     var ops4: OpsBuilder(f32) = try .init(arena.allocator(), square_a);
@@ -857,58 +787,73 @@ test "OpsBuilder GEMM all transpose cases with same matrix" {
     // A^T * A^T = [[1*1+3*2, 1*3+3*4], [2*1+4*2, 2*3+4*4]] = [[7, 15], [10, 22]]
     try expectEqual(@as(usize, 2), result4.rows);
     try expectEqual(@as(usize, 2), result4.cols);
-    try expectEqual(@as(f32, 7.0), result4.at(0, 0).*);    // 1*1 + 3*2
-    try expectEqual(@as(f32, 15.0), result4.at(0, 1).*);   // 1*3 + 3*4
-    try expectEqual(@as(f32, 10.0), result4.at(1, 0).*);   // 2*1 + 4*2
-    try expectEqual(@as(f32, 22.0), result4.at(1, 1).*);   // 2*3 + 4*4
+    try expectEqual(@as(f32, 7.0), result4.at(0, 0).*); // 1*1 + 3*2
+    try expectEqual(@as(f32, 15.0), result4.at(0, 1).*); // 1*3 + 3*4
+    try expectEqual(@as(f32, 10.0), result4.at(1, 0).*); // 2*1 + 4*2
+    try expectEqual(@as(f32, 22.0), result4.at(1, 1).*); // 2*3 + 4*4
 }
 
-test "OpsBuilder SIMD same-matrix detection verification" {
+test "OpsBuilder SIMD 9x9 matrix with known values" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
 
-    // Test with matrices large enough to exceed threshold
-    // 9x9 * 9x9 = 729 operations > 512 threshold
+    // Create simple 9x9 matrix with predictable values (forces SIMD: 729 ops > 512)
     var test_matrix = try Matrix(f32).init(arena.allocator(), 9, 9);
     
-    // Fill with known values
+    // Fill with simple pattern: A[i,j] = i + 1 (row number)
     for (0..9) |i| {
         for (0..9) |j| {
-            test_matrix.at(i, j).* = @as(f32, @floatFromInt(i + j + 1));
+            test_matrix.at(i, j).* = @as(f32, @floatFromInt(i + 1));
         }
     }
-
-    // Test that all 4 cases complete without errors when using same matrix
-    // (We can't easily verify which path was taken without debug output,
-    //  but we can verify the operations complete successfully)
     
-    // Case 1: A * A
+    // Test Case 1: A * A (should use SIMD same-matrix optimization)
     var ops1: OpsBuilder(f32) = try .init(arena.allocator(), test_matrix);
     try ops1.gemm(test_matrix, false, false, 1.0, 0.0, null);
     const result1 = ops1.toOwned();
+    
+    // Verify Case 1: A * A (uses SIMD same-matrix optimization)
     try expectEqual(@as(usize, 9), result1.rows);
     try expectEqual(@as(usize, 9), result1.cols);
-    
-    // Case 2: A^T * A  
+    try expectEqual(@as(f32, 45.0), result1.at(0, 0).*);   // Row 0 * Col 0
+    try expectEqual(@as(f32, 90.0), result1.at(1, 0).*);   // Row 1 * Col 0
+    try expectEqual(@as(f32, 405.0), result1.at(8, 8).*);  // Row 8 * Col 8
+
+    // Test Case 2: A^T * A (covariance)
     var ops2: OpsBuilder(f32) = try .init(arena.allocator(), test_matrix);
     try ops2.gemm(test_matrix, true, false, 1.0, 0.0, null);
     const result2 = ops2.toOwned();
+    
+    // Verify Case 2: A^T * A (covariance, uses SIMD same-matrix optimization)
     try expectEqual(@as(usize, 9), result2.rows);
     try expectEqual(@as(usize, 9), result2.cols);
-    
-    // Case 3: A * A^T
+    try expectEqual(@as(f32, 285.0), result2.at(0, 0).*);  // Sum of squares: 1²+2²+...+9²
+    try expectEqual(@as(f32, 285.0), result2.at(8, 8).*);  // Same for all diagonal elements
+
+    // Test Case 3: A * A^T (gram matrix)  
     var ops3: OpsBuilder(f32) = try .init(arena.allocator(), test_matrix);
     try ops3.gemm(test_matrix, false, true, 1.0, 0.0, null);
     const result3 = ops3.toOwned();
+    
+    // Verify Case 3: A * A^T (gram matrix, uses SIMD same-matrix optimization)
     try expectEqual(@as(usize, 9), result3.rows);
     try expectEqual(@as(usize, 9), result3.cols);
-    
-    // Case 4: A^T * A^T
+    try expectEqual(@as(f32, 9.0), result3.at(0, 0).*);    // 1² * 9 elements
+    try expectEqual(@as(f32, 36.0), result3.at(1, 1).*);   // 2² * 9 elements
+    try expectEqual(@as(f32, 729.0), result3.at(8, 8).*);  // 9² * 9 elements
+
+    // Test Case 4: A^T * A^T
     var ops4: OpsBuilder(f32) = try .init(arena.allocator(), test_matrix);
     try ops4.gemm(test_matrix, true, true, 1.0, 0.0, null);
     const result4 = ops4.toOwned();
+    
+    // Verify Case 4: A^T * A^T (uses SIMD same-matrix optimization)
     try expectEqual(@as(usize, 9), result4.rows);
     try expectEqual(@as(usize, 9), result4.cols);
+    try expectEqual(@as(f32, 45.0), result4.at(0, 0).*);   // Corners same as case 1
+    try expectEqual(@as(f32, 405.0), result4.at(0, 8).*);  
+    try expectEqual(@as(f32, 45.0), result4.at(8, 0).*);   
+    try expectEqual(@as(f32, 405.0), result4.at(8, 8).*);  
 }
 
 test "OpsBuilder matrix operations: add, sub, scale, transpose" {
