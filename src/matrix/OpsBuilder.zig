@@ -252,40 +252,73 @@ pub fn OpsBuilder(comptime T: type) type {
 
             // Skip computation if alpha is zero
             if (alpha != 0) {
-                const vec_len = std.simd.suggestVectorLength(T) orelse 1;
-                const VecType = @Vector(vec_len, T);
+                // For the most common case: A * B (no transposes), use optimized SIMD
+                if (!trans_a and !trans_b) {
+                    const vec_len = std.simd.suggestVectorLength(T) orelse 1;
 
-                for (0..a_rows) |i| {
-                    for (0..b_cols) |j| {
-                        var accumulator: T = 0;
+                    if (vec_len > 1) {
+                        // Optimized SIMD implementation with cache-friendly access patterns
+                        const VecType = @Vector(vec_len, T);
 
-                        // SIMD loop - process vec_len elements at once
-                        var k: usize = 0;
-                        while (k + vec_len <= a_cols) : (k += vec_len) {
-                            var a_vec: VecType = undefined;
-                            var b_vec: VecType = undefined;
+                        // Transpose B for cache-friendly row-major access
+                        var b_transposed = try Matrix(T).init(self.allocator, b_cols, a_cols);
+                        defer b_transposed.deinit();
 
-                            // Load vectors with appropriate indexing based on transpose flags
-                            for (0..vec_len) |v| {
-                                const a_val = if (trans_a) self.result.at(k + v, i).* else self.result.at(i, k + v).*;
-                                const b_val = if (trans_b) other.at(j, k + v).* else other.at(k + v, j).*;
-                                a_vec[v] = a_val;
-                                b_vec[v] = b_val;
+                        for (0..a_cols) |k| {
+                            for (0..b_cols) |j| {
+                                b_transposed.at(j, k).* = other.at(k, j).*;
                             }
-
-                            // Vectorized multiply-accumulate
-                            const prod_vec = a_vec * b_vec;
-                            accumulator += @reduce(.Add, prod_vec);
                         }
 
-                        // Handle remainder elements with scalar code
-                        while (k < a_cols) : (k += 1) {
-                            const a_val = if (trans_a) self.result.at(k, i).* else self.result.at(i, k).*;
-                            const b_val = if (trans_b) other.at(j, k).* else other.at(k, j).*;
-                            accumulator += a_val * b_val;
-                        }
+                        // Optimized SIMD kernel
+                        for (0..a_rows) |i| {
+                            for (0..b_cols) |j| {
+                                var accumulator: T = 0;
 
-                        result.at(i, j).* += alpha * accumulator;
+                                // Process vec_len elements at once
+                                var k: usize = 0;
+                                while (k + vec_len <= a_cols) : (k += vec_len) {
+                                    // Load vectors from both matrices (both are now row-major access)
+                                    const a_vec: VecType = self.result.items[i * a_cols + k .. i * a_cols + k + vec_len][0..vec_len].*;
+                                    const b_vec: VecType = b_transposed.items[j * a_cols + k .. j * a_cols + k + vec_len][0..vec_len].*;
+
+                                    // Vectorized multiply-accumulate
+                                    const prod_vec = a_vec * b_vec;
+                                    accumulator += @reduce(.Add, prod_vec);
+                                }
+
+                                // Handle remainder elements
+                                while (k < a_cols) : (k += 1) {
+                                    accumulator += self.result.at(i, k).* * b_transposed.at(j, k).*;
+                                }
+
+                                result.at(i, j).* += alpha * accumulator;
+                            }
+                        }
+                    } else {
+                        // No SIMD support, use scalar implementation
+                        for (0..a_rows) |i| {
+                            for (0..b_cols) |j| {
+                                var accumulator: T = 0;
+                                for (0..a_cols) |k| {
+                                    accumulator += self.result.at(i, k).* * other.at(k, j).*;
+                                }
+                                result.at(i, j).* += alpha * accumulator;
+                            }
+                        }
+                    }
+                } else {
+                    // General case with transpose support (scalar implementation)
+                    for (0..a_rows) |i| {
+                        for (0..b_cols) |j| {
+                            var accumulator: T = 0;
+                            for (0..a_cols) |k| {
+                                const a_val = if (trans_a) self.result.at(k, i).* else self.result.at(i, k).*;
+                                const b_val = if (trans_b) other.at(j, k).* else other.at(k, j).*;
+                                accumulator += a_val * b_val;
+                            }
+                            result.at(i, j).* += alpha * accumulator;
+                        }
                     }
                 }
             }
