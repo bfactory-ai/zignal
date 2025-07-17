@@ -81,8 +81,15 @@ const perlin_mod = @import("perlin.zig");
 pub const perlin = perlin_mod.perlin;
 pub const PerlinOptions = perlin_mod.PerlinOptions;
 
-pub const Point2d = geometry.Point2d;
-pub const Point3d = geometry.Point3d;
+// New unified Point system with arbitrary dimensions and SIMD acceleration
+const point_module = @import("geometry/Point.zig");
+pub const Point = point_module.Point;
+pub const Point1d = point_module.Point1d;
+pub const Point2d = point_module.Point2d;
+pub const Point3d = point_module.Point3d;
+pub const Point4d = point_module.Point4d;
+pub const point = point_module.point;
+
 pub const pointInTriangle = geometry.pointInTriangle;
 pub const findBarycenter = geometry.findBarycenter;
 
@@ -93,4 +100,12 @@ pub const SvdResult = @import("svd.zig").SvdResult;
 
 pub const featureDistributionMatch = @import("fdm.zig").featureDistributionMatch;
 
-pub const PrincipalComponentAnalysis = @import("pca.zig").PrincipalComponentAnalysis;
+// New unified PCA system for arbitrary dimensions
+const pca_module = @import("pca.zig");
+pub const PCA = pca_module.PCA;
+pub const colorToPoint = pca_module.colorToPoint;
+pub const pointToColor = pca_module.pointToColor;
+pub const imageToPoints = pca_module.imageToPoints;
+pub const pointsToImage = pca_module.pointsToImage;
+// Legacy alias for backward compatibility
+pub const PrincipalComponentAnalysis = pca_module.PrincipalComponentAnalysis;

@@ -4,8 +4,8 @@ const std = @import("std");
 const assert = std.debug.assert;
 const formatting = @import("formatting.zig");
 
-const Point2d = @import("../geometry/points.zig").Point2d;
-const Point3d = @import("../geometry/points.zig").Point3d;
+const Point2d = @import("../geometry/Point.zig").Point2d;
+const Point3d = @import("../geometry/Point.zig").Point3d;
 
 /// Creates a static matrix with elements of type T and size rows times cols.
 pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) type {
@@ -322,7 +322,7 @@ pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) typ
         /// Converts a column matrix into a Point2d.
         pub fn toPoint2d(self: Self) Point2d(T) {
             comptime assert(rows >= 2 and cols == 1);
-            return .{ .x = self.items[0][0], .y = self.items[1][0] };
+            return Point2d(T).init2d(self.items[0][0], self.items[1][0]);
         }
 
         /// Computes the trace (sum of diagonal elements) of a square matrix.
