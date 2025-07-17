@@ -100,9 +100,24 @@ pub const SvdResult = @import("svd.zig").SvdResult;
 
 pub const featureDistributionMatch = @import("fdm.zig").featureDistributionMatch;
 
+// PCA (Principal Component Analysis) system
 const pca = @import("pca.zig");
-pub const PrincipalComponentAnalysis = pca.PrincipalComponentAnalysis;
+pub const PrincipalComponentAnalysis = pca.PrincipalComponentAnalysis; // Legacy alias
+
+// Color conversion utilities
 pub const colorToPoint = pca.colorToPoint;
 pub const pointToColor = pca.pointToColor;
-pub const imageToPoints = pca.imageToPoints;
-pub const pointsToImage = pca.pointsToImage;
+
+// Image-to-points conversion functions
+pub const imageToColorPoints = pca.imageToColorPoints;
+pub const colorPointsToImage = pca.colorPointsToImage;
+pub const imageToIntensityPoints = pca.imageToIntensityPoints;
+pub const intensityPointsToImage = pca.intensityPointsToImage;
+
+// Spatial-color point conversion (position + color information)
+pub const imageToSpatialColorPoints = pca.imageToSpatialColorPoints;
+pub const imageToSpatialIntensityPoints = pca.imageToSpatialIntensityPoints;
+
+// Utility functions for spatial-color points
+pub const extractColorFromSpatialColor = pca.extractColorFromSpatialColor;
+pub const extractSpatialFromSpatialColor = pca.extractSpatialFromSpatialColor;
