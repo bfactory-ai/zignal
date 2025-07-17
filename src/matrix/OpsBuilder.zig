@@ -112,13 +112,13 @@ pub fn OpsBuilder(comptime T: type) type {
             // Use LU decomposition for larger matrices
             var lu_result = try self.lu();
             defer lu_result.deinit();
-            
+
             // det(A) = sign * product of diagonal elements of U
             var det = lu_result.sign;
             for (0..n) |i| {
                 det *= lu_result.u.at(i, i).*;
             }
-            
+
             return det;
         }
 
@@ -549,7 +549,7 @@ pub fn OpsBuilder(comptime T: type) type {
             p: []usize,        // Permutation vector
             sign: T,           // Determinant sign (+1 or -1)
             allocator: std.mem.Allocator,
-            
+
             pub fn deinit(self: *@This()) void {
                 self.l.deinit();
                 self.u.deinit();
@@ -562,40 +562,40 @@ pub fn OpsBuilder(comptime T: type) type {
         pub fn lu(self: *Self) !LUResult {
             const n = self.result.rows;
             assert(n == self.result.cols); // Must be square
-            
+
             // Create working copy
             var work = try Matrix(T).init(self.allocator, n, n);
             defer work.deinit();
             @memcpy(work.items, self.result.items);
-            
+
             // Initialize L as identity, U as zero
             var l = try Matrix(T).init(self.allocator, n, n);
             errdefer l.deinit();
             var u = try Matrix(T).init(self.allocator, n, n);
             errdefer u.deinit();
-            
+
             // Initialize permutation vector
             var p = try self.allocator.alloc(usize, n);
             errdefer self.allocator.free(p);
             for (0..n) |i| {
                 p[i] = i;
             }
-            
+
             // Initialize matrices
             @memset(l.items, 0);
             @memset(u.items, 0);
             for (0..n) |i| {
                 l.at(i, i).* = 1.0; // L starts as identity
             }
-            
+
             var sign: T = 1.0;
-            
+
             // Perform LU decomposition with partial pivoting
             for (0..n) |pivot_col| {
                 // Find pivot
                 var max_row = pivot_col;
                 var max_val = @abs(work.at(pivot_col, pivot_col).*);
-                
+
                 for (pivot_col + 1..n) |row_idx| {
                     const val = @abs(work.at(row_idx, pivot_col).*);
                     if (val > max_val) {
@@ -603,13 +603,13 @@ pub fn OpsBuilder(comptime T: type) type {
                         max_row = row_idx;
                     }
                 }
-                
+
                 // Check for zero pivot (singular matrix)
                 if (max_val < std.math.floatEps(T) * 10) {
                     // Continue with decomposition even if singular
                     // User can check if U has zeros on diagonal
                 }
-                
+
                 // Swap rows if needed
                 if (max_row != pivot_col) {
                     sign = -sign;
@@ -617,14 +617,14 @@ pub fn OpsBuilder(comptime T: type) type {
                     const temp_p = p[pivot_col];
                     p[pivot_col] = p[max_row];
                     p[max_row] = temp_p;
-                    
+
                     // Swap rows in work matrix
                     for (0..n) |j| {
                         const temp = work.at(pivot_col, j).*;
                         work.at(pivot_col, j).* = work.at(max_row, j).*;
                         work.at(max_row, j).* = temp;
                     }
-                    
+
                     // Swap rows in L (only the part already computed)
                     for (0..pivot_col) |j| {
                         const temp = l.at(pivot_col, j).*;
@@ -632,30 +632,103 @@ pub fn OpsBuilder(comptime T: type) type {
                         l.at(max_row, j).* = temp;
                     }
                 }
-                
+
                 // Copy pivot row to U
                 for (pivot_col..n) |j| {
                     u.at(pivot_col, j).* = work.at(pivot_col, j).*;
                 }
-                
+
                 // Compute L column and eliminate
                 for (pivot_col + 1..n) |row_idx| {
                     if (@abs(work.at(pivot_col, pivot_col).*) > std.math.floatEps(T)) {
                         const factor = work.at(row_idx, pivot_col).* / work.at(pivot_col, pivot_col).*;
                         l.at(row_idx, pivot_col).* = factor;
-                        
+
                         for (pivot_col + 1..n) |col_idx| {
                             work.at(row_idx, col_idx).* -= factor * work.at(pivot_col, col_idx).*;
                         }
                     }
                 }
             }
-            
+
             return LUResult{
                 .l = l,
                 .u = u,
                 .p = p,
                 .sign = sign,
+                .allocator = self.allocator,
+            };
+        }
+
+        pub const QRResult = struct {
+            q: Matrix(T),      // Orthogonal matrix (Q^T Q = I)
+            r: Matrix(T),      // Upper triangular matrix
+            allocator: std.mem.Allocator,
+
+            pub fn deinit(self: *@This()) void {
+                self.q.deinit();
+                self.r.deinit();
+            }
+        };
+
+        /// Compute QR decomposition using Modified Gram-Schmidt algorithm
+        /// Returns Q, R matrices such that A = QR where Q is orthogonal and R is upper triangular
+        pub fn qr(self: *Self) !QRResult {
+            const m = self.result.rows;
+            const n = self.result.cols;
+
+            // Initialize Q and R matrices
+            var q = try Matrix(T).init(self.allocator, m, n);
+            errdefer q.deinit();
+            var r = try Matrix(T).init(self.allocator, n, n);
+            errdefer r.deinit();
+
+            // Copy A to Q (will be modified in-place)
+            @memcpy(q.items, self.result.items);
+
+            // Initialize R as zero
+            @memset(r.items, 0);
+
+            // Modified Gram-Schmidt algorithm
+            for (0..n) |j| {
+                // Compute R[j,j] = ||Q[:,j]||
+                var norm_sq: T = 0;
+                for (0..m) |i| {
+                    const val = q.at(i, j).*;
+                    norm_sq += val * val;
+                }
+                r.at(j, j).* = @sqrt(norm_sq);
+
+                // Check for linear dependence
+                if (r.at(j, j).* < std.math.floatEps(T) * 100) {
+                    return error.LinearlyDependent;
+                }
+
+                // Normalize Q[:,j]
+                const inv_norm = 1.0 / r.at(j, j).*;
+                for (0..m) |i| {
+                    q.at(i, j).* *= inv_norm;
+                }
+
+                // Orthogonalize remaining columns
+                for (j + 1..n) |k| {
+                    // Compute R[j,k] = Q[:,j]^T * Q[:,k]
+                    var dot_product: T = 0;
+                    for (0..m) |i| {
+                        dot_product += q.at(i, j).* * q.at(i, k).*;
+                    }
+                    r.at(j, k).* = dot_product;
+
+                    // Q[:,k] = Q[:,k] - R[j,k] * Q[:,j]
+                    for (0..m) |i| {
+                        q.at(i, k).* -= r.at(j, k).* * q.at(i, j).*;
+                    }
+                }
+            }
+
+            return QRResult{
+                .q = q,
+                .r = r,
                 .allocator = self.allocator,
             };
         }
@@ -1549,7 +1622,7 @@ test "OpsBuilder apply method" {
     try ops1.apply(std.math.sqrt, .{});
     var result1 = ops1.toOwned();
     defer result1.deinit();
-    
+
     try expectEqual(@as(f64, 1.0), result1.at(0, 0).*);
     try expectEqual(@as(f64, 2.0), result1.at(0, 1).*);
     try expectEqual(@as(f64, 3.0), result1.at(0, 2).*);
@@ -1567,7 +1640,7 @@ test "OpsBuilder apply method" {
     try ops2.apply(pow2, .{@as(f64, 2.0)});
     var result2 = ops2.toOwned();
     defer result2.deinit();
-    
+
     try expectEqual(@as(f64, 1.0), result2.at(0, 0).*);
     try expectEqual(@as(f64, 4.0), result2.at(0, 1).*);
     try expectEqual(@as(f64, 9.0), result2.at(0, 2).*);
@@ -1581,12 +1654,12 @@ test "OpsBuilder apply method" {
             return 1.0 / x;
         }
     }.f;
-    
+
     var ops3 = try OpsBuilder(f64).init(arena.allocator(), result1);
     try ops3.apply(reciprocal, .{});
     var result3 = ops3.toOwned();
     defer result3.deinit();
-    
+
     try expectEqual(@as(f64, 1.0), result3.at(0, 0).*);
     try expectEqual(@as(f64, 0.5), result3.at(0, 1).*);
     try expectEqual(@as(f64, 1.0/3.0), result3.at(0, 2).*);
@@ -1610,21 +1683,21 @@ test "OpsBuilder statistical operations" {
 
     // Test sum: 1+2+3+4+5+6 = 21
     try expectEqual(@as(f64, 21.0), ops.sum());
-    
+
     // Test mean: 21/6 = 3.5
     try expectEqual(@as(f64, 3.5), ops.mean());
-    
+
     // Test min and max
     try expectEqual(@as(f64, 1.0), ops.min());
     try expectEqual(@as(f64, 6.0), ops.max());
-    
+
     // Test variance: E[(X - 3.5)²]
     // Values: (1-3.5)² + (2-3.5)² + (3-3.5)² + (4-3.5)² + (5-3.5)² + (6-3.5)²
     //       = 6.25 + 2.25 + 0.25 + 0.25 + 2.25 + 6.25 = 17.5
     // Variance = 17.5 / 6 = 2.916666...
     const variance = ops.variance();
     try std.testing.expect(@abs(variance - 2.916666666666667) < 1e-10);
-    
+
     // Test standard deviation: sqrt(variance)
     const std_dev = ops.stdDev();
     try std.testing.expect(@abs(std_dev - @sqrt(2.916666666666667)) < 1e-10);
@@ -1647,10 +1720,10 @@ test "OpsBuilder norms" {
     // Test Frobenius norm: sqrt(9 + 16 + 1 + 4) = sqrt(30)
     const frob = ops.frobeniusNorm();
     try std.testing.expect(@abs(frob - @sqrt(30.0)) < 1e-10);
-    
+
     // Test L1 norm: 3 + 4 + 1 + 2 = 10
     try expectEqual(@as(f64, 10.0), ops.l1Norm());
-    
+
     // Test max norm: max(3, 4, 1, 2) = 4
     try expectEqual(@as(f64, 4.0), ops.maxNorm());
 
@@ -1674,7 +1747,7 @@ test "OpsBuilder offset and pow" {
     try ops1.offset(5.0);
     var result1 = ops1.toOwned();
     defer result1.deinit();
-    
+
     try expectEqual(@as(f64, 6.0), result1.at(0, 0).*);
     try expectEqual(@as(f64, 7.0), result1.at(0, 1).*);
     try expectEqual(@as(f64, 8.0), result1.at(1, 0).*);
@@ -1685,7 +1758,7 @@ test "OpsBuilder offset and pow" {
     try ops2.pow(2.0);
     var result2 = ops2.toOwned();
     defer result2.deinit();
-    
+
     try expectEqual(@as(f64, 1.0), result2.at(0, 0).*);
     try expectEqual(@as(f64, 4.0), result2.at(0, 1).*);
     try expectEqual(@as(f64, 9.0), result2.at(1, 0).*);
@@ -1737,7 +1810,7 @@ test "OpsBuilder LU decomposition" {
     // Reconstruct PA = LU
     var pa = try Matrix(f64).init(arena.allocator(), 3, 3);
     defer pa.deinit();
-    
+
     // Apply permutation: PA[i,j] = A[p[i],j]
     for (0..3) |i| {
         for (0..3) |j| {
@@ -1763,6 +1836,132 @@ test "OpsBuilder LU decomposition" {
     for (0..3) |i| {
         for (0..3) |j| {
             const diff = @abs(pa.at(i, j).* - lu_product.at(i, j).*);
+            try std.testing.expect(diff < eps);
+        }
+    }
+}
+
+test "OpsBuilder QR decomposition" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    // Test 3x3 matrix
+    var mat = try Matrix(f64).init(arena.allocator(), 3, 3);
+    mat.at(0, 0).* = 12.0;
+    mat.at(0, 1).* = -51.0;
+    mat.at(0, 2).* = 4.0;
+    mat.at(1, 0).* = 6.0;
+    mat.at(1, 1).* = 167.0;
+    mat.at(1, 2).* = -68.0;
+    mat.at(2, 0).* = -4.0;
+    mat.at(2, 1).* = 24.0;
+    mat.at(2, 2).* = -41.0;
+
+    var ops = try OpsBuilder(f64).init(arena.allocator(), mat);
+    defer ops.deinit();
+
+    // Compute QR decomposition
+    var qr_result = try ops.qr();
+    defer qr_result.deinit();
+
+    // Verify dimensions
+    try expectEqual(@as(usize, 3), qr_result.q.rows);
+    try expectEqual(@as(usize, 3), qr_result.q.cols);
+    try expectEqual(@as(usize, 3), qr_result.r.rows);
+    try expectEqual(@as(usize, 3), qr_result.r.cols);
+
+    // Verify R is upper triangular
+    try expectEqual(@as(f64, 0.0), qr_result.r.at(1, 0).*);
+    try expectEqual(@as(f64, 0.0), qr_result.r.at(2, 0).*);
+    try expectEqual(@as(f64, 0.0), qr_result.r.at(2, 1).*);
+
+    // Verify Q is orthogonal: Q^T * Q should be identity
+    var qtq = try Matrix(f64).init(arena.allocator(), 3, 3);
+    defer qtq.deinit();
+    @memset(qtq.items, 0);
+
+    for (0..3) |i| {
+        for (0..3) |j| {
+            for (0..3) |k| {
+                qtq.at(i, j).* += qr_result.q.at(k, i).* * qr_result.q.at(k, j).*;
+            }
+        }
+    }
+
+    // Check that Q^T * Q is approximately identity
+    const eps = 1e-10;
+    for (0..3) |i| {
+        for (0..3) |j| {
+            const expected: f64 = if (i == j) 1.0 else 0.0;
+            const diff = @abs(qtq.at(i, j).* - expected);
+            try std.testing.expect(diff < eps);
+        }
+    }
+
+    // Verify A = Q * R
+    var qr_product = try Matrix(f64).init(arena.allocator(), 3, 3);
+    defer qr_product.deinit();
+    @memset(qr_product.items, 0);
+
+    for (0..3) |i| {
+        for (0..3) |j| {
+            for (0..3) |k| {
+                qr_product.at(i, j).* += qr_result.q.at(i, k).* * qr_result.r.at(k, j).*;
+            }
+        }
+    }
+
+    // Verify A = QR (within numerical tolerance)
+    for (0..3) |i| {
+        for (0..3) |j| {
+            const diff = @abs(mat.at(i, j).* - qr_product.at(i, j).*);
+            try std.testing.expect(diff < eps);
+        }
+    }
+
+    // Test rectangular matrix (4x3) with linearly independent columns
+    var rect_mat = try Matrix(f64).init(arena.allocator(), 4, 3);
+    rect_mat.at(0, 0).* = 1.0;
+    rect_mat.at(0, 1).* = 0.0;
+    rect_mat.at(0, 2).* = 0.0;
+    rect_mat.at(1, 0).* = 1.0;
+    rect_mat.at(1, 1).* = 1.0;
+    rect_mat.at(1, 2).* = 0.0;
+    rect_mat.at(2, 0).* = 1.0;
+    rect_mat.at(2, 1).* = 1.0;
+    rect_mat.at(2, 2).* = 1.0;
+    rect_mat.at(3, 0).* = 1.0;
+    rect_mat.at(3, 1).* = 1.0;
+    rect_mat.at(3, 2).* = 2.0;
+
+    var rect_ops = try OpsBuilder(f64).init(arena.allocator(), rect_mat);
+    defer rect_ops.deinit();
+
+    var rect_qr = try rect_ops.qr();
+    defer rect_qr.deinit();
+
+    // Verify dimensions for rectangular matrix
+    try expectEqual(@as(usize, 4), rect_qr.q.rows);
+    try expectEqual(@as(usize, 3), rect_qr.q.cols);
+    try expectEqual(@as(usize, 3), rect_qr.r.rows);
+    try expectEqual(@as(usize, 3), rect_qr.r.cols);
+
+    // Verify A = Q * R for rectangular matrix
+    var rect_product = try Matrix(f64).init(arena.allocator(), 4, 3);
+    defer rect_product.deinit();
+    @memset(rect_product.items, 0);
+
+    for (0..4) |i| {
+        for (0..3) |j| {
+            for (0..3) |k| {
+                rect_product.at(i, j).* += rect_qr.q.at(i, k).* * rect_qr.r.at(k, j).*;
+            }
+        }
+    }
+
+    for (0..4) |i| {
+        for (0..3) |j| {
+            const diff = @abs(rect_mat.at(i, j).* - rect_product.at(i, j).*);
             try std.testing.expect(diff < eps);
         }
     }
