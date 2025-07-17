@@ -593,6 +593,123 @@ pub fn OpsBuilder(comptime T: type) type {
             try self.gemm(other, true, false, 1.0, 0.0, null);
         }
 
+        /// Apply a function to all matrix elements with optional arguments
+        pub fn apply(self: *Self, comptime func: anytype, args: anytype) !void {
+            for (0..self.result.items.len) |i| {
+                self.result.items[i] = @call(.auto, func, .{self.result.items[i]} ++ args);
+            }
+        }
+
+        /// Sum of all elements
+        pub fn sum(self: *Self) T {
+            var total: T = 0;
+            for (0..self.result.items.len) |i| {
+                total += self.result.items[i];
+            }
+            return total;
+        }
+
+        /// Mean (average) of all elements
+        pub fn mean(self: *Self) T {
+            return self.sum() / @as(T, @floatFromInt(self.result.items.len));
+        }
+
+        /// Variance: E[(X - μ)²]
+        pub fn variance(self: *Self) T {
+            const mu = self.mean();
+            var sum_sq_diff: T = 0;
+            for (0..self.result.items.len) |i| {
+                const diff = self.result.items[i] - mu;
+                sum_sq_diff += diff * diff;
+            }
+            return sum_sq_diff / @as(T, @floatFromInt(self.result.items.len));
+        }
+
+        /// Standard deviation: sqrt(variance)
+        pub fn stdDev(self: *Self) T {
+            return @sqrt(self.variance());
+        }
+
+        /// Minimum element
+        pub fn min(self: *Self) T {
+            var min_val = self.result.items[0];
+            for (1..self.result.items.len) |i| {
+                if (self.result.items[i] < min_val) {
+                    min_val = self.result.items[i];
+                }
+            }
+            return min_val;
+        }
+
+        /// Maximum element
+        pub fn max(self: *Self) T {
+            var max_val = self.result.items[0];
+            for (1..self.result.items.len) |i| {
+                if (self.result.items[i] > max_val) {
+                    max_val = self.result.items[i];
+                }
+            }
+            return max_val;
+        }
+
+        /// Frobenius norm: sqrt(sum of squares of all elements)
+        pub fn frobeniusNorm(self: *Self) T {
+            // Using the SMatrix approach: sqrt(times(self).sum())
+            var sum_squares: T = 0;
+            for (0..self.result.items.len) |i| {
+                sum_squares += self.result.items[i] * self.result.items[i];
+            }
+            return @sqrt(sum_squares);
+        }
+
+        /// L1 norm (nuclear norm): sum of absolute values of all elements
+        pub fn l1Norm(self: *Self) T {
+            var sum_abs: T = 0;
+            for (0..self.result.items.len) |i| {
+                sum_abs += @abs(self.result.items[i]);
+            }
+            return sum_abs;
+        }
+
+        /// Max norm (L-infinity): maximum absolute value
+        pub fn maxNorm(self: *Self) T {
+            var max_abs: T = 0;
+            for (0..self.result.items.len) |i| {
+                const abs_val = @abs(self.result.items[i]);
+                if (abs_val > max_abs) {
+                    max_abs = abs_val;
+                }
+            }
+            return max_abs;
+        }
+
+        /// Trace: sum of diagonal elements (square matrices only)
+        pub fn trace(self: *Self) T {
+            assert(self.result.rows == self.result.cols);
+            var sum_diag: T = 0;
+            for (0..self.result.rows) |i| {
+                sum_diag += self.result.at(i, i).*;
+            }
+            return sum_diag;
+        }
+
+        /// Add scalar to all elements
+        pub fn offset(self: *Self, value: T) !void {
+            for (0..self.result.items.len) |i| {
+                self.result.items[i] += value;
+            }
+        }
+
+        /// Raise all elements to power n (convenience method)
+        pub fn pow(self: *Self, n: T) !void {
+            const powN = struct {
+                fn f(x: T, exponent: T) T {
+                    return std.math.pow(T, x, exponent);
+                }
+            }.f;
+            try self.apply(powN, .{n});
+        }
+
         /// Transfer ownership of the result to the caller
         pub fn toOwned(self: *Self) Matrix(T) {
             const final_result = self.result;
@@ -1345,4 +1462,165 @@ test "OpsBuilder determinant - large matrices using LU" {
     const det_id = try ops_id.determinant();
 
     try expectEqual(@as(f64, 1.0), det_id);
+}
+
+test "OpsBuilder apply method" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    // Test matrix
+    var mat = try Matrix(f64).init(arena.allocator(), 2, 3);
+    mat.at(0, 0).* = 1.0;
+    mat.at(0, 1).* = 4.0;
+    mat.at(0, 2).* = 9.0;
+    mat.at(1, 0).* = 16.0;
+    mat.at(1, 1).* = 25.0;
+    mat.at(1, 2).* = 36.0;
+
+    // Test apply with no arguments (sqrt)
+    var ops1 = try OpsBuilder(f64).init(arena.allocator(), mat);
+    try ops1.apply(std.math.sqrt, .{});
+    var result1 = ops1.toOwned();
+    defer result1.deinit();
+    
+    try expectEqual(@as(f64, 1.0), result1.at(0, 0).*);
+    try expectEqual(@as(f64, 2.0), result1.at(0, 1).*);
+    try expectEqual(@as(f64, 3.0), result1.at(0, 2).*);
+    try expectEqual(@as(f64, 4.0), result1.at(1, 0).*);
+    try expectEqual(@as(f64, 5.0), result1.at(1, 1).*);
+    try expectEqual(@as(f64, 6.0), result1.at(1, 2).*);
+
+    // Test apply with arguments (pow)
+    const pow2 = struct {
+        fn f(x: f64, n: f64) f64 {
+            return std.math.pow(f64, x, n);
+        }
+    }.f;
+    var ops2 = try OpsBuilder(f64).init(arena.allocator(), result1);
+    try ops2.apply(pow2, .{@as(f64, 2.0)});
+    var result2 = ops2.toOwned();
+    defer result2.deinit();
+    
+    try expectEqual(@as(f64, 1.0), result2.at(0, 0).*);
+    try expectEqual(@as(f64, 4.0), result2.at(0, 1).*);
+    try expectEqual(@as(f64, 9.0), result2.at(0, 2).*);
+    try expectEqual(@as(f64, 16.0), result2.at(1, 0).*);
+    try expectEqual(@as(f64, 25.0), result2.at(1, 1).*);
+    try expectEqual(@as(f64, 36.0), result2.at(1, 2).*);
+
+    // Test custom function
+    const reciprocal = struct {
+        fn f(x: f64) f64 {
+            return 1.0 / x;
+        }
+    }.f;
+    
+    var ops3 = try OpsBuilder(f64).init(arena.allocator(), result1);
+    try ops3.apply(reciprocal, .{});
+    var result3 = ops3.toOwned();
+    defer result3.deinit();
+    
+    try expectEqual(@as(f64, 1.0), result3.at(0, 0).*);
+    try expectEqual(@as(f64, 0.5), result3.at(0, 1).*);
+    try expectEqual(@as(f64, 1.0/3.0), result3.at(0, 2).*);
+}
+
+test "OpsBuilder statistical operations" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    // Test matrix with known values
+    var mat = try Matrix(f64).init(arena.allocator(), 2, 3);
+    mat.at(0, 0).* = 1.0;
+    mat.at(0, 1).* = 2.0;
+    mat.at(0, 2).* = 3.0;
+    mat.at(1, 0).* = 4.0;
+    mat.at(1, 1).* = 5.0;
+    mat.at(1, 2).* = 6.0;
+
+    var ops = try OpsBuilder(f64).init(arena.allocator(), mat);
+    defer ops.deinit();
+
+    // Test sum: 1+2+3+4+5+6 = 21
+    try expectEqual(@as(f64, 21.0), ops.sum());
+    
+    // Test mean: 21/6 = 3.5
+    try expectEqual(@as(f64, 3.5), ops.mean());
+    
+    // Test min and max
+    try expectEqual(@as(f64, 1.0), ops.min());
+    try expectEqual(@as(f64, 6.0), ops.max());
+    
+    // Test variance: E[(X - 3.5)²]
+    // Values: (1-3.5)² + (2-3.5)² + (3-3.5)² + (4-3.5)² + (5-3.5)² + (6-3.5)²
+    //       = 6.25 + 2.25 + 0.25 + 0.25 + 2.25 + 6.25 = 17.5
+    // Variance = 17.5 / 6 = 2.916666...
+    const variance = ops.variance();
+    try std.testing.expect(@abs(variance - 2.916666666666667) < 1e-10);
+    
+    // Test standard deviation: sqrt(variance)
+    const std_dev = ops.stdDev();
+    try std.testing.expect(@abs(std_dev - @sqrt(2.916666666666667)) < 1e-10);
+}
+
+test "OpsBuilder norms" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    // Test matrix
+    var mat = try Matrix(f64).init(arena.allocator(), 2, 2);
+    mat.at(0, 0).* = 3.0;
+    mat.at(0, 1).* = -4.0;
+    mat.at(1, 0).* = -1.0;
+    mat.at(1, 1).* = 2.0;
+
+    var ops = try OpsBuilder(f64).init(arena.allocator(), mat);
+    defer ops.deinit();
+
+    // Test Frobenius norm: sqrt(9 + 16 + 1 + 4) = sqrt(30)
+    const frob = ops.frobeniusNorm();
+    try std.testing.expect(@abs(frob - @sqrt(30.0)) < 1e-10);
+    
+    // Test L1 norm: 3 + 4 + 1 + 2 = 10
+    try expectEqual(@as(f64, 10.0), ops.l1Norm());
+    
+    // Test max norm: max(3, 4, 1, 2) = 4
+    try expectEqual(@as(f64, 4.0), ops.maxNorm());
+
+    // Test trace (diagonal sum): 3 + 2 = 5
+    try expectEqual(@as(f64, 5.0), ops.trace());
+}
+
+test "OpsBuilder offset and pow" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    // Test matrix
+    var mat = try Matrix(f64).init(arena.allocator(), 2, 2);
+    mat.at(0, 0).* = 1.0;
+    mat.at(0, 1).* = 2.0;
+    mat.at(1, 0).* = 3.0;
+    mat.at(1, 1).* = 4.0;
+
+    // Test offset
+    var ops1 = try OpsBuilder(f64).init(arena.allocator(), mat);
+    try ops1.offset(5.0);
+    var result1 = ops1.toOwned();
+    defer result1.deinit();
+    
+    try expectEqual(@as(f64, 6.0), result1.at(0, 0).*);
+    try expectEqual(@as(f64, 7.0), result1.at(0, 1).*);
+    try expectEqual(@as(f64, 8.0), result1.at(1, 0).*);
+    try expectEqual(@as(f64, 9.0), result1.at(1, 1).*);
+
+    // Test pow
+    var ops2 = try OpsBuilder(f64).init(arena.allocator(), mat);
+    try ops2.pow(2.0);
+    var result2 = ops2.toOwned();
+    defer result2.deinit();
+    
+    try expectEqual(@as(f64, 1.0), result2.at(0, 0).*);
+    try expectEqual(@as(f64, 4.0), result2.at(0, 1).*);
+    try expectEqual(@as(f64, 9.0), result2.at(1, 0).*);
+    try expectEqual(@as(f64, 16.0), result2.at(1, 1).*);
 }
