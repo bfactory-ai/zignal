@@ -23,15 +23,13 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
-const Matrix = @import("matrix.zig").Matrix;
-const svd = @import("svd.zig").svd;
-const SMatrix = @import("matrix.zig").SMatrix;
-const Point = @import("geometry/Point.zig").Point;
-const Point2d = @import("geometry/Point.zig").Point2d;
-const Point3d = @import("geometry/Point.zig").Point3d;
 const Image = @import("image.zig").Image;
+const Matrix = @import("matrix.zig").Matrix;
 const Rgb = @import("color.zig").Rgb;
 const Rgba = @import("color.zig").Rgba;
+const SMatrix = @import("matrix.zig").SMatrix;
+const svd = @import("svd.zig").svd;
+const OpsBuilder = @import("matrix/OpsBuilder.zig").OpsBuilder;
 
 /// Principal Component Analysis for arbitrary-dimensional vectors.
 /// Uses SIMD-accelerated vector operations for optimal performance.
@@ -42,7 +40,6 @@ pub fn PrincipalComponentAnalysis(comptime T: type, comptime dim: usize) type {
     return struct {
         const Self = @This();
         const Vec = @Vector(dim, T);
-        const PointType = Point(T, dim);
 
         /// Mean vector for centering data
         mean: Vec,
@@ -98,7 +95,7 @@ pub fn PrincipalComponentAnalysis(comptime T: type, comptime dim: usize) type {
             self.mean = self.mean / @as(Vec, @splat(@floatFromInt(n_samples)));
 
             // Create centered data matrix
-            var data_matrix = try Matrix(T).init(self.allocator, n_samples, dim);
+            var data_matrix: Matrix(T) = try .init(self.allocator, n_samples, dim);
             defer data_matrix.deinit();
 
             for (vectors, 0..) |vec, i| {
@@ -117,7 +114,6 @@ pub fn PrincipalComponentAnalysis(comptime T: type, comptime dim: usize) type {
                 try self.computeComponentsFromCovariance(&data_matrix, actual_components);
             }
         }
-
 
         /// Project a vector onto the principal components.
         /// Returns the coefficients in PCA space.
@@ -140,8 +136,6 @@ pub fn PrincipalComponentAnalysis(comptime T: type, comptime dim: usize) type {
             return coefficients;
         }
 
-
-
         /// Reconstruct a vector from PCA coefficients.
         pub fn reconstruct(self: Self, coefficients: []const T) !Vec {
             if (self.num_components == 0) return error.NotFitted;
@@ -161,20 +155,33 @@ pub fn PrincipalComponentAnalysis(comptime T: type, comptime dim: usize) type {
             return result;
         }
 
-
         /// Get the mean vector
         pub fn getMean(self: Self) Vec {
             return self.mean;
         }
 
-
-
-
-        // Private helper methods
-
+        /// Compute principal components using the covariance matrix approach.
+        ///
+        /// This method is efficient when n_samples > dimensions because it computes
+        /// the covariance matrix C = X^T * X / (n-1), which is only dim × dim.
+        ///
+        /// Mathematical basis:
+        /// - The eigenvectors of the covariance matrix are the principal components
+        /// - The eigenvalues represent the variance along each component
+        /// - We directly get the components without additional projection
+        ///
+        /// Example: For 1000 RGB images (1000×3 matrix), we compute a 3×3 covariance
+        /// matrix instead of a 1000×1000 Gram matrix, making it much more efficient.
         fn computeComponentsFromCovariance(self: *Self, data_matrix: *Matrix(T), num_components: usize) !void {
             // Compute covariance matrix (X^T * X) / (n-1)
-            var cov_matrix = try computeScaledMatrixProduct(self.allocator, data_matrix, true);
+            const n_samples = data_matrix.rows;
+            const scale = 1.0 / @as(T, @floatFromInt(n_samples - 1));
+            
+            var ops = try OpsBuilder(T).init(self.allocator, data_matrix.*);
+            defer ops.deinit();
+            try ops.covariance();
+            try ops.scale(scale);
+            var cov_matrix = ops.toOwned();
             defer cov_matrix.deinit();
 
             const n = cov_matrix.rows;
@@ -182,7 +189,7 @@ pub fn PrincipalComponentAnalysis(comptime T: type, comptime dim: usize) type {
             // Convert to static matrix for SVD - keep size reasonable
             if (n > 64) return error.DimensionTooLarge;
 
-            var cov_static: SMatrix(T, 64, 64) = std.mem.zeroes(SMatrix(T, 64, 64));
+            var cov_static: SMatrix(T, 64, 64) = .initAll(0);
             for (0..n) |i| {
                 for (0..n) |j| {
                     cov_static.items[i][j] = cov_matrix.at(i, j).*;
@@ -222,9 +229,32 @@ pub fn PrincipalComponentAnalysis(comptime T: type, comptime dim: usize) type {
             }
         }
 
+        /// Compute principal components using the Gram matrix approach.
+        ///
+        /// This method is efficient when n_samples ≤ dimensions because it computes
+        /// the Gram matrix G = X * X^T / (n-1), which is only n_samples × n_samples.
+        ///
+        /// Mathematical basis:
+        /// - The Gram matrix and covariance matrix share the same non-zero eigenvalues
+        /// - The eigenvectors of G are related to the principal components through X
+        /// - We must project the eigenvectors back: PC_i = X^T * u_i / sqrt(λ_i * n)
+        ///
+        /// Why the projection step?
+        /// - Eigenvectors of G live in sample space, not feature space
+        /// - We need to transform them back to get the actual principal components
+        ///
+        /// Example: For 10 high-dimensional vectors (10×1000 matrix), we compute a
+        /// 10×10 Gram matrix instead of a 1000×1000 covariance matrix.
         fn computeComponentsFromGram(self: *Self, data_matrix: *Matrix(T), num_components: usize) !void {
             // Compute Gram matrix (X * X^T) / (n-1)
-            var gram_matrix = try computeScaledMatrixProduct(self.allocator, data_matrix, false);
+            const n_samples = data_matrix.rows;
+            const scale = 1.0 / @as(T, @floatFromInt(n_samples - 1));
+            
+            var ops = try OpsBuilder(T).init(self.allocator, data_matrix.*);
+            defer ops.deinit();
+            try ops.gram();
+            try ops.scale(scale);
+            var gram_matrix = ops.toOwned();
             defer gram_matrix.deinit();
 
             const n = gram_matrix.rows;
@@ -370,8 +400,6 @@ pub fn imageToIntensityPoints(allocator: Allocator, image: Image(u8)) ![]@Vector
     return points;
 }
 
-
-
 /// Convert intensity points back to a grayscale image.
 /// Reconstructs an image from 1D intensity points.
 pub fn intensityPointsToImage(allocator: Allocator, points: []const @Vector(1, f64), rows: usize, cols: usize) !Image(u8) {
@@ -387,44 +415,6 @@ pub fn intensityPointsToImage(allocator: Allocator, points: []const @Vector(1, f
     return image;
 }
 
-
-
-// Helper functions
-
-/// Compute matrix product and scale by (n-1) for covariance or Gram matrices
-fn computeScaledMatrixProduct(allocator: Allocator, data: *Matrix(f64), transpose_first: bool) !Matrix(f64) {
-    const n_samples = data.rows;
-    const n_features = data.cols;
-    const scale = @as(f64, @floatFromInt(n_samples - 1));
-
-    if (transpose_first) {
-        // Compute X^T * X (covariance approach)
-        var result = try Matrix(f64).init(allocator, n_features, n_features);
-        for (0..n_features) |i| {
-            for (0..n_features) |j| {
-                var sum: f64 = 0;
-                for (0..n_samples) |k| {
-                    sum += data.at(k, i).* * data.at(k, j).*;
-                }
-                result.at(i, j).* = sum / scale;
-            }
-        }
-        return result;
-    } else {
-        // Compute X * X^T (Gram approach)
-        var result = try Matrix(f64).init(allocator, n_samples, n_samples);
-        for (0..n_samples) |i| {
-            for (0..n_samples) |j| {
-                var sum: f64 = 0;
-                for (0..n_features) |k| {
-                    sum += data.at(i, k).* * data.at(j, k).*;
-                }
-                result.at(i, j).* = sum / scale;
-            }
-        }
-        return result;
-    }
-}
 
 // Tests
 
@@ -466,8 +456,6 @@ test "PCA on 2D vectors" {
     try std.testing.expect(@abs(reconstructed[0] - 4.0) < 1e-10);
     try std.testing.expect(@abs(reconstructed[1] - 5.0) < 1e-10);
 }
-
-
 
 test "Generic color to point conversion" {
     _ = std.testing.allocator;
@@ -538,7 +526,6 @@ test "Generic image to color points conversion" {
     try std.testing.expectEqual(image.data[0].b, reconstructed.data[0].b);
 }
 
-
 test "PCA on image color data" {
     const allocator = std.testing.allocator;
 
@@ -563,11 +550,11 @@ test "PCA on image color data" {
 
     // Test basic functionality
     try std.testing.expect(pca.num_components == 1);
-    
+
     // Project and reconstruct a point
     const coeffs = try pca.project(color_points[0]);
     defer allocator.free(coeffs);
-    
+
     const reconstructed = try pca.reconstruct(coeffs);
     _ = reconstructed; // Just verify it works
 }
