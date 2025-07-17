@@ -200,6 +200,46 @@ pub fn OpsBuilder(comptime T: type) type {
             try self.gemm(self.result, true, false, 1.0, 0.0, null);
         }
 
+        /// Helper function for optimized SIMD GEMM kernel
+        /// Both matrices must be arranged for row-major access
+        fn simdGemmKernel(
+            comptime VecType: type,
+            comptime vec_len: usize,
+            result: *Matrix(T),
+            matrix_a: Matrix(T),
+            matrix_b: Matrix(T),
+            alpha: T,
+            a_rows: usize,
+            a_cols: usize,
+            b_cols: usize,
+        ) void {
+            // Both matrices are now guaranteed to be accessed row-wise
+            for (0..a_rows) |i| {
+                for (0..b_cols) |j| {
+                    var accumulator: T = 0;
+
+                    // Process vec_len elements at once
+                    var k: usize = 0;
+                    while (k + vec_len <= a_cols) : (k += vec_len) {
+                        // Load vectors from both matrices (both are row-major access)
+                        const a_vec: VecType = matrix_a.items[i * a_cols + k .. i * a_cols + k + vec_len][0..vec_len].*;
+                        const b_vec: VecType = matrix_b.items[j * a_cols + k .. j * a_cols + k + vec_len][0..vec_len].*;
+
+                        // Vectorized multiply-accumulate
+                        const prod_vec = a_vec * b_vec;
+                        accumulator += @reduce(.Add, prod_vec);
+                    }
+
+                    // Handle remainder elements
+                    while (k < a_cols) : (k += 1) {
+                        accumulator += matrix_a.at(i, k).* * matrix_b.at(j, k).*;
+                    }
+
+                    result.at(i, j).* += alpha * accumulator;
+                }
+            }
+        }
+
         /// General Matrix Multiply (GEMM): C = α * op(A) * op(B) + β * C
         ///
         /// This is the fundamental matrix operation that unifies many matrix computations:
@@ -252,15 +292,14 @@ pub fn OpsBuilder(comptime T: type) type {
 
             // Skip computation if alpha is zero
             if (alpha != 0) {
-                // For the most common case: A * B (no transposes), use optimized SIMD
-                if (!trans_a and !trans_b) {
-                    const vec_len = std.simd.suggestVectorLength(T) orelse 1;
+                const vec_len = std.simd.suggestVectorLength(T) orelse 1;
 
-                    if (vec_len > 1) {
-                        // Optimized SIMD implementation with cache-friendly access patterns
-                        const VecType = @Vector(vec_len, T);
+                if (vec_len > 1) {
+                    // Enable SIMD for all 4 transpose combinations
+                    const VecType = @Vector(vec_len, T);
 
-                        // Transpose B for cache-friendly row-major access
+                    if (!trans_a and !trans_b) {
+                        // Case 1: A * B - transpose B for cache-friendly row-major access
                         var b_transposed = try Matrix(T).init(self.allocator, b_cols, a_cols);
                         defer b_transposed.deinit();
 
@@ -270,45 +309,47 @@ pub fn OpsBuilder(comptime T: type) type {
                             }
                         }
 
-                        // Optimized SIMD kernel
-                        for (0..a_rows) |i| {
-                            for (0..b_cols) |j| {
-                                var accumulator: T = 0;
+                        simdGemmKernel(VecType, vec_len, &result, self.result, b_transposed, alpha, a_rows, a_cols, b_cols);
+                    } else if (trans_a and !trans_b) {
+                        // Case 2: A^T * B - transpose A for cache-friendly row-major access
+                        var a_transposed = try Matrix(T).init(self.allocator, a_rows, a_cols);
+                        defer a_transposed.deinit();
 
-                                // Process vec_len elements at once
-                                var k: usize = 0;
-                                while (k + vec_len <= a_cols) : (k += vec_len) {
-                                    // Load vectors from both matrices (both are now row-major access)
-                                    const a_vec: VecType = self.result.items[i * a_cols + k .. i * a_cols + k + vec_len][0..vec_len].*;
-                                    const b_vec: VecType = b_transposed.items[j * a_cols + k .. j * a_cols + k + vec_len][0..vec_len].*;
-
-                                    // Vectorized multiply-accumulate
-                                    const prod_vec = a_vec * b_vec;
-                                    accumulator += @reduce(.Add, prod_vec);
-                                }
-
-                                // Handle remainder elements
-                                while (k < a_cols) : (k += 1) {
-                                    accumulator += self.result.at(i, k).* * b_transposed.at(j, k).*;
-                                }
-
-                                result.at(i, j).* += alpha * accumulator;
+                        // Transpose A: a_transposed[i,j] = A[j,i]
+                        for (0..a_cols) |k| {
+                            for (0..a_rows) |i| {
+                                a_transposed.at(i, k).* = self.result.at(k, i).*;
                             }
                         }
-                    } else {
-                        // No SIMD support, use scalar implementation
-                        for (0..a_rows) |i| {
-                            for (0..b_cols) |j| {
-                                var accumulator: T = 0;
-                                for (0..a_cols) |k| {
-                                    accumulator += self.result.at(i, k).* * other.at(k, j).*;
+
+                        // Handle special case when A and B are the same matrix (for covariance)
+                        if (self.result.items.ptr == other.items.ptr and 
+                            self.result.rows == other.rows and 
+                            self.result.cols == other.cols) {
+                            // For covariance (A^T * A), we need to also use transposed for B
+                            simdGemmKernel(VecType, vec_len, &result, a_transposed, a_transposed, alpha, a_rows, a_cols, b_cols);
+                        } else {
+                            // General case: transpose B for row-wise access
+                            var b_transposed = try Matrix(T).init(self.allocator, b_cols, a_cols);
+                            defer b_transposed.deinit();
+
+                            for (0..a_cols) |k| {
+                                for (0..b_cols) |j| {
+                                    b_transposed.at(j, k).* = other.at(k, j).*;
                                 }
-                                result.at(i, j).* += alpha * accumulator;
                             }
+
+                            simdGemmKernel(VecType, vec_len, &result, a_transposed, b_transposed, alpha, a_rows, a_cols, b_cols);
                         }
+                    } else if (!trans_a and trans_b) {
+                        // Case 3: A * B^T - no transpose needed, B^T is naturally row-wise
+                        simdGemmKernel(VecType, vec_len, &result, self.result, other, alpha, a_rows, a_cols, b_cols);
+                    } else if (trans_a and trans_b) {
+                        // Case 4: A^T * B^T - no transpose needed, both naturally row-wise
+                        simdGemmKernel(VecType, vec_len, &result, self.result, other, alpha, a_rows, a_cols, b_cols);
                     }
                 } else {
-                    // General case with transpose support (scalar implementation)
+                    // No SIMD support, use scalar implementation for all transpose combinations
                     for (0..a_rows) |i| {
                         for (0..b_cols) |j| {
                             var accumulator: T = 0;
@@ -625,6 +666,71 @@ test "OpsBuilder GEMM operations" {
     try expectEqual(@as(usize, 3), cov.cols);
     try expectEqual(@as(f32, 17.0), cov.at(0, 0).*); // 1*1 + 4*4
     try expectEqual(@as(f32, 22.0), cov.at(0, 1).*); // 1*2 + 4*5
+}
+
+test "OpsBuilder SIMD case 2: A^T * B with same matrix (covariance)" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    // Create a test matrix
+    var data = try Matrix(f32).init(arena.allocator(), 4, 3);
+    data.at(0, 0).* = 1.0;
+    data.at(0, 1).* = 2.0;
+    data.at(0, 2).* = 3.0;
+    data.at(1, 0).* = 4.0;
+    data.at(1, 1).* = 5.0;
+    data.at(1, 2).* = 6.0;
+    data.at(2, 0).* = 7.0;
+    data.at(2, 1).* = 8.0;
+    data.at(2, 2).* = 9.0;
+    data.at(3, 0).* = 10.0;
+    data.at(3, 1).* = 11.0;
+    data.at(3, 2).* = 12.0;
+
+    // Test covariance using OpsBuilder (should use SIMD)
+    var ops1: OpsBuilder(f32) = try .init(arena.allocator(), data);
+    try ops1.covariance(); // This calls gemm(self.result, true, false, 1.0, 0.0, null)
+    const simd_result = ops1.toOwned();
+
+    // Compute expected result manually
+    var expected = try Matrix(f32).init(arena.allocator(), 3, 3);
+    @memset(expected.items, 0);
+
+    // Compute A^T * A manually
+    for (0..3) |i| {
+        for (0..3) |j| {
+            var sum: f32 = 0;
+            for (0..4) |k| {
+                sum += data.at(k, i).* * data.at(k, j).*;
+            }
+            expected.at(i, j).* = sum;
+        }
+    }
+
+    // Verify dimensions
+    try expectEqual(@as(usize, 3), simd_result.rows);
+    try expectEqual(@as(usize, 3), simd_result.cols);
+
+    // Verify values match
+    for (0..3) |i| {
+        for (0..3) |j| {
+            const diff = @abs(simd_result.at(i, j).* - expected.at(i, j).*);
+            try std.testing.expect(diff < 1e-5);
+        }
+    }
+
+    // Also test direct GEMM call with same matrix
+    var ops2: OpsBuilder(f32) = try .init(arena.allocator(), data);
+    try ops2.gemm(data, true, false, 1.0, 0.0, null);
+    const direct_result = ops2.toOwned();
+
+    // Verify direct GEMM gives same result
+    for (0..3) |i| {
+        for (0..3) |j| {
+            const diff = @abs(direct_result.at(i, j).* - expected.at(i, j).*);
+            try std.testing.expect(diff < 1e-5);
+        }
+    }
 }
 
 test "OpsBuilder matrix operations: add, sub, scale, transpose" {
