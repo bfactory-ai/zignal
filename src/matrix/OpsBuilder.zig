@@ -110,69 +110,18 @@ pub fn OpsBuilder(comptime T: type) type {
             }
 
             // Use LU decomposition for larger matrices
-            return try self.determinantLU();
-        }
-
-        /// Computes determinant using LU decomposition with partial pivoting
-        /// det(A) = det(P) * det(L) * det(U) = ±1 * 1 * product(diagonal of U)
-        fn determinantLU(self: *Self) !T {
-            const n = self.result.rows;
-
-            // Create a copy of the matrix for LU decomposition
-            var lu = try Matrix(T).init(self.allocator, n, n);
-            defer lu.deinit();
-            @memcpy(lu.items, self.result.items);
-
-            var sign: T = 1.0; // Track sign changes from row swaps
-
-            // Perform LU decomposition with partial pivoting
-            for (0..n) |pivot_col| {
-                // Find pivot
-                var max_row = pivot_col;
-                var max_val = @abs(lu.at(pivot_col, pivot_col).*);
-
-                for (pivot_col + 1..n) |row_idx| {
-                    const val = @abs(lu.at(row_idx, pivot_col).*);
-                    if (val > max_val) {
-                        max_val = val;
-                        max_row = row_idx;
-                    }
-                }
-
-                // Check for zero pivot (singular matrix)
-                if (max_val < std.math.floatEps(T) * 10) {
-                    return 0; // Determinant is zero
-                }
-
-                // Swap rows if needed
-                if (max_row != pivot_col) {
-                    sign = -sign; // Each row swap changes the sign
-                    for (0..n) |j| {
-                        const temp = lu.at(pivot_col, j).*;
-                        lu.at(pivot_col, j).* = lu.at(max_row, j).*;
-                        lu.at(max_row, j).* = temp;
-                    }
-                }
-
-                // Eliminate column below pivot
-                for (pivot_col + 1..n) |row_idx| {
-                    const factor = lu.at(row_idx, pivot_col).* / lu.at(pivot_col, pivot_col).*;
-                    lu.at(row_idx, pivot_col).* = factor; // Store L factor
-
-                    for (pivot_col + 1..n) |col_idx| {
-                        lu.at(row_idx, col_idx).* -= factor * lu.at(pivot_col, col_idx).*;
-                    }
-                }
-            }
-
-            // Calculate determinant as product of diagonal elements of U
-            var det = sign;
+            var lu_result = try self.lu();
+            defer lu_result.deinit();
+            
+            // det(A) = sign * product of diagonal elements of U
+            var det = lu_result.sign;
             for (0..n) |i| {
-                det *= lu.at(i, i).*;
+                det *= lu_result.u.at(i, i).*;
             }
-
+            
             return det;
         }
+
 
         /// Inverts the matrix using analytical formulas for small matrices (≤3x3)
         /// and Gauss-Jordan elimination for larger matrices
@@ -591,6 +540,124 @@ pub fn OpsBuilder(comptime T: type) type {
         /// Convenience method for common GEMM use case
         pub fn transposeDot(self: *Self, other: Matrix(T)) !void {
             try self.gemm(other, true, false, 1.0, 0.0, null);
+        }
+
+        /// Result of LU decomposition
+        pub const LUResult = struct {
+            l: Matrix(T),      // Lower triangular matrix
+            u: Matrix(T),      // Upper triangular matrix
+            p: []usize,        // Permutation vector
+            sign: T,           // Determinant sign (+1 or -1)
+            allocator: std.mem.Allocator,
+            
+            pub fn deinit(self: *@This()) void {
+                self.l.deinit();
+                self.u.deinit();
+                self.allocator.free(self.p);
+            }
+        };
+
+        /// Compute LU decomposition with partial pivoting
+        /// Returns L, U matrices and permutation vector such that PA = LU
+        pub fn lu(self: *Self) !LUResult {
+            const n = self.result.rows;
+            assert(n == self.result.cols); // Must be square
+            
+            // Create working copy
+            var work = try Matrix(T).init(self.allocator, n, n);
+            defer work.deinit();
+            @memcpy(work.items, self.result.items);
+            
+            // Initialize L as identity, U as zero
+            var l = try Matrix(T).init(self.allocator, n, n);
+            errdefer l.deinit();
+            var u = try Matrix(T).init(self.allocator, n, n);
+            errdefer u.deinit();
+            
+            // Initialize permutation vector
+            var p = try self.allocator.alloc(usize, n);
+            errdefer self.allocator.free(p);
+            for (0..n) |i| {
+                p[i] = i;
+            }
+            
+            // Initialize matrices
+            @memset(l.items, 0);
+            @memset(u.items, 0);
+            for (0..n) |i| {
+                l.at(i, i).* = 1.0; // L starts as identity
+            }
+            
+            var sign: T = 1.0;
+            
+            // Perform LU decomposition with partial pivoting
+            for (0..n) |pivot_col| {
+                // Find pivot
+                var max_row = pivot_col;
+                var max_val = @abs(work.at(pivot_col, pivot_col).*);
+                
+                for (pivot_col + 1..n) |row_idx| {
+                    const val = @abs(work.at(row_idx, pivot_col).*);
+                    if (val > max_val) {
+                        max_val = val;
+                        max_row = row_idx;
+                    }
+                }
+                
+                // Check for zero pivot (singular matrix)
+                if (max_val < std.math.floatEps(T) * 10) {
+                    // Continue with decomposition even if singular
+                    // User can check if U has zeros on diagonal
+                }
+                
+                // Swap rows if needed
+                if (max_row != pivot_col) {
+                    sign = -sign;
+                    // Swap in permutation vector
+                    const temp_p = p[pivot_col];
+                    p[pivot_col] = p[max_row];
+                    p[max_row] = temp_p;
+                    
+                    // Swap rows in work matrix
+                    for (0..n) |j| {
+                        const temp = work.at(pivot_col, j).*;
+                        work.at(pivot_col, j).* = work.at(max_row, j).*;
+                        work.at(max_row, j).* = temp;
+                    }
+                    
+                    // Swap rows in L (only the part already computed)
+                    for (0..pivot_col) |j| {
+                        const temp = l.at(pivot_col, j).*;
+                        l.at(pivot_col, j).* = l.at(max_row, j).*;
+                        l.at(max_row, j).* = temp;
+                    }
+                }
+                
+                // Copy pivot row to U
+                for (pivot_col..n) |j| {
+                    u.at(pivot_col, j).* = work.at(pivot_col, j).*;
+                }
+                
+                // Compute L column and eliminate
+                for (pivot_col + 1..n) |row_idx| {
+                    if (@abs(work.at(pivot_col, pivot_col).*) > std.math.floatEps(T)) {
+                        const factor = work.at(row_idx, pivot_col).* / work.at(pivot_col, pivot_col).*;
+                        l.at(row_idx, pivot_col).* = factor;
+                        
+                        for (pivot_col + 1..n) |col_idx| {
+                            work.at(row_idx, col_idx).* -= factor * work.at(pivot_col, col_idx).*;
+                        }
+                    }
+                }
+            }
+            
+            return LUResult{
+                .l = l,
+                .u = u,
+                .p = p,
+                .sign = sign,
+                .allocator = self.allocator,
+            };
         }
 
         /// Apply a function to all matrix elements with optional arguments
@@ -1623,4 +1690,80 @@ test "OpsBuilder offset and pow" {
     try expectEqual(@as(f64, 4.0), result2.at(0, 1).*);
     try expectEqual(@as(f64, 9.0), result2.at(1, 0).*);
     try expectEqual(@as(f64, 16.0), result2.at(1, 1).*);
+}
+
+test "OpsBuilder LU decomposition" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    // Test 3x3 matrix
+    var mat = try Matrix(f64).init(arena.allocator(), 3, 3);
+    mat.at(0, 0).* = 2.0;
+    mat.at(0, 1).* = 1.0;
+    mat.at(0, 2).* = 1.0;
+    mat.at(1, 0).* = 4.0;
+    mat.at(1, 1).* = 3.0;
+    mat.at(1, 2).* = 3.0;
+    mat.at(2, 0).* = 8.0;
+    mat.at(2, 1).* = 7.0;
+    mat.at(2, 2).* = 9.0;
+
+    var ops = try OpsBuilder(f64).init(arena.allocator(), mat);
+    defer ops.deinit();
+
+    // Compute LU decomposition
+    var lu_result = try ops.lu();
+    defer lu_result.deinit();
+
+    // Verify dimensions
+    try expectEqual(@as(usize, 3), lu_result.l.rows);
+    try expectEqual(@as(usize, 3), lu_result.l.cols);
+    try expectEqual(@as(usize, 3), lu_result.u.rows);
+    try expectEqual(@as(usize, 3), lu_result.u.cols);
+
+    // Verify L is lower triangular with 1s on diagonal
+    try expectEqual(@as(f64, 1.0), lu_result.l.at(0, 0).*);
+    try expectEqual(@as(f64, 1.0), lu_result.l.at(1, 1).*);
+    try expectEqual(@as(f64, 1.0), lu_result.l.at(2, 2).*);
+    try expectEqual(@as(f64, 0.0), lu_result.l.at(0, 1).*);
+    try expectEqual(@as(f64, 0.0), lu_result.l.at(0, 2).*);
+    try expectEqual(@as(f64, 0.0), lu_result.l.at(1, 2).*);
+
+    // Verify U is upper triangular
+    try expectEqual(@as(f64, 0.0), lu_result.u.at(1, 0).*);
+    try expectEqual(@as(f64, 0.0), lu_result.u.at(2, 0).*);
+    try expectEqual(@as(f64, 0.0), lu_result.u.at(2, 1).*);
+
+    // Reconstruct PA = LU
+    var pa = try Matrix(f64).init(arena.allocator(), 3, 3);
+    defer pa.deinit();
+    
+    // Apply permutation: PA[i,j] = A[p[i],j]
+    for (0..3) |i| {
+        for (0..3) |j| {
+            pa.at(i, j).* = mat.at(lu_result.p[i], j).*;
+        }
+    }
+
+    // Compute L * U
+    var lu_product = try Matrix(f64).init(arena.allocator(), 3, 3);
+    defer lu_product.deinit();
+    @memset(lu_product.items, 0);
+
+    for (0..3) |i| {
+        for (0..3) |j| {
+            for (0..3) |k| {
+                lu_product.at(i, j).* += lu_result.l.at(i, k).* * lu_result.u.at(k, j).*;
+            }
+        }
+    }
+
+    // Verify PA = LU (within numerical tolerance)
+    const eps = 1e-10;
+    for (0..3) |i| {
+        for (0..3) |j| {
+            const diff = @abs(pa.at(i, j).* - lu_product.at(i, j).*);
+            try std.testing.expect(diff < eps);
+        }
+    }
 }
