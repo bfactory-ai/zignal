@@ -15,7 +15,6 @@ pub fn build(b: *std.Build) void {
         "seam_carving",
         "whitebalance",
         "fdm",
-        "pca_example",
     };
 
     // List of additional examples to build as executables
