@@ -44,16 +44,18 @@ jobs:
 
     - name: Build wheel
       run: |
+        source .venv/bin/activate
         cd bindings/python
-        uv run python build_wheels.py --optimize ReleaseFast
+        python build_wheels.py --optimize ReleaseFast
       env:
         ZIG_OPTIMIZE: ReleaseFast
 
     - name: Test wheel
       run: |
+        source .venv/bin/activate
         cd bindings/python
         uv pip install dist/*.whl
-        uv run python -c "import zignal; red = zignal.Rgb(255, 0, 0); print(f'Test passed: {red}, hex=0x{red.to_hex():06x}')"
+        python -c "import zignal; red = zignal.Rgb(255, 0, 0); print(f'Test passed: {red}, hex=0x{red.to_hex():06x}')"
 
     - name: Upload wheels as artifacts
       uses: actions/upload-artifact@v4
@@ -85,8 +87,9 @@ jobs:
 
     - name: Build sdist
       run: |
+        source .venv/bin/activate
         cd bindings/python
-        uv build --sdist
+        python -m build --sdist
 
     - name: Upload sdist as artifact
       uses: actions/upload-artifact@v4
