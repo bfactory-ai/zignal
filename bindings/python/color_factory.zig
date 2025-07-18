@@ -322,7 +322,7 @@ pub fn createColorBinding(
         }
 
         // Custom init function with validation
-        pub fn init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) c_int {
+        pub fn init(self_obj: [*c]c.PyObject, args: [*c]c.PyObject, kwds: [*c]c.PyObject) callconv(.c) c_int {
             _ = kwds;
             const self = @as(*ObjectType, @ptrCast(self_obj));
 
@@ -330,7 +330,8 @@ pub fn createColorBinding(
             switch (fields.len) {
                 1 => {
                     var arg0: fields[0].type = undefined;
-                    if (c.PyArg_ParseTuple(args, py_utils.getFormatString(fields[0].type).ptr, &arg0) == 0) {
+                    const format = comptime std.fmt.comptimePrint("{s}", .{py_utils.getFormatString(fields[0].type)});
+                    if (c.PyArg_ParseTuple(args, format, &arg0) == 0) {
                         return -1;
                     }
 
@@ -346,8 +347,11 @@ pub fn createColorBinding(
                 2 => {
                     var arg0: fields[0].type = undefined;
                     var arg1: fields[1].type = undefined;
-                    const format = comptime py_utils.getFormatString(fields[0].type) ++ py_utils.getFormatString(fields[1].type);
-                    if (c.PyArg_ParseTuple(args, format.ptr, &arg0, &arg1) == 0) {
+                    const format = comptime std.fmt.comptimePrint("{s}{s}", .{
+                        py_utils.getFormatString(fields[0].type),
+                        py_utils.getFormatString(fields[1].type),
+                    });
+                    if (c.PyArg_ParseTuple(args, format, &arg0, &arg1) == 0) {
                         return -1;
                     }
 
@@ -387,8 +391,12 @@ pub fn createColorBinding(
                         var arg0: fields[0].type = undefined;
                         var arg1: fields[1].type = undefined;
                         var arg2: fields[2].type = undefined;
-                        const format = comptime py_utils.getFormatString(fields[0].type) ++ py_utils.getFormatString(fields[1].type) ++ py_utils.getFormatString(fields[2].type);
-                        if (c.PyArg_ParseTuple(args, format.ptr, &arg0, &arg1, &arg2) == 0) {
+                        const format = comptime std.fmt.comptimePrint("{s}{s}{s}", .{
+                            py_utils.getFormatString(fields[0].type),
+                            py_utils.getFormatString(fields[1].type),
+                            py_utils.getFormatString(fields[2].type),
+                        });
+                        if (c.PyArg_ParseTuple(args, format, &arg0, &arg1, &arg2) == 0) {
                             return -1;
                         }
 
@@ -409,8 +417,13 @@ pub fn createColorBinding(
                     var arg1: fields[1].type = undefined;
                     var arg2: fields[2].type = undefined;
                     var arg3: fields[3].type = undefined;
-                    const format = comptime py_utils.getFormatString(fields[0].type) ++ py_utils.getFormatString(fields[1].type) ++ py_utils.getFormatString(fields[2].type) ++ py_utils.getFormatString(fields[3].type);
-                    if (c.PyArg_ParseTuple(args, format.ptr, &arg0, &arg1, &arg2, &arg3) == 0) {
+                    const format = comptime std.fmt.comptimePrint("{s}{s}{s}{s}", .{
+                        py_utils.getFormatString(fields[0].type),
+                        py_utils.getFormatString(fields[1].type),
+                        py_utils.getFormatString(fields[2].type),
+                        py_utils.getFormatString(fields[3].type),
+                    });
+                    if (c.PyArg_ParseTuple(args, format, &arg0, &arg1, &arg2, &arg3) == 0) {
                         return -1;
                     }
 
@@ -437,7 +450,7 @@ pub fn createColorBinding(
             c.Py_TYPE(self_obj).*.tp_free.?(self_obj);
         }
 
-        pub fn new(type_obj: ?*c.PyTypeObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+        pub fn new(type_obj: [*c]c.PyTypeObject, args: [*c]c.PyObject, kwds: [*c]c.PyObject) callconv(.c) ?*c.PyObject {
             _ = args;
             _ = kwds;
 
