@@ -230,7 +230,22 @@ fn resolveVersion(b: *std.Build) std.SemanticVersion {
     // if (zignal_version.pre == null and zignal_version.build == null) return zignal_version;
 
     var code: u8 = undefined;
-    const git_describe_raw = b.runAllowFail(&.{ "git", "describe", "--tags" }, &code, .Ignore) catch return zignal_version;
+    const git_describe_raw = b.runAllowFail(&.{ "git", "describe", "--tags" }, &code, .Ignore) catch {
+        // If git describe fails (no tags), try to get commit count from git log
+        const git_count_raw = b.runAllowFail(&.{ "git", "rev-list", "--count", "HEAD" }, &code, .Ignore) catch return zignal_version;
+        const commit_count = std.mem.trim(u8, git_count_raw, " \n\r");
+
+        const git_hash_raw = b.runAllowFail(&.{ "git", "rev-parse", "--short", "HEAD" }, &code, .Ignore) catch return zignal_version;
+        const commit_hash = std.mem.trim(u8, git_hash_raw, " \n\r");
+
+        return .{
+            .major = zignal_version.major,
+            .minor = zignal_version.minor,
+            .patch = zignal_version.patch,
+            .pre = b.fmt("dev.{s}", .{commit_count}),
+            .build = commit_hash,
+        };
+    };
     const git_describe = std.mem.trim(u8, git_describe_raw, " \n\r");
 
     switch (std.mem.count(u8, git_describe, "-")) {
