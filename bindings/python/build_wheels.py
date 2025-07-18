@@ -45,6 +45,61 @@ PLATFORMS = [
 ]
 
 
+def update_version_from_zig() -> str:
+    """Update pyproject.toml version from Zig build system and return the version."""
+    print("\n=== Updating version from Zig build system ===")
+    
+    # Get the directory containing this script
+    script_dir = Path(__file__).parent
+    update_version_script = script_dir / "update_version.py"
+    
+    if not update_version_script.exists():
+        print(f"Warning: update_version.py not found at {update_version_script}")
+        print("Proceeding with existing version in pyproject.toml")
+        return get_current_version()
+    
+    try:
+        result = subprocess.run(
+            [sys.executable, str(update_version_script)],
+            cwd=script_dir,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        print(result.stdout.strip())
+        
+        # Extract the version from the output
+        lines = result.stdout.strip().split('\n')
+        for line in lines:
+            if line.startswith("Zig resolved version:"):
+                return line.split(":", 1)[1].strip()
+        
+        # Fallback to reading from pyproject.toml if version not found in output
+        return get_current_version()
+        
+    except subprocess.CalledProcessError as e:
+        print(f"Warning: Failed to update version from Zig: {e}")
+        print(f"stderr: {e.stderr}")
+        print("Proceeding with existing version in pyproject.toml")
+        return get_current_version()
+
+
+def get_current_version() -> str:
+    """Get the current version from pyproject.toml."""
+    script_dir = Path(__file__).parent
+    pyproject_path = script_dir / "pyproject.toml"
+    
+    if not pyproject_path.exists():
+        return "unknown"
+    
+    import re
+    content = pyproject_path.read_text()
+    match = re.search(r'^version\s*=\s*"([^"]*)"', content, re.MULTILINE)
+    if match:
+        return match.group(1)
+    return "unknown"
+
+
 def run_command(cmd: List[str], cwd: Path = None, env: dict = None) -> subprocess.CompletedProcess:
     """Run a command and return the result."""
     print(f"Running: {' '.join(cmd)}")
@@ -182,6 +237,11 @@ def main():
         choices=["Debug", "ReleaseSafe", "ReleaseFast", "ReleaseSmall"],
         help="Zig optimization mode (default: ReleaseFast)"
     )
+    parser.add_argument(
+        "--skip-version-update",
+        action="store_true",
+        help="Skip automatic version update from Zig build system"
+    )
     
     global args
     args = parser.parse_args()
@@ -208,7 +268,15 @@ def main():
             print("Use --list-platforms to see available platforms")
             sys.exit(1)
     
+    # Update version from Zig build system (unless skipped)
+    if args.skip_version_update:
+        print("Skipping version update (--skip-version-update specified)")
+        version = get_current_version()
+    else:
+        version = update_version_from_zig()
+    
     print(f"Building wheels for {len(platforms_to_build)} platform(s) with optimization: {args.optimize}")
+    print(f"Version: {version}")
     
     wheels = build_all_wheels(platforms_to_build)
     

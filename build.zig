@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const zignal_version = std.SemanticVersion.parse(@import("build.zig.zon").version) catch unreachable;
 const min_zig_version = std.SemanticVersion.parse(@import("build.zig.zon").minimum_zig_version) catch unreachable;
 
 pub fn build(b: *Build) void {
@@ -82,6 +83,26 @@ pub fn build(b: *Build) void {
     // Set default behavior
     b.default_step.dependOn(docs_step);
     b.default_step.dependOn(fmt_step);
+
+    // Version info step
+    const version_info_step = b.step("version-info", "Print the resolved version information");
+    const version_info_exe = b.addExecutable(.{
+        .name = "version-info",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/version_info.zig"),
+            .target = target,
+            .optimize = .Debug,
+        }),
+    });
+
+    // Add build options to version info executable
+    const version_options = b.addOptions();
+    const resolved_version = resolveVersion(b);
+    version_options.addOption([]const u8, "version", b.fmt("{f}", .{resolved_version}));
+    version_info_exe.root_module.addOptions("build_options", version_options);
+
+    const version_info_run = b.addRunArtifact(version_info_exe);
+    version_info_step.dependOn(&version_info_run.step);
 
     // Python bindings
     const py_bindings_step = b.step("python-bindings", "Build the python bindings");
@@ -189,3 +210,62 @@ const Build = blk: {
         break :blk std.Build;
     }
 };
+
+/// Returns `MAJOR.MINOR.PATCH-dev` when `git describe` fails.
+fn resolveVersion(b: *std.Build) std.SemanticVersion {
+    const version_string = b.option([]const u8, "version-string", "Override the version of this build");
+    if (version_string) |semver_string| {
+        return std.SemanticVersion.parse(semver_string) catch |err| {
+            std.debug.panic("Expected -Dversion-string={s} to be a semantic version: {}", .{ semver_string, err });
+        };
+    }
+
+    if (zignal_version.pre == null and zignal_version.build == null) return zignal_version;
+
+    var code: u8 = undefined;
+    const git_describe_raw = b.runAllowFail(&.{ "git", "describe", "--tags" }, &code, .Ignore) catch return zignal_version;
+    const git_describe = std.mem.trim(u8, git_describe_raw, " \n\r");
+    const git_branch_raw = b.runAllowFail(&.{ "git", "branch", "--show-current" }, &code, .Ignore) catch return zignal_version;
+    const git_branch = std.mem.trim(u8, git_branch_raw, " \n\r");
+    const dev_prefix = if (std.mem.eql(u8, git_branch, "master")) "dev" else git_branch;
+
+    switch (std.mem.count(u8, git_describe, "-")) {
+        0 => {
+            // Tagged release version (e.g. 1.0.0).
+            std.debug.assert(std.mem.eql(u8, git_describe, b.fmt("{}", .{zignal_version})));
+            return zignal_version;
+        },
+        2 => {
+            // Untagged development build (e.g. 2.0.1-57-g9b7de08de).
+            var it = std.mem.splitScalar(u8, git_describe, '-');
+            const previous_tag = it.first();
+            const commit_count = it.next().?;
+            const commit_ghash = it.next().?;
+
+            const previous_version = std.SemanticVersion.parse(previous_tag) catch unreachable;
+
+            // lviton_version must be greater than its previous version.
+            if (zignal_version.order(previous_version) != .gt) {
+                std.log.err("LViton version {} must newer than {}", .{
+                    zignal_version,
+                    previous_version,
+                });
+                std.process.exit(1);
+            }
+            // commit hash is prefixed with g in git describe.
+            std.debug.assert(std.mem.startsWith(u8, commit_ghash, "g"));
+
+            return .{
+                .major = zignal_version.major,
+                .minor = zignal_version.minor,
+                .patch = zignal_version.patch,
+                .pre = b.fmt("{s}.{s}", .{ dev_prefix, commit_count }),
+                .build = commit_ghash[1..],
+            };
+        },
+        else => {
+            std.debug.print("Unexpected 'git describe' output: '{s}'\n", .{git_describe});
+            std.process.exit(1);
+        },
+    }
+}

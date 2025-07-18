@@ -36,5 +36,11 @@ except ImportError as e:
     else:
         raise ImportError(f"_zignal extension not found in {pkg_dir}") from e
 
-__version__ = "0.1.0"
+# Get version dynamically from package metadata
+try:
+    from importlib.metadata import version
+    __version__ = version("zignal-processing")
+except Exception:
+    # Fallback if package not installed
+    __version__ = "unknown"
 __all__ = ["Rgb", "ImageRgb"]
