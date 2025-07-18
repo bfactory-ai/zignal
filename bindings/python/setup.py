@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 from setuptools import Extension, find_packages, setup
 from setuptools.command.build_ext import build_ext
@@ -42,13 +43,21 @@ class ZigBuildExt(build_ext):
                 f"which contains the build.zig file and source code."
             )
 
+        # Set up environment for Zig build to find Python headers
+        env = os.environ.copy()
+
+        # Get Python include directory
+        python_include = sysconfig.get_path('include')
+        env['PYTHON_INCLUDE_DIR'] = python_include
+        print(f"Setting PYTHON_INCLUDE_DIR={python_include}")
+
         # Build the Zig library with optimizations
         cmd = ["zig", "build", "python-bindings", f"-Doptimize={ext.zig_optimize}"]
         if ext.zig_target != "native":
             cmd.extend([f"-Dtarget={ext.zig_target}"])
 
         print(f"Running: {' '.join(cmd)} in {project_root}")
-        result = subprocess.run(cmd, cwd=project_root, capture_output=True, text=True)
+        result = subprocess.run(cmd, cwd=project_root, capture_output=True, text=True, env=env)
 
         if result.returncode != 0:
             print(f"Zig build failed with return code {result.returncode}", file=sys.stderr)
@@ -58,14 +67,6 @@ class ZigBuildExt(build_ext):
 
         # Find the built library
         lib_dir = project_root / "zig-out" / "lib"
-
-        # Debug: List all files in lib_dir
-        if lib_dir.exists():
-            print(f"DEBUG: Files in {lib_dir}:", file=sys.stderr)
-            for file in lib_dir.iterdir():
-                print(f"DEBUG:   {file.name}", file=sys.stderr)
-        else:
-            print(f"DEBUG: Library directory {lib_dir} does not exist", file=sys.stderr)
 
         # Look for the library with different possible extensions
         extensions = [".so", ".dylib", ".pyd", ".dll"]

@@ -97,7 +97,14 @@ pub fn build(b: *Build) void {
 
     // Link against libc for Python headers
     py_module.linkLibC();
-    
+
+    // Add Python include directory if provided via environment variable
+    if (std.process.getEnvVarOwned(b.allocator, "PYTHON_INCLUDE_DIR")) |python_include| {
+        py_module.addIncludePath(.{ .cwd_relative = python_include });
+    } else |_| {
+        // No Python include directory specified - will rely on system default paths
+    }
+
     // Add zignal module as dependency
     py_module.root_module.addImport("zignal", b.addModule("zignal", .{
         .root_source_file = b.path("src/root.zig"),
