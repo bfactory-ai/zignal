@@ -60,5 +60,5 @@ except ImportError as e:
         print(f"DEBUG: Extension file not found at {zignal_path}", file=sys.stderr)
         raise e
 
-__version__ = "0.1.0"
+__version__ = "0.1.3"
 __all__ = ["Rgb"]
