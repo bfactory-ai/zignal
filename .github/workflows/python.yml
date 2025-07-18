@@ -34,22 +34,26 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v2
 
+    - name: Create virtual environment
+      run: |
+        uv venv
+
     - name: Install build dependencies
       run: |
-        uv pip install --system --upgrade setuptools wheel build
+        uv pip install --upgrade setuptools wheel build
 
     - name: Build wheel
       run: |
         cd bindings/python
-        python build_wheels.py --optimize ReleaseFast
+        uv run python build_wheels.py --optimize ReleaseFast
       env:
         ZIG_OPTIMIZE: ReleaseFast
 
     - name: Test wheel
       run: |
         cd bindings/python
-        uv pip install --system dist/*.whl
-        python -c "import zignal; red = zignal.Rgb(255, 0, 0); print(f'Test passed: {red}, hex=0x{red.to_hex():06x}')"
+        uv pip install dist/*.whl
+        uv run python -c "import zignal; red = zignal.Rgb(255, 0, 0); print(f'Test passed: {red}, hex=0x{red.to_hex():06x}')"
 
     - name: Upload wheels as artifacts
       uses: actions/upload-artifact@v4
@@ -71,9 +75,13 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v2
 
+    - name: Create virtual environment
+      run: |
+        uv venv
+
     - name: Install build dependencies
       run: |
-        uv pip install --system --upgrade setuptools wheel build
+        uv pip install --upgrade setuptools wheel build
 
     - name: Build sdist
       run: |
