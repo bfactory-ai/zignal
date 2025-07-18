@@ -102,7 +102,7 @@ def get_zig_optimize():
 if __name__ == "__main__":
     setup(
         packages=find_packages(),
-        ext_modules=[ZigExtension("zignal.zignal", get_zig_target(), get_zig_optimize())],
+        ext_modules=[ZigExtension("zignal._zignal", get_zig_target(), get_zig_optimize())],
         cmdclass={"build_ext": ZigBuildExt},
         distclass=BinaryDistribution,
         zip_safe=False,

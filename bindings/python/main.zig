@@ -34,7 +34,7 @@ var zignal_module = c.PyModuleDef{
     .m_free = null,
 };
 
-pub export fn PyInit_zignal() ?*c.PyObject {
+pub export fn PyInit__zignal() ?*c.PyObject {
     const m = c.PyModule_Create(&zignal_module);
     if (m == null) return null;
 
