@@ -135,7 +135,20 @@ pub fn build(b: *Build) void {
             }
         },
         .macos => {
-            py_module.linkSystemLibrary("python3");
+            // On macOS, try to link against specific Python library if provided
+            if (std.process.getEnvVarOwned(b.allocator, "PYTHON_LIBS_DIR")) |libs_dir| {
+                py_module.addLibraryPath(.{ .cwd_relative = libs_dir });
+
+                if (std.process.getEnvVarOwned(b.allocator, "PYTHON_LIB_NAME")) |lib_name| {
+                    py_module.linkSystemLibrary(lib_name);
+                } else |_| {
+                    // Fallback to default
+                    py_module.linkSystemLibrary("python3");
+                }
+            } else |_| {
+                // No specific Python library path - use system default
+                py_module.linkSystemLibrary("python3");
+            }
             py_module.linkSystemLibrary("dl");
             py_module.linkSystemLibrary("m");
         },

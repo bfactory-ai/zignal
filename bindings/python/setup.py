@@ -51,7 +51,7 @@ class ZigBuildExt(build_ext):
         env['PYTHON_INCLUDE_DIR'] = python_include
         print(f"Setting PYTHON_INCLUDE_DIR={python_include}")
 
-        # On Windows, we need to also provide the Python library for linking
+        # On Windows and macOS, we need to provide specific Python library information
         if sys.platform == "win32":
             # Get Python library directory (usually in libs subdirectory)
             python_prefix = sysconfig.get_path('stdlib')  # Usually C:\Python313\Lib
@@ -70,6 +70,32 @@ class ZigBuildExt(build_ext):
                 print(f"Setting PYTHON_LIB_NAME={python_lib_name}")
             else:
                 print(f"Warning: Python libs directory not found at {python_libs_dir}", file=sys.stderr)
+
+        elif sys.platform == "darwin":
+            # On macOS, Python can be installed as a framework or via package managers
+            # Try to detect the correct library path and name
+            version_info = sys.version_info
+            python_lib_name = f"python{version_info.major}.{version_info.minor}"
+
+            # Get library directory from sysconfig
+            try:
+                # For framework installations
+                lib_dir = sysconfig.get_config_var('LIBDIR')
+                if lib_dir and Path(lib_dir).exists():
+                    env['PYTHON_LIBS_DIR'] = lib_dir
+                    env['PYTHON_LIB_NAME'] = python_lib_name
+                    print(f"Setting PYTHON_LIBS_DIR={lib_dir}")
+                    print(f"Setting PYTHON_LIB_NAME={python_lib_name}")
+                else:
+                    # Fallback: try common framework path
+                    framework_lib = f"/Library/Frameworks/Python.framework/Versions/{version_info.major}.{version_info.minor}/lib"
+                    if Path(framework_lib).exists():
+                        env['PYTHON_LIBS_DIR'] = framework_lib
+                        env['PYTHON_LIB_NAME'] = python_lib_name
+                        print(f"Setting PYTHON_LIBS_DIR={framework_lib}")
+                        print(f"Setting PYTHON_LIB_NAME={python_lib_name}")
+            except Exception as e:
+                print(f"Warning: Could not detect macOS Python library info: {e}", file=sys.stderr)
 
         # Build the Zig library with optimizations
         cmd = ["zig", "build", "python-bindings", f"-Doptimize={ext.zig_optimize}"]
