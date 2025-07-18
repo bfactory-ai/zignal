@@ -29,7 +29,7 @@ fn imagergb_new(type_obj: ?*c.PyTypeObject, args: ?*c.PyObject, kwds: ?*c.PyObje
         // Initialize to null pointer to avoid undefined behavior
         obj.image_ptr = null;
     }
-    return @ptrCast(self);
+    return @as(?*c.PyObject, @ptrCast(self));
 }
 
 fn imagergb_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) c_int {
@@ -132,7 +132,7 @@ fn imagergb_load(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.Py
     const image_ptr = allocator.create(zignal.Image(zignal.Rgb)) catch {
         var img = image;
         img.deinit(allocator);
-        c.Py_DECREF(@ptrCast(self));
+        c.Py_DECREF(@as(*c.PyObject, @ptrCast(self)));
         c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
         return null;
     };
@@ -140,7 +140,7 @@ fn imagergb_load(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.Py
     image_ptr.* = image;
     self.?.image_ptr = image_ptr;
     
-    return @ptrCast(self);
+    return @as(?*c.PyObject, @ptrCast(self));
 }
 
 // Convert image to numpy array (zero-copy)
