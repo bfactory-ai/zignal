@@ -10,9 +10,34 @@ from pathlib import Path
 from typing import List, Tuple
 
 
+def get_native_platform():
+    """Get the platform configuration for the current system."""
+    import platform
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    
+    if system == "linux":
+        if machine in ["x86_64", "amd64"]:
+            return ("native", "linux_x86_64", ".so")
+        elif machine in ["aarch64", "arm64"]:
+            return ("native", "linux_aarch64", ".so")
+    elif system == "windows":
+        if machine in ["x86_64", "amd64"]:
+            return ("native", "win_amd64", ".pyd")
+        elif machine in ["aarch64", "arm64"]:
+            return ("native", "win_arm64", ".pyd")
+    elif system == "darwin":
+        if machine in ["x86_64", "amd64"]:
+            return ("native", "macosx_10_9_x86_64", ".dylib")
+        elif machine in ["aarch64", "arm64"]:
+            return ("native", "macosx_11_0_arm64", ".dylib")
+    
+    # Fallback - let setuptools determine the platform
+    return ("native", "", ".so")
+
 # Platform configurations: (zig_target, wheel_platform_tag, extension)
 PLATFORMS = [
-    ("native", "linux_x86_64", ".so"),  # Native Linux
+    get_native_platform(),  # Native platform
     # Cross-compilation targets (requires Python headers for target platforms)
     # ("x86_64-windows-msvc", "win_amd64", ".pyd"),
     # ("x86_64-macos-none", "macosx_10_9_x86_64", ".dylib"),
@@ -83,7 +108,11 @@ def create_wheel(
     # This ensures we use the same environment (venv or system) consistently
     python_exe = sys.executable
     
-    cmd = [python_exe, "setup.py", "bdist_wheel", "--plat-name", platform_tag]
+    # Build the command - only add --plat-name if we have a specific platform tag
+    cmd = [python_exe, "setup.py", "bdist_wheel"]
+    if platform_tag:  # Only specify platform if we have one
+        cmd.extend(["--plat-name", platform_tag])
+    
     result = run_command(cmd, cwd=bindings_dir, env=env)
     
     # Find the generated wheel

@@ -95,6 +95,9 @@ pub fn build(b: *Build) void {
         }),
     });
 
+    // Link against libc for Python headers
+    py_module.linkLibC();
+    
     // Add zignal module as dependency
     py_module.root_module.addImport("zignal", b.addModule("zignal", .{
         .root_source_file = b.path("src/root.zig"),
