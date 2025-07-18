@@ -494,7 +494,7 @@ pub fn generateRepr(comptime ObjectType: type, comptime ZigType: type) fn ([*c]c
 }
 
 /// Get format string for a type
-fn getFormatString(comptime T: type) []const u8 {
+pub fn getFormatString(comptime T: type) []const u8 {
     return switch (@typeInfo(T)) {
         .int => |info| if (info.signedness == .unsigned) "I" else "i",
         .float => "d",
@@ -551,6 +551,275 @@ pub fn generatePythonType(
         .tp_methods = generateMethods(ObjectType, ZigType, methods),
         .tp_getset = generateGetSetDefs(ObjectType),
         .tp_init = generateInit(ObjectType, ZigType),
+        .tp_new = generateNew(ObjectType),
+    };
+}
+
+// ============================================================================
+// COLOR TYPE FACTORY
+// ============================================================================
+
+/// Configuration for color type binding generation
+pub const ColorTypeConfig = struct {
+    /// Custom validation function (optional)
+    custom_validation: ?*const fn (field_name: []const u8, value: anytype) bool = null,
+    /// Custom error message for validation failures
+    validation_error: []const u8 = "Invalid color component value",
+    /// Custom methods to add to the type
+    custom_methods: []const MethodDescriptor = &.{},
+    /// Custom documentation for the type
+    custom_doc: ?[]const u8 = null,
+};
+
+/// Generate a complete color type binding with automatic property getters,
+/// validation, and standard color methods
+pub fn createColorBinding(
+    comptime name: []const u8,
+    comptime ZigColorType: type,
+    comptime config: ColorTypeConfig,
+) type {
+    // Generate the Python object type
+    const ObjectType = generateColorObjectType(ZigColorType);
+    
+    // Generate standard color methods
+    const standard_methods = generateStandardColorMethods(ObjectType, ZigColorType);
+    
+    // Combine standard and custom methods
+    const all_methods = standard_methods ++ config.custom_methods;
+    
+    return struct {
+        pub const PyObjectType = ObjectType;
+        pub const ZigType = ZigColorType;
+        
+        // Generate the Python type object
+        pub var TypeObject = generateColorPythonType(name, ObjectType, ZigColorType, all_methods, config);
+        
+        // Generate custom init with validation
+        pub fn init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) c_int {
+            _ = kwds;
+            const self = @as(*ObjectType, @ptrCast(self_obj.?));
+            const fields = @typeInfo(ZigColorType).@"struct".fields;
+            
+            // Parse arguments based on field count
+            switch (fields.len) {
+                1 => {
+                    var arg0: @TypeOf(@field(@as(ZigColorType, undefined), fields[0].name)) = undefined;
+                    if (c.PyArg_ParseTuple(args, getFormatString(fields[0].type).ptr, &arg0) == 0) {
+                        return -1;
+                    }
+                    
+                    // Validate if custom validation is provided
+                    if (config.custom_validation) |validator| {
+                        if (!validator(fields[0].name, arg0)) {
+                            c.PyErr_SetString(c.PyExc_ValueError, config.validation_error.ptr);
+                            return -1;
+                        }
+                    }
+                    
+                    @field(self, fields[0].name) = arg0;
+                },
+                2 => {
+                    var arg0: @TypeOf(@field(@as(ZigColorType, undefined), fields[0].name)) = undefined;
+                    var arg1: @TypeOf(@field(@as(ZigColorType, undefined), fields[1].name)) = undefined;
+                    const format = getFormatString(fields[0].type) ++ getFormatString(fields[1].type);
+                    if (c.PyArg_ParseTuple(args, format.ptr, &arg0, &arg1) == 0) {
+                        return -1;
+                    }
+                    
+                    // Validate if custom validation is provided
+                    if (config.custom_validation) |validator| {
+                        if (!validator(fields[0].name, arg0) or !validator(fields[1].name, arg1)) {
+                            c.PyErr_SetString(c.PyExc_ValueError, config.validation_error.ptr);
+                            return -1;
+                        }
+                    }
+                    
+                    @field(self, fields[0].name) = arg0;
+                    @field(self, fields[1].name) = arg1;
+                },
+                3 => {
+                    var arg0: @TypeOf(@field(@as(ZigColorType, undefined), fields[0].name)) = undefined;
+                    var arg1: @TypeOf(@field(@as(ZigColorType, undefined), fields[1].name)) = undefined;
+                    var arg2: @TypeOf(@field(@as(ZigColorType, undefined), fields[2].name)) = undefined;
+                    const format = getFormatString(fields[0].type) ++ getFormatString(fields[1].type) ++ getFormatString(fields[2].type);
+                    if (c.PyArg_ParseTuple(args, format.ptr, &arg0, &arg1, &arg2) == 0) {
+                        return -1;
+                    }
+                    
+                    // Validate if custom validation is provided
+                    if (config.custom_validation) |validator| {
+                        if (!validator(fields[0].name, arg0) or !validator(fields[1].name, arg1) or !validator(fields[2].name, arg2)) {
+                            c.PyErr_SetString(c.PyExc_ValueError, config.validation_error.ptr);
+                            return -1;
+                        }
+                    }
+                    
+                    @field(self, fields[0].name) = arg0;
+                    @field(self, fields[1].name) = arg1;
+                    @field(self, fields[2].name) = arg2;
+                },
+                4 => {
+                    var arg0: @TypeOf(@field(@as(ZigColorType, undefined), fields[0].name)) = undefined;
+                    var arg1: @TypeOf(@field(@as(ZigColorType, undefined), fields[1].name)) = undefined;
+                    var arg2: @TypeOf(@field(@as(ZigColorType, undefined), fields[2].name)) = undefined;
+                    var arg3: @TypeOf(@field(@as(ZigColorType, undefined), fields[3].name)) = undefined;
+                    const format = getFormatString(fields[0].type) ++ getFormatString(fields[1].type) ++ getFormatString(fields[2].type) ++ getFormatString(fields[3].type);
+                    if (c.PyArg_ParseTuple(args, format.ptr, &arg0, &arg1, &arg2, &arg3) == 0) {
+                        return -1;
+                    }
+                    
+                    // Validate if custom validation is provided
+                    if (config.custom_validation) |validator| {
+                        if (!validator(fields[0].name, arg0) or !validator(fields[1].name, arg1) or !validator(fields[2].name, arg2) or !validator(fields[3].name, arg3)) {
+                            c.PyErr_SetString(c.PyExc_ValueError, config.validation_error.ptr);
+                            return -1;
+                        }
+                    }
+                    
+                    @field(self, fields[0].name) = arg0;
+                    @field(self, fields[1].name) = arg1;
+                    @field(self, fields[2].name) = arg2;
+                    @field(self, fields[3].name) = arg3;
+                },
+                else => {
+                    c.PyErr_SetString(c.PyExc_TypeError, "Unsupported number of color components");
+                    return -1;
+                },
+            }
+            
+            return 0;
+        }
+    };
+}
+
+/// Generate a Python object type for a color type
+fn generateColorObjectType(comptime ZigColorType: type) type {
+    const fields = @typeInfo(ZigColorType).@"struct".fields;
+    
+    // Create the object type with ob_base and all color fields
+    var object_fields: [fields.len + 1]std.builtin.Type.StructField = undefined;
+    
+    // Add ob_base as first field
+    object_fields[0] = std.builtin.Type.StructField{
+        .name = "ob_base",
+        .type = c.PyObject,
+        .default_value_ptr = null,
+        .is_comptime = false,
+        .alignment = 0,
+    };
+    
+    // Add all color component fields
+    inline for (fields, 1..) |field, i| {
+        object_fields[i] = std.builtin.Type.StructField{
+            .name = field.name,
+            .type = field.type,
+            .default_value_ptr = null,
+            .is_comptime = false,
+            .alignment = 0,
+        };
+    }
+    
+    return @Type(.{
+        .@"struct" = .{
+            .layout = .@"extern",
+            .fields = &object_fields,
+            .decls = &.{},
+            .is_tuple = false,
+        },
+    });
+}
+
+/// Generate standard color methods (automatic detection of available methods)
+fn generateStandardColorMethods(comptime ObjectType: type, comptime ZigColorType: type) []const MethodDescriptor {
+    _ = ObjectType;
+    comptime var methods: []const MethodDescriptor = &.{};
+    
+    // Check for common color methods and add them automatically
+    if (@hasDecl(ZigColorType, "toHex")) {
+        methods = methods ++ &[_]MethodDescriptor{
+            .{ .name = "to_hex", .zig_method = "toHex", .doc = "Convert to hexadecimal representation" },
+        };
+    }
+    
+    if (@hasDecl(ZigColorType, "luma")) {
+        methods = methods ++ &[_]MethodDescriptor{
+            .{ .name = "luma", .zig_method = "luma", .doc = "Calculate perceptual luminance" },
+        };
+    }
+    
+    if (@hasDecl(ZigColorType, "isGray")) {
+        methods = methods ++ &[_]MethodDescriptor{
+            .{ .name = "is_gray", .zig_method = "isGray", .doc = "Check if color is grayscale" },
+        };
+    }
+    
+    if (@hasDecl(ZigColorType, "toGray")) {
+        methods = methods ++ &[_]MethodDescriptor{
+            .{ .name = "to_gray", .zig_method = "toGray", .doc = "Convert to grayscale" },
+        };
+    }
+    
+    if (@hasDecl(ZigColorType, "toRgb")) {
+        methods = methods ++ &[_]MethodDescriptor{
+            .{ .name = "to_rgb", .zig_method = "toRgb", .doc = "Convert to RGB color space" },
+        };
+    }
+    
+    if (@hasDecl(ZigColorType, "toHsl")) {
+        methods = methods ++ &[_]MethodDescriptor{
+            .{ .name = "to_hsl", .zig_method = "toHsl", .doc = "Convert to HSL color space" },
+        };
+    }
+    
+    if (@hasDecl(ZigColorType, "toHsv")) {
+        methods = methods ++ &[_]MethodDescriptor{
+            .{ .name = "to_hsv", .zig_method = "toHsv", .doc = "Convert to HSV color space" },
+        };
+    }
+    
+    if (@hasDecl(ZigColorType, "toLab")) {
+        methods = methods ++ &[_]MethodDescriptor{
+            .{ .name = "to_lab", .zig_method = "toLab", .doc = "Convert to CIELAB color space" },
+        };
+    }
+    
+    if (@hasDecl(ZigColorType, "toOklab")) {
+        methods = methods ++ &[_]MethodDescriptor{
+            .{ .name = "to_oklab", .zig_method = "toOklab", .doc = "Convert to Oklab color space" },
+        };
+    }
+    
+    if (@hasDecl(ZigColorType, "toOklch")) {
+        methods = methods ++ &[_]MethodDescriptor{
+            .{ .name = "to_oklch", .zig_method = "toOklch", .doc = "Convert to Oklch color space" },
+        };
+    }
+    
+    return methods;
+}
+
+/// Generate Python type object for color types
+fn generateColorPythonType(
+    comptime name: []const u8,
+    comptime ObjectType: type,
+    comptime ZigColorType: type,
+    comptime methods: []const MethodDescriptor,
+    comptime config: ColorTypeConfig,
+) c.PyTypeObject {
+    const doc = if (config.custom_doc) |custom| custom else @typeName(ZigColorType) ++ " color type";
+    
+    return c.PyTypeObject{
+        .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
+        .tp_name = "zignal." ++ name,
+        .tp_basicsize = @sizeOf(ObjectType),
+        .tp_dealloc = generateDealloc(ObjectType),
+        .tp_repr = generateRepr(ObjectType, ZigColorType),
+        .tp_str = generateRepr(ObjectType, ZigColorType),
+        .tp_flags = c.Py_TPFLAGS_DEFAULT,
+        .tp_doc = doc.ptr,
+        .tp_methods = @ptrCast(generateMethods(ObjectType, ZigColorType, methods)),
+        .tp_getset = @ptrCast(@constCast(generateGetSetDefs(ObjectType))),
+        .tp_init = null, // Will be set manually
         .tp_new = generateNew(ObjectType),
     };
 }

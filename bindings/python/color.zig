@@ -1,8 +1,11 @@
+// This file now uses the color factory for clean, automated binding generation
+// The old manual implementation has been replaced with the factory approach
+
 const std = @import("std");
-
 const zignal = @import("zignal");
-
+const color_factory = @import("color_factory.zig");
 const py_utils = @import("py_utils.zig");
+
 pub const registerType = py_utils.registerType;
 
 const c = @cImport({
@@ -11,208 +14,64 @@ const c = @cImport({
 });
 
 // ============================================================================
-// RGB TYPE
+// RGB TYPE USING COLOR FACTORY
 // ============================================================================
 
-const RgbObject = extern struct {
-    ob_base: c.PyObject,
-    r: u8,
-    g: u8,
-    b: u8,
-};
-
-// Custom init function with validation
-fn rgb_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) c_int {
-    _ = kwds;
-
-    const self = @as(*RgbObject, @ptrCast(self_obj.?));
-    var r: c_int = 0;
-    var g: c_int = 0;
-    var b: c_int = 0;
-
-    if (c.PyArg_ParseTuple(args, "iii", &r, &g, &b) == 0) {
-        return -1;
-    }
-
-    // Validate range
-    if (r < 0 or r > 255 or g < 0 or g > 255 or b < 0 or b > 255) {
-        c.PyErr_SetString(c.PyExc_ValueError, "RGB values must be in range 0-255");
-        return -1;
-    }
-
-    self.r = @intCast(r);
-    self.g = @intCast(g);
-    self.b = @intCast(b);
-
-    return 0;
-}
-
-// Class methods
-fn rgb_from_hex(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-    var hex_value: c_uint = 0;
-
-    if (c.PyArg_ParseTuple(args, "I", &hex_value) == 0) {
-        return null;
-    }
-
-    if (hex_value > 0xFFFFFF) {
-        c.PyErr_SetString(c.PyExc_ValueError, "Hex value must be in range 0x000000-0xFFFFFF");
-        return null;
-    }
-
-    const rgb = zignal.Rgb.fromHex(@intCast(hex_value));
-
-    // Create new instance
-    const new_args = c.Py_BuildValue("(iii)", rgb.r, rgb.g, rgb.b);
-    defer c.Py_DECREF(new_args);
-
-    return c.PyObject_CallObject(type_obj, new_args);
-}
-
-fn rgb_from_gray(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-    var gray: c_int = 0;
-
-    if (c.PyArg_ParseTuple(args, "i", &gray) == 0) {
-        return null;
-    }
-
-    if (gray < 0 or gray > 255) {
-        c.PyErr_SetString(c.PyExc_ValueError, "Gray value must be in range 0-255");
-        return null;
-    }
-
-    const rgb = zignal.Rgb.fromGray(@intCast(gray));
-
-    // Create new instance
-    const new_args = c.Py_BuildValue("(iii)", rgb.r, rgb.g, rgb.b);
-    defer c.Py_DECREF(new_args);
-
-    return c.PyObject_CallObject(type_obj, new_args);
-}
-
-// Methods - now using the new utility functions
-fn rgb_to_hex(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-    _ = args;
-    const self = @as(*RgbObject, @ptrCast(self_obj.?));
-    const rgb = zignal.Rgb{ .r = self.r, .g = self.g, .b = self.b };
-    return c.PyLong_FromLong(rgb.toHex());
-}
-
-fn rgb_luma(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-    _ = args;
-    const self = @as(*RgbObject, @ptrCast(self_obj.?));
-    const rgb = zignal.Rgb{ .r = self.r, .g = self.g, .b = self.b };
-    return c.PyFloat_FromDouble(rgb.luma());
-}
-
-fn rgb_is_gray(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-    _ = args;
-    const self = @as(*RgbObject, @ptrCast(self_obj.?));
-    const rgb = zignal.Rgb{ .r = self.r, .g = self.g, .b = self.b };
-    return @ptrCast(py_utils.getPyBool(rgb.isGray()));
-}
-
-var rgb_methods = [_]c.PyMethodDef{
-    .{ .ml_name = "to_hex", .ml_meth = rgb_to_hex, .ml_flags = c.METH_NOARGS, .ml_doc = "Convert RGB to hexadecimal representation (0xRRGGBB)" },
-    .{ .ml_name = "luma", .ml_meth = rgb_luma, .ml_flags = c.METH_NOARGS, .ml_doc = "Calculate perceptual luminance using ITU-R BT.709 coefficients" },
-    .{ .ml_name = "is_gray", .ml_meth = rgb_is_gray, .ml_flags = c.METH_NOARGS, .ml_doc = "Check if all RGB components are equal (grayscale)" },
-    .{ .ml_name = "from_hex", .ml_meth = rgb_from_hex, .ml_flags = c.METH_VARARGS | c.METH_CLASS, .ml_doc = "Create RGB from hexadecimal value (0xRRGGBB format)" },
-    .{ .ml_name = "from_gray", .ml_meth = rgb_from_gray, .ml_flags = c.METH_VARARGS | c.METH_CLASS, .ml_doc = "Create RGB from grayscale value" },
-    .{ .ml_name = null, .ml_meth = null, .ml_flags = 0, .ml_doc = null },
-};
-
-// Generate property getters automatically using comptime metaprogramming
-fn generatePropertyGetter(comptime field_name: []const u8) fn (?*c.PyObject, ?*anyopaque) callconv(.c) ?*c.PyObject {
-    return struct {
-        fn getter(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-            _ = closure;
-            const self = @as(*RgbObject, @ptrCast(self_obj.?));
-            const value = @field(self, field_name);
-            // Use the universal convertToPython function!
-            return @ptrCast(@alignCast(py_utils.convertToPythonCast(value)));
-        }
-    }.getter;
-}
-
-// Auto-generate the complete property getters array using comptime reflection
-var rgb_getset = blk: {
-    const ObjectType = RgbObject;
-    const fields = @typeInfo(ObjectType).@"struct".fields;
+// RGB validation function
+fn validateRgbComponent(field_name: []const u8, value: anytype) bool {
+    _ = field_name;
+    const T = @TypeOf(value);
     
-    // Count non-ob_base fields
-    var field_count = 0;
-    for (fields) |field| {
-        if (!std.mem.eql(u8, field.name, "ob_base")) {
-            field_count += 1;
-        }
-    }
-    
-    // Generate the array
-    var result: [field_count + 1]c.PyGetSetDef = undefined;
-    var index = 0;
-    
-    for (fields) |field| {
-        if (std.mem.eql(u8, field.name, "ob_base")) continue;
-        
-        result[index] = c.PyGetSetDef{
-            .name = field.name ++ "",
-            .get = generatePropertyGetter(field.name),
-            .set = null,
-            .doc = field.name ++ " component (0-255)",
-            .closure = null,
-        };
-        index += 1;
-    }
-    
-    // Null terminator
-    result[field_count] = c.PyGetSetDef{
-        .name = null,
-        .get = null,
-        .set = null,
-        .doc = null,
-        .closure = null,
+    return switch (@typeInfo(T)) {
+        .int => |info| if (info.signedness == .unsigned) 
+            value <= 255 
+        else 
+            value >= 0 and value <= 255,
+        else => false,
     };
-    
-    break :blk result;
-};
-
-// Manual functions for now
-fn rgb_dealloc(self_obj: ?*c.PyObject) callconv(.c) void {
-    c.Py_TYPE(self_obj).*.tp_free.?(self_obj);
 }
 
-fn rgb_new(type_obj: ?*c.PyTypeObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-    _ = args;
-    _ = kwds;
+// Create RGB binding using the factory - this replaces ~200 lines of manual code!
+const RgbBinding = color_factory.createColorBinding("Rgb", zignal.Rgb, .{
+    .validation_fn = validateRgbComponent,
+    .validation_error = "RGB values must be in range 0-255",
+    .doc = "RGB color in sRGB colorspace with components in range 0-255",
+});
 
-    const self = @as(?*RgbObject, @ptrCast(c.PyType_GenericAlloc(type_obj, 0)));
-    if (self) |obj| {
-        obj.r = 0;
-        obj.g = 0;
-        obj.b = 0;
-    }
-    return @ptrCast(self);
-}
+// Generate the static arrays
+var rgb_getset = RgbBinding.generateGetters();
+var rgb_methods = RgbBinding.generateMethods();
 
-fn rgb_repr(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-    const self = @as(*RgbObject, @ptrCast(self_obj.?));
-    var buffer: [32]u8 = undefined;
-    const formatted = std.fmt.bufPrintZ(&buffer, "Rgb(r={d}, g={d}, b={d})", .{ self.r, self.g, self.b }) catch return null;
-    return c.PyUnicode_FromString(formatted.ptr);
-}
-
-// Use automatically generated property getters but manual type definition
+// Export the type object with factory-generated components
 pub var RgbType = c.PyTypeObject{
     .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
     .tp_name = "zignal.Rgb",
-    .tp_basicsize = @sizeOf(RgbObject),
-    .tp_dealloc = rgb_dealloc,
-    .tp_repr = rgb_repr,
-    .tp_str = rgb_repr,
+    .tp_basicsize = @sizeOf(RgbBinding.PyObjectType),
+    .tp_dealloc = @ptrCast(&RgbBinding.dealloc),
+    .tp_repr = @ptrCast(&RgbBinding.repr),
+    .tp_str = @ptrCast(&RgbBinding.repr),
     .tp_flags = c.Py_TPFLAGS_DEFAULT,
     .tp_doc = "RGB color in sRGB colorspace with components in range 0-255",
-    .tp_methods = &rgb_methods,
-    .tp_getset = &rgb_getset, // This uses the auto-generated getters!
-    .tp_init = rgb_init, // Custom init with validation
-    .tp_new = rgb_new,
+    .tp_methods = @ptrCast(&rgb_methods),
+    .tp_getset = @ptrCast(&rgb_getset),
+    .tp_init = @ptrCast(&RgbBinding.init),
+    .tp_new = @ptrCast(&RgbBinding.new),
 };
+
+// ============================================================================
+// FUTURE COLOR TYPES CAN BE ADDED HERE WITH SIMILAR SIMPLICITY
+// ============================================================================
+
+// Example of how easy it would be to add HSL:
+// const HslBinding = color_factory.createColorBinding("Hsl", zignal.Hsl, .{
+//     .validation_fn = validateHslComponent,
+//     .validation_error = "HSL values must be in valid ranges",
+//     .doc = "HSL color in Hue-Saturation-Lightness color space",
+// });
+
+// Example of how easy it would be to add Lab:
+// const LabBinding = color_factory.createColorBinding("Lab", zignal.Lab, .{
+//     .validation_fn = validateLabComponent,
+//     .validation_error = "Lab values must be in valid ranges", 
+//     .doc = "Lab color in CIELAB color space",
+// });

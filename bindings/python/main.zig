@@ -39,7 +39,7 @@ pub export fn PyInit__zignal() ?*c.PyObject {
     const m = c.PyModule_Create(&zignal_module);
     if (m == null) return null;
 
-    // Register Rgb type
+    // Register Rgb type (using factory)
     py_utils.registerType(@ptrCast(m), "Rgb", @ptrCast(&color.RgbType)) catch {
         c.Py_DECREF(m);
         return null;
