@@ -77,12 +77,7 @@ class ZigBuildExt(build_ext):
         dest_dir.mkdir(parents=True, exist_ok=True)
         
         # Copy to the correct location with correct name
-        if sys.platform == "win32":
-            dest_name = Path(ext.name).with_suffix(".pyd")
-        else:
-            dest_name = Path(ext.name).with_suffix(".so")
-        
-        dest_path = dest_dir / dest_name.name
+        dest_path = Path(self.get_ext_fullpath(ext.name))
         print(f"Copying {library_path} -> {dest_path}")
         shutil.copy2(library_path, dest_path)
 

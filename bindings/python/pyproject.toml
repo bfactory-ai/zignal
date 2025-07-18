@@ -8,14 +8,13 @@ version = "0.1.0"
 description = "Zero-dependency image processing library"
 readme = "README.md"
 authors = [{name = "zignal contributors"}]
-license = {text = "MIT"}
-requires-python = ">=3.8"
+license = "MIT"
+requires-python = ">=3.9"
 keywords = ["image-processing", "computer-vision", "zig", "native"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9", 
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -36,7 +35,7 @@ dev = ["pytest", "black", "mypy"]
 
 [tool.cibuildwheel]
 # Only build CPython wheels
-build = "cp38-* cp39-* cp310-* cp311-* cp312-* cp313-*"
+build = "cp39-* cp310-* cp311-* cp312-* cp313-*"
 # Skip 32-bit builds and musl for now
 skip = ["*-win32", "*-musllinux*"]
 
