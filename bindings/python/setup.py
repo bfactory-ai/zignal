@@ -61,11 +61,11 @@ class ZigBuildExt(build_ext):
 
         # Debug: List all files in lib_dir
         if lib_dir.exists():
-            print(f"Files in {lib_dir}:")
+            print(f"DEBUG: Files in {lib_dir}:", file=sys.stderr)
             for file in lib_dir.iterdir():
-                print(f"  {file.name}")
+                print(f"DEBUG:   {file.name}", file=sys.stderr)
         else:
-            print(f"Library directory {lib_dir} does not exist")
+            print(f"DEBUG: Library directory {lib_dir} does not exist", file=sys.stderr)
 
         # Look for the library with different possible extensions
         extensions = [".so", ".dylib", ".pyd", ".dll"]
@@ -73,10 +73,10 @@ class ZigBuildExt(build_ext):
 
         for extension in extensions:
             candidate = lib_dir / f"zignal{extension}"
-            print(f"Checking for library at: {candidate}")
+            print(f"DEBUG: Checking for library at: {candidate}", file=sys.stderr)
             if candidate.exists():
                 library_path = candidate
-                print(f"Found library: {library_path}")
+                print(f"DEBUG: Found library: {library_path}", file=sys.stderr)
                 break
 
         if not library_path:
@@ -88,8 +88,9 @@ class ZigBuildExt(build_ext):
 
         # Copy to the correct location with correct name
         dest_path = Path(self.get_ext_fullpath(ext.name))
-        print(f"Copying {library_path} -> {dest_path}")
+        print(f"DEBUG: Copying {library_path} -> {dest_path}", file=sys.stderr)
         shutil.copy2(library_path, dest_path)
+        print(f"DEBUG: Copy completed. File exists at destination: {dest_path.exists()}", file=sys.stderr)
 
 
 class BinaryDistribution(Distribution):

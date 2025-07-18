@@ -91,6 +91,14 @@ def create_wheel(
     latest_wheel = max(wheels, key=lambda p: p.stat().st_mtime)
     
     print(f"Created wheel: {latest_wheel}")
+    
+    # Debug: Check wheel contents
+    import zipfile
+    print("DEBUG: Wheel contents:")
+    with zipfile.ZipFile(latest_wheel, 'r') as zf:
+        for name in zf.namelist():
+            print(f"  {name}")
+    
     return latest_wheel
 
 
