@@ -100,12 +100,40 @@ pub fn build(b: *Build) void {
         .root_source_file = b.path("src/root.zig"),
     }));
 
-    // Add python C flags
-    py_module.linkSystemLibrary("python3");
-    py_module.linkSystemLibrary("dl");
-    py_module.linkSystemLibrary("m");
+    // Add platform-specific python libraries and flags
+    const target_info = target.result;
+    switch (target_info.os.tag) {
+        .windows => {
+            // Windows doesn't need dl and m libraries
+            // Python library will need to be linked manually for cross-compilation
+        },
+        .macos => {
+            py_module.linkSystemLibrary("python3");
+            py_module.linkSystemLibrary("dl");
+            py_module.linkSystemLibrary("m");
+        },
+        .linux => {
+            py_module.linkSystemLibrary("python3");
+            py_module.linkSystemLibrary("dl");
+            py_module.linkSystemLibrary("m");
+        },
+        else => {
+            // Try the default for other platforms
+            py_module.linkSystemLibrary("python3");
+            py_module.linkSystemLibrary("dl");
+            py_module.linkSystemLibrary("m");
+        },
+    }
 
-    const install_py_module = b.addInstallFile(py_module.getEmittedBin(), "lib/zignal.so");
+    // Determine output file extension based on target platform
+    const extension = switch (target_info.os.tag) {
+        .windows => ".pyd",
+        .macos => ".dylib",
+        else => ".so",
+    };
+
+    const output_name = b.fmt("lib/zignal{s}", .{extension});
+    const install_py_module = b.addInstallFile(py_module.getEmittedBin(), output_name);
     py_bindings_step.dependOn(&install_py_module.step);
 }
 
