@@ -97,7 +97,9 @@ pub fn build(b: *Build) void {
 
     // Add build options to version info executable
     const version_options = b.addOptions();
-    version_options.addOption([]const u8, "version", b.fmt("{f}", .{resolveVersion(b)}));
+    // Resolve version once to avoid duplicate option declarations
+    const version = resolveVersion(b);
+    version_options.addOption([]const u8, "version", b.fmt("{f}", .{version}));
     version_info_exe.root_module.addOptions("build_options", version_options);
 
     const version_info_run = b.addRunArtifact(version_info_exe);
@@ -129,6 +131,11 @@ pub fn build(b: *Build) void {
     py_module.root_module.addImport("zignal", b.addModule("zignal", .{
         .root_source_file = b.path("src/root.zig"),
     }));
+
+    // Add build options to python bindings
+    const py_options = b.addOptions();
+    py_options.addOption([]const u8, "version", b.fmt("{f}", .{version}));
+    py_module.root_module.addOptions("build_options", py_options);
 
     // Add platform-specific python libraries and flags
     const target_info = target.result;

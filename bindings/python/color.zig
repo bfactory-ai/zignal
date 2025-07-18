@@ -59,6 +59,55 @@ pub var RgbType = c.PyTypeObject{
 };
 
 // ============================================================================
+// HSV TYPE USING COLOR FACTORY - DEBUGGING
+// ============================================================================
+
+// HSV validation function
+fn validateHsvComponent(field_name: []const u8, value: anytype) bool {
+    const T = @TypeOf(value);
+    
+    return switch (@typeInfo(T)) {
+        .float => {
+            if (std.mem.eql(u8, field_name, "h")) {
+                return value >= 0.0 and value <= 360.0;
+            } else if (std.mem.eql(u8, field_name, "s") or std.mem.eql(u8, field_name, "v")) {
+                return value >= 0.0 and value <= 100.0;
+            } else {
+                return false;
+            }
+        },
+        else => false,
+    };
+}
+
+// Try to create HSV binding like RGB but use simpler approach
+pub const HsvBinding = color_factory.createColorBinding("Hsv", zignal.Hsv, .{
+    .validation_fn = validateHsvComponent,
+    .validation_error = "HSV values must be in valid ranges (h: 0-360, s: 0-100, v: 0-100)",
+    .doc = "HSV color",
+});
+
+// Generate the static arrays for HSV
+var hsv_getset = HsvBinding.generateGetters();
+var hsv_methods = HsvBinding.generateMethods();
+
+// Export the HSV type object with factory-generated components
+pub var HsvType = c.PyTypeObject{
+    .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
+    .tp_name = "zignal.Hsv",
+    .tp_basicsize = @sizeOf(HsvBinding.PyObjectType),
+    .tp_dealloc = @ptrCast(&HsvBinding.dealloc),
+    .tp_repr = @ptrCast(&HsvBinding.repr),
+    .tp_str = @ptrCast(&HsvBinding.repr),
+    .tp_flags = c.Py_TPFLAGS_DEFAULT,
+    .tp_doc = "HSV color",
+    .tp_methods = @ptrCast(&hsv_methods),
+    .tp_getset = @ptrCast(&hsv_getset),
+    .tp_init = @ptrCast(&HsvBinding.init),
+    .tp_new = @ptrCast(&HsvBinding.new),
+};
+
+// ============================================================================
 // FUTURE COLOR TYPES CAN BE ADDED HERE WITH SIMILAR SIMPLICITY
 // ============================================================================
 

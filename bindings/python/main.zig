@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_options = @import("build_options");
 
 const color = @import("color.zig");
 const image = @import("image.zig");
@@ -13,14 +14,7 @@ const c = @cImport({
 // MODULE FUNCTIONS
 // ============================================================================
 
-fn zignal_hello(self: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-    _ = self;
-    _ = args;
-    return c.PyUnicode_FromString("Hello from Zignal!");
-}
-
 var zignal_methods = [_]c.PyMethodDef{
-    .{ .ml_name = "hello", .ml_meth = zignal_hello, .ml_flags = c.METH_NOARGS, .ml_doc = "A simple hello world function." },
     .{ .ml_name = null, .ml_meth = null, .ml_flags = 0, .ml_doc = null },
 };
 
@@ -45,11 +39,30 @@ pub export fn PyInit__zignal() ?*c.PyObject {
         return null;
     };
 
+    // Register Hsv type (using factory)
+    py_utils.registerType(@ptrCast(m), "Hsv", @ptrCast(&color.HsvType)) catch |err| {
+        std.log.err("Failed to register HSV type: {}", .{err});
+        c.Py_DECREF(m);
+        return null;
+    };
+
     // Register ImageRgb type
     py_utils.registerType(@ptrCast(m), "ImageRgb", @ptrCast(&image.ImageRgbType)) catch {
         c.Py_DECREF(m);
         return null;
     };
+
+    // Add __version__ as a module attribute from build options
+    const version_str = c.PyUnicode_FromString(@ptrCast(build_options.version));
+    if (version_str == null) {
+        c.Py_DECREF(m);
+        return null;
+    }
+    if (c.PyModule_AddObject(m, "__version__", version_str) < 0) {
+        c.Py_DECREF(version_str);
+        c.Py_DECREF(m);
+        return null;
+    }
 
     return m;
 }

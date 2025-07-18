@@ -1,9 +1,7 @@
 """Zignal Python bindings - zero-dependency image processing library."""
 
-# Import the compiled extension module
-import sys
-import os
 import importlib.util
+import os
 
 # Try the import
 try:
@@ -36,11 +34,5 @@ except ImportError as e:
     else:
         raise ImportError(f"_zignal extension not found in {pkg_dir}") from e
 
-# Get version dynamically from package metadata
-try:
-    from importlib.metadata import version
-    __version__ = version("zignal-processing")
-except Exception:
-    # Fallback if package not installed
-    __version__ = "unknown"
-__all__ = ["Rgb", "ImageRgb"]
+# Dynamically populate __all__ from the native module
+__all__ = [name for name in globals() if not name.startswith('_') and name not in ['importlib', 'os', 'sys', 'spec', 'module']]
