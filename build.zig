@@ -237,7 +237,6 @@ fn resolveVersion(b: *std.Build) std.SemanticVersion {
             var it = std.mem.splitScalar(u8, git_describe, '-');
             const previous_tag = it.first();
             const commit_count = it.next().?;
-            const commit_ghash = it.next().?;
 
             const previous_version = std.SemanticVersion.parse(previous_tag) catch unreachable;
 
@@ -249,15 +248,12 @@ fn resolveVersion(b: *std.Build) std.SemanticVersion {
                 });
                 std.process.exit(1);
             }
-            // commit hash is prefixed with g in git describe.
-            std.debug.assert(std.mem.startsWith(u8, commit_ghash, "g"));
 
             return .{
                 .major = zignal_version.major,
                 .minor = zignal_version.minor,
                 .patch = zignal_version.patch,
                 .pre = b.fmt("dev.{s}", .{commit_count}),
-                .build = commit_ghash[1..],
             };
         },
         else => {
