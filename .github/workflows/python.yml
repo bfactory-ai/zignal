@@ -95,6 +95,11 @@ jobs:
       with:
         python-version: '3.11'
 
+    - name: Install Zig
+      uses: mlugg/setup-zig@v2
+      with:
+        version: master
+
     - name: Install uv
       uses: astral-sh/setup-uv@v2
 
@@ -110,6 +115,7 @@ jobs:
       run: |
         source .venv/bin/activate
         cd bindings/python
+        python update_version.py
         python -m build --sdist
 
     - name: Upload sdist as artifact
