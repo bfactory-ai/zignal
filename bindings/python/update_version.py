@@ -37,6 +37,42 @@ def get_zig_version() -> str:
         sys.exit(1)
 
 
+def zig_to_python_version(zig_version: str) -> str:
+    """Convert Zig version format to Python PEP 440 format."""
+    # Convert Zig's "0.2.0-dev.13+abc123" to Python's "0.2.0.dev13"
+    # Also handle simple "0.2.0-dev" case
+    
+    # Pattern to match Zig version format
+    pattern = r'^(\d+\.\d+\.\d+)(?:-(.+?)(?:\.(\d+))?)?(?:\+(.+))?$'
+    match = re.match(pattern, zig_version)
+    
+    if not match:
+        # If it doesn't match expected format, return as-is
+        return zig_version
+    
+    base_version = match.group(1)  # "0.2.0"
+    prerelease = match.group(2)    # "dev" or "python" etc.
+    dev_number = match.group(3)    # "13" or None
+    commit_hash = match.group(4)   # "abc123" or None
+    
+    if prerelease:
+        if prerelease in ["dev", "python"]:
+            # Convert to Python dev format
+            if dev_number:
+                return f"{base_version}.dev{dev_number}"
+            else:
+                return f"{base_version}.dev0"
+        else:
+            # Other prerelease formats, keep as-is but convert separator
+            if dev_number:
+                return f"{base_version}.{prerelease}{dev_number}"
+            else:
+                return f"{base_version}.{prerelease}0"
+    else:
+        # No prerelease, just return base version
+        return base_version
+
+
 def update_pyproject_toml(new_version: str) -> None:
     """Update the version field in pyproject.toml."""
     pyproject_path = Path(__file__).parent / "pyproject.toml"
@@ -84,8 +120,12 @@ def main():
     zig_version = get_zig_version()
     print(f"Zig resolved version: {zig_version}")
 
+    # Convert to Python format
+    python_version = zig_to_python_version(zig_version)
+    print(f"Python version format: {python_version}")
+
     # Update pyproject.toml
-    update_pyproject_toml(zig_version)
+    update_pyproject_toml(python_version)
 
     print("✅ Version synchronization complete!")
 
