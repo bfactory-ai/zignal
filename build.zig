@@ -95,6 +95,11 @@ pub fn build(b: *Build) void {
         }),
     });
 
+    // Add zignal module as dependency
+    py_module.root_module.addImport("zignal", b.addModule("zignal", .{
+        .root_source_file = b.path("src/root.zig"),
+    }));
+
     // Add python C flags
     py_module.linkSystemLibrary("python3");
     py_module.linkSystemLibrary("dl");
