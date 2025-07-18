@@ -172,7 +172,7 @@ pub fn build(b: *Build) void {
         else => ".so",
     };
 
-    const output_name = b.fmt("lib/zignal{s}", .{extension});
+    const output_name = b.fmt("lib/_zignal{s}", .{extension});
     const install_py_module = b.addInstallFile(py_module.getEmittedBin(), output_name);
     py_bindings_step.dependOn(&install_py_module.step);
 }

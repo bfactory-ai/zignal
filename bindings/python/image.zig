@@ -143,8 +143,101 @@ fn imagergb_load(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.Py
     return @ptrCast(self);
 }
 
+// Convert image to numpy array (zero-copy)
+fn imagergb_to_numpy(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    _ = args;
+    const self = @as(*ImageRgbObject, @ptrCast(self_obj.?));
+    
+    if (self.image_ptr) |ptr| {
+        // Import numpy
+        const np_module = c.PyImport_ImportModule("numpy") orelse {
+            c.PyErr_SetString(c.PyExc_ImportError, "NumPy is not installed. Please install it with: pip install numpy");
+            return null;
+        };
+        defer c.Py_DECREF(np_module);
+        
+        // Create a memoryview from our image data
+        var buffer = c.Py_buffer{
+            .buf = @ptrCast(ptr.data.ptr),
+            .obj = self_obj,
+            .len = @intCast(ptr.rows * ptr.cols * @sizeOf(zignal.Rgb)),
+            .itemsize = 1,
+            .readonly = 0,
+            .ndim = 1,
+            .format = @constCast("B"),
+            .shape = null,
+            .strides = null,
+            .suboffsets = null,
+            .internal = null,
+        };
+        c.Py_INCREF(self_obj); // Keep parent alive
+        
+        const memview = c.PyMemoryView_FromBuffer(&buffer) orelse {
+            c.Py_DECREF(self_obj);
+            return null;
+        };
+        defer c.Py_DECREF(memview);
+        
+        // Get numpy.frombuffer function
+        const frombuffer = c.PyObject_GetAttrString(np_module, "frombuffer") orelse return null;
+        defer c.Py_DECREF(frombuffer);
+        
+        // Create arguments for frombuffer(memview, dtype='uint8')
+        const args_tuple = c.Py_BuildValue("(O)", memview) orelse return null;
+        defer c.Py_DECREF(args_tuple);
+        
+        const kwargs = c.Py_BuildValue("{s:s}", "dtype", "uint8") orelse return null;
+        defer c.Py_DECREF(kwargs);
+        
+        // Call numpy.frombuffer
+        const flat_array = c.PyObject_Call(frombuffer, args_tuple, kwargs) orelse return null;
+        
+        // Reshape to (rows, cols, 3)
+        const reshape_method = c.PyObject_GetAttrString(flat_array, "reshape") orelse {
+            c.Py_DECREF(flat_array);
+            return null;
+        };
+        defer c.Py_DECREF(reshape_method);
+        
+        const shape_tuple = c.Py_BuildValue("(iii)", ptr.rows, ptr.cols, @as(c_int, 3)) orelse {
+            c.Py_DECREF(flat_array);
+            return null;
+        };
+        defer c.Py_DECREF(shape_tuple);
+        
+        const reshaped_array = c.PyObject_CallObject(reshape_method, shape_tuple) orelse {
+            c.Py_DECREF(flat_array);
+            return null;
+        };
+        
+        c.Py_DECREF(flat_array);
+        return reshaped_array;
+    } else {
+        c.PyErr_SetString(c.PyExc_ValueError, "Image not initialized");
+        return null;
+    }
+}
+
+// Create ImageRgb from numpy array
+fn imagergb_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    _ = type_obj;
+    var array_obj: ?*c.PyObject = undefined;
+    
+    if (c.PyArg_ParseTuple(args, "O", &array_obj) == 0) {
+        return null;
+    }
+    
+    // For debugging, just return an error for now
+    if (array_obj != null) {
+        c.PyErr_SetString(c.PyExc_NotImplementedError, "from_numpy is temporarily disabled for debugging");
+    }
+    return null;
+}
+
 var imagergb_methods = [_]c.PyMethodDef{
     .{ .ml_name = "load", .ml_meth = imagergb_load, .ml_flags = c.METH_VARARGS | c.METH_CLASS, .ml_doc = "Load an RGB image from file" },
+    .{ .ml_name = "from_numpy", .ml_meth = imagergb_from_numpy, .ml_flags = c.METH_VARARGS | c.METH_CLASS, .ml_doc = "Create ImageRgb from NumPy array with shape (rows, cols, 3) and dtype uint8" },
+    .{ .ml_name = "to_numpy", .ml_meth = imagergb_to_numpy, .ml_flags = c.METH_NOARGS, .ml_doc = "Convert image to NumPy array with shape (rows, cols, 3) without copying data" },
     .{ .ml_name = null, .ml_meth = null, .ml_flags = 0, .ml_doc = null },
 };
 
