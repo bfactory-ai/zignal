@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Zero-dependency image processing library"
 readme = "README.md"
 authors = [{name = "zignal contributors"}]
-license = "MIT"
+license = {text = "MIT"}
 requires-python = ">=3.9"
 keywords = ["image-processing", "computer-vision", "zig", "native"]
 classifiers = [

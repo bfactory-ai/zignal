@@ -36,7 +36,7 @@ jobs:
 
     - name: Install build dependencies
       run: |
-        uv pip install --system setuptools>=77.0.0 wheel build
+        uv pip install --system --upgrade setuptools wheel build
 
     - name: Build wheel
       run: |
@@ -73,7 +73,7 @@ jobs:
 
     - name: Install build dependencies
       run: |
-        uv pip install --system setuptools>=77.0.0 wheel build
+        uv pip install --system --upgrade setuptools wheel build
 
     - name: Build sdist
       run: |
