@@ -82,6 +82,26 @@ pub fn build(b: *Build) void {
     // Set default behavior
     b.default_step.dependOn(docs_step);
     b.default_step.dependOn(fmt_step);
+
+    // Python bindings
+    const py_bindings_step = b.step("python-bindings", "Build the python bindings");
+    const py_module = b.addLibrary(.{
+        .name = "zignal",
+        .linkage = .dynamic,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bindings/python/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    // Add python C flags
+    py_module.linkSystemLibrary("python3");
+    py_module.linkSystemLibrary("dl");
+    py_module.linkSystemLibrary("m");
+
+    const install_py_module = b.addInstallFile(py_module.getEmittedBin(), "lib/zignal.so");
+    py_bindings_step.dependOn(&install_py_module.step);
 }
 
 const Build = blk: {
