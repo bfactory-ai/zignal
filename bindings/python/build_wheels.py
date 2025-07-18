@@ -18,9 +18,9 @@ def get_native_platform():
     
     if system == "linux":
         if machine in ["x86_64", "amd64"]:
-            return ("native", "linux_x86_64", ".so")
+            return ("native", "manylinux1_x86_64", ".so")
         elif machine in ["aarch64", "arm64"]:
-            return ("native", "linux_aarch64", ".so")
+            return ("native", "manylinux1_aarch64", ".so")
     elif system == "windows":
         if machine in ["x86_64", "amd64"]:
             return ("native", "win_amd64", ".pyd")
