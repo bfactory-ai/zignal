@@ -78,7 +78,12 @@ def create_wheel(
     
     # Use python setup.py directly to build and create wheel
     # The setup.py will automatically build the Zig extension
-    cmd = ["python", "setup.py", "bdist_wheel", "--plat-name", platform_tag]
+    
+    # Use the same Python interpreter that's running this script
+    # This ensures we use the same environment (venv or system) consistently
+    python_exe = sys.executable
+    
+    cmd = [python_exe, "setup.py", "bdist_wheel", "--plat-name", platform_tag]
     result = run_command(cmd, cwd=bindings_dir, env=env)
     
     # Find the generated wheel
