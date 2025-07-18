@@ -154,6 +154,26 @@ pub fn createColorBinding(
                 index += 1;
             }
             
+            if (@hasDecl(ZigColorType, "toHsv")) {
+                methods[index] = c.PyMethodDef{
+                    .ml_name = "to_hsv",
+                    .ml_meth = generateToHsvMethod(),
+                    .ml_flags = c.METH_NOARGS,
+                    .ml_doc = "Convert to HSV color space",
+                };
+                index += 1;
+            }
+            
+            if (@hasDecl(ZigColorType, "toRgb")) {
+                methods[index] = c.PyMethodDef{
+                    .ml_name = "to_rgb",
+                    .ml_meth = generateToRgbMethod(),
+                    .ml_flags = c.METH_NOARGS,
+                    .ml_doc = "Convert to RGB color space",
+                };
+                index += 1;
+            }
+            
             // Null terminator
             methods[index] = c.PyMethodDef{
                 .ml_name = null,
@@ -171,6 +191,8 @@ pub fn createColorBinding(
             if (@hasDecl(ZigColorType, "toHex")) count += 1;
             if (@hasDecl(ZigColorType, "luma")) count += 1;
             if (@hasDecl(ZigColorType, "isGray")) count += 1;
+            if (@hasDecl(ZigColorType, "toHsv")) count += 1;
+            if (@hasDecl(ZigColorType, "toRgb")) count += 1;
             return count;
         }
         
@@ -209,6 +231,67 @@ pub fn createColorBinding(
                     return @ptrCast(py_utils.getPyBool(result));
                 }
             }.method;
+        }
+        
+        fn generateToHsvMethod() fn ([*c]c.PyObject, [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
+            return struct {
+                fn method(self_obj: [*c]c.PyObject, args: [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
+                    _ = args;
+                    const self = @as(*ObjectType, @ptrCast(self_obj));
+                    const zig_color = objectToZigColor(self);
+                    const hsv_result = zig_color.toHsv();
+                    
+                    // Create a new HSV Python object
+                    return createHsvPyObject(hsv_result);
+                }
+            }.method;
+        }
+        
+        fn generateToRgbMethod() fn ([*c]c.PyObject, [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
+            return struct {
+                fn method(self_obj: [*c]c.PyObject, args: [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
+                    _ = args;
+                    const self = @as(*ObjectType, @ptrCast(self_obj));
+                    const zig_color = objectToZigColor(self);
+                    const rgb_result = zig_color.toRgb();
+                    
+                    // Create a new RGB Python object
+                    return createRgbPyObject(rgb_result);
+                }
+            }.method;
+        }
+        
+        // Helper functions to create Python objects from Zig colors
+        fn createHsvPyObject(hsv: zignal.Hsv) ?*c.PyObject {
+            // Import the color module to access HsvType
+            const color = @import("color.zig");
+            
+            // Create a new HSV object
+            const hsv_obj = c.PyType_GenericNew(@ptrCast(&color.HsvType), null, null);
+            if (hsv_obj == null) return null;
+            
+            const hsv_py = @as(*color.HsvBinding.PyObjectType, @ptrCast(hsv_obj));
+            hsv_py.field0 = hsv.h;
+            hsv_py.field1 = hsv.s;
+            hsv_py.field2 = hsv.v;
+            
+            return hsv_obj;
+        }
+        
+        fn createRgbPyObject(rgb: zignal.Rgb) ?*c.PyObject {
+            // Import the color module to access RgbType
+            const color = @import("color.zig");
+            
+            // Create a new RGB object
+            const rgb_obj = c.PyType_GenericNew(@ptrCast(&color.RgbType), null, null);
+            if (rgb_obj == null) return null;
+            
+            const rgb_py = @as(*color.RgbBinding.PyObjectType, @ptrCast(rgb_obj));
+            rgb_py.field0 = rgb.r;
+            rgb_py.field1 = rgb.g;
+            rgb_py.field2 = rgb.b;
+            
+            return rgb_obj;
         }
         
         // Convert Python object to Zig color
@@ -284,14 +367,13 @@ pub fn createColorBinding(
                     self.field1 = arg1;
                 },
                 3 => {
-                    // Handle different field types appropriately
-                    if (fields[0].type == f64) {
-                        // f64 fields - use f64 for PyArg_ParseTuple
-                        var arg0: f64 = undefined;
-                        var arg1: f64 = undefined;
-                        var arg2: f64 = undefined;
-                        const format = comptime py_utils.getFormatString(fields[0].type) ++ py_utils.getFormatString(fields[1].type) ++ py_utils.getFormatString(fields[2].type);
-                        if (c.PyArg_ParseTuple(args, format.ptr, &arg0, &arg1, &arg2) == 0) {
+                    // For validation, we need to parse as larger types to avoid overflow
+                    if (fields[0].type == u8) {
+                        // RGB case: parse as int to avoid u8 wrapping, then validate
+                        var arg0: c_int = undefined;
+                        var arg1: c_int = undefined;
+                        var arg2: c_int = undefined;
+                        if (c.PyArg_ParseTuple(args, "iii", &arg0, &arg1, &arg2) == 0) {
                             return -1;
                         }
                         
@@ -302,11 +384,11 @@ pub fn createColorBinding(
                             }
                         }
                         
-                        self.field0 = arg0;
-                        self.field1 = arg1;
-                        self.field2 = arg2;
+                        self.field0 = @intCast(arg0);
+                        self.field1 = @intCast(arg1);
+                        self.field2 = @intCast(arg2);
                     } else {
-                        // Non-f64 fields - use field types directly
+                        // Non-u8 case: use field types directly
                         var arg0: fields[0].type = undefined;
                         var arg1: fields[1].type = undefined;
                         var arg2: fields[2].type = undefined;

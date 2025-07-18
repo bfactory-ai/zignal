@@ -32,7 +32,7 @@ fn validateRgbComponent(field_name: []const u8, value: anytype) bool {
 }
 
 // Create RGB binding using the factory - this replaces ~200 lines of manual code!
-const RgbBinding = color_factory.createColorBinding("Rgb", zignal.Rgb, .{
+pub const RgbBinding = color_factory.createColorBinding("Rgb", zignal.Rgb, .{
     .validation_fn = validateRgbComponent,
     .validation_error = "RGB values must be in range 0-255",
     .doc = "RGB color in sRGB colorspace with components in range 0-255",

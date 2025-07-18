@@ -210,7 +210,7 @@ fn imagergb_to_numpy(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*
         };
         defer c.Py_DECREF(reshape_method);
 
-        const shape_tuple = c.Py_BuildValue("(iii)", ptr.rows, ptr.cols, @as(c_int, 3)) orelse {
+        const shape_tuple = c.Py_BuildValue("(III)", ptr.rows, ptr.cols, @as(c_uint, 3)) orelse {
             c.Py_DECREF(flat_array);
             return null;
         };
