@@ -207,8 +207,8 @@ pub fn makeNoArgsMethodWrapper(
     comptime method_name: []const u8,
 ) fn ([*c]c.PyObject, [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
     return struct {
-        fn wrapper(self_obj: [*c]c.PyObject, args: [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
-            _ = args;
+        fn wrapper(self_obj: [*c]c.PyObject, ignored: [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
+            _ = ignored;
             const self = @as(*ObjectType, @ptrCast(self_obj));
 
             // Convert ObjectType to ZigType
@@ -580,26 +580,26 @@ pub fn createColorBinding(
 ) type {
     // Generate the Python object type
     const ObjectType = generateColorObjectType(ZigColorType);
-    
+
     // Generate standard color methods
     const standard_methods = generateStandardColorMethods(ObjectType, ZigColorType);
-    
+
     // Combine standard and custom methods
     const all_methods = standard_methods ++ config.custom_methods;
-    
+
     return struct {
         pub const PyObjectType = ObjectType;
         pub const ZigType = ZigColorType;
-        
+
         // Generate the Python type object
         pub var TypeObject = generateColorPythonType(name, ObjectType, ZigColorType, all_methods, config);
-        
+
         // Generate custom init with validation
         pub fn init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) c_int {
             _ = kwds;
             const self = @as(*ObjectType, @ptrCast(self_obj.?));
             const fields = @typeInfo(ZigColorType).@"struct".fields;
-            
+
             // Parse arguments based on field count
             switch (fields.len) {
                 1 => {
@@ -607,7 +607,7 @@ pub fn createColorBinding(
                     if (c.PyArg_ParseTuple(args, getFormatString(fields[0].type).ptr, &arg0) == 0) {
                         return -1;
                     }
-                    
+
                     // Validate if custom validation is provided
                     if (config.custom_validation) |validator| {
                         if (!validator(fields[0].name, arg0)) {
@@ -615,7 +615,7 @@ pub fn createColorBinding(
                             return -1;
                         }
                     }
-                    
+
                     @field(self, fields[0].name) = arg0;
                 },
                 2 => {
@@ -625,7 +625,7 @@ pub fn createColorBinding(
                     if (c.PyArg_ParseTuple(args, format.ptr, &arg0, &arg1) == 0) {
                         return -1;
                     }
-                    
+
                     // Validate if custom validation is provided
                     if (config.custom_validation) |validator| {
                         if (!validator(fields[0].name, arg0) or !validator(fields[1].name, arg1)) {
@@ -633,7 +633,7 @@ pub fn createColorBinding(
                             return -1;
                         }
                     }
-                    
+
                     @field(self, fields[0].name) = arg0;
                     @field(self, fields[1].name) = arg1;
                 },
@@ -645,7 +645,7 @@ pub fn createColorBinding(
                     if (c.PyArg_ParseTuple(args, format.ptr, &arg0, &arg1, &arg2) == 0) {
                         return -1;
                     }
-                    
+
                     // Validate if custom validation is provided
                     if (config.custom_validation) |validator| {
                         if (!validator(fields[0].name, arg0) or !validator(fields[1].name, arg1) or !validator(fields[2].name, arg2)) {
@@ -653,7 +653,7 @@ pub fn createColorBinding(
                             return -1;
                         }
                     }
-                    
+
                     @field(self, fields[0].name) = arg0;
                     @field(self, fields[1].name) = arg1;
                     @field(self, fields[2].name) = arg2;
@@ -667,7 +667,7 @@ pub fn createColorBinding(
                     if (c.PyArg_ParseTuple(args, format.ptr, &arg0, &arg1, &arg2, &arg3) == 0) {
                         return -1;
                     }
-                    
+
                     // Validate if custom validation is provided
                     if (config.custom_validation) |validator| {
                         if (!validator(fields[0].name, arg0) or !validator(fields[1].name, arg1) or !validator(fields[2].name, arg2) or !validator(fields[3].name, arg3)) {
@@ -675,7 +675,7 @@ pub fn createColorBinding(
                             return -1;
                         }
                     }
-                    
+
                     @field(self, fields[0].name) = arg0;
                     @field(self, fields[1].name) = arg1;
                     @field(self, fields[2].name) = arg2;
@@ -686,7 +686,7 @@ pub fn createColorBinding(
                     return -1;
                 },
             }
-            
+
             return 0;
         }
     };
@@ -695,10 +695,10 @@ pub fn createColorBinding(
 /// Generate a Python object type for a color type
 fn generateColorObjectType(comptime ZigColorType: type) type {
     const fields = @typeInfo(ZigColorType).@"struct".fields;
-    
+
     // Create the object type with ob_base and all color fields
     var object_fields: [fields.len + 1]std.builtin.Type.StructField = undefined;
-    
+
     // Add ob_base as first field
     object_fields[0] = std.builtin.Type.StructField{
         .name = "ob_base",
@@ -707,7 +707,7 @@ fn generateColorObjectType(comptime ZigColorType: type) type {
         .is_comptime = false,
         .alignment = 0,
     };
-    
+
     // Add all color component fields
     inline for (fields, 1..) |field, i| {
         object_fields[i] = std.builtin.Type.StructField{
@@ -718,7 +718,7 @@ fn generateColorObjectType(comptime ZigColorType: type) type {
             .alignment = 0,
         };
     }
-    
+
     return @Type(.{
         .@"struct" = .{
             .layout = .@"extern",
@@ -733,68 +733,68 @@ fn generateColorObjectType(comptime ZigColorType: type) type {
 fn generateStandardColorMethods(comptime ObjectType: type, comptime ZigColorType: type) []const MethodDescriptor {
     _ = ObjectType;
     comptime var methods: []const MethodDescriptor = &.{};
-    
+
     // Check for common color methods and add them automatically
     if (@hasDecl(ZigColorType, "toHex")) {
         methods = methods ++ &[_]MethodDescriptor{
             .{ .name = "to_hex", .zig_method = "toHex", .doc = "Convert to hexadecimal representation" },
         };
     }
-    
+
     if (@hasDecl(ZigColorType, "luma")) {
         methods = methods ++ &[_]MethodDescriptor{
             .{ .name = "luma", .zig_method = "luma", .doc = "Calculate perceptual luminance" },
         };
     }
-    
+
     if (@hasDecl(ZigColorType, "isGray")) {
         methods = methods ++ &[_]MethodDescriptor{
             .{ .name = "is_gray", .zig_method = "isGray", .doc = "Check if color is grayscale" },
         };
     }
-    
+
     if (@hasDecl(ZigColorType, "toGray")) {
         methods = methods ++ &[_]MethodDescriptor{
             .{ .name = "to_gray", .zig_method = "toGray", .doc = "Convert to grayscale" },
         };
     }
-    
+
     if (@hasDecl(ZigColorType, "toRgb")) {
         methods = methods ++ &[_]MethodDescriptor{
             .{ .name = "to_rgb", .zig_method = "toRgb", .doc = "Convert to RGB color space" },
         };
     }
-    
+
     if (@hasDecl(ZigColorType, "toHsl")) {
         methods = methods ++ &[_]MethodDescriptor{
             .{ .name = "to_hsl", .zig_method = "toHsl", .doc = "Convert to HSL color space" },
         };
     }
-    
+
     if (@hasDecl(ZigColorType, "toHsv")) {
         methods = methods ++ &[_]MethodDescriptor{
             .{ .name = "to_hsv", .zig_method = "toHsv", .doc = "Convert to HSV color space" },
         };
     }
-    
+
     if (@hasDecl(ZigColorType, "toLab")) {
         methods = methods ++ &[_]MethodDescriptor{
             .{ .name = "to_lab", .zig_method = "toLab", .doc = "Convert to CIELAB color space" },
         };
     }
-    
+
     if (@hasDecl(ZigColorType, "toOklab")) {
         methods = methods ++ &[_]MethodDescriptor{
             .{ .name = "to_oklab", .zig_method = "toOklab", .doc = "Convert to Oklab color space" },
         };
     }
-    
+
     if (@hasDecl(ZigColorType, "toOklch")) {
         methods = methods ++ &[_]MethodDescriptor{
             .{ .name = "to_oklch", .zig_method = "toOklch", .doc = "Convert to Oklch color space" },
         };
     }
-    
+
     return methods;
 }
 
@@ -807,7 +807,7 @@ fn generateColorPythonType(
     comptime config: ColorTypeConfig,
 ) c.PyTypeObject {
     const doc = if (config.custom_doc) |custom| custom else @typeName(ZigColorType) ++ " color type";
-    
+
     return c.PyTypeObject{
         .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
         .tp_name = "zignal." ++ name,

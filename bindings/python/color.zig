@@ -21,11 +21,11 @@ const c = @cImport({
 fn validateRgbComponent(field_name: []const u8, value: anytype) bool {
     _ = field_name;
     const T = @TypeOf(value);
-    
+
     return switch (@typeInfo(T)) {
-        .int => |info| if (info.signedness == .unsigned) 
-            value <= 255 
-        else 
+        .int => |info| if (info.signedness == .unsigned)
+            value <= 255
+        else
             value >= 0 and value <= 255,
         else => false,
     };
@@ -65,7 +65,7 @@ pub var RgbType = c.PyTypeObject{
 // HSV validation function
 fn validateHsvComponent(field_name: []const u8, value: anytype) bool {
     const T = @TypeOf(value);
-    
+
     return switch (@typeInfo(T)) {
         .float => {
             if (std.mem.eql(u8, field_name, "h")) {
@@ -121,6 +121,6 @@ pub var HsvType = c.PyTypeObject{
 // Example of how easy it would be to add Lab:
 // const LabBinding = color_factory.createColorBinding("Lab", zignal.Lab, .{
 //     .validation_fn = validateLabComponent,
-//     .validation_error = "Lab values must be in valid ranges", 
+//     .validation_error = "Lab values must be in valid ranges",
 //     .doc = "Lab color in CIELAB color space",
 // });
