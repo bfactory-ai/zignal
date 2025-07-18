@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const color = @import("color.zig");
+const image = @import("image.zig");
 const py_utils = @import("py_utils.zig");
 
 const c = @cImport({
@@ -40,6 +41,12 @@ pub export fn PyInit__zignal() ?*c.PyObject {
 
     // Register Rgb type
     py_utils.registerType(@ptrCast(m), "Rgb", @ptrCast(&color.RgbType)) catch {
+        c.Py_DECREF(m);
+        return null;
+    };
+
+    // Register ImageRgb type
+    py_utils.registerType(@ptrCast(m), "ImageRgb", @ptrCast(&image.ImageRgbType)) catch {
         c.Py_DECREF(m);
         return null;
     };
