@@ -90,7 +90,7 @@ fn rgb_from_gray(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.Py
     return c.PyObject_CallObject(type_obj, new_args);
 }
 
-// Methods - manual for now, but using auto-generated property getters
+// Methods - now using the new utility functions
 fn rgb_to_hex(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
     const self = @as(*RgbObject, @ptrCast(self_obj.?));
@@ -121,30 +121,59 @@ var rgb_methods = [_]c.PyMethodDef{
     .{ .ml_name = null, .ml_meth = null, .ml_flags = 0, .ml_doc = null },
 };
 
-// Property getters - using the new convertToPython utility function
-fn rgb_get_r(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-    _ = closure;
-    const self = @as(*RgbObject, @ptrCast(self_obj.?));
-    return c.PyLong_FromLong(self.r);
+// Generate property getters automatically using comptime metaprogramming
+fn generatePropertyGetter(comptime field_name: []const u8) fn (?*c.PyObject, ?*anyopaque) callconv(.c) ?*c.PyObject {
+    return struct {
+        fn getter(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
+            _ = closure;
+            const self = @as(*RgbObject, @ptrCast(self_obj.?));
+            const value = @field(self, field_name);
+            // Use the universal convertToPython function!
+            return @ptrCast(@alignCast(py_utils.convertToPythonCast(value)));
+        }
+    }.getter;
 }
 
-fn rgb_get_g(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-    _ = closure;
-    const self = @as(*RgbObject, @ptrCast(self_obj.?));
-    return c.PyLong_FromLong(self.g);
-}
-
-fn rgb_get_b(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-    _ = closure;
-    const self = @as(*RgbObject, @ptrCast(self_obj.?));
-    return c.PyLong_FromLong(self.b);
-}
-
-var rgb_getset = [_]c.PyGetSetDef{
-    .{ .name = "r", .get = rgb_get_r, .set = null, .doc = "Red component (0-255)", .closure = null },
-    .{ .name = "g", .get = rgb_get_g, .set = null, .doc = "Green component (0-255)", .closure = null },
-    .{ .name = "b", .get = rgb_get_b, .set = null, .doc = "Blue component (0-255)", .closure = null },
-    .{ .name = null, .get = null, .set = null, .doc = null, .closure = null },
+// Auto-generate the complete property getters array using comptime reflection
+var rgb_getset = blk: {
+    const ObjectType = RgbObject;
+    const fields = @typeInfo(ObjectType).@"struct".fields;
+    
+    // Count non-ob_base fields
+    var field_count = 0;
+    for (fields) |field| {
+        if (!std.mem.eql(u8, field.name, "ob_base")) {
+            field_count += 1;
+        }
+    }
+    
+    // Generate the array
+    var result: [field_count + 1]c.PyGetSetDef = undefined;
+    var index = 0;
+    
+    for (fields) |field| {
+        if (std.mem.eql(u8, field.name, "ob_base")) continue;
+        
+        result[index] = c.PyGetSetDef{
+            .name = field.name ++ "",
+            .get = generatePropertyGetter(field.name),
+            .set = null,
+            .doc = field.name ++ " component (0-255)",
+            .closure = null,
+        };
+        index += 1;
+    }
+    
+    // Null terminator
+    result[field_count] = c.PyGetSetDef{
+        .name = null,
+        .get = null,
+        .set = null,
+        .doc = null,
+        .closure = null,
+    };
+    
+    break :blk result;
 };
 
 // Manual functions for now

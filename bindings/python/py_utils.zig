@@ -66,6 +66,13 @@ pub fn convertToPython(value: anytype) ?*c.PyObject {
     };
 }
 
+/// Universal conversion function that works around cimport type issues
+/// Cast the result to your specific PyObject type
+pub inline fn convertToPythonCast(value: anytype) ?*anyopaque {
+    const result = convertToPython(value);
+    return @ptrCast(result);
+}
+
 /// Generate a property getter function for any field type
 pub fn makeFieldGetter(comptime ObjectType: type, comptime field_name: []const u8) fn ([*c]c.PyObject, ?*anyopaque) callconv(.c) [*c]c.PyObject {
     return struct {
