@@ -12,7 +12,7 @@ from setuptools.dist import Distribution
 
 class ZigExtension(Extension):
     """Extension that will be built with Zig."""
-    
+
     def __init__(self, name: str, zig_target: str = "native", zig_optimize: str = "ReleaseFast"):
         # Initialize with dummy source to satisfy setuptools
         super().__init__(name, sources=[])
@@ -22,17 +22,17 @@ class ZigExtension(Extension):
 
 class ZigBuildExt(build_ext):
     """Custom build_ext command that uses Zig."""
-    
+
     def build_extension(self, ext: ZigExtension) -> None:
         if not isinstance(ext, ZigExtension):
             return super().build_extension(ext)
-        
+
         print(f"Building Zig extension with target: {ext.zig_target}, optimize: {ext.zig_optimize}")
-        
+
         # Find the project root (where build.zig is located)
         current_dir = Path(__file__).parent
         project_root = current_dir.parent.parent
-        
+
         # Verify build.zig exists - we always build from source
         build_zig = project_root / "build.zig"
         if not build_zig.exists():
@@ -41,41 +41,51 @@ class ZigBuildExt(build_ext):
                 f"The Python bindings must be built from the zignal project root directory "
                 f"which contains the build.zig file and source code."
             )
-        
+
         # Build the Zig library with optimizations
         cmd = ["zig", "build", "python-bindings", f"-Doptimize={ext.zig_optimize}"]
         if ext.zig_target != "native":
             cmd.extend([f"-Dtarget={ext.zig_target}"])
-        
+
         print(f"Running: {' '.join(cmd)} in {project_root}")
         result = subprocess.run(cmd, cwd=project_root, capture_output=True, text=True)
-        
+
         if result.returncode != 0:
             print(f"Zig build failed with return code {result.returncode}", file=sys.stderr)
             print(f"stdout: {result.stdout}", file=sys.stderr)
             print(f"stderr: {result.stderr}", file=sys.stderr)
             raise RuntimeError(f"Zig build failed: {result.stderr}")
-        
+
         # Find the built library
         lib_dir = project_root / "zig-out" / "lib"
-        
+
+        # Debug: List all files in lib_dir
+        if lib_dir.exists():
+            print(f"Files in {lib_dir}:")
+            for file in lib_dir.iterdir():
+                print(f"  {file.name}")
+        else:
+            print(f"Library directory {lib_dir} does not exist")
+
         # Look for the library with different possible extensions
         extensions = [".so", ".dylib", ".pyd", ".dll"]
         library_path = None
-        
+
         for extension in extensions:
             candidate = lib_dir / f"zignal{extension}"
+            print(f"Checking for library at: {candidate}")
             if candidate.exists():
                 library_path = candidate
+                print(f"Found library: {library_path}")
                 break
-        
+
         if not library_path:
-            raise RuntimeError(f"Built library not found in {lib_dir}")
-        
+            raise RuntimeError(f"Built library not found in {lib_dir}. Available files: {list(lib_dir.glob('*')) if lib_dir.exists() else 'directory does not exist'}")
+
         # Determine destination path
         dest_dir = Path(self.get_ext_fullpath(ext.name)).parent
         dest_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Copy to the correct location with correct name
         dest_path = Path(self.get_ext_fullpath(ext.name))
         print(f"Copying {library_path} -> {dest_path}")
@@ -84,7 +94,7 @@ class ZigBuildExt(build_ext):
 
 class BinaryDistribution(Distribution):
     """Distribution which always forces a binary package with platform tag."""
-    
+
     def has_ext_modules(self):
         return True
 
