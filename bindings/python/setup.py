@@ -50,7 +50,7 @@ class ZigBuildExt(build_ext):
         python_include = sysconfig.get_path('include')
         env['PYTHON_INCLUDE_DIR'] = python_include
         print(f"Setting PYTHON_INCLUDE_DIR={python_include}")
-        
+
         # On Windows, we need to also provide the Python library for linking
         if sys.platform == "win32":
             # Get Python library directory (usually in libs subdirectory)
@@ -58,11 +58,11 @@ class ZigBuildExt(build_ext):
             # Navigate up to get the root, then to libs
             python_root = Path(python_prefix).parent  # C:\Python313
             python_libs_dir = python_root / "libs"
-            
+
             if python_libs_dir.exists():
                 env['PYTHON_LIBS_DIR'] = str(python_libs_dir)
                 print(f"Setting PYTHON_LIBS_DIR={python_libs_dir}")
-                
+
                 # Determine the Python library name (e.g., python313.lib)
                 version_info = sys.version_info
                 python_lib_name = f"python{version_info.major}{version_info.minor}.lib"

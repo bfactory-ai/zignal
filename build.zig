@@ -117,11 +117,11 @@ pub fn build(b: *Build) void {
             // On Windows, link against the Python library
             if (std.process.getEnvVarOwned(b.allocator, "PYTHON_LIBS_DIR")) |libs_dir| {
                 py_module.addLibraryPath(.{ .cwd_relative = libs_dir });
-                
+
                 if (std.process.getEnvVarOwned(b.allocator, "PYTHON_LIB_NAME")) |lib_name| {
                     // Remove the .lib extension for linkSystemLibrary
                     const lib_name_no_ext = if (std.mem.endsWith(u8, lib_name, ".lib"))
-                        lib_name[0..lib_name.len - 4]
+                        lib_name[0 .. lib_name.len - 4]
                     else
                         lib_name;
                     py_module.linkSystemLibrary(lib_name_no_ext);
