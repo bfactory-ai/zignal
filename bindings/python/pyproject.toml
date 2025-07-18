@@ -8,7 +8,7 @@ version = "0.1.1"
 description = "Zero-dependency image processing library"
 readme = "README.md"
 authors = [{name = "zignal contributors"}]
-license = {text = "MIT"}
+license = "MIT"
 requires-python = ">=3.9"
 keywords = ["image-processing", "computer-vision", "zig", "native"]
 classifiers = [
@@ -25,10 +25,10 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-org/zignal"
-Repository = "https://github.com/your-org/zignal"
-Documentation = "https://your-org.github.io/zignal"
-Issues = "https://github.com/your-org/zignal/issues"
+Homepage = "https://github.com/bfactory-ai/zignal"
+Repository = "https://github.com/bfactory-ai/zignal"
+Documentation = "https://github.com/bfactory-ai/zignal"
+Issues = "https://github.com/bfactory-ai/zignal/issues"
 
 [project.optional-dependencies]
 dev = ["pytest", "black", "mypy"]
@@ -47,3 +47,9 @@ before-build = "curl -L https://ziglang.org/builds/zig-macos-x86_64-0.14.0-dev.2
 
 [tool.cibuildwheel.windows]
 before-build = "curl -L https://ziglang.org/builds/zig-windows-x86_64-0.14.0-dev.2495+10bb6c883.zip -o zig.zip && powershell Expand-Archive zig.zip C:/zig && set PATH=C:/zig/zig-windows-x86_64-0.14.0-dev.2495+10bb6c883;%PATH%"
+
+[dependency-groups]
+dev = [
+    "build>=1.2.2.post1",
+    "twine>=6.1.0",
+]

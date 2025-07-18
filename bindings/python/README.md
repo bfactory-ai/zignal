@@ -41,7 +41,7 @@ print(f"Gray: {gray}")
 Requires Zig compiler:
 
 ```bash
-git clone https://github.com/your-org/zignal
+git clone https://github.com/bfactory-ai/zignal
 cd zignal/bindings/python
 pip install -e .
 ```
