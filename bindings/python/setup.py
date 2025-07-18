@@ -119,7 +119,7 @@ class ZigBuildExt(build_ext):
         library_path = None
 
         for extension in extensions:
-            candidate = lib_dir / f"zignal{extension}"
+            candidate = lib_dir / f"_zignal{extension}"
             print(f"DEBUG: Checking for library at: {candidate}", file=sys.stderr)
             if candidate.exists():
                 library_path = candidate
