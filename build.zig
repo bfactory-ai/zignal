@@ -114,8 +114,25 @@ pub fn build(b: *Build) void {
     const target_info = target.result;
     switch (target_info.os.tag) {
         .windows => {
-            // Windows doesn't need dl and m libraries
-            // Python library will need to be linked manually for cross-compilation
+            // On Windows, link against the Python library
+            if (std.process.getEnvVarOwned(b.allocator, "PYTHON_LIBS_DIR")) |libs_dir| {
+                py_module.addLibraryPath(.{ .cwd_relative = libs_dir });
+                
+                if (std.process.getEnvVarOwned(b.allocator, "PYTHON_LIB_NAME")) |lib_name| {
+                    // Remove the .lib extension for linkSystemLibrary
+                    const lib_name_no_ext = if (std.mem.endsWith(u8, lib_name, ".lib"))
+                        lib_name[0..lib_name.len - 4]
+                    else
+                        lib_name;
+                    py_module.linkSystemLibrary(lib_name_no_ext);
+                } else |_| {
+                    // Fallback - try to link against a common Python library name
+                    py_module.linkSystemLibrary("python3");
+                }
+            } else |_| {
+                // No Python library path provided - try system default
+                py_module.linkSystemLibrary("python3");
+            }
         },
         .macos => {
             py_module.linkSystemLibrary("python3");

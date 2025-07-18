@@ -43,13 +43,33 @@ class ZigBuildExt(build_ext):
                 f"which contains the build.zig file and source code."
             )
 
-        # Set up environment for Zig build to find Python headers
+        # Set up environment for Zig build to find Python headers and libraries
         env = os.environ.copy()
 
         # Get Python include directory
         python_include = sysconfig.get_path('include')
         env['PYTHON_INCLUDE_DIR'] = python_include
         print(f"Setting PYTHON_INCLUDE_DIR={python_include}")
+        
+        # On Windows, we need to also provide the Python library for linking
+        if sys.platform == "win32":
+            # Get Python library directory (usually in libs subdirectory)
+            python_prefix = sysconfig.get_path('stdlib')  # Usually C:\Python313\Lib
+            # Navigate up to get the root, then to libs
+            python_root = Path(python_prefix).parent  # C:\Python313
+            python_libs_dir = python_root / "libs"
+            
+            if python_libs_dir.exists():
+                env['PYTHON_LIBS_DIR'] = str(python_libs_dir)
+                print(f"Setting PYTHON_LIBS_DIR={python_libs_dir}")
+                
+                # Determine the Python library name (e.g., python313.lib)
+                version_info = sys.version_info
+                python_lib_name = f"python{version_info.major}{version_info.minor}.lib"
+                env['PYTHON_LIB_NAME'] = python_lib_name
+                print(f"Setting PYTHON_LIB_NAME={python_lib_name}")
+            else:
+                print(f"Warning: Python libs directory not found at {python_libs_dir}", file=sys.stderr)
 
         # Build the Zig library with optimizations
         cmd = ["zig", "build", "python-bindings", f"-Doptimize={ext.zig_optimize}"]
