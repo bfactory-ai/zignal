@@ -220,7 +220,8 @@ fn resolveVersion(b: *std.Build) std.SemanticVersion {
         };
     }
 
-    if (zignal_version.pre == null and zignal_version.build == null) return zignal_version;
+    // Always check git state to determine if we're on a clean tag or ahead of it
+    // if (zignal_version.pre == null and zignal_version.build == null) return zignal_version;
 
     var code: u8 = undefined;
     const git_describe_raw = b.runAllowFail(&.{ "git", "describe", "--tags" }, &code, .Ignore) catch return zignal_version;
@@ -231,8 +232,8 @@ fn resolveVersion(b: *std.Build) std.SemanticVersion {
 
     switch (std.mem.count(u8, git_describe, "-")) {
         0 => {
-            // Tagged release version (e.g. 1.0.0).
-            std.debug.assert(std.mem.eql(u8, git_describe, b.fmt("{}", .{zignal_version})));
+            // Tagged release version (e.g. 0.1.0).
+            std.debug.assert(std.mem.eql(u8, git_describe, b.fmt("{f}", .{zignal_version})));
             return zignal_version;
         },
         2 => {
@@ -246,7 +247,7 @@ fn resolveVersion(b: *std.Build) std.SemanticVersion {
 
             // lviton_version must be greater than its previous version.
             if (zignal_version.order(previous_version) != .gt) {
-                std.log.err("LViton version {} must newer than {}", .{
+                std.log.err("LViton version {f} must newer than {f}", .{
                     zignal_version,
                     previous_version,
                 });
