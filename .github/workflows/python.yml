@@ -64,14 +64,18 @@ jobs:
       if: runner.os != 'Windows'
       run: |
         source .venv/bin/activate
-        uv pip install bindings/python/dist/*.whl
+        wheel=$(find bindings/python/dist -name "*.whl" | head -1)
+        echo "Installing wheel: $wheel"
+        uv pip install "$wheel"
         python -c "import zignal; red = zignal.Rgb(255, 0, 0); print(f'Test passed: {red}, hex=0x{red.to_hex():06x}')"
 
     - name: Test wheel (Windows)
       if: runner.os == 'Windows'
       run: |
         .venv\Scripts\Activate.ps1
-        uv pip install bindings/python/dist/*.whl
+        $wheel = Get-ChildItem bindings/python/dist/*.whl | Select-Object -First 1
+        Write-Host "Installing wheel: $wheel"
+        uv pip install "$wheel"
         python -c "import zignal; red = zignal.Rgb(255, 0, 0); print(f'Test passed: {red}, hex=0x{red.to_hex():06x}')"
 
     - name: Upload wheels as artifacts
