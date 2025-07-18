@@ -36,7 +36,7 @@ fn imagergb_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject)
     _ = self_obj;
     _ = args;
     _ = kwds;
-    
+
     // For now, don't allow direct instantiation
     c.PyErr_SetString(c.PyExc_TypeError, "ImageRgb cannot be instantiated directly. Use ImageRgb.load() instead.");
     return -1;
@@ -47,20 +47,20 @@ var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 
 fn imagergb_dealloc(self_obj: ?*c.PyObject) callconv(.c) void {
     const self = @as(*ImageRgbObject, @ptrCast(self_obj.?));
-    
+
     // Free the image data if it was allocated
     if (self.image_ptr) |ptr| {
         const allocator = gpa.allocator();
         ptr.deinit(allocator);
         allocator.destroy(ptr);
     }
-    
+
     c.Py_TYPE(self_obj).*.tp_free.?(self_obj);
 }
 
 fn imagergb_repr(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*ImageRgbObject, @ptrCast(self_obj.?));
-    
+
     if (self.image_ptr) |ptr| {
         var buffer: [64]u8 = undefined;
         const formatted = std.fmt.bufPrintZ(&buffer, "ImageRgb({d}x{d})", .{ ptr.rows, ptr.cols }) catch return null;
@@ -74,7 +74,7 @@ fn imagergb_repr(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
 fn imagergb_get_rows(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
     _ = closure;
     const self = @as(*ImageRgbObject, @ptrCast(self_obj.?));
-    
+
     if (self.image_ptr) |ptr| {
         return c.PyLong_FromLong(@intCast(ptr.rows));
     } else {
@@ -86,7 +86,7 @@ fn imagergb_get_rows(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) 
 fn imagergb_get_cols(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
     _ = closure;
     const self = @as(*ImageRgbObject, @ptrCast(self_obj.?));
-    
+
     if (self.image_ptr) |ptr| {
         return c.PyLong_FromLong(@intCast(ptr.cols));
     } else {
@@ -98,17 +98,28 @@ fn imagergb_get_cols(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) 
 // Class methods
 fn imagergb_load(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     var file_path: [*c]const u8 = undefined;
-    
+
     if (c.PyArg_ParseTuple(args, "s", &file_path) == 0) {
         return null;
     }
-    
+
     // Use global allocator
     const allocator = gpa.allocator();
-    
+
     // Convert C string to Zig slice
     const path_slice = std.mem.span(file_path);
-    
+
+    // Check if file exists first to provide better error message
+    std.fs.cwd().access(path_slice, .{}) catch |err| {
+        switch (err) {
+            error.FileNotFound => {
+                c.PyErr_SetString(c.PyExc_FileNotFoundError, "Image file not found");
+                return null;
+            },
+            else => {}, // Continue with load attempt
+        }
+    };
+
     // Load the image
     const image = zignal.Image(zignal.Rgb).load(allocator, path_slice) catch |err| {
         switch (err) {
@@ -119,7 +130,7 @@ fn imagergb_load(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.Py
         }
         return null;
     };
-    
+
     // Create new Python object
     const self = @as(?*ImageRgbObject, @ptrCast(c.PyType_GenericAlloc(@ptrCast(type_obj), 0)));
     if (self == null) {
@@ -127,7 +138,7 @@ fn imagergb_load(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.Py
         img.deinit(allocator);
         return null;
     }
-    
+
     // Allocate space for the image on heap and move it there
     const image_ptr = allocator.create(zignal.Image(zignal.Rgb)) catch {
         var img = image;
@@ -136,10 +147,10 @@ fn imagergb_load(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.Py
         c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
         return null;
     };
-    
+
     image_ptr.* = image;
     self.?.image_ptr = image_ptr;
-    
+
     return @as(?*c.PyObject, @ptrCast(self));
 }
 
@@ -147,7 +158,7 @@ fn imagergb_load(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.Py
 fn imagergb_to_numpy(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
     const self = @as(*ImageRgbObject, @ptrCast(self_obj.?));
-    
+
     if (self.image_ptr) |ptr| {
         // Import numpy
         const np_module = c.PyImport_ImportModule("numpy") orelse {
@@ -155,7 +166,7 @@ fn imagergb_to_numpy(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*
             return null;
         };
         defer c.Py_DECREF(np_module);
-        
+
         // Create a memoryview from our image data
         var buffer = c.Py_buffer{
             .buf = @ptrCast(ptr.data.ptr),
@@ -171,45 +182,45 @@ fn imagergb_to_numpy(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*
             .internal = null,
         };
         c.Py_INCREF(self_obj); // Keep parent alive
-        
+
         const memview = c.PyMemoryView_FromBuffer(&buffer) orelse {
             c.Py_DECREF(self_obj);
             return null;
         };
         defer c.Py_DECREF(memview);
-        
+
         // Get numpy.frombuffer function
         const frombuffer = c.PyObject_GetAttrString(np_module, "frombuffer") orelse return null;
         defer c.Py_DECREF(frombuffer);
-        
+
         // Create arguments for frombuffer(memview, dtype='uint8')
         const args_tuple = c.Py_BuildValue("(O)", memview) orelse return null;
         defer c.Py_DECREF(args_tuple);
-        
+
         const kwargs = c.Py_BuildValue("{s:s}", "dtype", "uint8") orelse return null;
         defer c.Py_DECREF(kwargs);
-        
+
         // Call numpy.frombuffer
         const flat_array = c.PyObject_Call(frombuffer, args_tuple, kwargs) orelse return null;
-        
+
         // Reshape to (rows, cols, 3)
         const reshape_method = c.PyObject_GetAttrString(flat_array, "reshape") orelse {
             c.Py_DECREF(flat_array);
             return null;
         };
         defer c.Py_DECREF(reshape_method);
-        
+
         const shape_tuple = c.Py_BuildValue("(iii)", ptr.rows, ptr.cols, @as(c_int, 3)) orelse {
             c.Py_DECREF(flat_array);
             return null;
         };
         defer c.Py_DECREF(shape_tuple);
-        
+
         const reshaped_array = c.PyObject_CallObject(reshape_method, shape_tuple) orelse {
             c.Py_DECREF(flat_array);
             return null;
         };
-        
+
         c.Py_DECREF(flat_array);
         return reshaped_array;
     } else {
@@ -222,11 +233,11 @@ fn imagergb_to_numpy(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*
 fn imagergb_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = type_obj;
     var array_obj: ?*c.PyObject = undefined;
-    
+
     if (c.PyArg_ParseTuple(args, "O", &array_obj) == 0) {
         return null;
     }
-    
+
     // For debugging, just return an error for now
     if (array_obj != null) {
         c.PyErr_SetString(c.PyExc_NotImplementedError, "from_numpy is temporarily disabled for debugging");

@@ -85,11 +85,11 @@ pub fn build(b: *Build) void {
     b.default_step.dependOn(fmt_step);
 
     // Version info step
-    const version_info_step = b.step("version-info", "Print the resolved version information");
+    const version_info_step = b.step("version", "Print the resolved version information");
     const version_info_exe = b.addExecutable(.{
-        .name = "version-info",
+        .name = "version",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/version_info.zig"),
+            .root_source_file = b.path("src/version.zig"),
             .target = target,
             .optimize = .Debug,
         }),
@@ -97,8 +97,7 @@ pub fn build(b: *Build) void {
 
     // Add build options to version info executable
     const version_options = b.addOptions();
-    const resolved_version = resolveVersion(b);
-    version_options.addOption([]const u8, "version", b.fmt("{f}", .{resolved_version}));
+    version_options.addOption([]const u8, "version", b.fmt("{f}", .{resolveVersion(b)}));
     version_info_exe.root_module.addOptions("build_options", version_options);
 
     const version_info_run = b.addRunArtifact(version_info_exe);
@@ -226,9 +225,6 @@ fn resolveVersion(b: *std.Build) std.SemanticVersion {
     var code: u8 = undefined;
     const git_describe_raw = b.runAllowFail(&.{ "git", "describe", "--tags" }, &code, .Ignore) catch return zignal_version;
     const git_describe = std.mem.trim(u8, git_describe_raw, " \n\r");
-    const git_branch_raw = b.runAllowFail(&.{ "git", "branch", "--show-current" }, &code, .Ignore) catch return zignal_version;
-    const git_branch = std.mem.trim(u8, git_branch_raw, " \n\r");
-    const dev_prefix = if (std.mem.eql(u8, git_branch, "master")) "dev" else git_branch;
 
     switch (std.mem.count(u8, git_describe, "-")) {
         0 => {
@@ -260,7 +256,7 @@ fn resolveVersion(b: *std.Build) std.SemanticVersion {
                 .major = zignal_version.major,
                 .minor = zignal_version.minor,
                 .patch = zignal_version.patch,
-                .pre = b.fmt("{s}.{s}", .{ dev_prefix, commit_count }),
+                .pre = b.fmt("dev.{s}", .{commit_count}),
                 .build = commit_ghash[1..],
             };
         },
