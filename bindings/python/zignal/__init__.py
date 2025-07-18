@@ -28,17 +28,17 @@ try:
 except ImportError as e:
     print(f"DEBUG: Import failed: {e}", file=sys.stderr)
     print(f"DEBUG: Exception type: {type(e)}", file=sys.stderr)
-    
+
     # Try alternative import methods
     import importlib.util
-    
+
     # Find the actual extension file
     zignal_path = None
     for file in os.listdir(pkg_dir):
         if file.startswith("_zignal.") and (file.endswith(".so") or file.endswith(".pyd") or file.endswith(".dylib")):
             zignal_path = os.path.join(pkg_dir, file)
             break
-    
+
     if zignal_path and os.path.exists(zignal_path):
         print(f"DEBUG: Found extension at {zignal_path}", file=sys.stderr)
         try:
@@ -60,5 +60,5 @@ except ImportError as e:
         print(f"DEBUG: Extension file not found at {zignal_path}", file=sys.stderr)
         raise e
 
-__version__ = "0.1.2"
+__version__ = "0.1.0"
 __all__ = ["Rgb"]
