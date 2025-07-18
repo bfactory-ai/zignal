@@ -42,7 +42,8 @@ jobs:
       run: |
         uv pip install --upgrade setuptools wheel build
 
-    - name: Build wheel
+    - name: Build wheel (Unix)
+      if: runner.os != 'Windows'
       run: |
         source .venv/bin/activate
         cd bindings/python
@@ -50,9 +51,26 @@ jobs:
       env:
         ZIG_OPTIMIZE: ReleaseFast
 
-    - name: Test wheel
+    - name: Build wheel (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        .venv\Scripts\Activate.ps1
+        cd bindings/python
+        python build_wheels.py --optimize ReleaseFast
+      env:
+        ZIG_OPTIMIZE: ReleaseFast
+
+    - name: Test wheel (Unix)
+      if: runner.os != 'Windows'
       run: |
         source .venv/bin/activate
+        uv pip install bindings/python/dist/*.whl
+        python -c "import zignal; red = zignal.Rgb(255, 0, 0); print(f'Test passed: {red}, hex=0x{red.to_hex():06x}')"
+
+    - name: Test wheel (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        .venv\Scripts\Activate.ps1
         uv pip install bindings/python/dist/*.whl
         python -c "import zignal; red = zignal.Rgb(255, 0, 0); print(f'Test passed: {red}, hex=0x{red.to_hex():06x}')"
 
