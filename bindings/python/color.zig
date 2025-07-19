@@ -313,181 +313,142 @@ pub fn registerAllColorTypes(module: [*c]c.PyObject) !void {
 // ============================================================================
 
 /// Create a Python object from any zignal color type
-pub fn createPyObject(color: anytype) ?*c.PyObject {
-    const T = @TypeOf(color);
-
-    // Handle each color type
-    if (T == zignal.Rgb) {
-        return createRgbPyObject(color);
-    } else if (T == zignal.Rgba) {
-        return createRgbaPyObject(color);
-    } else if (T == zignal.Hsv) {
-        return createHsvPyObject(color);
-    } else if (T == zignal.Hsl) {
-        return createHslPyObject(color);
-    } else if (T == zignal.Lab) {
-        return createLabPyObject(color);
-    } else if (T == zignal.Xyz) {
-        return createXyzPyObject(color);
-    } else if (T == zignal.Oklab) {
-        return createOklabPyObject(color);
-    } else if (T == zignal.Oklch) {
-        return createOklchPyObject(color);
-    } else if (T == zignal.Lch) {
-        return createLchPyObject(color);
-    } else if (T == zignal.Lms) {
-        return createLmsPyObject(color);
-    } else if (T == zignal.Xyb) {
-        return createXybPyObject(color);
-    } else if (T == zignal.Ycbcr) {
-        return createYcbcrPyObject(color);
-    }
-
-    return null;
+pub fn createColorPyObject(color: anytype) ?*c.PyObject {
+    return switch (@TypeOf(color)) {
+        zignal.Rgb => createRgbPyObject(color),
+        zignal.Rgba => createRgbaPyObject(color),
+        zignal.Hsv => createHsvPyObject(color),
+        zignal.Hsl => createHslPyObject(color),
+        zignal.Lab => createLabPyObject(color),
+        zignal.Xyz => createXyzPyObject(color),
+        zignal.Oklab => createOklabPyObject(color),
+        zignal.Oklch => createOklchPyObject(color),
+        zignal.Lch => createLchPyObject(color),
+        zignal.Lms => createLmsPyObject(color),
+        zignal.Xyb => createXybPyObject(color),
+        zignal.Ycbcr => createYcbcrPyObject(color),
+        else => null,
+    };
 }
 
 // Helper functions for each type
 fn createRgbPyObject(rgb: zignal.Rgb) ?*c.PyObject {
     const obj = c.PyType_GenericNew(@ptrCast(&RgbType), null, null);
     if (obj == null) return null;
-
     const py_obj = @as(*RgbBinding.PyObjectType, @ptrCast(obj));
     py_obj.field0 = rgb.r;
     py_obj.field1 = rgb.g;
     py_obj.field2 = rgb.b;
-
     return obj;
 }
 
 fn createRgbaPyObject(rgba: zignal.Rgba) ?*c.PyObject {
     const obj = c.PyType_GenericNew(@ptrCast(&RgbaType), null, null);
     if (obj == null) return null;
-
     const py_obj = @as(*RgbaBinding.PyObjectType, @ptrCast(obj));
     py_obj.field0 = rgba.r;
     py_obj.field1 = rgba.g;
     py_obj.field2 = rgba.b;
     py_obj.field3 = rgba.a;
-
     return obj;
 }
 
 fn createHsvPyObject(hsv: zignal.Hsv) ?*c.PyObject {
     const obj = c.PyType_GenericNew(@ptrCast(&HsvType), null, null);
     if (obj == null) return null;
-
     const py_obj = @as(*HsvBinding.PyObjectType, @ptrCast(obj));
     py_obj.field0 = hsv.h;
     py_obj.field1 = hsv.s;
     py_obj.field2 = hsv.v;
-
     return obj;
 }
 
 fn createHslPyObject(hsl: zignal.Hsl) ?*c.PyObject {
     const obj = c.PyType_GenericNew(@ptrCast(&HslType), null, null);
     if (obj == null) return null;
-
     const py_obj = @as(*HslBinding.PyObjectType, @ptrCast(obj));
     py_obj.field0 = hsl.h;
     py_obj.field1 = hsl.s;
     py_obj.field2 = hsl.l;
-
     return obj;
 }
 
 fn createLabPyObject(lab: zignal.Lab) ?*c.PyObject {
     const obj = c.PyType_GenericNew(@ptrCast(&LabType), null, null);
     if (obj == null) return null;
-
     const py_obj = @as(*LabBinding.PyObjectType, @ptrCast(obj));
     py_obj.field0 = lab.l;
     py_obj.field1 = lab.a;
     py_obj.field2 = lab.b;
-
     return obj;
 }
 
 fn createXyzPyObject(xyz: zignal.Xyz) ?*c.PyObject {
     const obj = c.PyType_GenericNew(@ptrCast(&XyzType), null, null);
     if (obj == null) return null;
-
     const py_obj = @as(*XyzBinding.PyObjectType, @ptrCast(obj));
     py_obj.field0 = xyz.x;
     py_obj.field1 = xyz.y;
     py_obj.field2 = xyz.z;
-
     return obj;
 }
 
 fn createOklabPyObject(oklab: zignal.Oklab) ?*c.PyObject {
     const obj = c.PyType_GenericNew(@ptrCast(&OklabType), null, null);
     if (obj == null) return null;
-
     const py_obj = @as(*OklabBinding.PyObjectType, @ptrCast(obj));
     py_obj.field0 = oklab.l;
     py_obj.field1 = oklab.a;
     py_obj.field2 = oklab.b;
-
     return obj;
 }
 
 fn createOklchPyObject(oklch: zignal.Oklch) ?*c.PyObject {
     const obj = c.PyType_GenericNew(@ptrCast(&OklchType), null, null);
     if (obj == null) return null;
-
     const py_obj = @as(*OklchBinding.PyObjectType, @ptrCast(obj));
     py_obj.field0 = oklch.l;
     py_obj.field1 = oklch.c;
     py_obj.field2 = oklch.h;
-
     return obj;
 }
 
 fn createLchPyObject(lch: zignal.Lch) ?*c.PyObject {
     const obj = c.PyType_GenericNew(@ptrCast(&LchType), null, null);
     if (obj == null) return null;
-
     const py_obj = @as(*LchBinding.PyObjectType, @ptrCast(obj));
     py_obj.field0 = lch.l;
     py_obj.field1 = lch.c;
     py_obj.field2 = lch.h;
-
     return obj;
 }
 
 fn createLmsPyObject(lms: zignal.Lms) ?*c.PyObject {
     const obj = c.PyType_GenericNew(@ptrCast(&LmsType), null, null);
     if (obj == null) return null;
-
     const py_obj = @as(*LmsBinding.PyObjectType, @ptrCast(obj));
     py_obj.field0 = lms.l;
     py_obj.field1 = lms.m;
     py_obj.field2 = lms.s;
-
     return obj;
 }
 
 fn createXybPyObject(xyb: zignal.Xyb) ?*c.PyObject {
     const obj = c.PyType_GenericNew(@ptrCast(&XybType), null, null);
     if (obj == null) return null;
-
     const py_obj = @as(*XybBinding.PyObjectType, @ptrCast(obj));
     py_obj.field0 = xyb.x;
     py_obj.field1 = xyb.y;
     py_obj.field2 = xyb.b;
-
     return obj;
 }
 
 fn createYcbcrPyObject(ycbcr: zignal.Ycbcr) ?*c.PyObject {
     const obj = c.PyType_GenericNew(@ptrCast(&YcbcrType), null, null);
     if (obj == null) return null;
-
     const py_obj = @as(*YcbcrBinding.PyObjectType, @ptrCast(obj));
     py_obj.field0 = ycbcr.y;
     py_obj.field1 = ycbcr.cb;
     py_obj.field2 = ycbcr.cr;
-
     return obj;
 }

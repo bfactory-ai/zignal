@@ -2,8 +2,8 @@ const std = @import("std");
 
 const zignal = @import("zignal");
 
-const color = @import("color.zig");
 const color_types = @import("color_registry.zig").color_types;
+const createColorPyObject = @import("color.zig").createColorPyObject;
 const getValidationErrorMessage = @import("color_registry.zig").getValidationErrorMessage;
 const isSupportedColor = @import("color_registry.zig").isSupportedColor;
 const py_utils = @import("py_utils.zig");
@@ -185,7 +185,7 @@ pub fn createColorBinding(
                         const self = @as(*ObjectType, @ptrCast(self_obj));
                         const zig_color = objectToZigColor(self);
                         const result = zig_color.toRgba(255); // Default alpha 255
-                        return @ptrCast(color.createPyObject(result));
+                        return @ptrCast(createColorPyObject(result));
                     }
                 }.method,
                 // All other color types use the same pattern with automatic method name generation
@@ -195,7 +195,7 @@ pub fn createColorBinding(
                         const zig_color = objectToZigColor(self);
                         const method_name = comptime getZigConversionMethodName(TargetColorType);
                         const result = @field(ZigColorType, method_name)(zig_color);
-                        return @ptrCast(color.createPyObject(result));
+                        return @ptrCast(createColorPyObject(result));
                     }
                 }.method,
             };
