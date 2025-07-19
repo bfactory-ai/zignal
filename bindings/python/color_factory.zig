@@ -14,19 +14,10 @@ const c = @cImport({
 // SIMPLIFIED COLOR FACTORY
 // ============================================================================
 
-/// Configuration for color type binding generation
-pub const ColorBindingConfig = struct {
-    /// Custom error message for validation failures
-    validation_error: []const u8 = "Invalid color component value",
-    /// Custom documentation for the type
-    doc: []const u8 = "Color type",
-};
-
 /// Generate a color binding with automatic property getters and validation
 pub fn createColorBinding(
     comptime name: []const u8,
     comptime ZigColorType: type,
-    comptime config: ColorBindingConfig,
 ) type {
     const fields = @typeInfo(ZigColorType).@"struct".fields;
 
@@ -308,7 +299,8 @@ pub fn createColorBinding(
                     // Use generic validation with the actual color type
                     const color_registry = @import("color_registry.zig");
                     if (!color_registry.validateColorComponent(ZigColorType, fields[0].name ++ "", arg0)) {
-                        c.PyErr_SetString(c.PyExc_ValueError, config.validation_error.ptr);
+                        const error_msg = color_registry.getValidationErrorMessage(ZigColorType);
+                        c.PyErr_SetString(c.PyExc_ValueError, error_msg.ptr);
                         return -1;
                     }
 
@@ -333,7 +325,8 @@ pub fn createColorBinding(
                     if (!color_registry.validateColorComponent(ZigColorType, fields[0].name ++ "", arg0) or
                         !color_registry.validateColorComponent(ZigColorType, fields[1].name ++ "", arg1))
                     {
-                        c.PyErr_SetString(c.PyExc_ValueError, config.validation_error.ptr);
+                        const error_msg = color_registry.getValidationErrorMessage(ZigColorType);
+                        c.PyErr_SetString(c.PyExc_ValueError, error_msg.ptr);
                         return -1;
                     }
 
@@ -358,7 +351,8 @@ pub fn createColorBinding(
                             !color_registry.validateColorComponent(ZigColorType, fields[1].name ++ "", arg1) or
                             !color_registry.validateColorComponent(ZigColorType, fields[2].name ++ "", arg2))
                         {
-                            c.PyErr_SetString(c.PyExc_ValueError, config.validation_error.ptr);
+                            const error_msg = color_registry.getValidationErrorMessage(ZigColorType);
+                            c.PyErr_SetString(c.PyExc_ValueError, error_msg.ptr);
                             return -1;
                         }
 
@@ -403,7 +397,8 @@ pub fn createColorBinding(
                             !color_registry.validateColorComponent(ZigColorType, fields[1].name ++ "", arg1) or
                             !color_registry.validateColorComponent(ZigColorType, fields[2].name ++ "", arg2))
                         {
-                            c.PyErr_SetString(c.PyExc_ValueError, config.validation_error.ptr);
+                            const error_msg = color_registry.getValidationErrorMessage(ZigColorType);
+                            c.PyErr_SetString(c.PyExc_ValueError, error_msg.ptr);
                             return -1;
                         }
 
@@ -437,7 +432,8 @@ pub fn createColorBinding(
                         !color_registry.validateColorComponent(ZigColorType, fields[2].name ++ "", arg2) or
                         !color_registry.validateColorComponent(ZigColorType, fields[3].name ++ "", arg3))
                     {
-                        c.PyErr_SetString(c.PyExc_ValueError, config.validation_error.ptr);
+                        const error_msg = color_registry.getValidationErrorMessage(ZigColorType);
+                        c.PyErr_SetString(c.PyExc_ValueError, error_msg.ptr);
                         return -1;
                     }
 

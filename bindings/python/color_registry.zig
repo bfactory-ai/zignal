@@ -16,6 +16,24 @@ const c = @cImport({
 /// Generic color component validation using type introspection
 /// This function determines validation rules based on the actual field types and semantics
 pub fn validateColorComponent(comptime ColorType: type, field_name: []const u8, value: anytype) bool {
+    // Compile-time validation that ColorType is supported
+    switch (ColorType) {
+        zignal.Rgb,
+        zignal.Rgba,
+        zignal.Hsv,
+        zignal.Hsl,
+        zignal.Lab,
+        zignal.Xyz,
+        zignal.Oklab,
+        zignal.Oklch,
+        zignal.Lch,
+        zignal.Lms,
+        zignal.Xyb,
+        zignal.Ycbcr,
+        => {},
+        else => @compileError("Missing validation for color type '" ++ @typeName(ColorType) ++ "'. "),
+    }
+
     const T = @TypeOf(value);
 
     // Apply validation rules based on color type and field name semantics
@@ -98,107 +116,44 @@ pub fn validateColorComponent(comptime ColorType: type, field_name: []const u8, 
 }
 
 // ============================================================================
-// COLOR BINDING REGISTRY
+// TYPE-DRIVEN COLOR FUNCTIONS
 // ============================================================================
 
-pub const ColorBindingEntry = struct {
-    name: []const u8,
-    zig_type: type,
-    validation_error: []const u8,
-    doc: []const u8,
-};
-
-// Define all color types we want to expose to Python
-pub const ColorRegistry = [_]ColorBindingEntry{
-    .{
-        .name = "Rgb",
-        .zig_type = zignal.Rgb,
-        .validation_error = "RGB values must be in range 0-255",
-        .doc = "RGB color in sRGB colorspace with components in range 0-255",
-    },
-    .{
-        .name = "Rgba",
-        .zig_type = zignal.Rgba,
-        .validation_error = "RGBA values must be in range 0-255",
-        .doc = "RGBA color with alpha channel, components in range 0-255",
-    },
-    .{
-        .name = "Hsv",
-        .zig_type = zignal.Hsv,
-        .validation_error = "HSV values must be in valid ranges (h: 0-360, s: 0-100, v: 0-100)",
-        .doc = "HSV (Hue-Saturation-Value) color representation",
-    },
-    .{
-        .name = "Hsl",
-        .zig_type = zignal.Hsl,
-        .validation_error = "HSL values must be in valid ranges (h: 0-360, s: 0-100, l: 0-100)",
-        .doc = "HSL (Hue-Saturation-Lightness) color representation",
-    },
-    .{
-        .name = "Lab",
-        .zig_type = zignal.Lab,
-        .validation_error = "Lab values must be in valid ranges (L: 0-100, a/b: typically -128 to 127)",
-        .doc = "CIELAB color space representation",
-    },
-    .{
-        .name = "Xyz",
-        .zig_type = zignal.Xyz,
-        .validation_error = "XYZ values must be non-negative",
-        .doc = "CIE 1931 XYZ color space representation",
-    },
-    .{
-        .name = "Oklab",
-        .zig_type = zignal.Oklab,
-        .validation_error = "Oklab values must be in valid ranges (l: 0-1, a/b: typically -0.5 to 0.5)",
-        .doc = "Oklab perceptual color space representation",
-    },
-    .{
-        .name = "Oklch",
-        .zig_type = zignal.Oklch,
-        .validation_error = "Oklch values must be in valid ranges (l: 0-1, c: 0-0.5, h: 0-360)",
-        .doc = "Oklch perceptual color space in cylindrical coordinates",
-    },
-    .{
-        .name = "Lch",
-        .zig_type = zignal.Lch,
-        .validation_error = "Lch values must be in valid ranges (l: 0-100, c: >=0, h: 0-360)",
-        .doc = "CIE LCH color space representation (cylindrical Lab)",
-    },
-    .{
-        .name = "Lms",
-        .zig_type = zignal.Lms,
-        .validation_error = "LMS values should be non-negative cone responses",
-        .doc = "LMS color space representing Long, Medium, Short wavelength cone responses",
-    },
-    .{
-        .name = "Xyb",
-        .zig_type = zignal.Xyb,
-        .validation_error = "XYB values used in JPEG XL compression",
-        .doc = "XYB color space used in JPEG XL image compression",
-    },
-    .{
-        .name = "Ycbcr",
-        .zig_type = zignal.Ycbcr,
-        .validation_error = "YCbCr values must be in range 0-255",
-        .doc = "YCbCr color space used in JPEG and video encoding",
-    },
-};
-
-// ============================================================================
-// HELPER FUNCTIONS
-// ============================================================================
-
-/// Get the binding configuration for a specific color type
-pub fn getBindingConfig(comptime T: type) ?ColorBindingEntry {
-    inline for (ColorRegistry) |entry| {
-        if (entry.zig_type == T) {
-            return entry;
-        }
-    }
-    return null;
+/// Get the validation error message for a specific color type
+pub fn getValidationErrorMessage(comptime ColorType: type) []const u8 {
+    // Return appropriate error message based on color type
+    return switch (ColorType) {
+        zignal.Rgb, zignal.Rgba => "RGB values must be in range 0-255",
+        zignal.Hsv => "HSV values must be in valid ranges (h: 0-360, s: 0-100, v: 0-100)",
+        zignal.Hsl => "HSL values must be in valid ranges (h: 0-360, s: 0-100, l: 0-100)",
+        zignal.Lab => "Lab values must be in valid ranges (L: 0-100, a/b: typically -128 to 127)",
+        zignal.Xyz => "XYZ values must be non-negative",
+        zignal.Oklab => "Oklab values must be in valid ranges (l: 0-1, a/b: typically -0.5 to 0.5)",
+        zignal.Oklch => "Oklch values must be in valid ranges (l: 0-1, c: 0-0.5, h: 0-360)",
+        zignal.Lch => "Lch values must be in valid ranges (l: 0-100, c: >=0, h: 0-360)",
+        zignal.Lms => "LMS values should be non-negative cone responses",
+        zignal.Xyb => "XYB values used in JPEG XL compression",
+        zignal.Ycbcr => "YCbCr values must be in range 0-255",
+        else => @compileError("Missing validation error message for color type '" ++ @typeName(ColorType) ++ "'. "),
+    };
 }
 
-/// Check if a type is registered in the color registry
-pub fn isRegisteredColorType(comptime T: type) bool {
-    return getBindingConfig(T) != null;
+/// Get the documentation string for a specific color type
+pub fn getDocumentationString(comptime ColorType: type) []const u8 {
+    // Return appropriate documentation based on color type
+    return switch (ColorType) {
+        zignal.Rgb => "RGB color in sRGB colorspace with components in range 0-255",
+        zignal.Rgba => "RGBA color with alpha channel, components in range 0-255",
+        zignal.Hsv => "HSV (Hue-Saturation-Value) color representation",
+        zignal.Hsl => "HSL (Hue-Saturation-Lightness) color representation",
+        zignal.Lab => "CIELAB color space representation",
+        zignal.Xyz => "CIE 1931 XYZ color space representation",
+        zignal.Oklab => "Oklab perceptual color space representation",
+        zignal.Oklch => "Oklch perceptual color space in cylindrical coordinates",
+        zignal.Lch => "CIE LCH color space representation (cylindrical Lab)",
+        zignal.Lms => "LMS color space representing Long, Medium, Short wavelength cone responses",
+        zignal.Xyb => "XYB color space used in JPEG XL image compression",
+        zignal.Ycbcr => "YCbCr color space used in JPEG and video encoding",
+        else => @compileError("Missing documentation for color type '" ++ @typeName(ColorType) ++ "'. "),
+    };
 }
