@@ -30,6 +30,14 @@ pub const color_types = .{
     zignal.Ycbcr,
 };
 
+/// Check if a type is a supported color type
+pub fn isSupportedColor(comptime T: type) bool {
+    inline for (color_types) |ColorType| {
+        if (T == ColorType) return true;
+    }
+    return false;
+}
+
 // ============================================================================
 // VALIDATION FUNCTIONS
 // ============================================================================

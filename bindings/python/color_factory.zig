@@ -2,8 +2,12 @@ const std = @import("std");
 
 const zignal = @import("zignal");
 
+const color_types = @import("color_registry.zig").color_types;
+const getValidationErrorMessage = @import("color_registry.zig").getValidationErrorMessage;
+const isSupportedColor = @import("color_registry.zig").isSupportedColor;
 const py_utils = @import("py_utils.zig");
 pub const registerType = py_utils.registerType;
+const validateColorComponent = @import("color_registry.zig").validateColorComponent;
 
 const c = @cImport({
     @cDefine("PY_SSIZE_T_CLEAN", {});
@@ -108,14 +112,15 @@ pub fn createColorBinding(
             var methods: [getMethodCount() + 1]c.PyMethodDef = undefined;
             var index: usize = 0;
 
-            const color_registry = @import("color_registry.zig");
-
             // Generate conversion methods for each color type
-            inline for (color_registry.color_types) |TargetColorType| {
+            inline for (color_types) |TargetColorType| {
                 const method_name = getConversionMethodName(TargetColorType);
                 const zig_method_name = getZigConversionMethodName(TargetColorType);
 
-                // Only add method if the Zig type has this conversion method
+                // Skip self-conversion (e.g., Rgb.toRgb doesn't exist)
+                if (TargetColorType == ZigColorType) continue;
+
+                // Check if the Zig type has this conversion method
                 if (@hasDecl(ZigColorType, zig_method_name)) {
                     methods[index] = c.PyMethodDef{
                         .ml_name = method_name.ptr,
@@ -124,90 +129,92 @@ pub fn createColorBinding(
                         .ml_doc = getConversionMethodDoc(TargetColorType).ptr,
                     };
                     index += 1;
+                } else {
+                    @compileError("Missing conversion method: " ++ @typeName(ZigColorType) ++ "." ++ zig_method_name ++ " - expected for color type in registry");
                 }
             }
-
-            // Null terminator
-            methods[index] = c.PyMethodDef{
-                .ml_name = null,
-                .ml_meth = null,
-                .ml_flags = 0,
-                .ml_doc = null,
-            };
-
+            methods[index] = c.PyMethodDef{ .ml_name = null, .ml_meth = null, .ml_flags = 0, .ml_doc = null };
             return methods;
         }
 
         // Count available methods - automatically count conversion methods for all color types
         fn getMethodCount() comptime_int {
             var count: comptime_int = 0;
-            const color_registry = @import("color_registry.zig");
 
-            inline for (color_registry.color_types) |TargetColorType| {
+            inline for (color_types) |TargetColorType| {
+                // Skip self-conversion (e.g., Rgb.toRgb doesn't exist)
+                if (TargetColorType == ZigColorType) continue;
+
                 const zig_method_name = getZigConversionMethodName(TargetColorType);
                 if (@hasDecl(ZigColorType, zig_method_name)) {
                     count += 1;
+                } else {
+                    @compileError("Missing conversion method: " ++ @typeName(ZigColorType) ++ "." ++ zig_method_name ++ " - expected for color type in registry");
                 }
             }
             return count;
         }
 
-        // Helper functions for method name generation
-        fn getConversionMethodName(comptime TargetColorType: type) []const u8 {
-            return switch (TargetColorType) {
-                zignal.Rgb => "to_rgb",
-                zignal.Rgba => "to_rgba",
-                zignal.Hsl => "to_hsl",
-                zignal.Hsv => "to_hsv",
-                zignal.Lab => "to_lab",
-                zignal.Lch => "to_lch",
-                zignal.Lms => "to_lms",
-                zignal.Oklab => "to_oklab",
-                zignal.Oklch => "to_oklch",
-                zignal.Xyb => "to_xyb",
-                zignal.Xyz => "to_xyz",
-                zignal.Ycbcr => "to_ycbcr",
-                else => @compileError("Unknown color type for method name generation"),
-            };
+        /// Convert string to lowercase at comptime
+        fn comptimeLowercase(comptime input: []const u8) []const u8 {
+            comptime var result: [input.len]u8 = undefined;
+            inline for (input, 0..) |char, i| {
+                result[i] = std.ascii.toLower(char);
+            }
+            return result[0..];
         }
 
+        /// Automatically generate Python method name from type name
+        /// e.g., zignal.Rgb -> "to_rgb", zignal.Oklab -> "to_oklab"
+        fn getConversionMethodName(comptime TargetColorType: type) []const u8 {
+            const type_name = @typeName(TargetColorType);
+
+            // Find the last dot and take everything after it
+            if (std.mem.lastIndexOf(u8, type_name, ".")) |dot_index| {
+                const base_name = type_name[dot_index + 1 ..];
+                return "to_" ++ comptimeLowercase(base_name);
+            } else {
+                // If no dot found, use the whole type name
+                return "to_" ++ comptimeLowercase(type_name);
+            }
+        }
+
+        /// Automatically generate method name from type name
+        /// e.g., zignal.Rgb -> "toRgb", zignal.Oklab -> "toOklab"
         fn getZigConversionMethodName(comptime TargetColorType: type) []const u8 {
-            return switch (TargetColorType) {
-                zignal.Rgb => "toRgb",
-                zignal.Rgba => "toRgba",
-                zignal.Hsl => "toHsl",
-                zignal.Hsv => "toHsv",
-                zignal.Lab => "toLab",
-                zignal.Lch => "toLch",
-                zignal.Lms => "toLms",
-                zignal.Oklab => "toOklab",
-                zignal.Oklch => "toOklch",
-                zignal.Xyb => "toXyb",
-                zignal.Xyz => "toXyz",
-                zignal.Ycbcr => "toYcbcr",
-                else => @compileError("Unknown color type for Zig method name generation"),
-            };
+            const type_name = @typeName(TargetColorType);
+
+            // Find the last dot and take everything after it
+            if (std.mem.lastIndexOf(u8, type_name, ".")) |dot_index| {
+                const base_name = type_name[dot_index + 1 ..];
+                return "to" ++ base_name;
+            } else {
+                // If no dot found, use the whole type name
+                return "to" ++ type_name;
+            }
         }
 
         fn getConversionMethodDoc(comptime TargetColorType: type) []const u8 {
-            return switch (TargetColorType) {
-                zignal.Rgb => "Convert to RGB color space",
-                zignal.Rgba => "Convert to RGBA color space with alpha",
-                zignal.Hsl => "Convert to HSL color space",
-                zignal.Hsv => "Convert to HSV color space",
-                zignal.Lab => "Convert to CIELAB color space",
-                zignal.Lch => "Convert to CIE LCH color space",
-                zignal.Lms => "Convert to LMS cone response space",
-                zignal.Oklab => "Convert to Oklab perceptual color space",
-                zignal.Oklch => "Convert to Oklch perceptual color space",
-                zignal.Xyb => "Convert to XYB color space",
-                zignal.Xyz => "Convert to CIE XYZ color space",
-                zignal.Ycbcr => "Convert to YCbCr color space",
-                else => @compileError("Unknown color type for documentation generation"),
-            };
+
+            // First check if it's a supported color type
+            if (!isSupportedColor(TargetColorType)) {
+                @compileError("Unsupported color type: " ++ @typeName(TargetColorType));
+            }
+
+            // Automatically generate documentation from type name
+            const type_name = @typeName(TargetColorType);
+
+            // Extract the color space name (everything after the last dot)
+            if (std.mem.lastIndexOf(u8, type_name, ".")) |dot_index| {
+                const color_space = type_name[dot_index + 1 ..];
+                return "Convert to " ++ color_space ++ " color space";
+            } else {
+                // Fallback if no dot found
+                return "Convert to " ++ type_name ++ " color space";
+            }
         }
 
-        // Generic conversion method generator - creates specific methods for each target type
+        /// Generic conversion method generator - creates specific methods for each target type
         fn generateConversionMethod(comptime TargetColorType: type) fn ([*c]c.PyObject, [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
             return switch (TargetColorType) {
                 zignal.Rgb => struct {
@@ -372,9 +379,8 @@ pub fn createColorBinding(
                     }
 
                     // Use generic validation with the actual color type
-                    const color_registry = @import("color_registry.zig");
-                    if (!color_registry.validateColorComponent(ZigColorType, fields[0].name ++ "", arg0)) {
-                        const error_msg = color_registry.getValidationErrorMessage(ZigColorType);
+                    if (!validateColorComponent(ZigColorType, fields[0].name ++ "", arg0)) {
+                        const error_msg = getValidationErrorMessage(ZigColorType);
                         c.PyErr_SetString(c.PyExc_ValueError, error_msg.ptr);
                         return -1;
                     }
@@ -396,11 +402,10 @@ pub fn createColorBinding(
                     }
 
                     // Use generic validation with the actual color type
-                    const color_registry = @import("color_registry.zig");
-                    if (!color_registry.validateColorComponent(ZigColorType, fields[0].name ++ "", arg0) or
-                        !color_registry.validateColorComponent(ZigColorType, fields[1].name ++ "", arg1))
+                    if (!validateColorComponent(ZigColorType, fields[0].name ++ "", arg0) or
+                        !validateColorComponent(ZigColorType, fields[1].name ++ "", arg1))
                     {
-                        const error_msg = color_registry.getValidationErrorMessage(ZigColorType);
+                        const error_msg = getValidationErrorMessage(ZigColorType);
                         c.PyErr_SetString(c.PyExc_ValueError, error_msg.ptr);
                         return -1;
                     }
@@ -421,12 +426,11 @@ pub fn createColorBinding(
                         }
 
                         // Use generic validation with the actual color type
-                        const color_registry = @import("color_registry.zig");
-                        if (!color_registry.validateColorComponent(ZigColorType, fields[0].name ++ "", arg0) or
-                            !color_registry.validateColorComponent(ZigColorType, fields[1].name ++ "", arg1) or
-                            !color_registry.validateColorComponent(ZigColorType, fields[2].name ++ "", arg2))
+                        if (!validateColorComponent(ZigColorType, fields[0].name ++ "", arg0) or
+                            !validateColorComponent(ZigColorType, fields[1].name ++ "", arg1) or
+                            !validateColorComponent(ZigColorType, fields[2].name ++ "", arg2))
                         {
-                            const error_msg = color_registry.getValidationErrorMessage(ZigColorType);
+                            const error_msg = getValidationErrorMessage(ZigColorType);
                             c.PyErr_SetString(c.PyExc_ValueError, error_msg.ptr);
                             return -1;
                         }
@@ -467,12 +471,11 @@ pub fn createColorBinding(
                         }
 
                         // Use generic validation with the actual color type
-                        const color_registry = @import("color_registry.zig");
-                        if (!color_registry.validateColorComponent(ZigColorType, fields[0].name ++ "", arg0) or
-                            !color_registry.validateColorComponent(ZigColorType, fields[1].name ++ "", arg1) or
-                            !color_registry.validateColorComponent(ZigColorType, fields[2].name ++ "", arg2))
+                        if (!validateColorComponent(ZigColorType, fields[0].name ++ "", arg0) or
+                            !validateColorComponent(ZigColorType, fields[1].name ++ "", arg1) or
+                            !validateColorComponent(ZigColorType, fields[2].name ++ "", arg2))
                         {
-                            const error_msg = color_registry.getValidationErrorMessage(ZigColorType);
+                            const error_msg = getValidationErrorMessage(ZigColorType);
                             c.PyErr_SetString(c.PyExc_ValueError, error_msg.ptr);
                             return -1;
                         }
@@ -501,13 +504,12 @@ pub fn createColorBinding(
                     }
 
                     // Use generic validation with the actual color type
-                    const color_registry = @import("color_registry.zig");
-                    if (!color_registry.validateColorComponent(ZigColorType, fields[0].name ++ "", arg0) or
-                        !color_registry.validateColorComponent(ZigColorType, fields[1].name ++ "", arg1) or
-                        !color_registry.validateColorComponent(ZigColorType, fields[2].name ++ "", arg2) or
-                        !color_registry.validateColorComponent(ZigColorType, fields[3].name ++ "", arg3))
+                    if (!validateColorComponent(ZigColorType, fields[0].name ++ "", arg0) or
+                        !validateColorComponent(ZigColorType, fields[1].name ++ "", arg1) or
+                        !validateColorComponent(ZigColorType, fields[2].name ++ "", arg2) or
+                        !validateColorComponent(ZigColorType, fields[3].name ++ "", arg3))
                     {
-                        const error_msg = color_registry.getValidationErrorMessage(ZigColorType);
+                        const error_msg = getValidationErrorMessage(ZigColorType);
                         c.PyErr_SetString(c.PyExc_ValueError, error_msg.ptr);
                         return -1;
                     }
