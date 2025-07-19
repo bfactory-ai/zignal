@@ -107,9 +107,9 @@ pub fn createColorBinding(
 
                     const value = switch (field_index) {
                         0 => self.field0,
-                        1 => self.field1,
-                        2 => self.field2,
-                        3 => self.field3,
+                        1 => if (fields.len > 1) self.field1 else unreachable,
+                        2 => if (fields.len > 2) self.field2 else unreachable,
+                        3 => if (fields.len > 3) self.field3 else unreachable,
                         else => unreachable,
                     };
 
@@ -258,35 +258,15 @@ pub fn createColorBinding(
 
         // Helper functions to create Python objects from Zig colors
         fn createHsvPyObject(hsv: zignal.Hsv) ?*c.PyObject {
-            // Import the color module to access HsvType
+            // Use the createPyObject helper from color.zig
             const color = @import("color.zig");
-
-            // Create a new HSV object
-            const hsv_obj = c.PyType_GenericNew(@ptrCast(&color.HsvType), null, null);
-            if (hsv_obj == null) return null;
-
-            const hsv_py = @as(*color.HsvBinding.PyObjectType, @ptrCast(hsv_obj));
-            hsv_py.field0 = hsv.h;
-            hsv_py.field1 = hsv.s;
-            hsv_py.field2 = hsv.v;
-
-            return hsv_obj;
+            return @ptrCast(color.createPyObject(hsv));
         }
 
         fn createRgbPyObject(rgb: zignal.Rgb) ?*c.PyObject {
-            // Import the color module to access RgbType
+            // Use the createPyObject helper from color.zig
             const color = @import("color.zig");
-
-            // Create a new RGB object
-            const rgb_obj = c.PyType_GenericNew(@ptrCast(&color.RgbType), null, null);
-            if (rgb_obj == null) return null;
-
-            const rgb_py = @as(*color.RgbBinding.PyObjectType, @ptrCast(rgb_obj));
-            rgb_py.field0 = rgb.r;
-            rgb_py.field1 = rgb.g;
-            rgb_py.field2 = rgb.b;
-
-            return rgb_obj;
+            return @ptrCast(color.createPyObject(rgb));
         }
 
         // Convert Python object to Zig color
@@ -330,13 +310,16 @@ pub fn createColorBinding(
             switch (fields.len) {
                 1 => {
                     var arg0: fields[0].type = undefined;
-                    const format = comptime std.fmt.comptimePrint("{s}", .{py_utils.getFormatString(fields[0].type)});
-                    if (c.PyArg_ParseTuple(args, format, &arg0) == 0) {
+                    const format = comptime blk: {
+                        const fmt = std.fmt.comptimePrint("{s}", .{py_utils.getFormatString(fields[0].type)});
+                        break :blk fmt ++ "";  // Ensure null termination
+                    };
+                    if (c.PyArg_ParseTuple(args, format.ptr, &arg0) == 0) {
                         return -1;
                     }
 
                     if (config.validation_fn) |validator| {
-                        if (!validator(fields[0].name, arg0)) {
+                        if (!validator(fields[0].name ++ "", arg0)) {
                             c.PyErr_SetString(c.PyExc_ValueError, config.validation_error.ptr);
                             return -1;
                         }
@@ -347,16 +330,19 @@ pub fn createColorBinding(
                 2 => {
                     var arg0: fields[0].type = undefined;
                     var arg1: fields[1].type = undefined;
-                    const format = comptime std.fmt.comptimePrint("{s}{s}", .{
-                        py_utils.getFormatString(fields[0].type),
-                        py_utils.getFormatString(fields[1].type),
-                    });
-                    if (c.PyArg_ParseTuple(args, format, &arg0, &arg1) == 0) {
+                    const format = comptime blk: {
+                        const fmt = std.fmt.comptimePrint("{s}{s}", .{
+                            py_utils.getFormatString(fields[0].type),
+                            py_utils.getFormatString(fields[1].type),
+                        });
+                        break :blk fmt ++ "";  // Ensure null termination
+                    };
+                    if (c.PyArg_ParseTuple(args, format.ptr, &arg0, &arg1) == 0) {
                         return -1;
                     }
 
                     if (config.validation_fn) |validator| {
-                        if (!validator(fields[0].name, arg0) or !validator(fields[1].name, arg1)) {
+                        if (!validator(fields[0].name ++ "", arg0) or !validator(fields[1].name ++ "", arg1)) {
                             c.PyErr_SetString(c.PyExc_ValueError, config.validation_error.ptr);
                             return -1;
                         }
@@ -372,12 +358,13 @@ pub fn createColorBinding(
                         var arg0: c_int = undefined;
                         var arg1: c_int = undefined;
                         var arg2: c_int = undefined;
-                        if (c.PyArg_ParseTuple(args, "iii", &arg0, &arg1, &arg2) == 0) {
+                        const format = comptime std.fmt.comptimePrint("iii", .{});
+                        if (c.PyArg_ParseTuple(args, format.ptr, &arg0, &arg1, &arg2) == 0) {
                             return -1;
                         }
 
                         if (config.validation_fn) |validator| {
-                            if (!validator(fields[0].name, arg0) or !validator(fields[1].name, arg1) or !validator(fields[2].name, arg2)) {
+                            if (!validator(fields[0].name ++ "", arg0) or !validator(fields[1].name ++ "", arg1) or !validator(fields[2].name ++ "", arg2)) {
                                 c.PyErr_SetString(c.PyExc_ValueError, config.validation_error.ptr);
                                 return -1;
                             }
@@ -391,17 +378,35 @@ pub fn createColorBinding(
                         var arg0: fields[0].type = undefined;
                         var arg1: fields[1].type = undefined;
                         var arg2: fields[2].type = undefined;
-                        const format = comptime std.fmt.comptimePrint("{s}{s}{s}", .{
-                            py_utils.getFormatString(fields[0].type),
-                            py_utils.getFormatString(fields[1].type),
-                            py_utils.getFormatString(fields[2].type),
-                        });
-                        if (c.PyArg_ParseTuple(args, format, &arg0, &arg1, &arg2) == 0) {
-                            return -1;
+                        
+                        // Use std.fmt.comptimePrint for proper null termination
+                        if (fields[0].type == f64 and fields[1].type == f64 and fields[2].type == f64) {
+                            // HSV case: all f64 fields
+                            const format = comptime std.fmt.comptimePrint("ddd", .{});
+                            if (c.PyArg_ParseTuple(args, format.ptr, &arg0, &arg1, &arg2) == 0) {
+                                return -1;
+                            }
+                        } else if (fields[0].type == f32 and fields[1].type == f32 and fields[2].type == f32) {
+                            // f32 case: all f32 fields 
+                            const format = comptime std.fmt.comptimePrint("fff", .{});
+                            if (c.PyArg_ParseTuple(args, format.ptr, &arg0, &arg1, &arg2) == 0) {
+                                return -1;
+                            }
+                        } else {
+                            // Fallback: build format string character by character
+                            var format_buf: [4]u8 = undefined;
+                            format_buf[0] = py_utils.getFormatString(fields[0].type)[0];
+                            format_buf[1] = py_utils.getFormatString(fields[1].type)[0];
+                            format_buf[2] = py_utils.getFormatString(fields[2].type)[0];
+                            format_buf[3] = 0; // null terminator
+                            
+                            if (c.PyArg_ParseTuple(args, &format_buf, &arg0, &arg1, &arg2) == 0) {
+                                return -1;
+                            }
                         }
 
                         if (config.validation_fn) |validator| {
-                            if (!validator(fields[0].name, arg0) or !validator(fields[1].name, arg1) or !validator(fields[2].name, arg2)) {
+                            if (!validator(fields[0].name ++ "", arg0) or !validator(fields[1].name ++ "", arg1) or !validator(fields[2].name ++ "", arg2)) {
                                 c.PyErr_SetString(c.PyExc_ValueError, config.validation_error.ptr);
                                 return -1;
                             }
@@ -417,18 +422,21 @@ pub fn createColorBinding(
                     var arg1: fields[1].type = undefined;
                     var arg2: fields[2].type = undefined;
                     var arg3: fields[3].type = undefined;
-                    const format = comptime std.fmt.comptimePrint("{s}{s}{s}{s}", .{
-                        py_utils.getFormatString(fields[0].type),
-                        py_utils.getFormatString(fields[1].type),
-                        py_utils.getFormatString(fields[2].type),
-                        py_utils.getFormatString(fields[3].type),
-                    });
-                    if (c.PyArg_ParseTuple(args, format, &arg0, &arg1, &arg2, &arg3) == 0) {
+                    const format = comptime blk: {
+                        const fmt = std.fmt.comptimePrint("{s}{s}{s}{s}", .{
+                            py_utils.getFormatString(fields[0].type),
+                            py_utils.getFormatString(fields[1].type),
+                            py_utils.getFormatString(fields[2].type),
+                            py_utils.getFormatString(fields[3].type),
+                        });
+                        break :blk fmt ++ "";  // Ensure null termination
+                    };
+                    if (c.PyArg_ParseTuple(args, format.ptr, &arg0, &arg1, &arg2, &arg3) == 0) {
                         return -1;
                     }
 
                     if (config.validation_fn) |validator| {
-                        if (!validator(fields[0].name, arg0) or !validator(fields[1].name, arg1) or !validator(fields[2].name, arg2) or !validator(fields[3].name, arg3)) {
+                        if (!validator(fields[0].name ++ "", arg0) or !validator(fields[1].name ++ "", arg1) or !validator(fields[2].name ++ "", arg2) or !validator(fields[3].name ++ "", arg3)) {
                             c.PyErr_SetString(c.PyExc_ValueError, config.validation_error.ptr);
                             return -1;
                         }
@@ -485,4 +493,46 @@ pub fn createColorBinding(
 // Make getFormatString public
 pub fn getFormatString(comptime T: type) []const u8 {
     return py_utils.getFormatString(T);
+}
+
+// ============================================================================
+// BULK TYPE GENERATION
+// ============================================================================
+
+const color_registry = @import("color_registry.zig");
+
+/// Container for generated color binding data
+pub const GeneratedColorBinding = struct {
+    binding_type: type,
+    type_object: *c.PyTypeObject,
+    getset_defs: []c.PyGetSetDef,
+    method_defs: []c.PyMethodDef,
+};
+
+/// Generate all color bindings from the registry
+pub fn generateAllColorBindings() []GeneratedColorBinding {
+    @compileError("generateAllColorBindings must be called at comptime with inline for loops");
+}
+
+/// Generate a PyTypeObject for a color binding
+pub fn generatePyTypeObject(
+    comptime name: []const u8,
+    comptime BindingType: type,
+    getset: *[]c.PyGetSetDef,
+    methods: *[]c.PyMethodDef,
+) c.PyTypeObject {
+    return c.PyTypeObject{
+        .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
+        .tp_name = "zignal." ++ name,
+        .tp_basicsize = @sizeOf(BindingType.PyObjectType),
+        .tp_dealloc = @ptrCast(&BindingType.dealloc),
+        .tp_repr = @ptrCast(&BindingType.repr),
+        .tp_str = @ptrCast(&BindingType.repr),
+        .tp_flags = c.Py_TPFLAGS_DEFAULT,
+        .tp_doc = null, // Will be set from registry
+        .tp_methods = @ptrCast(methods),
+        .tp_getset = @ptrCast(getset),
+        .tp_init = @ptrCast(&BindingType.init),
+        .tp_new = @ptrCast(&BindingType.new),
+    };
 }

@@ -33,15 +33,9 @@ pub export fn PyInit__zignal() ?*c.PyObject {
     const m = c.PyModule_Create(&zignal_module);
     if (m == null) return null;
 
-    // Register Rgb type (using factory)
-    py_utils.registerType(@ptrCast(m), "Rgb", @ptrCast(&color.RgbType)) catch {
-        c.Py_DECREF(m);
-        return null;
-    };
-
-    // Register Hsv type (using factory)
-    py_utils.registerType(@ptrCast(m), "Hsv", @ptrCast(&color.HsvType)) catch |err| {
-        std.log.err("Failed to register HSV type: {}", .{err});
+    // Register all color types from the registry
+    color.registerAllColorTypes(@ptrCast(m)) catch |err| {
+        std.log.err("Failed to register color types: {}", .{err});
         c.Py_DECREF(m);
         return null;
     };
