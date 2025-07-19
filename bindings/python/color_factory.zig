@@ -170,7 +170,7 @@ pub fn createColorBinding(
             }.setter;
         }
 
-        // Generate methods array - automatically create conversion methods for all color types
+        /// Generate methods array - automatically create conversion methods for all color types
         pub fn generateMethods() [color_types.len]c.PyMethodDef {
             var methods: [color_types.len]c.PyMethodDef = undefined;
             var index: usize = 0;
@@ -237,9 +237,8 @@ pub fn createColorBinding(
             }
         }
 
-        /// Returns documentation for conversion to the given color type
+        /// Automatically generate documentation from type name
         fn getConversionMethodDoc(comptime TargetColorType: type) []const u8 {
-            // Automatically generate documentation from type name
             const type_name = @typeName(TargetColorType);
 
             // Extract the color space name (everything after the last dot)
@@ -276,7 +275,7 @@ pub fn createColorBinding(
             };
         }
 
-        // Convert Python object to Zig color
+        /// Convert Python object to Zig color
         fn objectToZigColor(obj: *ObjectType) ZigColorType {
             var zig_color: ZigColorType = undefined;
 
@@ -294,7 +293,7 @@ pub fn createColorBinding(
             return zig_color;
         }
 
-        // Convert Zig color to Python object fields
+        /// Convert Zig color to Python object fields
         fn zigColorToObject(zig_color: ZigColorType, obj: *ObjectType) void {
             inline for (fields, 0..) |field, i| {
                 const field_value = @field(zig_color, field.name);
@@ -308,7 +307,7 @@ pub fn createColorBinding(
             }
         }
 
-        // Custom init function with validation
+        /// Custom init function with validation
         pub fn init(self_obj: [*c]c.PyObject, args: [*c]c.PyObject, kwds: [*c]c.PyObject) callconv(.c) c_int {
             _ = kwds;
             const self = @as(*ObjectType, @ptrCast(self_obj));
@@ -472,7 +471,7 @@ pub fn createColorBinding(
             return 0;
         }
 
-        // Standard Python object methods
+        /// Standard Python object methods
         pub fn dealloc(self_obj: [*c]c.PyObject) callconv(.c) void {
             c.Py_TYPE(self_obj).*.tp_free.?(self_obj);
         }

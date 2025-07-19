@@ -14,10 +14,6 @@ const c = @cImport({
 // MODULE FUNCTIONS
 // ============================================================================
 
-var zignal_methods = [_]c.PyMethodDef{
-    .{ .ml_name = null, .ml_meth = null, .ml_flags = 0, .ml_doc = null },
-};
-
 var zignal_module = c.PyModuleDef{
     .m_name = "zignal",
     .m_doc = "zero dependency image processing library",
@@ -27,6 +23,10 @@ var zignal_module = c.PyModuleDef{
     .m_traverse = null,
     .m_clear = null,
     .m_free = null,
+};
+
+var zignal_methods = [_]c.PyMethodDef{
+    .{ .ml_name = null, .ml_meth = null, .ml_flags = 0, .ml_doc = null },
 };
 
 pub export fn PyInit__zignal() ?*c.PyObject {
