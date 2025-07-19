@@ -102,65 +102,53 @@ pub fn createColorBinding(
                     _ = closure;
                     const self = @as(*ObjectType, @ptrCast(self_obj));
 
-                    // Get the field info for validation
+                    // Get field info
                     const field = fields[field_index];
                     const field_name = field.name ++ "";
 
-                    // Parse the Python value based on the field type
-                    var new_value: field.type = undefined;
+                    // Convert Python value with detailed error information
+                    const conversion_result = py_utils.convertFromPythonWithError(field.type, @ptrCast(value_obj));
+                    const new_value = switch (conversion_result) {
+                        .success => |val| val,
+                        .error_info => |info| {
+                            switch (info.error_type) {
+                                .not_integer => {
+                                    c.PyErr_SetString(c.PyExc_TypeError, "Expected integer value");
+                                    return -1;
+                                },
+                                .not_float => {
+                                    c.PyErr_SetString(c.PyExc_TypeError, "Expected float value");
+                                    return -1;
+                                },
+                                .integer_out_of_range => {
+                                    // Only handle integer types here since this is integer_out_of_range
+                                    if (@typeInfo(field.type) == .int) {
+                                        const min_val = std.math.minInt(field.type);
+                                        const max_val = std.math.maxInt(field.type);
+                                        const attempted = info.attempted_value orelse 0;
 
-                    if (field.type == u8) {
-                        // For u8 fields (like RGB), parse as int to check range
-                        var int_value: c_int = undefined;
-                        if (c.PyLong_AsLong(value_obj) == -1 and c.PyErr_Occurred() != null) {
-                            c.PyErr_SetString(c.PyExc_TypeError, "Expected integer value");
-                            return -1;
-                        }
-                        int_value = @intCast(c.PyLong_AsLong(value_obj));
+                                        var buffer: [256]u8 = undefined;
+                                        const msg = std.fmt.bufPrintZ(&buffer, "Value {} is out of range for {s} (valid range: {} to {})", .{ attempted, @typeName(field.type), min_val, max_val }) catch "Value out of range";
 
-                        // Validate using the color registry
-                        if (!validateColorComponent(ZigColorType, field_name, int_value)) {
-                            const error_msg = getValidationErrorMessage(ZigColorType);
-                            c.PyErr_SetString(c.PyExc_ValueError, error_msg.ptr);
-                            return -1;
-                        }
+                                        c.PyErr_SetString(c.PyExc_ValueError, msg.ptr);
+                                        return -1;
+                                    } else {
+                                        c.PyErr_SetString(c.PyExc_ValueError, "Value out of range");
+                                        return -1;
+                                    }
+                                },
+                                else => {
+                                    c.PyErr_SetString(c.PyExc_TypeError, "Unsupported value type");
+                                    return -1;
+                                },
+                            }
+                        },
+                    };
 
-                        new_value = @intCast(int_value);
-                    } else if (field.type == f64) {
-                        // For f64 fields (like HSV)
-                        const double_value = c.PyFloat_AsDouble(value_obj);
-                        if (c.PyErr_Occurred() != null) {
-                            c.PyErr_SetString(c.PyExc_TypeError, "Expected float value");
-                            return -1;
-                        }
-
-                        // Validate using the color registry
-                        if (!validateColorComponent(ZigColorType, field_name, double_value)) {
-                            const error_msg = getValidationErrorMessage(ZigColorType);
-                            c.PyErr_SetString(c.PyExc_ValueError, error_msg.ptr);
-                            return -1;
-                        }
-
-                        new_value = double_value;
-                    } else if (field.type == f32) {
-                        // For f32 fields
-                        const double_value = c.PyFloat_AsDouble(value_obj);
-                        if (c.PyErr_Occurred() != null) {
-                            c.PyErr_SetString(c.PyExc_TypeError, "Expected float value");
-                            return -1;
-                        }
-                        const float_value: f32 = @floatCast(double_value);
-
-                        // Validate using the color registry
-                        if (!validateColorComponent(ZigColorType, field_name, float_value)) {
-                            const error_msg = getValidationErrorMessage(ZigColorType);
-                            c.PyErr_SetString(c.PyExc_ValueError, error_msg.ptr);
-                            return -1;
-                        }
-
-                        new_value = float_value;
-                    } else {
-                        c.PyErr_SetString(c.PyExc_TypeError, "Unsupported field type for setter");
+                    // Validate using the color registry
+                    if (!validateColorComponent(ZigColorType, field_name, new_value)) {
+                        const error_msg = getValidationErrorMessage(ZigColorType);
+                        c.PyErr_SetString(c.PyExc_ValueError, error_msg.ptr);
                         return -1;
                     }
 

@@ -155,6 +155,65 @@ fn hasMethod(comptime T: type, comptime method_name: []const u8) bool {
     return @hasDecl(T, method_name);
 }
 
+/// Error information for conversion failures
+pub const ConversionError = enum {
+    not_python_object,
+    not_integer,
+    not_float,
+    integer_out_of_range,
+    float_out_of_range,
+    unsupported_type,
+};
+
+/// Result type for conversions with error information
+pub fn ConversionResult(comptime T: type) type {
+    return union(enum) {
+        success: T,
+        error_info: struct {
+            error_type: ConversionError,
+            attempted_value: ?i64 = null, // For range errors
+        },
+    };
+}
+
+/// Convert Python value with detailed error information
+pub fn convertFromPythonWithError(comptime T: type, py_obj: ?*c.PyObject) ConversionResult(T) {
+    if (py_obj == null) {
+        return .{ .error_info = .{ .error_type = .not_python_object } };
+    }
+
+    return switch (@typeInfo(T)) {
+        .int => blk: {
+            // Always use PyLong_AsLong for better negative value handling
+            const val = c.PyLong_AsLong(py_obj);
+            if (val == -1 and c.PyErr_Occurred() != null) {
+                c.PyErr_Clear(); // Clear the Python error since we're handling it
+                break :blk .{ .error_info = .{ .error_type = .not_integer } };
+            }
+
+            // Check if value fits in target type
+            const min_val = std.math.minInt(T);
+            const max_val = std.math.maxInt(T);
+            if (val < min_val or val > max_val) {
+                break :blk .{ .error_info = .{
+                    .error_type = .integer_out_of_range,
+                    .attempted_value = val,
+                } };
+            }
+            break :blk .{ .success = @intCast(val) };
+        },
+        .float => blk: {
+            const val = c.PyFloat_AsDouble(py_obj);
+            if (val == -1.0 and c.PyErr_Occurred() != null) {
+                c.PyErr_Clear(); // Clear the Python error since we're handling it
+                break :blk .{ .error_info = .{ .error_type = .not_float } };
+            }
+            break :blk .{ .success = @floatCast(val) };
+        },
+        else => .{ .error_info = .{ .error_type = .unsupported_type } },
+    };
+}
+
 /// Convert Python arguments to Zig values
 pub fn convertFromPython(comptime T: type, py_obj: ?*c.PyObject) ?T {
     if (py_obj == null) return null;
@@ -166,10 +225,21 @@ pub fn convertFromPython(comptime T: type, py_obj: ?*c.PyObject) ?T {
                 if (val == @as(c_ulong, @bitCast(@as(c_long, -1))) and c.PyErr_Occurred() != null) {
                     break :blk null;
                 }
+                // Check if value fits in target type
+                const max_val = std.math.maxInt(T);
+                if (val > max_val) {
+                    break :blk null;
+                }
                 break :blk @intCast(val);
             } else {
                 const val = c.PyLong_AsLong(py_obj);
                 if (val == -1 and c.PyErr_Occurred() != null) {
+                    break :blk null;
+                }
+                // Check if value fits in target type
+                const min_val = std.math.minInt(T);
+                const max_val = std.math.maxInt(T);
+                if (val < min_val or val > max_val) {
                     break :blk null;
                 }
                 break :blk @intCast(val);
