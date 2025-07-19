@@ -28,7 +28,6 @@ pub const RgbBinding = color_factory.createColorBinding(
     "Rgb",
     zignal.Rgb,
     .{
-        .validation_fn = color_registry.getBindingConfig(zignal.Rgb).?.validation_fn,
         .validation_error = color_registry.getBindingConfig(zignal.Rgb).?.validation_error,
         .doc = color_registry.getBindingConfig(zignal.Rgb).?.doc,
     },
@@ -55,7 +54,6 @@ pub const RgbaBinding = color_factory.createColorBinding(
     "Rgba",
     zignal.Rgba,
     .{
-        .validation_fn = color_registry.getBindingConfig(zignal.Rgba).?.validation_fn,
         .validation_error = color_registry.getBindingConfig(zignal.Rgba).?.validation_error,
         .doc = color_registry.getBindingConfig(zignal.Rgba).?.doc,
     },
@@ -82,7 +80,6 @@ pub const HsvBinding = color_factory.createColorBinding(
     "Hsv",
     zignal.Hsv,
     .{
-        .validation_fn = color_registry.getBindingConfig(zignal.Hsv).?.validation_fn,
         .validation_error = color_registry.getBindingConfig(zignal.Hsv).?.validation_error,
         .doc = color_registry.getBindingConfig(zignal.Hsv).?.doc,
     },
@@ -109,7 +106,6 @@ pub const HslBinding = color_factory.createColorBinding(
     "Hsl",
     zignal.Hsl,
     .{
-        .validation_fn = color_registry.getBindingConfig(zignal.Hsl).?.validation_fn,
         .validation_error = color_registry.getBindingConfig(zignal.Hsl).?.validation_error,
         .doc = color_registry.getBindingConfig(zignal.Hsl).?.doc,
     },
@@ -136,7 +132,6 @@ pub const LabBinding = color_factory.createColorBinding(
     "Lab",
     zignal.Lab,
     .{
-        .validation_fn = color_registry.getBindingConfig(zignal.Lab).?.validation_fn,
         .validation_error = color_registry.getBindingConfig(zignal.Lab).?.validation_error,
         .doc = color_registry.getBindingConfig(zignal.Lab).?.doc,
     },
@@ -163,7 +158,6 @@ pub const XyzBinding = color_factory.createColorBinding(
     "Xyz",
     zignal.Xyz,
     .{
-        .validation_fn = color_registry.getBindingConfig(zignal.Xyz).?.validation_fn,
         .validation_error = color_registry.getBindingConfig(zignal.Xyz).?.validation_error,
         .doc = color_registry.getBindingConfig(zignal.Xyz).?.doc,
     },
@@ -190,7 +184,6 @@ pub const OklabBinding = color_factory.createColorBinding(
     "Oklab",
     zignal.Oklab,
     .{
-        .validation_fn = color_registry.getBindingConfig(zignal.Oklab).?.validation_fn,
         .validation_error = color_registry.getBindingConfig(zignal.Oklab).?.validation_error,
         .doc = color_registry.getBindingConfig(zignal.Oklab).?.doc,
     },
@@ -217,7 +210,6 @@ pub const OklchBinding = color_factory.createColorBinding(
     "Oklch",
     zignal.Oklch,
     .{
-        .validation_fn = color_registry.getBindingConfig(zignal.Oklch).?.validation_fn,
         .validation_error = color_registry.getBindingConfig(zignal.Oklch).?.validation_error,
         .doc = color_registry.getBindingConfig(zignal.Oklch).?.doc,
     },
@@ -244,7 +236,6 @@ pub const LchBinding = color_factory.createColorBinding(
     "Lch",
     zignal.Lch,
     .{
-        .validation_fn = color_registry.getBindingConfig(zignal.Lch).?.validation_fn,
         .validation_error = color_registry.getBindingConfig(zignal.Lch).?.validation_error,
         .doc = color_registry.getBindingConfig(zignal.Lch).?.doc,
     },
@@ -271,7 +262,6 @@ pub const LmsBinding = color_factory.createColorBinding(
     "Lms",
     zignal.Lms,
     .{
-        .validation_fn = color_registry.getBindingConfig(zignal.Lms).?.validation_fn,
         .validation_error = color_registry.getBindingConfig(zignal.Lms).?.validation_error,
         .doc = color_registry.getBindingConfig(zignal.Lms).?.doc,
     },
@@ -298,7 +288,6 @@ pub const XybBinding = color_factory.createColorBinding(
     "Xyb",
     zignal.Xyb,
     .{
-        .validation_fn = color_registry.getBindingConfig(zignal.Xyb).?.validation_fn,
         .validation_error = color_registry.getBindingConfig(zignal.Xyb).?.validation_error,
         .doc = color_registry.getBindingConfig(zignal.Xyb).?.doc,
     },
@@ -325,7 +314,6 @@ pub const YcbcrBinding = color_factory.createColorBinding(
     "Ycbcr",
     zignal.Ycbcr,
     .{
-        .validation_fn = color_registry.getBindingConfig(zignal.Ycbcr).?.validation_fn,
         .validation_error = color_registry.getBindingConfig(zignal.Ycbcr).?.validation_error,
         .doc = color_registry.getBindingConfig(zignal.Ycbcr).?.doc,
     },
