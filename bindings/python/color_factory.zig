@@ -238,7 +238,8 @@ pub fn createColorBinding(
                     const hsv_result = zig_color.toHsv();
 
                     // Create a new HSV Python object
-                    return createHsvPyObject(hsv_result);
+                    const color = @import("color.zig");
+                    return @ptrCast(color.createPyObject(hsv_result));
                 }
             }.method;
         }
@@ -251,23 +252,12 @@ pub fn createColorBinding(
                     const rgb_result = zig_color.toRgb();
 
                     // Create a new RGB Python object
-                    return createRgbPyObject(rgb_result);
+                    const color = @import("color.zig");
+                    return @ptrCast(color.createPyObject(rgb_result));
                 }
             }.method;
         }
 
-        // Helper functions to create Python objects from Zig colors
-        fn createHsvPyObject(hsv: zignal.Hsv) ?*c.PyObject {
-            // Use the createPyObject helper from color.zig
-            const color = @import("color.zig");
-            return @ptrCast(color.createPyObject(hsv));
-        }
-
-        fn createRgbPyObject(rgb: zignal.Rgb) ?*c.PyObject {
-            // Use the createPyObject helper from color.zig
-            const color = @import("color.zig");
-            return @ptrCast(color.createPyObject(rgb));
-        }
 
         // Convert Python object to Zig color
         fn objectToZigColor(obj: *ObjectType) ZigColorType {
@@ -490,49 +480,3 @@ pub fn createColorBinding(
     };
 }
 
-// Make getFormatString public
-pub fn getFormatString(comptime T: type) []const u8 {
-    return py_utils.getFormatString(T);
-}
-
-// ============================================================================
-// BULK TYPE GENERATION
-// ============================================================================
-
-const color_registry = @import("color_registry.zig");
-
-/// Container for generated color binding data
-pub const GeneratedColorBinding = struct {
-    binding_type: type,
-    type_object: *c.PyTypeObject,
-    getset_defs: []c.PyGetSetDef,
-    method_defs: []c.PyMethodDef,
-};
-
-/// Generate all color bindings from the registry
-pub fn generateAllColorBindings() []GeneratedColorBinding {
-    @compileError("generateAllColorBindings must be called at comptime with inline for loops");
-}
-
-/// Generate a PyTypeObject for a color binding
-pub fn generatePyTypeObject(
-    comptime name: []const u8,
-    comptime BindingType: type,
-    getset: *[]c.PyGetSetDef,
-    methods: *[]c.PyMethodDef,
-) c.PyTypeObject {
-    return c.PyTypeObject{
-        .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
-        .tp_name = "zignal." ++ name,
-        .tp_basicsize = @sizeOf(BindingType.PyObjectType),
-        .tp_dealloc = @ptrCast(&BindingType.dealloc),
-        .tp_repr = @ptrCast(&BindingType.repr),
-        .tp_str = @ptrCast(&BindingType.repr),
-        .tp_flags = c.Py_TPFLAGS_DEFAULT,
-        .tp_doc = null, // Will be set from registry
-        .tp_methods = @ptrCast(methods),
-        .tp_getset = @ptrCast(getset),
-        .tp_init = @ptrCast(&BindingType.init),
-        .tp_new = @ptrCast(&BindingType.new),
-    };
-}
