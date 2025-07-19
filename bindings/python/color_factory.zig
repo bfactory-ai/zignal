@@ -312,7 +312,7 @@ pub fn createColorBinding(
                     var arg0: fields[0].type = undefined;
                     const format = comptime blk: {
                         const fmt = std.fmt.comptimePrint("{s}", .{py_utils.getFormatString(fields[0].type)});
-                        break :blk fmt ++ "";  // Ensure null termination
+                        break :blk fmt ++ ""; // Ensure null termination
                     };
                     if (c.PyArg_ParseTuple(args, format.ptr, &arg0) == 0) {
                         return -1;
@@ -335,7 +335,7 @@ pub fn createColorBinding(
                             py_utils.getFormatString(fields[0].type),
                             py_utils.getFormatString(fields[1].type),
                         });
-                        break :blk fmt ++ "";  // Ensure null termination
+                        break :blk fmt ++ ""; // Ensure null termination
                     };
                     if (c.PyArg_ParseTuple(args, format.ptr, &arg0, &arg1) == 0) {
                         return -1;
@@ -378,7 +378,7 @@ pub fn createColorBinding(
                         var arg0: fields[0].type = undefined;
                         var arg1: fields[1].type = undefined;
                         var arg2: fields[2].type = undefined;
-                        
+
                         // Use std.fmt.comptimePrint for proper null termination
                         if (fields[0].type == f64 and fields[1].type == f64 and fields[2].type == f64) {
                             // HSV case: all f64 fields
@@ -387,7 +387,7 @@ pub fn createColorBinding(
                                 return -1;
                             }
                         } else if (fields[0].type == f32 and fields[1].type == f32 and fields[2].type == f32) {
-                            // f32 case: all f32 fields 
+                            // f32 case: all f32 fields
                             const format = comptime std.fmt.comptimePrint("fff", .{});
                             if (c.PyArg_ParseTuple(args, format.ptr, &arg0, &arg1, &arg2) == 0) {
                                 return -1;
@@ -399,7 +399,7 @@ pub fn createColorBinding(
                             format_buf[1] = py_utils.getFormatString(fields[1].type)[0];
                             format_buf[2] = py_utils.getFormatString(fields[2].type)[0];
                             format_buf[3] = 0; // null terminator
-                            
+
                             if (c.PyArg_ParseTuple(args, &format_buf, &arg0, &arg1, &arg2) == 0) {
                                 return -1;
                             }
@@ -429,7 +429,7 @@ pub fn createColorBinding(
                             py_utils.getFormatString(fields[2].type),
                             py_utils.getFormatString(fields[3].type),
                         });
-                        break :blk fmt ++ "";  // Ensure null termination
+                        break :blk fmt ++ ""; // Ensure null termination
                     };
                     if (c.PyArg_ParseTuple(args, format.ptr, &arg0, &arg1, &arg2, &arg3) == 0) {
                         return -1;

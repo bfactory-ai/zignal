@@ -3,7 +3,6 @@
 
 const std = @import("std");
 const zignal = @import("zignal");
-const color_factory = @import("color_factory.zig");
 
 const c = @cImport({
     @cDefine("PY_SSIZE_T_CLEAN", {});
@@ -34,9 +33,10 @@ fn validateHsvHslComponent(field_name: []const u8, value: anytype) bool {
         .float => {
             if (std.mem.eql(u8, field_name, "h")) {
                 return value >= 0.0 and value <= 360.0;
-            } else if (std.mem.eql(u8, field_name, "s") or 
-                      std.mem.eql(u8, field_name, "v") or 
-                      std.mem.eql(u8, field_name, "l")) {
+            } else if (std.mem.eql(u8, field_name, "s") or
+                std.mem.eql(u8, field_name, "v") or
+                std.mem.eql(u8, field_name, "l"))
+            {
                 return value >= 0.0 and value <= 100.0;
             } else {
                 return false;
