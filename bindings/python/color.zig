@@ -28,7 +28,7 @@ pub const RgbBinding = color_factory.createColorBinding(
     "Rgb",
     zignal.Rgb,
 );
-var rgb_getset = RgbBinding.generateGetters();
+var rgb_getset = RgbBinding.generateGetSet();
 var rgb_methods = RgbBinding.generateMethods();
 pub var RgbType = c.PyTypeObject{
     .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
@@ -50,7 +50,7 @@ pub const RgbaBinding = color_factory.createColorBinding(
     "Rgba",
     zignal.Rgba,
 );
-var rgba_getset = RgbaBinding.generateGetters();
+var rgba_getset = RgbaBinding.generateGetSet();
 var rgba_methods = RgbaBinding.generateMethods();
 pub var RgbaType = c.PyTypeObject{
     .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
@@ -72,7 +72,7 @@ pub const HsvBinding = color_factory.createColorBinding(
     "Hsv",
     zignal.Hsv,
 );
-var hsv_getset = HsvBinding.generateGetters();
+var hsv_getset = HsvBinding.generateGetSet();
 var hsv_methods = HsvBinding.generateMethods();
 pub var HsvType = c.PyTypeObject{
     .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
@@ -94,7 +94,7 @@ pub const HslBinding = color_factory.createColorBinding(
     "Hsl",
     zignal.Hsl,
 );
-var hsl_getset = HslBinding.generateGetters();
+var hsl_getset = HslBinding.generateGetSet();
 var hsl_methods = HslBinding.generateMethods();
 pub var HslType = c.PyTypeObject{
     .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
@@ -116,7 +116,7 @@ pub const LabBinding = color_factory.createColorBinding(
     "Lab",
     zignal.Lab,
 );
-var lab_getset = LabBinding.generateGetters();
+var lab_getset = LabBinding.generateGetSet();
 var lab_methods = LabBinding.generateMethods();
 pub var LabType = c.PyTypeObject{
     .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
@@ -138,7 +138,7 @@ pub const XyzBinding = color_factory.createColorBinding(
     "Xyz",
     zignal.Xyz,
 );
-var xyz_getset = XyzBinding.generateGetters();
+var xyz_getset = XyzBinding.generateGetSet();
 var xyz_methods = XyzBinding.generateMethods();
 pub var XyzType = c.PyTypeObject{
     .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
@@ -160,7 +160,7 @@ pub const OklabBinding = color_factory.createColorBinding(
     "Oklab",
     zignal.Oklab,
 );
-var oklab_getset = OklabBinding.generateGetters();
+var oklab_getset = OklabBinding.generateGetSet();
 var oklab_methods = OklabBinding.generateMethods();
 pub var OklabType = c.PyTypeObject{
     .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
@@ -182,7 +182,7 @@ pub const OklchBinding = color_factory.createColorBinding(
     "Oklch",
     zignal.Oklch,
 );
-var oklch_getset = OklchBinding.generateGetters();
+var oklch_getset = OklchBinding.generateGetSet();
 var oklch_methods = OklchBinding.generateMethods();
 pub var OklchType = c.PyTypeObject{
     .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
@@ -204,7 +204,7 @@ pub const LchBinding = color_factory.createColorBinding(
     "Lch",
     zignal.Lch,
 );
-var lch_getset = LchBinding.generateGetters();
+var lch_getset = LchBinding.generateGetSet();
 var lch_methods = LchBinding.generateMethods();
 pub var LchType = c.PyTypeObject{
     .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
@@ -226,7 +226,7 @@ pub const LmsBinding = color_factory.createColorBinding(
     "Lms",
     zignal.Lms,
 );
-var lms_getset = LmsBinding.generateGetters();
+var lms_getset = LmsBinding.generateGetSet();
 var lms_methods = LmsBinding.generateMethods();
 pub var LmsType = c.PyTypeObject{
     .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
@@ -248,7 +248,7 @@ pub const XybBinding = color_factory.createColorBinding(
     "Xyb",
     zignal.Xyb,
 );
-var xyb_getset = XybBinding.generateGetters();
+var xyb_getset = XybBinding.generateGetSet();
 var xyb_methods = XybBinding.generateMethods();
 pub var XybType = c.PyTypeObject{
     .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
@@ -270,7 +270,7 @@ pub const YcbcrBinding = color_factory.createColorBinding(
     "Ycbcr",
     zignal.Ycbcr,
 );
-var ycbcr_getset = YcbcrBinding.generateGetters();
+var ycbcr_getset = YcbcrBinding.generateGetSet();
 var ycbcr_methods = YcbcrBinding.generateMethods();
 pub var YcbcrType = c.PyTypeObject{
     .ob_base = .{ .ob_base = .{}, .ob_size = 0 },

@@ -61,20 +61,20 @@ pub fn createColorBinding(
         pub const PyObjectType = ObjectType;
         pub const ZigType = ZigColorType;
 
-        /// Generate property getters
-        pub fn generateGetters() [fields.len + 1]c.PyGetSetDef {
-            var getters: [fields.len + 1]c.PyGetSetDef = undefined;
+        /// Generate property getters and setters
+        pub fn generateGetSet() [fields.len + 1]c.PyGetSetDef {
+            var getset: [fields.len + 1]c.PyGetSetDef = undefined;
             inline for (fields, 0..) |field, i| {
-                getters[i] = c.PyGetSetDef{
+                getset[i] = c.PyGetSetDef{
                     .name = field.name ++ "",
                     .get = generateFieldGetter(i),
-                    .set = null,
+                    .set = generateFieldSetter(i),
                     .doc = field.name ++ " component",
                     .closure = null,
                 };
             }
-            getters[fields.len] = c.PyGetSetDef{ .name = null, .get = null, .set = null, .doc = null, .closure = null };
-            return getters;
+            getset[fields.len] = c.PyGetSetDef{ .name = null, .get = null, .set = null, .doc = null, .closure = null };
+            return getset;
         }
 
         /// Generate field getter for specific field index
@@ -93,6 +93,95 @@ pub fn createColorBinding(
                     return @ptrCast(@alignCast(py_utils.convertToPythonCast(value)));
                 }
             }.getter;
+        }
+
+        /// Generate field setter for specific field index
+        fn generateFieldSetter(comptime field_index: usize) fn ([*c]c.PyObject, [*c]c.PyObject, ?*anyopaque) callconv(.c) c_int {
+            return struct {
+                fn setter(self_obj: [*c]c.PyObject, value_obj: [*c]c.PyObject, closure: ?*anyopaque) callconv(.c) c_int {
+                    _ = closure;
+                    const self = @as(*ObjectType, @ptrCast(self_obj));
+
+                    // Get the field info for validation
+                    const field = fields[field_index];
+                    const field_name = field.name ++ "";
+
+                    // Parse the Python value based on the field type
+                    var new_value: field.type = undefined;
+
+                    if (field.type == u8) {
+                        // For u8 fields (like RGB), parse as int to check range
+                        var int_value: c_int = undefined;
+                        if (c.PyLong_AsLong(value_obj) == -1 and c.PyErr_Occurred() != null) {
+                            c.PyErr_SetString(c.PyExc_TypeError, "Expected integer value");
+                            return -1;
+                        }
+                        int_value = @intCast(c.PyLong_AsLong(value_obj));
+
+                        // Validate using the color registry
+                        if (!validateColorComponent(ZigColorType, field_name, int_value)) {
+                            const error_msg = getValidationErrorMessage(ZigColorType);
+                            c.PyErr_SetString(c.PyExc_ValueError, error_msg.ptr);
+                            return -1;
+                        }
+
+                        new_value = @intCast(int_value);
+                    } else if (field.type == f64) {
+                        // For f64 fields (like HSV)
+                        const double_value = c.PyFloat_AsDouble(value_obj);
+                        if (c.PyErr_Occurred() != null) {
+                            c.PyErr_SetString(c.PyExc_TypeError, "Expected float value");
+                            return -1;
+                        }
+
+                        // Validate using the color registry
+                        if (!validateColorComponent(ZigColorType, field_name, double_value)) {
+                            const error_msg = getValidationErrorMessage(ZigColorType);
+                            c.PyErr_SetString(c.PyExc_ValueError, error_msg.ptr);
+                            return -1;
+                        }
+
+                        new_value = double_value;
+                    } else if (field.type == f32) {
+                        // For f32 fields
+                        const double_value = c.PyFloat_AsDouble(value_obj);
+                        if (c.PyErr_Occurred() != null) {
+                            c.PyErr_SetString(c.PyExc_TypeError, "Expected float value");
+                            return -1;
+                        }
+                        const float_value: f32 = @floatCast(double_value);
+
+                        // Validate using the color registry
+                        if (!validateColorComponent(ZigColorType, field_name, float_value)) {
+                            const error_msg = getValidationErrorMessage(ZigColorType);
+                            c.PyErr_SetString(c.PyExc_ValueError, error_msg.ptr);
+                            return -1;
+                        }
+
+                        new_value = float_value;
+                    } else {
+                        c.PyErr_SetString(c.PyExc_TypeError, "Unsupported field type for setter");
+                        return -1;
+                    }
+
+                    // Set the field value
+                    switch (field_index) {
+                        0 => self.field0 = new_value,
+                        1 => if (fields.len > 1) {
+                            self.field1 = new_value;
+                        } else unreachable,
+                        2 => if (fields.len > 2) {
+                            self.field2 = new_value;
+                        } else unreachable,
+                        3 => if (fields.len > 3) {
+                            self.field3 = new_value;
+                        } else unreachable,
+                        else => unreachable,
+                    }
+
+                    return 0; // Success
+                }
+            }.setter;
         }
 
         // Generate methods array - automatically create conversion methods for all color types
