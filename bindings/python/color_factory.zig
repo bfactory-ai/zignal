@@ -3,11 +3,14 @@ const std = @import("std");
 const zignal = @import("zignal");
 
 const color_types = @import("color_registry.zig").color_types;
+const ConversionError = @import("py_utils.zig").ConversionError;
+const convertFromPython = @import("py_utils.zig").convertFromPython;
+const convertToPython = @import("py_utils.zig").convertToPython;
 const createColorPyObject = @import("color.zig").createColorPyObject;
+const getFormatString = @import("py_utils.zig").getFormatString;
 const getValidationErrorMessage = @import("color_registry.zig").getValidationErrorMessage;
 const isSupportedColor = @import("color_registry.zig").isSupportedColor;
-const py_utils = @import("py_utils.zig");
-pub const registerType = py_utils.registerType;
+const registerType = @import("py_utils.zig").registerType;
 const validateColorComponent = @import("color_registry.zig").validateColorComponent;
 
 const c = @cImport({
@@ -90,7 +93,7 @@ pub fn createColorBinding(
                         3 => if (fields.len > 3) self.field3 else unreachable,
                         else => unreachable,
                     };
-                    return @ptrCast(@alignCast(py_utils.convertToPythonCast(value)));
+                    return @ptrCast(@alignCast(convertToPython(value)));
                 }
             }.getter;
         }
@@ -106,43 +109,38 @@ pub fn createColorBinding(
                     const field = fields[field_index];
                     const field_name = field.name ++ "";
 
-                    // Convert Python value with detailed error information
-                    const conversion_result = py_utils.convertFromPythonWithError(field.type, @ptrCast(value_obj));
-                    const new_value = switch (conversion_result) {
-                        .success => |val| val,
-                        .error_info => |info| {
-                            switch (info.error_type) {
-                                .not_integer => {
-                                    c.PyErr_SetString(c.PyExc_TypeError, "Expected integer value");
-                                    return -1;
-                                },
-                                .not_float => {
-                                    c.PyErr_SetString(c.PyExc_TypeError, "Expected float value");
-                                    return -1;
-                                },
-                                .integer_out_of_range => {
-                                    // Only handle integer types here since this is integer_out_of_range
-                                    if (@typeInfo(field.type) == .int) {
-                                        const min_val = std.math.minInt(field.type);
-                                        const max_val = std.math.maxInt(field.type);
-                                        const attempted = info.attempted_value orelse 0;
+                    // Convert Python value using idiomatic error union
+                    const new_value = convertFromPython(field.type, @ptrCast(value_obj)) catch |err| {
+                        switch (err) {
+                            ConversionError.not_integer => {
+                                c.PyErr_SetString(c.PyExc_TypeError, "Expected integer value");
+                                return -1;
+                            },
+                            ConversionError.not_float => {
+                                c.PyErr_SetString(c.PyExc_TypeError, "Expected float value");
+                                return -1;
+                            },
+                            ConversionError.integer_out_of_range => {
+                                // Generate helpful range message without the attempted value
+                                if (@typeInfo(field.type) == .int) {
+                                    const min_val = std.math.minInt(field.type);
+                                    const max_val = std.math.maxInt(field.type);
 
-                                        var buffer: [256]u8 = undefined;
-                                        const msg = std.fmt.bufPrintZ(&buffer, "Value {} is out of range for {s} (valid range: {} to {})", .{ attempted, @typeName(field.type), min_val, max_val }) catch "Value out of range";
+                                    var buffer: [256]u8 = undefined;
+                                    const msg = std.fmt.bufPrintZ(&buffer, "Value is out of range for {s} (valid range: {} to {})", .{ @typeName(field.type), min_val, max_val }) catch "Value out of range";
 
-                                        c.PyErr_SetString(c.PyExc_ValueError, msg.ptr);
-                                        return -1;
-                                    } else {
-                                        c.PyErr_SetString(c.PyExc_ValueError, "Value out of range");
-                                        return -1;
-                                    }
-                                },
-                                else => {
-                                    c.PyErr_SetString(c.PyExc_TypeError, "Unsupported value type");
+                                    c.PyErr_SetString(c.PyExc_ValueError, msg.ptr);
                                     return -1;
-                                },
-                            }
-                        },
+                                } else {
+                                    c.PyErr_SetString(c.PyExc_ValueError, "Value out of range");
+                                    return -1;
+                                }
+                            },
+                            else => {
+                                c.PyErr_SetString(c.PyExc_TypeError, "Unsupported value type");
+                                return -1;
+                            },
+                        }
                     };
 
                     // Validate using the color registry
@@ -320,7 +318,7 @@ pub fn createColorBinding(
                 1 => {
                     var arg0: fields[0].type = undefined;
                     const format = comptime blk: {
-                        const fmt = std.fmt.comptimePrint("{s}", .{py_utils.getFormatString(fields[0].type)});
+                        const fmt = std.fmt.comptimePrint("{s}", .{getFormatString(fields[0].type)});
                         break :blk fmt ++ ""; // Ensure null termination
                     };
                     if (c.PyArg_ParseTuple(args, format.ptr, &arg0) == 0) {
@@ -341,8 +339,8 @@ pub fn createColorBinding(
                     var arg1: fields[1].type = undefined;
                     const format = comptime blk: {
                         const fmt = std.fmt.comptimePrint("{s}{s}", .{
-                            py_utils.getFormatString(fields[0].type),
-                            py_utils.getFormatString(fields[1].type),
+                            getFormatString(fields[0].type),
+                            getFormatString(fields[1].type),
                         });
                         break :blk fmt ++ ""; // Ensure null termination
                     };
@@ -409,9 +407,9 @@ pub fn createColorBinding(
                         } else {
                             // Fallback: build format string character by character
                             var format_buf: [4]u8 = undefined;
-                            format_buf[0] = py_utils.getFormatString(fields[0].type)[0];
-                            format_buf[1] = py_utils.getFormatString(fields[1].type)[0];
-                            format_buf[2] = py_utils.getFormatString(fields[2].type)[0];
+                            format_buf[0] = getFormatString(fields[0].type)[0];
+                            format_buf[1] = getFormatString(fields[1].type)[0];
+                            format_buf[2] = getFormatString(fields[2].type)[0];
                             format_buf[3] = 0; // null terminator
 
                             if (c.PyArg_ParseTuple(args, &format_buf, &arg0, &arg1, &arg2) == 0) {
@@ -441,10 +439,10 @@ pub fn createColorBinding(
                     var arg3: fields[3].type = undefined;
                     const format = comptime blk: {
                         const fmt = std.fmt.comptimePrint("{s}{s}{s}{s}", .{
-                            py_utils.getFormatString(fields[0].type),
-                            py_utils.getFormatString(fields[1].type),
-                            py_utils.getFormatString(fields[2].type),
-                            py_utils.getFormatString(fields[3].type),
+                            getFormatString(fields[0].type),
+                            getFormatString(fields[1].type),
+                            getFormatString(fields[2].type),
+                            getFormatString(fields[3].type),
                         });
                         break :blk fmt ++ ""; // Ensure null termination
                     };
