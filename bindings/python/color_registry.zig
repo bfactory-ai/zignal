@@ -10,6 +10,27 @@ const c = @cImport({
 });
 
 // ============================================================================
+// COLOR TYPES REGISTRY
+// ============================================================================
+
+/// Complete list of all color types available in the system
+/// This serves as the single source of truth for auto-generation
+pub const color_types = .{
+    zignal.Rgb,
+    zignal.Rgba,
+    zignal.Hsl,
+    zignal.Hsv,
+    zignal.Lab,
+    zignal.Lch,
+    zignal.Lms,
+    zignal.Oklab,
+    zignal.Oklch,
+    zignal.Xyb,
+    zignal.Xyz,
+    zignal.Ycbcr,
+};
+
+// ============================================================================
 // VALIDATION FUNCTIONS
 // ============================================================================
 

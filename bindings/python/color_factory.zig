@@ -10,10 +10,6 @@ const c = @cImport({
     @cInclude("Python.h");
 });
 
-// ============================================================================
-// SIMPLIFIED COLOR FACTORY
-// ============================================================================
-
 /// Generate a color binding with automatic property getters and validation
 pub fn createColorBinding(
     comptime name: []const u8,
@@ -107,60 +103,28 @@ pub fn createColorBinding(
             }.getter;
         }
 
-        // Generate methods array
+        // Generate methods array - automatically create conversion methods for all color types
         pub fn generateMethods() [getMethodCount() + 1]c.PyMethodDef {
             var methods: [getMethodCount() + 1]c.PyMethodDef = undefined;
             var index: usize = 0;
 
-            // Add methods based on what's available on the Zig type
-            if (@hasDecl(ZigColorType, "toHex")) {
-                methods[index] = c.PyMethodDef{
-                    .ml_name = "to_hex",
-                    .ml_meth = generateToHexMethod(),
-                    .ml_flags = c.METH_NOARGS,
-                    .ml_doc = "Convert to hexadecimal representation",
-                };
-                index += 1;
-            }
+            const color_registry = @import("color_registry.zig");
 
-            if (@hasDecl(ZigColorType, "luma")) {
-                methods[index] = c.PyMethodDef{
-                    .ml_name = "luma",
-                    .ml_meth = generateLumaMethod(),
-                    .ml_flags = c.METH_NOARGS,
-                    .ml_doc = "Calculate perceptual luminance",
-                };
-                index += 1;
-            }
+            // Generate conversion methods for each color type
+            inline for (color_registry.color_types) |TargetColorType| {
+                const method_name = getConversionMethodName(TargetColorType);
+                const zig_method_name = getZigConversionMethodName(TargetColorType);
 
-            if (@hasDecl(ZigColorType, "isGray")) {
-                methods[index] = c.PyMethodDef{
-                    .ml_name = "is_gray",
-                    .ml_meth = generateIsGrayMethod(),
-                    .ml_flags = c.METH_NOARGS,
-                    .ml_doc = "Check if color is grayscale",
-                };
-                index += 1;
-            }
-
-            if (@hasDecl(ZigColorType, "toHsv")) {
-                methods[index] = c.PyMethodDef{
-                    .ml_name = "to_hsv",
-                    .ml_meth = generateToHsvMethod(),
-                    .ml_flags = c.METH_NOARGS,
-                    .ml_doc = "Convert to HSV color space",
-                };
-                index += 1;
-            }
-
-            if (@hasDecl(ZigColorType, "toRgb")) {
-                methods[index] = c.PyMethodDef{
-                    .ml_name = "to_rgb",
-                    .ml_meth = generateToRgbMethod(),
-                    .ml_flags = c.METH_NOARGS,
-                    .ml_doc = "Convert to RGB color space",
-                };
-                index += 1;
+                // Only add method if the Zig type has this conversion method
+                if (@hasDecl(ZigColorType, zig_method_name)) {
+                    methods[index] = c.PyMethodDef{
+                        .ml_name = method_name.ptr,
+                        .ml_meth = generateConversionMethod(TargetColorType),
+                        .ml_flags = c.METH_NOARGS,
+                        .ml_doc = getConversionMethodDoc(TargetColorType).ptr,
+                    };
+                    index += 1;
+                }
             }
 
             // Null terminator
@@ -174,77 +138,188 @@ pub fn createColorBinding(
             return methods;
         }
 
-        // Count available methods
+        // Count available methods - automatically count conversion methods for all color types
         fn getMethodCount() comptime_int {
             var count: comptime_int = 0;
-            if (@hasDecl(ZigColorType, "toHex")) count += 1;
-            if (@hasDecl(ZigColorType, "luma")) count += 1;
-            if (@hasDecl(ZigColorType, "isGray")) count += 1;
-            if (@hasDecl(ZigColorType, "toHsv")) count += 1;
-            if (@hasDecl(ZigColorType, "toRgb")) count += 1;
+            const color_registry = @import("color_registry.zig");
+
+            inline for (color_registry.color_types) |TargetColorType| {
+                const zig_method_name = getZigConversionMethodName(TargetColorType);
+                if (@hasDecl(ZigColorType, zig_method_name)) {
+                    count += 1;
+                }
+            }
             return count;
         }
 
-        // Method generators
-        fn generateToHexMethod() fn ([*c]c.PyObject, [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
-            return struct {
-                fn method(self_obj: [*c]c.PyObject, _: [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
-                    const self = @as(*ObjectType, @ptrCast(self_obj));
-                    const zig_color = objectToZigColor(self);
-                    const result = zig_color.toHex();
-                    return @ptrCast(py_utils.convertToPython(result));
-                }
-            }.method;
+        // Helper functions for method name generation
+        fn getConversionMethodName(comptime TargetColorType: type) []const u8 {
+            return switch (TargetColorType) {
+                zignal.Rgb => "to_rgb",
+                zignal.Rgba => "to_rgba",
+                zignal.Hsl => "to_hsl",
+                zignal.Hsv => "to_hsv",
+                zignal.Lab => "to_lab",
+                zignal.Lch => "to_lch",
+                zignal.Lms => "to_lms",
+                zignal.Oklab => "to_oklab",
+                zignal.Oklch => "to_oklch",
+                zignal.Xyb => "to_xyb",
+                zignal.Xyz => "to_xyz",
+                zignal.Ycbcr => "to_ycbcr",
+                else => @compileError("Unknown color type for method name generation"),
+            };
         }
 
-        fn generateLumaMethod() fn ([*c]c.PyObject, [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
-            return struct {
-                fn method(self_obj: [*c]c.PyObject, _: [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
-                    const self = @as(*ObjectType, @ptrCast(self_obj));
-                    const zig_color = objectToZigColor(self);
-                    const result = zig_color.luma();
-                    return @ptrCast(py_utils.convertToPython(result));
-                }
-            }.method;
+        fn getZigConversionMethodName(comptime TargetColorType: type) []const u8 {
+            return switch (TargetColorType) {
+                zignal.Rgb => "toRgb",
+                zignal.Rgba => "toRgba",
+                zignal.Hsl => "toHsl",
+                zignal.Hsv => "toHsv",
+                zignal.Lab => "toLab",
+                zignal.Lch => "toLch",
+                zignal.Lms => "toLms",
+                zignal.Oklab => "toOklab",
+                zignal.Oklch => "toOklch",
+                zignal.Xyb => "toXyb",
+                zignal.Xyz => "toXyz",
+                zignal.Ycbcr => "toYcbcr",
+                else => @compileError("Unknown color type for Zig method name generation"),
+            };
         }
 
-        fn generateIsGrayMethod() fn ([*c]c.PyObject, [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
-            return struct {
-                fn method(self_obj: [*c]c.PyObject, _: [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
-                    const self = @as(*ObjectType, @ptrCast(self_obj));
-                    const zig_color = objectToZigColor(self);
-                    const result = zig_color.isGray();
-                    return @ptrCast(py_utils.getPyBool(result));
-                }
-            }.method;
+        fn getConversionMethodDoc(comptime TargetColorType: type) []const u8 {
+            return switch (TargetColorType) {
+                zignal.Rgb => "Convert to RGB color space",
+                zignal.Rgba => "Convert to RGBA color space with alpha",
+                zignal.Hsl => "Convert to HSL color space",
+                zignal.Hsv => "Convert to HSV color space",
+                zignal.Lab => "Convert to CIELAB color space",
+                zignal.Lch => "Convert to CIE LCH color space",
+                zignal.Lms => "Convert to LMS cone response space",
+                zignal.Oklab => "Convert to Oklab perceptual color space",
+                zignal.Oklch => "Convert to Oklch perceptual color space",
+                zignal.Xyb => "Convert to XYB color space",
+                zignal.Xyz => "Convert to CIE XYZ color space",
+                zignal.Ycbcr => "Convert to YCbCr color space",
+                else => @compileError("Unknown color type for documentation generation"),
+            };
         }
 
-        fn generateToHsvMethod() fn ([*c]c.PyObject, [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
-            return struct {
-                fn method(self_obj: [*c]c.PyObject, _: [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
-                    const self = @as(*ObjectType, @ptrCast(self_obj));
-                    const zig_color = objectToZigColor(self);
-                    const hsv_result = zig_color.toHsv();
-
-                    // Create a new HSV Python object
-                    const color = @import("color.zig");
-                    return @ptrCast(color.createPyObject(hsv_result));
-                }
-            }.method;
-        }
-
-        fn generateToRgbMethod() fn ([*c]c.PyObject, [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
-            return struct {
-                fn method(self_obj: [*c]c.PyObject, _: [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
-                    const self = @as(*ObjectType, @ptrCast(self_obj));
-                    const zig_color = objectToZigColor(self);
-                    const rgb_result = zig_color.toRgb();
-
-                    // Create a new RGB Python object
-                    const color = @import("color.zig");
-                    return @ptrCast(color.createPyObject(rgb_result));
-                }
-            }.method;
+        // Generic conversion method generator - creates specific methods for each target type
+        fn generateConversionMethod(comptime TargetColorType: type) fn ([*c]c.PyObject, [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
+            return switch (TargetColorType) {
+                zignal.Rgb => struct {
+                    fn method(self_obj: [*c]c.PyObject, _: [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
+                        const self = @as(*ObjectType, @ptrCast(self_obj));
+                        const zig_color = objectToZigColor(self);
+                        const result = zig_color.toRgb();
+                        const color = @import("color.zig");
+                        return @ptrCast(color.createPyObject(result));
+                    }
+                }.method,
+                zignal.Rgba => struct {
+                    fn method(self_obj: [*c]c.PyObject, _: [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
+                        const self = @as(*ObjectType, @ptrCast(self_obj));
+                        const zig_color = objectToZigColor(self);
+                        const result = zig_color.toRgba(255); // Default alpha 255
+                        const color = @import("color.zig");
+                        return @ptrCast(color.createPyObject(result));
+                    }
+                }.method,
+                zignal.Hsl => struct {
+                    fn method(self_obj: [*c]c.PyObject, _: [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
+                        const self = @as(*ObjectType, @ptrCast(self_obj));
+                        const zig_color = objectToZigColor(self);
+                        const result = zig_color.toHsl();
+                        const color = @import("color.zig");
+                        return @ptrCast(color.createPyObject(result));
+                    }
+                }.method,
+                zignal.Hsv => struct {
+                    fn method(self_obj: [*c]c.PyObject, _: [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
+                        const self = @as(*ObjectType, @ptrCast(self_obj));
+                        const zig_color = objectToZigColor(self);
+                        const result = zig_color.toHsv();
+                        const color = @import("color.zig");
+                        return @ptrCast(color.createPyObject(result));
+                    }
+                }.method,
+                zignal.Lab => struct {
+                    fn method(self_obj: [*c]c.PyObject, _: [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
+                        const self = @as(*ObjectType, @ptrCast(self_obj));
+                        const zig_color = objectToZigColor(self);
+                        const result = zig_color.toLab();
+                        const color = @import("color.zig");
+                        return @ptrCast(color.createPyObject(result));
+                    }
+                }.method,
+                zignal.Lch => struct {
+                    fn method(self_obj: [*c]c.PyObject, _: [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
+                        const self = @as(*ObjectType, @ptrCast(self_obj));
+                        const zig_color = objectToZigColor(self);
+                        const result = zig_color.toLch();
+                        const color = @import("color.zig");
+                        return @ptrCast(color.createPyObject(result));
+                    }
+                }.method,
+                zignal.Lms => struct {
+                    fn method(self_obj: [*c]c.PyObject, _: [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
+                        const self = @as(*ObjectType, @ptrCast(self_obj));
+                        const zig_color = objectToZigColor(self);
+                        const result = zig_color.toLms();
+                        const color = @import("color.zig");
+                        return @ptrCast(color.createPyObject(result));
+                    }
+                }.method,
+                zignal.Oklab => struct {
+                    fn method(self_obj: [*c]c.PyObject, _: [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
+                        const self = @as(*ObjectType, @ptrCast(self_obj));
+                        const zig_color = objectToZigColor(self);
+                        const result = zig_color.toOklab();
+                        const color = @import("color.zig");
+                        return @ptrCast(color.createPyObject(result));
+                    }
+                }.method,
+                zignal.Oklch => struct {
+                    fn method(self_obj: [*c]c.PyObject, _: [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
+                        const self = @as(*ObjectType, @ptrCast(self_obj));
+                        const zig_color = objectToZigColor(self);
+                        const result = zig_color.toOklch();
+                        const color = @import("color.zig");
+                        return @ptrCast(color.createPyObject(result));
+                    }
+                }.method,
+                zignal.Xyb => struct {
+                    fn method(self_obj: [*c]c.PyObject, _: [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
+                        const self = @as(*ObjectType, @ptrCast(self_obj));
+                        const zig_color = objectToZigColor(self);
+                        const result = zig_color.toXyb();
+                        const color = @import("color.zig");
+                        return @ptrCast(color.createPyObject(result));
+                    }
+                }.method,
+                zignal.Xyz => struct {
+                    fn method(self_obj: [*c]c.PyObject, _: [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
+                        const self = @as(*ObjectType, @ptrCast(self_obj));
+                        const zig_color = objectToZigColor(self);
+                        const result = zig_color.toXyz();
+                        const color = @import("color.zig");
+                        return @ptrCast(color.createPyObject(result));
+                    }
+                }.method,
+                zignal.Ycbcr => struct {
+                    fn method(self_obj: [*c]c.PyObject, _: [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
+                        const self = @as(*ObjectType, @ptrCast(self_obj));
+                        const zig_color = objectToZigColor(self);
+                        const result = zig_color.toYcbcr();
+                        const color = @import("color.zig");
+                        return @ptrCast(color.createPyObject(result));
+                    }
+                }.method,
+                else => @compileError("Unknown color type for method generation"),
+            };
         }
 
         // Convert Python object to Zig color
