@@ -37,110 +37,103 @@ pub fn isSupportedColor(comptime T: type) bool {
 /// Generic color component validation using type introspection
 /// This function determines validation rules based on the actual field types and semantics
 pub fn validateColorComponent(comptime ColorType: type, field_name: []const u8, value: anytype) bool {
-    const T = @TypeOf(value);
-
     // Apply validation rules grouped by color type families
     return switch (ColorType) {
         // RGB family: integer components 0-255
-        zignal.Rgb, zignal.Rgba => switch (@typeInfo(T)) {
-            .int => |value_info| {
-                return if (value_info.signedness == .unsigned)
-                    value <= 255
-                else
-                    value >= 0 and value <= 255;
-            },
-            else => true,
+        zignal.Rgb, zignal.Rgba => {
+            if (std.mem.eql(u8, field_name, "r") or
+                std.mem.eql(u8, field_name, "g") or
+                std.mem.eql(u8, field_name, "b") or
+                std.mem.eql(u8, field_name, "a"))
+            {
+                return value >= 0 and value <= 255;
+            }
+            return false;
         },
 
         // HSV/HSL family: same validation rules (h: 0-360, s/v/l: 0-100)
-        zignal.Hsv, zignal.Hsl => switch (@typeInfo(T)) {
-            .float => {
-                if (std.mem.eql(u8, field_name, "h")) {
-                    return value >= 0.0 and value <= 360.0;
-                } else {
-                    // s, v, l all use 0-100 percentage
-                    return value >= 0.0 and value <= 100.0;
-                }
-            },
-            else => true,
+        zignal.Hsv, zignal.Hsl => {
+            if (std.mem.eql(u8, field_name, "h")) {
+                return value >= 0.0 and value <= 360.0;
+            } else if (std.mem.eql(u8, field_name, "s") or
+                std.mem.eql(u8, field_name, "v") or
+                std.mem.eql(u8, field_name, "l"))
+            {
+                return value >= 0.0 and value <= 100.0;
+            }
+            return false;
         },
 
         // Lab: L: 0-100, a/b: -200 to 200
-        zignal.Lab => switch (@typeInfo(T)) {
-            .float => {
-                if (std.mem.eql(u8, field_name, "l")) {
-                    return value >= 0.0 and value <= 100.0;
-                } else if (std.mem.eql(u8, field_name, "a") or std.mem.eql(u8, field_name, "b")) {
-                    return value >= -200.0 and value <= 200.0;
-                } else {
-                    return value >= -1000.0 and value <= 1000.0;
-                }
-            },
-            else => true,
+        zignal.Lab => {
+            if (std.mem.eql(u8, field_name, "l")) {
+                return value >= 0.0 and value <= 100.0;
+            } else if (std.mem.eql(u8, field_name, "a") or std.mem.eql(u8, field_name, "b")) {
+                return value >= -200.0 and value <= 200.0;
+            }
+            return false;
         },
 
         // Oklab: L: 0-1, a/b: -0.5 to 0.5
-        zignal.Oklab => switch (@typeInfo(T)) {
-            .float => {
-                if (std.mem.eql(u8, field_name, "l")) {
-                    return value >= 0.0 and value <= 1.0;
-                } else if (std.mem.eql(u8, field_name, "a") or std.mem.eql(u8, field_name, "b")) {
-                    return value >= -0.5 and value <= 0.5;
-                } else {
-                    return value >= -1000.0 and value <= 1000.0;
-                }
-            },
-            else => true,
+        zignal.Oklab => {
+            if (std.mem.eql(u8, field_name, "l")) {
+                return value >= 0.0 and value <= 1.0;
+            } else if (std.mem.eql(u8, field_name, "a") or std.mem.eql(u8, field_name, "b")) {
+                return value >= -0.5 and value <= 0.5;
+            }
+            return false;
         },
 
         // Oklch: L: 0-1, c: 0-0.5, h: 0-360
-        zignal.Oklch => switch (@typeInfo(T)) {
-            .float => {
-                if (std.mem.eql(u8, field_name, "l")) {
-                    return value >= 0.0 and value <= 1.0;
-                } else if (std.mem.eql(u8, field_name, "c")) {
-                    return value >= 0.0 and value <= 0.5;
-                } else if (std.mem.eql(u8, field_name, "h")) {
-                    return value >= 0.0 and value <= 360.0;
-                } else {
-                    return value >= -1000.0 and value <= 1000.0;
-                }
-            },
-            else => true,
+        zignal.Oklch => {
+            if (std.mem.eql(u8, field_name, "l")) {
+                return value >= 0.0 and value <= 1.0;
+            } else if (std.mem.eql(u8, field_name, "c")) {
+                return value >= 0.0 and value <= 0.5;
+            } else if (std.mem.eql(u8, field_name, "h")) {
+                return value >= 0.0 and value <= 360.0;
+            }
+            return false;
         },
 
         // Lch: L: 0-100, c: >=0, h: 0-360
-        zignal.Lch => switch (@typeInfo(T)) {
-            .float => {
-                if (std.mem.eql(u8, field_name, "l")) {
-                    return value >= 0.0 and value <= 100.0;
-                } else if (std.mem.eql(u8, field_name, "c")) {
-                    return value >= 0.0;
-                } else if (std.mem.eql(u8, field_name, "h")) {
-                    return value >= 0.0 and value <= 360.0;
-                } else {
-                    return value >= -1000.0 and value <= 1000.0;
-                }
-            },
-            else => true,
+        zignal.Lch => {
+            if (std.mem.eql(u8, field_name, "l")) {
+                return value >= 0.0 and value <= 100.0;
+            } else if (std.mem.eql(u8, field_name, "c")) {
+                return value >= 0.0;
+            } else if (std.mem.eql(u8, field_name, "h")) {
+                return value >= 0.0 and value <= 360.0;
+            }
+            return false;
         },
 
         // XYZ: 0-150 (can exceed 100)
-        zignal.Xyz => switch (@typeInfo(T)) {
-            .float => value >= 0.0 and value <= 150.0,
-            else => true,
+        zignal.Xyz => {
+            if (std.mem.eql(u8, field_name, "x") or
+                std.mem.eql(u8, field_name, "y") or
+                std.mem.eql(u8, field_name, "z"))
+            {
+                return value >= 0.0 and value <= 150.0;
+            }
+            return false;
         },
 
         // YCbCr: 0-255
-        zignal.Ycbcr => switch (@typeInfo(T)) {
-            .float => value >= 0.0 and value <= 255.0,
-            else => true,
+        zignal.Ycbcr => {
+            if (std.mem.eql(u8, field_name, "y") or
+                std.mem.eql(u8, field_name, "cb") or
+                std.mem.eql(u8, field_name, "cr"))
+            {
+                return value >= 0.0 and value <= 255.0;
+            }
+            return false;
         },
 
         // LMS, XYB: generic validation for other color spaces
-        zignal.Lms, zignal.Xyb => switch (@typeInfo(T)) {
-            .float => value >= -1000.0 and value <= 1000.0,
-            else => true,
+        zignal.Lms, zignal.Xyb => {
+            // Accept reasonable range for these color spaces
+            return value >= -1000.0 and value <= 1000.0;
         },
 
         else => @compileError("Missing validation for color type '" ++ @typeName(ColorType) ++ "'. "),
