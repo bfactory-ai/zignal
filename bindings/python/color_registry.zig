@@ -99,6 +99,34 @@ fn validateGenericComponent(field_name: []const u8, value: anytype) bool {
     return true; // Accept any value
 }
 
+// Lch validation: L=0-100, C>=0, H=0-360
+fn validateLchComponent(field_name: []const u8, value: anytype) bool {
+    const T = @TypeOf(value);
+    return switch (@typeInfo(T)) {
+        .float => {
+            if (std.mem.eql(u8, field_name, "l")) {
+                return value >= 0.0 and value <= 100.0;
+            } else if (std.mem.eql(u8, field_name, "c")) {
+                return value >= 0.0; // Chroma can be unbounded, but should be non-negative
+            } else if (std.mem.eql(u8, field_name, "h")) {
+                return value >= 0.0 and value <= 360.0;
+            }
+            return true;
+        },
+        else => false,
+    };
+}
+
+// YCbCr validation: Y=0-255, Cb=0-255, Cr=0-255 (f32 components)
+fn validateYcbcrComponent(field_name: []const u8, value: anytype) bool {
+    _ = field_name;
+    const T = @TypeOf(value);
+    return switch (@typeInfo(T)) {
+        .float => value >= 0.0 and value <= 255.0,
+        else => false,
+    };
+}
+
 // ============================================================================
 // COLOR BINDING REGISTRY
 // ============================================================================
@@ -169,14 +197,34 @@ pub const ColorRegistry = [_]ColorBindingEntry{
         .validation_error = "Oklch values must be in valid ranges (l: 0-1, c: 0-0.5, h: 0-360)",
         .doc = "Oklch perceptual color space in cylindrical coordinates",
     },
-    // More color types can be added here easily:
-    // .{
-    //     .name = "Lch",
-    //     .zig_type = zignal.Lch,
-    //     .validation_fn = validateLchComponent,
-    //     .validation_error = "Lch values must be in valid ranges",
-    //     .doc = "CIE LCH color space representation",
-    // },
+    .{
+        .name = "Lch",
+        .zig_type = zignal.Lch,
+        .validation_fn = validateLchComponent,
+        .validation_error = "Lch values must be in valid ranges (l: 0-100, c: >=0, h: 0-360)",
+        .doc = "CIE LCH color space representation (cylindrical Lab)",
+    },
+    .{
+        .name = "Lms",
+        .zig_type = zignal.Lms,
+        .validation_fn = validateGenericComponent,
+        .validation_error = "LMS values should be non-negative cone responses",
+        .doc = "LMS color space representing Long, Medium, Short wavelength cone responses",
+    },
+    .{
+        .name = "Xyb",
+        .zig_type = zignal.Xyb,
+        .validation_fn = validateGenericComponent,
+        .validation_error = "XYB values used in JPEG XL compression",
+        .doc = "XYB color space used in JPEG XL image compression",
+    },
+    .{
+        .name = "Ycbcr",
+        .zig_type = zignal.Ycbcr,
+        .validation_fn = validateYcbcrComponent,
+        .validation_error = "YCbCr values must be in range 0-255",
+        .doc = "YCbCr color space used in JPEG and video encoding",
+    },
 };
 
 // ============================================================================

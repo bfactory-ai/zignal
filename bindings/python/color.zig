@@ -239,6 +239,114 @@ pub var OklchType = c.PyTypeObject{
     .tp_new = @ptrCast(&OklchBinding.new),
 };
 
+// LCH
+pub const LchBinding = color_factory.createColorBinding(
+    "Lch",
+    zignal.Lch,
+    .{
+        .validation_fn = color_registry.ColorRegistry[8].validation_fn,
+        .validation_error = color_registry.ColorRegistry[8].validation_error,
+        .doc = color_registry.ColorRegistry[8].doc,
+    },
+);
+var lch_getset = LchBinding.generateGetters();
+var lch_methods = LchBinding.generateMethods();
+pub var LchType = c.PyTypeObject{
+    .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
+    .tp_name = "zignal.Lch",
+    .tp_basicsize = @sizeOf(LchBinding.PyObjectType),
+    .tp_dealloc = @ptrCast(&LchBinding.dealloc),
+    .tp_repr = @ptrCast(&LchBinding.repr),
+    .tp_str = @ptrCast(&LchBinding.repr),
+    .tp_flags = c.Py_TPFLAGS_DEFAULT,
+    .tp_doc = color_registry.ColorRegistry[8].doc.ptr,
+    .tp_methods = @ptrCast(&lch_methods),
+    .tp_getset = @ptrCast(&lch_getset),
+    .tp_init = @ptrCast(&LchBinding.init),
+    .tp_new = @ptrCast(&LchBinding.new),
+};
+
+// LMS
+pub const LmsBinding = color_factory.createColorBinding(
+    "Lms",
+    zignal.Lms,
+    .{
+        .validation_fn = color_registry.ColorRegistry[9].validation_fn,
+        .validation_error = color_registry.ColorRegistry[9].validation_error,
+        .doc = color_registry.ColorRegistry[9].doc,
+    },
+);
+var lms_getset = LmsBinding.generateGetters();
+var lms_methods = LmsBinding.generateMethods();
+pub var LmsType = c.PyTypeObject{
+    .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
+    .tp_name = "zignal.Lms",
+    .tp_basicsize = @sizeOf(LmsBinding.PyObjectType),
+    .tp_dealloc = @ptrCast(&LmsBinding.dealloc),
+    .tp_repr = @ptrCast(&LmsBinding.repr),
+    .tp_str = @ptrCast(&LmsBinding.repr),
+    .tp_flags = c.Py_TPFLAGS_DEFAULT,
+    .tp_doc = color_registry.ColorRegistry[9].doc.ptr,
+    .tp_methods = @ptrCast(&lms_methods),
+    .tp_getset = @ptrCast(&lms_getset),
+    .tp_init = @ptrCast(&LmsBinding.init),
+    .tp_new = @ptrCast(&LmsBinding.new),
+};
+
+// XYB
+pub const XybBinding = color_factory.createColorBinding(
+    "Xyb",
+    zignal.Xyb,
+    .{
+        .validation_fn = color_registry.ColorRegistry[10].validation_fn,
+        .validation_error = color_registry.ColorRegistry[10].validation_error,
+        .doc = color_registry.ColorRegistry[10].doc,
+    },
+);
+var xyb_getset = XybBinding.generateGetters();
+var xyb_methods = XybBinding.generateMethods();
+pub var XybType = c.PyTypeObject{
+    .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
+    .tp_name = "zignal.Xyb",
+    .tp_basicsize = @sizeOf(XybBinding.PyObjectType),
+    .tp_dealloc = @ptrCast(&XybBinding.dealloc),
+    .tp_repr = @ptrCast(&XybBinding.repr),
+    .tp_str = @ptrCast(&XybBinding.repr),
+    .tp_flags = c.Py_TPFLAGS_DEFAULT,
+    .tp_doc = color_registry.ColorRegistry[10].doc.ptr,
+    .tp_methods = @ptrCast(&xyb_methods),
+    .tp_getset = @ptrCast(&xyb_getset),
+    .tp_init = @ptrCast(&XybBinding.init),
+    .tp_new = @ptrCast(&XybBinding.new),
+};
+
+// YCBCR
+pub const YcbcrBinding = color_factory.createColorBinding(
+    "Ycbcr",
+    zignal.Ycbcr,
+    .{
+        .validation_fn = color_registry.ColorRegistry[11].validation_fn,
+        .validation_error = color_registry.ColorRegistry[11].validation_error,
+        .doc = color_registry.ColorRegistry[11].doc,
+    },
+);
+var ycbcr_getset = YcbcrBinding.generateGetters();
+var ycbcr_methods = YcbcrBinding.generateMethods();
+pub var YcbcrType = c.PyTypeObject{
+    .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
+    .tp_name = "zignal.Ycbcr",
+    .tp_basicsize = @sizeOf(YcbcrBinding.PyObjectType),
+    .tp_dealloc = @ptrCast(&YcbcrBinding.dealloc),
+    .tp_repr = @ptrCast(&YcbcrBinding.repr),
+    .tp_str = @ptrCast(&YcbcrBinding.repr),
+    .tp_flags = c.Py_TPFLAGS_DEFAULT,
+    .tp_doc = color_registry.ColorRegistry[11].doc.ptr,
+    .tp_methods = @ptrCast(&ycbcr_methods),
+    .tp_getset = @ptrCast(&ycbcr_getset),
+    .tp_init = @ptrCast(&YcbcrBinding.init),
+    .tp_new = @ptrCast(&YcbcrBinding.new),
+};
+
 // ============================================================================
 // REGISTRATION HELPER
 // ============================================================================
@@ -254,6 +362,10 @@ pub fn registerAllColorTypes(module: [*c]c.PyObject) !void {
     try registerType(@ptrCast(module), "Xyz", @ptrCast(&XyzType));
     try registerType(@ptrCast(module), "Oklab", @ptrCast(&OklabType));
     try registerType(@ptrCast(module), "Oklch", @ptrCast(&OklchType));
+    try registerType(@ptrCast(module), "Lch", @ptrCast(&LchType));
+    try registerType(@ptrCast(module), "Lms", @ptrCast(&LmsType));
+    try registerType(@ptrCast(module), "Xyb", @ptrCast(&XybType));
+    try registerType(@ptrCast(module), "Ycbcr", @ptrCast(&YcbcrType));
 }
 
 // ============================================================================
@@ -281,6 +393,14 @@ pub fn createPyObject(color: anytype) ?*c.PyObject {
         return createOklabPyObject(color);
     } else if (T == zignal.Oklch) {
         return createOklchPyObject(color);
+    } else if (T == zignal.Lch) {
+        return createLchPyObject(color);
+    } else if (T == zignal.Lms) {
+        return createLmsPyObject(color);
+    } else if (T == zignal.Xyb) {
+        return createXybPyObject(color);
+    } else if (T == zignal.Ycbcr) {
+        return createYcbcrPyObject(color);
     }
     
     return null;
@@ -380,6 +500,54 @@ fn createOklchPyObject(oklch: zignal.Oklch) ?*c.PyObject {
     py_obj.field0 = oklch.l;
     py_obj.field1 = oklch.c;
     py_obj.field2 = oklch.h;
+    
+    return obj;
+}
+
+fn createLchPyObject(lch: zignal.Lch) ?*c.PyObject {
+    const obj = c.PyType_GenericNew(@ptrCast(&LchType), null, null);
+    if (obj == null) return null;
+    
+    const py_obj = @as(*LchBinding.PyObjectType, @ptrCast(obj));
+    py_obj.field0 = lch.l;
+    py_obj.field1 = lch.c;
+    py_obj.field2 = lch.h;
+    
+    return obj;
+}
+
+fn createLmsPyObject(lms: zignal.Lms) ?*c.PyObject {
+    const obj = c.PyType_GenericNew(@ptrCast(&LmsType), null, null);
+    if (obj == null) return null;
+    
+    const py_obj = @as(*LmsBinding.PyObjectType, @ptrCast(obj));
+    py_obj.field0 = lms.l;
+    py_obj.field1 = lms.m;
+    py_obj.field2 = lms.s;
+    
+    return obj;
+}
+
+fn createXybPyObject(xyb: zignal.Xyb) ?*c.PyObject {
+    const obj = c.PyType_GenericNew(@ptrCast(&XybType), null, null);
+    if (obj == null) return null;
+    
+    const py_obj = @as(*XybBinding.PyObjectType, @ptrCast(obj));
+    py_obj.field0 = xyb.x;
+    py_obj.field1 = xyb.y;
+    py_obj.field2 = xyb.b;
+    
+    return obj;
+}
+
+fn createYcbcrPyObject(ycbcr: zignal.Ycbcr) ?*c.PyObject {
+    const obj = c.PyType_GenericNew(@ptrCast(&YcbcrType), null, null);
+    if (obj == null) return null;
+    
+    const py_obj = @as(*YcbcrBinding.PyObjectType, @ptrCast(obj));
+    py_obj.field0 = ycbcr.y;
+    py_obj.field1 = ycbcr.cb;
+    py_obj.field2 = ycbcr.cr;
     
     return obj;
 }
