@@ -60,11 +60,9 @@ pub fn createColorBinding(
         pub const PyObjectType = ObjectType;
         pub const ZigType = ZigColorType;
 
-        // Generate property getters
+        /// Generate property getters
         pub fn generateGetters() [fields.len + 1]c.PyGetSetDef {
             var getters: [fields.len + 1]c.PyGetSetDef = undefined;
-
-            // Generate getter for each field
             inline for (fields, 0..) |field, i| {
                 getters[i] = c.PyGetSetDef{
                     .name = field.name ++ "",
@@ -74,26 +72,16 @@ pub fn createColorBinding(
                     .closure = null,
                 };
             }
-
-            // Null terminator
-            getters[fields.len] = c.PyGetSetDef{
-                .name = null,
-                .get = null,
-                .set = null,
-                .doc = null,
-                .closure = null,
-            };
-
+            getters[fields.len] = c.PyGetSetDef{ .name = null, .get = null, .set = null, .doc = null, .closure = null };
             return getters;
         }
 
-        // Generate field getter for specific field index
+        /// Generate field getter for specific field index
         fn generateFieldGetter(comptime field_index: usize) fn ([*c]c.PyObject, ?*anyopaque) callconv(.c) [*c]c.PyObject {
             return struct {
                 fn getter(self_obj: [*c]c.PyObject, closure: ?*anyopaque) callconv(.c) [*c]c.PyObject {
                     _ = closure;
                     const self = @as(*ObjectType, @ptrCast(self_obj));
-
                     const value = switch (field_index) {
                         0 => self.field0,
                         1 => if (fields.len > 1) self.field1 else unreachable,
@@ -101,15 +89,14 @@ pub fn createColorBinding(
                         3 => if (fields.len > 3) self.field3 else unreachable,
                         else => unreachable,
                     };
-
                     return @ptrCast(@alignCast(py_utils.convertToPythonCast(value)));
                 }
             }.getter;
         }
 
         // Generate methods array - automatically create conversion methods for all color types
-        pub fn generateMethods() [getMethodCount() + 1]c.PyMethodDef {
-            var methods: [getMethodCount() + 1]c.PyMethodDef = undefined;
+        pub fn generateMethods() [color_types.len]c.PyMethodDef {
+            var methods: [color_types.len]c.PyMethodDef = undefined;
             var index: usize = 0;
 
             // Generate conversion methods for each color type
@@ -135,24 +122,6 @@ pub fn createColorBinding(
             }
             methods[index] = c.PyMethodDef{ .ml_name = null, .ml_meth = null, .ml_flags = 0, .ml_doc = null };
             return methods;
-        }
-
-        // Count available methods - automatically count conversion methods for all color types
-        fn getMethodCount() comptime_int {
-            var count: comptime_int = 0;
-
-            inline for (color_types) |TargetColorType| {
-                // Skip self-conversion (e.g., Rgb.toRgb doesn't exist)
-                if (TargetColorType == ZigColorType) continue;
-
-                const zig_method_name = getZigConversionMethodName(TargetColorType);
-                if (@hasDecl(ZigColorType, zig_method_name)) {
-                    count += 1;
-                } else {
-                    @compileError("Missing conversion method: " ++ @typeName(ZigColorType) ++ "." ++ zig_method_name ++ " - expected for color type in registry");
-                }
-            }
-            return count;
         }
 
         /// Convert string to lowercase at comptime
