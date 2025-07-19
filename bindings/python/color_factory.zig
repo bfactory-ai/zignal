@@ -143,8 +143,7 @@ pub fn createColorBinding(
                 const base_name = type_name[dot_index + 1 ..];
                 return "to_" ++ comptimeLowercase(base_name);
             } else {
-                // If no dot found, use the whole type name
-                return "to_" ++ comptimeLowercase(type_name);
+                @compileError("Expected zignal.ColorName format, got: " ++ type_name);
             }
         }
 
@@ -158,18 +157,12 @@ pub fn createColorBinding(
                 const base_name = type_name[dot_index + 1 ..];
                 return "to" ++ base_name;
             } else {
-                // If no dot found, use the whole type name
-                return "to" ++ type_name;
+                @compileError("Expected zignal.ColorName format, got: " ++ type_name);
             }
         }
 
+        /// Returns documentation for conversion to the given color type
         fn getConversionMethodDoc(comptime TargetColorType: type) []const u8 {
-
-            // First check if it's a supported color type
-            if (!isSupportedColor(TargetColorType)) {
-                @compileError("Unsupported color type: " ++ @typeName(TargetColorType));
-            }
-
             // Automatically generate documentation from type name
             const type_name = @typeName(TargetColorType);
 
@@ -178,8 +171,7 @@ pub fn createColorBinding(
                 const color_space = type_name[dot_index + 1 ..];
                 return "Convert to " ++ color_space ++ " color space";
             } else {
-                // Fallback if no dot found
-                return "Convert to " ++ type_name ++ " color space";
+                @compileError("Expected zignal.ColorName format, got: " ++ type_name);
             }
         }
 
