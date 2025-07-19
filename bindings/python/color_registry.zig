@@ -156,10 +156,6 @@ pub fn validateColorComponent(comptime ColorType: type, field_name: []const u8, 
     };
 }
 
-// ============================================================================
-// TYPE-DRIVEN COLOR FUNCTIONS
-// ============================================================================
-
 /// Get the validation error message for a specific color type
 pub fn getValidationErrorMessage(comptime ColorType: type) []const u8 {
     // Return appropriate error message based on color type
