@@ -130,10 +130,26 @@ pub fn validateColorComponent(comptime ColorType: type, field_name: []const u8, 
             return false;
         },
 
-        // LMS, XYB: generic validation for other color spaces
-        zignal.Lms, zignal.Xyb => {
-            // Accept reasonable range for these color spaces
-            return value >= -1000.0 and value <= 1000.0;
+        // LMS: L/M/S cone responses
+        zignal.Lms => {
+            if (std.mem.eql(u8, field_name, "l") or
+                std.mem.eql(u8, field_name, "m") or
+                std.mem.eql(u8, field_name, "s"))
+            {
+                return value >= 0.0 and value <= 1000.0; // Non-negative cone responses
+            }
+            return false;
+        },
+
+        // XYB: JPEG XL color space
+        zignal.Xyb => {
+            if (std.mem.eql(u8, field_name, "x") or
+                std.mem.eql(u8, field_name, "y") or
+                std.mem.eql(u8, field_name, "b"))
+            {
+                return value >= -1000.0 and value <= 1000.0;
+            }
+            return false;
         },
 
         else => @compileError("Missing validation for color type '" ++ @typeName(ColorType) ++ "'. "),
