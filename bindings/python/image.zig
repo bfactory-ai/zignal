@@ -269,7 +269,7 @@ fn imagergb_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) 
     buffer = std.mem.zeroes(c.Py_buffer);
 
     // Request buffer with strides info
-    const flags: c_int = 0x0108; // PyBUF_STRIDES | PyBUF_ND
+    const flags: c_int = 0x001c; // PyBUF_ND | PyBUF_STRIDES | PyBUF_FORMAT
     if (c.PyObject_GetBuffer(array_obj, &buffer, flags) != 0) {
         // Error already set by PyObject_GetBuffer
         return null;
@@ -300,7 +300,17 @@ fn imagergb_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) 
         return null;
     }
 
-    // We already ensured the array is C-contiguous above
+    // Check if array is C-contiguous
+    // For C-contiguous, strides should be: (cols*3, 3, 1)
+    const strides = @as([*]c.Py_ssize_t, @ptrCast(buffer.strides));
+    const expected_stride_2 = buffer.itemsize; // Should be 1 for uint8
+    const expected_stride_1 = expected_stride_2 * @as(c.Py_ssize_t, @intCast(channels)); // Should be 3
+    const expected_stride_0 = expected_stride_1 * @as(c.Py_ssize_t, @intCast(cols)); // Should be cols * 3
+
+    if (strides[0] != expected_stride_0 or strides[1] != expected_stride_1 or strides[2] != expected_stride_2) {
+        c.PyErr_SetString(c.PyExc_ValueError, "Array is not C-contiguous. Use numpy.ascontiguousarray() first.");
+        return null;
+    }
 
     // Create new Python object
     const self = @as(?*ImageRgbObject, @ptrCast(c.PyType_GenericAlloc(@ptrCast(type_obj), 0)));
