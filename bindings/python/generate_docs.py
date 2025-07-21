@@ -72,7 +72,7 @@ def main():
         sys.exit(1)
     
     # Create docs directory if it doesn't exist
-    docs_dir = project_root / "docs" / "python"
+    docs_dir = script_dir / "docs"
     docs_dir.mkdir(parents=True, exist_ok=True)
     
     # Generate documentation
@@ -81,7 +81,7 @@ def main():
         sys.executable, "-m", "pdoc",
         "--output-directory", str(docs_dir),
         "--no-show",  # Don't open browser
-        "zignal"  # Use the installed package
+        "zignal", "zignal._zignal"  # Document multiple modules to enable search
     ]
     
     result = subprocess.run(cmd, capture_output=True)
@@ -91,44 +91,18 @@ def main():
         sys.exit(1)
     
     print("Documentation generated successfully!")
+    print("Search functionality enabled by documenting multiple modules!")
     
-    # Find the generated HTML file (pdoc3 generates based on module name)
-    # Our module is named _zignal, but pdoc3 might rename it
-    possible_names = ["_zignal.html", "zignal.html"]
-    doc_file = None
-    for name in possible_names:
-        if (docs_dir / name).exists():
-            doc_file = name
-            break
+    # Check what files were generated
+    html_files = list(docs_dir.glob("*.html"))
+    if html_files:
+        print(f"Generated files: {[f.name for f in html_files]}")
     
-    if not doc_file:
-        # Look for any HTML file that's not index.html
-        html_files = [f for f in docs_dir.glob("*.html") if f.name != "index.html"]
-        if html_files:
-            doc_file = html_files[0].name
-        else:
-            doc_file = "zignal.html"  # fallback
+    # Check if search.js was generated (indicates search is enabled)
+    if (docs_dir / "search.js").exists():
+        print("Search functionality has been enabled!")
     
-    print(f"Documentation file: {doc_file}")
-    
-    # Optional: Generate a simple index.html redirect
-    index_content = f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>Zignal Python Documentation</title>
-    <meta http-equiv="refresh" content="0; url={doc_file}">
-</head>
-<body>
-    <p>Redirecting to <a href="{doc_file}">zignal documentation</a>...</p>
-</body>
-</html>
-"""
-    
-    with open(docs_dir / "index.html", "w") as f:
-        f.write(index_content)
-    
-    print(f"Created index.html redirect in {docs_dir}")
+    print(f"Documentation is available in {docs_dir}")
 
 
 if __name__ == "__main__":
