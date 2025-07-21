@@ -1,9 +1,17 @@
 """Test numpy functionality with various array configurations."""
 
-import numpy as np
 import pytest
 
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
+
 import zignal
+
+# Skip all tests in this module if numpy is not available
+pytestmark = pytest.mark.skipif(not HAS_NUMPY, reason="NumPy is not installed")
 
 
 def test_from_numpy_basic():

@@ -32,6 +32,7 @@ Issues = "https://github.com/bfactory-ai/zignal/issues"
 
 [project.optional-dependencies]
 dev = ["pytest", "uv", "ruff"]
+test = ["pytest", "numpy"]
 
 [dependency-groups]
 dev = [
