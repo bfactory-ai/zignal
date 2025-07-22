@@ -73,6 +73,7 @@ pub const isSixelSupported = sixel.isSixelSupported;
 pub const SixelOptions = sixel.SixelOptions;
 pub const PaletteMode = sixel.PaletteMode;
 pub const DitherMode = sixel.DitherMode;
+
 const png = @import("png.zig");
 pub const savePng = png.savePng;
 pub const loadPng = png.loadPng;
