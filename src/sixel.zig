@@ -799,35 +799,197 @@ fn generateAdaptivePalette(
     return actual_size;
 }
 
-/// Checks if the terminal supports sixel graphics
-pub fn isSixelSupported() !bool {
-    const allocator = std.heap.page_allocator;
+/// Configuration options for sixel detection
+pub const SixelDetectionOptions = struct {
+    /// Enable functional test (may cause visible output)
+    enable_functional_test: bool = false,
+    /// Timeout for terminal responses in milliseconds
+    timeout_ms: u64 = 100,
+};
 
-    // Check SIXEL environment variable override
-    if (std.process.getEnvVarOwned(allocator, "SIXEL")) |sixel_env| {
-        defer allocator.free(sixel_env);
-        if (std.mem.eql(u8, sixel_env, "1") or std.mem.eql(u8, sixel_env, "true")) {
+/// Terminal control and detection utilities
+const TerminalDetector = struct {
+    stdin: std.fs.File,
+    stdout: std.fs.File,
+    stderr: std.fs.File,
+    original_termios: std.posix.termios,
+
+    fn init() !TerminalDetector {
+        const stdin = std.fs.File.stdin();
+        const stdout = std.fs.File.stdout();
+        const stderr = std.fs.File.stderr();
+
+        // Get current terminal settings
+        const original = try std.posix.tcgetattr(stdin.handle);
+
+        return TerminalDetector{
+            .stdin = stdin,
+            .stdout = stdout,
+            .stderr = stderr,
+            .original_termios = original,
+        };
+    }
+
+    fn deinit(self: *TerminalDetector) void {
+        // Restore original terminal settings
+        std.posix.tcsetattr(self.stdin.handle, .FLUSH, self.original_termios) catch {};
+    }
+
+    fn enterRawMode(self: *TerminalDetector) !void {
+        var raw = self.original_termios;
+
+        // Disable canonical mode and echo
+        raw.lflag.ICANON = false;
+        raw.lflag.ECHO = false;
+
+        // Set minimum characters and timeout
+        raw.cc[@intFromEnum(std.posix.V.MIN)] = 0;
+        raw.cc[@intFromEnum(std.posix.V.TIME)] = 1; // 0.1 second timeout
+
+        try std.posix.tcsetattr(self.stdin.handle, .FLUSH, raw);
+    }
+
+    fn query(self: *TerminalDetector, sequence: []const u8, buffer: []u8, timeout_ms: u64) ![]const u8 {
+        _ = timeout_ms; // Will use termios timeout for now
+
+        // Enter raw mode
+        try self.enterRawMode();
+        defer std.posix.tcsetattr(self.stdin.handle, .FLUSH, self.original_termios) catch {};
+
+        // Clear any pending input
+        // TODO: tcflush not available in current Zig version
+        // std.posix.tcflush(self.stdin.handle, .I) catch {};
+
+        // Alternative: consume any pending input
+        var discard_buf: [256]u8 = undefined;
+        _ = self.stdin.read(&discard_buf) catch 0;
+
+        // Send query sequence
+        _ = try self.stdout.write(sequence);
+
+        // Read response
+        const n = try self.stdin.read(buffer);
+
+        if (n == 0) return error.NoResponse;
+
+        return buffer[0..n];
+    }
+};
+
+/// Check sixel support using DECRQSS (Request Status String)
+fn checkSixelByParamQuery() !bool {
+    var detector = try TerminalDetector.init();
+    defer detector.deinit();
+
+    // Query sixel graphics parameter
+    var response_buf: [256]u8 = undefined;
+    const response = detector.query("\x1b[?2;1;0S", &response_buf, 100) catch {
+        return false;
+    };
+
+    // Look for positive response indicating sixel support
+    // Expected format: ESC P 1 $ r <params> ESC \
+    if (response.len >= 4) {
+        if (std.mem.indexOf(u8, response, "\x1bP") != null) {
             return true;
         }
-    } else |_| {}
-
-    // Check TERM environment variable for known sixel-capable terminals
-    if (std.process.getEnvVarOwned(allocator, "TERM")) |term| {
-        defer allocator.free(term);
-        const sixel_terminals = [_][]const u8{
-            "xterm-256color",
-            "foot",
-            "mlterm",
-            "yaft-256color",
-            "mintty",
-            "wezterm",
-        };
-        for (sixel_terminals) |sixel_term| {
-            if (std.mem.indexOf(u8, term, sixel_term) != null) {
-                return true;
-            }
-        }
-    } else |_| {}
+    }
 
     return false;
+}
+
+/// Check sixel support using Device Attributes query
+fn checkSixelByDeviceAttributes() !bool {
+    var detector = try TerminalDetector.init();
+    defer detector.deinit();
+
+    // Send Primary Device Attributes query
+    var response_buf: [256]u8 = undefined;
+    const response = detector.query("\x1b[c", &response_buf, 100) catch {
+        return false;
+    };
+
+    // Parse response looking for attribute 4 (sixel graphics)
+    // Format: ESC [ ? <attributes> c
+    if (response.len >= 4 and response[0] == '\x1b' and response[1] == '[' and response[2] == '?') {
+        // Look for '4' in the attribute list
+        var i: usize = 3;
+        while (i < response.len and response[i] != 'c') : (i += 1) {
+            if (response[i] == '4') {
+                // Check it's a standalone 4, not part of another number
+                const prev_is_separator = (i == 3 or response[i - 1] == ';');
+                const next_is_separator = (i + 1 >= response.len or response[i + 1] == ';' or response[i + 1] == 'c');
+                if (prev_is_separator and next_is_separator) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
+/// Check sixel support using a functional test (may have visible effects)
+fn checkSixelByFunctionalTest() !bool {
+    var detector = try TerminalDetector.init();
+    defer detector.deinit();
+
+    // Get cursor position before
+    _ = try detector.stdout.write("\x1b[6n");
+    var pos_before_buf: [256]u8 = undefined;
+    const pos_before = detector.query("", &pos_before_buf, 100) catch {
+        return false;
+    };
+
+    // Send minimal sixel (1x1 transparent pixel)
+    _ = try detector.stdout.write("\x1bPq\"1;1;1;1#0;2;0;0;0#0~-\x1b\\");
+
+    // Get cursor position after
+    _ = try detector.stdout.write("\x1b[6n");
+    var pos_after_buf: [256]u8 = undefined;
+    const pos_after = detector.query("", &pos_after_buf, 100) catch {
+        return false;
+    };
+
+    // If positions differ, sixel was processed
+    return !std.mem.eql(u8, pos_before, pos_after);
+}
+
+/// Detect terminal sixel capability using multiple methods
+fn detectTerminalSixelCapability(options: SixelDetectionOptions) !bool {
+    // Try DECRQSS - Request Status String (no visible output)
+    if (checkSixelByParamQuery()) |result| {
+        if (result) return true;
+    } else |_| {}
+
+    // Try Device Attributes (no visible output)
+    if (checkSixelByDeviceAttributes()) |result| {
+        if (result) return true;
+    } else |_| {}
+
+    // Functional test as last resort (may have visible effects)
+    if (options.enable_functional_test) {
+        if (checkSixelByFunctionalTest()) |result| {
+            if (result) return true;
+        } else |_| {}
+    }
+
+    return false;
+}
+
+/// Checks if the terminal supports sixel graphics
+pub fn isSixelSupported() !bool {
+    // Check if we're connected to a terminal
+    const stdin = std.fs.File.stdin();
+    
+    // Try to get terminal attributes - if this fails with NotATerminal,
+    // we're redirected to a file/pipe, so allow sixel output
+    _ = std.posix.tcgetattr(stdin.handle) catch |err| switch (err) {
+        error.NotATerminal => return true, // Not a TTY, allow sixel for file output
+        else => return err,
+    };
+    
+    // We're in a terminal, so perform actual detection
+    const options = SixelDetectionOptions{};
+    return detectTerminalSixelCapability(options) catch false;
 }
