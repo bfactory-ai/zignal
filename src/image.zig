@@ -350,10 +350,9 @@ pub fn Image(comptime T: type) type {
                 height = @intFromFloat(@as(f32, @floatFromInt(height)) * scale);
             }
 
-            // Start sixel sequence with DCS and parameters
-            // P1;P2;P3;q where P1=0 (aspect ratio), P2=1 (background), P3=0 (no grid)
-            // Then add raster dimensions: "Pa;Pb;Ph;Pv where Pa=Pb=1 (aspect ratio), Ph=width, Pv=height
-            try writer.print("\x1bP0;1;0q\"1;1;{d};{d}", .{ width, height });
+            // Start sixel sequence with DCS, then add raster dimensions:
+            // "Pa;Pb;Ph;Pv where Pa=Pb=1 (aspect ratio), Ph=width, Pv=height
+            try writer.print("\x1bPq\"1;1;{d};{d}", .{ width, height });
 
             // Quantization to 252-color palette (6x7x6 distribution)
             // 7 levels for green (most sensitive), 6 for red and blue
@@ -857,19 +856,104 @@ pub fn Image(comptime T: type) type {
                 }
             };
 
-            // Check if dithering is enabled
-            const use_dithering = blk: {
+            // Helper function to apply Atkinson error diffusion
+            const applyAtkinsonDither = struct {
+                fn diffuseError(data: []u8, w: usize, h: usize, x: usize, y: usize, ch: usize, err: i16) void {
+                    // Atkinson error distribution (only 75% of error is diffused):
+                    //          X   1/8  1/8
+                    //   1/8   1/8  1/8
+                    //         1/8
+
+                    const diffusePixel = struct {
+                        fn apply(d: []u8, dw: usize, dh: usize, px: usize, py: usize, channel: usize, e: i16) void {
+                            if (px >= dw or py >= dh) return;
+
+                            const pos = (py * dw + px) * 3 + channel;
+                            const new_val = @as(i16, d[pos]) + @divTrunc(e, 8);
+                            d[pos] = @intCast(@min(@max(new_val, 0), 255));
+                        }
+                    };
+
+                    // Distribute error to neighboring pixels
+                    if (x + 1 < w) {
+                        diffusePixel.apply(data, w, h, x + 1, y, ch, err); // right
+                        if (x + 2 < w) {
+                            diffusePixel.apply(data, w, h, x + 2, y, ch, err); // right+1
+                        }
+                    }
+                    if (y + 1 < h) {
+                        if (x > 0) {
+                            diffusePixel.apply(data, w, h, x - 1, y + 1, ch, err); // bottom-left
+                        }
+                        diffusePixel.apply(data, w, h, x, y + 1, ch, err); // bottom
+                        if (x + 1 < w) {
+                            diffusePixel.apply(data, w, h, x + 1, y + 1, ch, err); // bottom-right
+                        }
+                    }
+                    if (y + 2 < h) {
+                        diffusePixel.apply(data, w, h, x, y + 2, ch, err); // bottom+1
+                    }
+                }
+
+                fn apply(data: []u8, w: usize, h: usize, pal: []const Rgb, pal_size: usize) void {
+                    // Process each pixel and apply error diffusion
+                    for (0..h) |y| {
+                        for (0..w) |x| {
+                            const pos = (y * w + x) * 3;
+                            const original = Rgb{
+                                .r = data[pos],
+                                .g = data[pos + 1],
+                                .b = data[pos + 2],
+                            };
+
+                            // Find nearest palette color
+                            const idx = findNearestColor.find(pal[0..pal_size], original);
+                            const quantized = pal[idx];
+
+                            // Calculate and diffuse error for each channel
+                            const r_error = @as(i16, original.r) - @as(i16, quantized.r);
+                            const g_error = @as(i16, original.g) - @as(i16, quantized.g);
+                            const b_error = @as(i16, original.b) - @as(i16, quantized.b);
+
+                            // Update pixel to quantized color
+                            data[pos] = quantized.r;
+                            data[pos + 1] = quantized.g;
+                            data[pos + 2] = quantized.b;
+
+                            // Diffuse errors
+                            diffuseError(data, w, h, x, y, 0, r_error);
+                            diffuseError(data, w, h, x, y, 1, g_error);
+                            diffuseError(data, w, h, x, y, 2, b_error);
+                        }
+                    }
+                }
+            };
+
+            // Check dithering mode
+            const DitherMode = enum { none, fs, atkinson, auto };
+            const dither_mode = blk: {
                 if (std.process.getEnvVarOwned(allocator, "SIXEL_DITHER")) |dither_env| {
                     defer allocator.free(dither_env);
-                    break :blk std.mem.eql(u8, dither_env, "1") or std.mem.eql(u8, dither_env, "true");
+                    if (std.mem.eql(u8, dither_env, "none") or std.mem.eql(u8, dither_env, "0") or std.mem.eql(u8, dither_env, "false")) {
+                        break :blk DitherMode.none;
+                    } else if (std.mem.eql(u8, dither_env, "fs")) {
+                        break :blk DitherMode.fs;
+                    } else if (std.mem.eql(u8, dither_env, "atkinson")) {
+                        break :blk DitherMode.atkinson;
+                    } else if (std.mem.eql(u8, dither_env, "auto")) {
+                        break :blk DitherMode.auto;
+                    } else {
+                        // Default to auto for other values (including "1" or "true")
+                        break :blk DitherMode.auto;
+                    }
                 } else |_| {
-                    break :blk true; // Default to enabled for adaptive palette
+                    break :blk DitherMode.auto; // Default to auto for adaptive palette
                 }
             };
 
             // Prepare working data for dithering
             var working_data: ?[]u8 = null;
-            if (use_dithering) {
+            if (dither_mode != .none) {
                 working_data = try allocator.alloc(u8, width * height * 3);
 
                 // Copy image data to working buffer
@@ -889,13 +973,26 @@ pub fn Image(comptime T: type) type {
                     }
                 }
 
-                // Apply Floyd-Steinberg dithering
-                applyFloydSteinbergDither.apply(working_data.?, width, height, palette[0..actual_palette_size], actual_palette_size);
+                // Apply dithering based on mode
+                switch (dither_mode) {
+                    .fs => applyFloydSteinbergDither.apply(working_data.?, width, height, palette[0..actual_palette_size], actual_palette_size),
+                    .atkinson => applyAtkinsonDither.apply(working_data.?, width, height, palette[0..actual_palette_size], actual_palette_size),
+                    .auto => {
+                        // Use Atkinson for <= 16 colors, Floyd-Steinberg for > 16 colors (like libsixel)
+                        if (actual_palette_size <= 16) {
+                            applyAtkinsonDither.apply(working_data.?, width, height, palette[0..actual_palette_size], actual_palette_size);
+                        } else {
+                            applyFloydSteinbergDither.apply(working_data.?, width, height, palette[0..actual_palette_size], actual_palette_size);
+                        }
+                    },
+                    .none => unreachable, // Already checked above
+                }
             }
             defer if (working_data) |data| allocator.free(data);
 
             // Start sixel sequence
-            try writer.print("\x1bP0;1;0q\"1;1;{d};{d}", .{ width, height });
+            // libsixel by default only outputs 'q' without parameters
+            try writer.print("\x1bPq\"1;1;{d};{d}", .{ width, height });
 
             // Define the adaptive palette
             for (0..actual_palette_size) |i| {
