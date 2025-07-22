@@ -57,6 +57,61 @@ pub const ImageFormat = enum {
     }
 };
 
+/// Formatter struct for sixel output with fallback to ANSI
+pub fn SixelFormatter(comptime T: type) type {
+    return struct {
+        image: *const Image(T),
+        options: @import("sixel.zig").SixelOptions,
+
+        const Self = @This();
+
+        pub fn format(self: Self, writer: anytype) !void {
+            const sixel = @import("sixel.zig");
+            
+            // Try sixel if supported
+            if (sixel.isSixelSupported() catch false) {
+                const allocator = std.heap.page_allocator;
+                
+                // Try to convert to sixel
+                const sixel_data = sixel.imageToSixel(T, self.image.*, allocator, self.options) catch |err| blk: {
+                    // On OutOfMemory, try with a simpler palette
+                    if (err == error.OutOfMemory) {
+                        const fallback_options = sixel.SixelOptions{
+                            .palette_mode = .fixed_6x7x6,
+                            .dither_mode = self.options.dither_mode,
+                            .max_colors = 16,
+                            .max_width = self.options.max_width,
+                            .max_height = self.options.max_height,
+                        };
+                        break :blk sixel.imageToSixel(T, self.image.*, allocator, fallback_options) catch null;
+                    } else {
+                        break :blk null;
+                    }
+                };
+                
+                if (sixel_data) |data| {
+                    defer allocator.free(data);
+                    try writer.writeAll(data);
+                    return;
+                }
+            }
+            
+            // Fallback to ANSI
+            const Rgb = @import("color.zig").Rgb;
+            for (0..self.image.rows) |r| {
+                for (0..self.image.cols) |c| {
+                    const pixel = self.image.at(r, c).*;
+                    const rgb = color.convertColor(Rgb, pixel);
+                    try writer.print("\x1b[48;2;{d};{d};{d}m \x1b[0m", .{ rgb.r, rgb.g, rgb.b });
+                }
+                if (r < self.image.rows - 1) {
+                    try writer.print("\n", .{});
+                }
+            }
+        }
+    };
+}
+
 /// A simple image struct that encapsulates the size and the data.
 pub fn Image(comptime T: type) type {
     return struct {
@@ -257,73 +312,26 @@ pub fn Image(comptime T: type) type {
             return &self.data[row * self.stride + col];
         }
 
-        /// Formats the image as a grid of colored spaces, where each pixel is represented by a space
-        /// with the appropriate background color. This provides a visual representation of the image
-        /// in terminal output.
-        pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            const sixel = @import("sixel.zig");
+        /// Returns a formatter that can render this image as sixel graphics with custom options.
+        /// The formatter will automatically fall back to ANSI colored blocks if sixel is not supported
+        /// or if an error occurs during sixel generation.
+        ///
+        /// Example:
+        /// ```zig
+        /// const img = try Image(Rgb).load(allocator, "test.png");
+        /// std.debug.print("{}", .{img.toSixel(.{ .palette_mode = .adaptive })});
+        /// ```
+        pub fn toSixel(self: *const Self, options: @import("sixel.zig").SixelOptions) SixelFormatter(T) {
+            return SixelFormatter(T){
+                .image = self,
+                .options = options,
+            };
+        }
 
-            // Check sixel support - if it fails, just use ANSI
-            const use_sixel = sixel.isSixelSupported() catch false;
-
-            if (use_sixel) {
-                const allocator = std.heap.page_allocator;
-
-                // Check environment variables for palette and dithering preferences
-                const use_adaptive = blk: {
-                    if (std.process.getEnvVarOwned(allocator, "SIXEL_ADAPTIVE")) |adaptive_env| {
-                        defer allocator.free(adaptive_env);
-                        break :blk std.mem.eql(u8, adaptive_env, "1") or std.mem.eql(u8, adaptive_env, "true");
-                    } else |_| {
-                        break :blk false;
-                    }
-                };
-
-                const dither_mode = blk: {
-                    if (std.process.getEnvVarOwned(allocator, "SIXEL_DITHER")) |dither_env| {
-                        defer allocator.free(dither_env);
-                        if (std.mem.eql(u8, dither_env, "none") or std.mem.eql(u8, dither_env, "0") or std.mem.eql(u8, dither_env, "false")) {
-                            break :blk sixel.DitherMode.none;
-                        } else if (std.mem.eql(u8, dither_env, "fs")) {
-                            break :blk sixel.DitherMode.floyd_steinberg;
-                        } else if (std.mem.eql(u8, dither_env, "atkinson")) {
-                            break :blk sixel.DitherMode.atkinson;
-                        }
-                    } else |_| {}
-                    break :blk sixel.DitherMode.auto;
-                };
-
-                const options = sixel.SixelOptions{
-                    .palette_mode = if (use_adaptive) .adaptive else .fixed_6x7x6,
-                    .dither_mode = dither_mode,
-                    .max_colors = 256,
-                    .max_width = 800,
-                    .max_height = 600,
-                };
-
-                // Convert to sixel and write
-                const sixel_data = sixel.imageToSixel(T, self, allocator, options) catch |err| switch (err) {
-                    error.OutOfMemory => blk: {
-                        // Fall back to fixed palette on memory error
-                        const fallback_options = sixel.SixelOptions{
-                            .palette_mode = .fixed_6x7x6,
-                            .dither_mode = dither_mode,
-                            .max_colors = 256,
-                            .max_width = 800,
-                            .max_height = 600,
-                        };
-                        break :blk sixel.imageToSixel(T, self, allocator, fallback_options) catch null;
-                    },
-                };
-
-                if (sixel_data) |data| {
-                    defer allocator.free(data);
-                    try writer.writeAll(data);
-                    return;
-                }
-            }
-
-            // ANSI fallback
+        /// Formats the image as a grid of colored spaces using ANSI escape codes.
+        /// Each pixel is represented by a space with the appropriate background color.
+        /// For sixel output with custom options, use the toSixel() method instead.
+        pub fn format(self: Self, writer: anytype) !void {
             const Rgb = @import("color.zig").Rgb;
             for (0..self.rows) |r| {
                 for (0..self.cols) |c| {
