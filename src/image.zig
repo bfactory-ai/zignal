@@ -265,7 +265,26 @@ pub fn Image(comptime T: type) type {
             const use_sixel = isSixelSupported() catch false;
 
             if (use_sixel) {
-                try self.formatSixel(writer);
+                // Check if adaptive palette is requested
+                const allocator = std.heap.page_allocator;
+                const use_adaptive = blk: {
+                    if (std.process.getEnvVarOwned(allocator, "SIXEL_ADAPTIVE")) |adaptive_env| {
+                        defer allocator.free(adaptive_env);
+                        break :blk std.mem.eql(u8, adaptive_env, "1") or std.mem.eql(u8, adaptive_env, "true");
+                    } else |_| {
+                        break :blk false;
+                    }
+                };
+
+                if (use_adaptive) {
+                    // Try adaptive palette, fall back to fixed if it fails (e.g., OutOfMemory)
+                    self.formatSixelAdaptive(writer) catch |err| switch (err) {
+                        error.OutOfMemory => try self.formatSixel(writer),
+                        else => return err,
+                    };
+                } else {
+                    try self.formatSixel(writer);
+                }
             } else {
                 try self.formatAnsi(writer);
             }
@@ -446,6 +465,422 @@ pub fn Image(comptime T: type) type {
             }
 
             // End sixel sequence with ST
+            try writer.print("\x1b\\", .{});
+        }
+
+        /// Color histogram entry for adaptive palette generation
+        const ColorCount = struct {
+            r: u8,
+            g: u8,
+            b: u8,
+            count: u32,
+        };
+
+        /// Box structure for median cut algorithm
+        const ColorBox = struct {
+            colors: []ColorCount,
+            r_min: u8,
+            r_max: u8,
+            g_min: u8,
+            g_max: u8,
+            b_min: u8,
+            b_max: u8,
+            population: u32,
+
+            fn volume(self: ColorBox) u32 {
+                if (self.r_max < self.r_min or self.g_max < self.g_min or self.b_max < self.b_min) {
+                    return 0;
+                }
+                const r_size = @as(u32, self.r_max) - @as(u32, self.r_min) + 1;
+                const g_size = @as(u32, self.g_max) - @as(u32, self.g_min) + 1;
+                const b_size = @as(u32, self.b_max) - @as(u32, self.b_min) + 1;
+                return r_size * g_size * b_size;
+            }
+
+            fn largestDimension(self: ColorBox) u8 {
+                if (self.r_max < self.r_min or self.g_max < self.g_min or self.b_max < self.b_min) {
+                    return 0;
+                }
+                const r_range = self.r_max - self.r_min;
+                const g_range = self.g_max - self.g_min;
+                const b_range = self.b_max - self.b_min;
+
+                if (g_range >= r_range and g_range >= b_range) return 1; // green
+                if (r_range >= b_range) return 0; // red
+                return 2; // blue
+            }
+        };
+
+        /// Formats the image using sixel with adaptive palette
+        fn formatSixelAdaptive(self: Self, writer: *std.Io.Writer) !void {
+            const Rgb = @import("color.zig").Rgb;
+            const allocator = std.heap.page_allocator;
+
+            // Limit size to reasonable dimensions
+            const max_width = 800;
+            const max_height = 600;
+            var width = self.cols;
+            var height = self.rows;
+
+            // Calculate scaling if needed
+            var scale_x: f32 = 1.0;
+            var scale_y: f32 = 1.0;
+            if (width > max_width) {
+                scale_x = @as(f32, @floatFromInt(max_width)) / @as(f32, @floatFromInt(width));
+            }
+            if (height > max_height) {
+                scale_y = @as(f32, @floatFromInt(max_height)) / @as(f32, @floatFromInt(height));
+            }
+            const scale = @min(scale_x, scale_y);
+
+            if (scale < 1.0) {
+                width = @intFromFloat(@as(f32, @floatFromInt(width)) * scale);
+                height = @intFromFloat(@as(f32, @floatFromInt(height)) * scale);
+            }
+
+            // First pass: build color histogram using 15-bit color space
+            var histogram = std.AutoHashMap(u16, u32).init(allocator);
+            defer histogram.deinit();
+
+            for (0..height) |row| {
+                for (0..width) |col| {
+                    const src_r = if (scale < 1.0) @as(usize, @intFromFloat(@as(f32, @floatFromInt(row)) / scale)) else row;
+                    const src_c = if (scale < 1.0) @as(usize, @intFromFloat(@as(f32, @floatFromInt(col)) / scale)) else col;
+
+                    if (src_r < self.rows and src_c < self.cols) {
+                        const pixel = self.at(src_r, src_c).*;
+                        const rgb = color.convertColor(Rgb, pixel);
+
+                        // Reduce to 15-bit color (5 bits per channel)
+                        const r5 = rgb.r >> 3;
+                        const g5 = rgb.g >> 3;
+                        const b5 = rgb.b >> 3;
+                        const key = (@as(u16, r5) << 10) | (@as(u16, g5) << 5) | @as(u16, b5);
+
+                        const result = try histogram.getOrPut(key);
+                        if (result.found_existing) {
+                            result.value_ptr.* += 1;
+                        } else {
+                            result.value_ptr.* = 1;
+                        }
+                    }
+                }
+            }
+
+            // Convert histogram to array for median cut
+            var color_list = std.ArrayList(ColorCount).init(allocator);
+            defer color_list.deinit();
+
+            var iter = histogram.iterator();
+            while (iter.next()) |entry| {
+                const key = entry.key_ptr.*;
+                const count = entry.value_ptr.*;
+
+                const r5 = @as(u8, @intCast((key >> 10) & 0x1F));
+                const g5 = @as(u8, @intCast((key >> 5) & 0x1F));
+                const b5 = @as(u8, @intCast(key & 0x1F));
+
+                // Convert back to 8-bit with proper scaling
+                const r8 = (r5 << 3) | (r5 >> 2);
+                const g8 = (g5 << 3) | (g5 >> 2);
+                const b8 = (b5 << 3) | (b5 >> 2);
+
+                try color_list.append(.{
+                    .r = r8,
+                    .g = g8,
+                    .b = b8,
+                    .count = count,
+                });
+            }
+
+            // Generate palette using median cut
+            var palette: [256]Rgb = undefined;
+            const palette_size = @min(color_list.items.len, 256);
+
+            if (palette_size == 0) {
+                // Fallback to fixed palette if no colors found
+                return self.formatSixel(writer);
+            }
+
+            // Initialize first box with all colors
+            var boxes = std.ArrayList(ColorBox).init(allocator);
+            defer boxes.deinit();
+
+            var initial_box = ColorBox{
+                .colors = color_list.items,
+                .r_min = 255,
+                .r_max = 0,
+                .g_min = 255,
+                .g_max = 0,
+                .b_min = 255,
+                .b_max = 0,
+                .population = 0,
+            };
+
+            // Find bounds of initial box
+            for (color_list.items) |c| {
+                initial_box.r_min = @min(initial_box.r_min, c.r);
+                initial_box.r_max = @max(initial_box.r_max, c.r);
+                initial_box.g_min = @min(initial_box.g_min, c.g);
+                initial_box.g_max = @max(initial_box.g_max, c.g);
+                initial_box.b_min = @min(initial_box.b_min, c.b);
+                initial_box.b_max = @max(initial_box.b_max, c.b);
+                initial_box.population += c.count;
+            }
+
+            try boxes.append(initial_box);
+
+            // Median cut algorithm
+            while (boxes.items.len < palette_size) {
+                // Find box with largest volume * population
+                var largest_idx: usize = 0;
+                var largest_score: u64 = 0;
+
+                for (boxes.items, 0..) |box, i| {
+                    const score = @as(u64, box.volume()) * @as(u64, box.population);
+                    if (score > largest_score) {
+                        largest_score = score;
+                        largest_idx = i;
+                    }
+                }
+
+                if (largest_score == 0) break; // No more splittable boxes
+
+                // Split the largest box
+                var box_to_split = boxes.orderedRemove(largest_idx);
+
+                // Check if box can be split (has different colors)
+                if (box_to_split.colors.len <= 1) {
+                    try boxes.append(box_to_split);
+                    continue;
+                }
+
+                const dim = box_to_split.largestDimension();
+
+                // Sort colors along the chosen dimension
+                const SortContext = struct {
+                    dim: u8,
+                    pub fn lessThan(ctx: @This(), a: ColorCount, b: ColorCount) bool {
+                        return switch (ctx.dim) {
+                            0 => a.r < b.r,
+                            1 => a.g < b.g,
+                            else => a.b < b.b,
+                        };
+                    }
+                };
+                std.sort.pdq(ColorCount, box_to_split.colors, SortContext{ .dim = dim }, SortContext.lessThan);
+
+                // Find median by population
+                var cumulative: u32 = 0;
+                const half_pop = box_to_split.population / 2;
+                var split_idx: usize = 0;
+
+                for (box_to_split.colors, 0..) |c, i| {
+                    cumulative += c.count;
+                    if (cumulative >= half_pop) {
+                        split_idx = i + 1;
+                        break;
+                    }
+                }
+
+                if (split_idx == 0) split_idx = 1;
+                if (split_idx >= box_to_split.colors.len) split_idx = box_to_split.colors.len - 1;
+
+                // Create two new boxes
+                var box1 = ColorBox{
+                    .colors = box_to_split.colors[0..split_idx],
+                    .r_min = 255,
+                    .r_max = 0,
+                    .g_min = 255,
+                    .g_max = 0,
+                    .b_min = 255,
+                    .b_max = 0,
+                    .population = 0,
+                };
+
+                var box2 = ColorBox{
+                    .colors = box_to_split.colors[split_idx..],
+                    .r_min = 255,
+                    .r_max = 0,
+                    .g_min = 255,
+                    .g_max = 0,
+                    .b_min = 255,
+                    .b_max = 0,
+                    .population = 0,
+                };
+
+                // Update bounds for both boxes
+                for (box1.colors) |c| {
+                    box1.r_min = @min(box1.r_min, c.r);
+                    box1.r_max = @max(box1.r_max, c.r);
+                    box1.g_min = @min(box1.g_min, c.g);
+                    box1.g_max = @max(box1.g_max, c.g);
+                    box1.b_min = @min(box1.b_min, c.b);
+                    box1.b_max = @max(box1.b_max, c.b);
+                    box1.population += c.count;
+                }
+
+                for (box2.colors) |c| {
+                    box2.r_min = @min(box2.r_min, c.r);
+                    box2.r_max = @max(box2.r_max, c.r);
+                    box2.g_min = @min(box2.g_min, c.g);
+                    box2.g_max = @max(box2.g_max, c.g);
+                    box2.b_min = @min(box2.b_min, c.b);
+                    box2.b_max = @max(box2.b_max, c.b);
+                    box2.population += c.count;
+                }
+
+                if (box1.colors.len > 0 and box1.r_max >= box1.r_min) try boxes.append(box1);
+                if (box2.colors.len > 0 and box2.r_max >= box2.r_min) try boxes.append(box2);
+            }
+
+            // Generate final palette from boxes (weighted average)
+            for (boxes.items, 0..) |box, i| {
+                if (i >= 256) break;
+
+                var r_sum: u64 = 0;
+                var g_sum: u64 = 0;
+                var b_sum: u64 = 0;
+                var weight_sum: u64 = 0;
+
+                for (box.colors) |c| {
+                    r_sum += @as(u64, c.r) * @as(u64, c.count);
+                    g_sum += @as(u64, c.g) * @as(u64, c.count);
+                    b_sum += @as(u64, c.b) * @as(u64, c.count);
+                    weight_sum += c.count;
+                }
+
+                if (weight_sum > 0) {
+                    palette[i] = .{
+                        .r = @intCast(r_sum / weight_sum),
+                        .g = @intCast(g_sum / weight_sum),
+                        .b = @intCast(b_sum / weight_sum),
+                    };
+                } else {
+                    // Use center of box if no weight
+                    palette[i] = .{
+                        .r = (box.r_min + box.r_max) / 2,
+                        .g = (box.g_min + box.g_max) / 2,
+                        .b = (box.b_min + box.b_max) / 2,
+                    };
+                }
+            }
+
+            const actual_palette_size = @min(boxes.items.len, 256);
+
+            // Build reverse lookup for palette
+            const findNearestColor = struct {
+                fn find(pal: []const Rgb, target: Rgb) u8 {
+                    var best_idx: u8 = 0;
+                    var best_dist: u32 = std.math.maxInt(u32);
+
+                    for (pal, 0..) |p, idx| {
+                        const dr = if (target.r > p.r) target.r - p.r else p.r - target.r;
+                        const dg = if (target.g > p.g) target.g - p.g else p.g - target.g;
+                        const db = if (target.b > p.b) target.b - p.b else p.b - target.b;
+                        const dist = @as(u32, dr) * @as(u32, dr) +
+                            @as(u32, dg) * @as(u32, dg) +
+                            @as(u32, db) * @as(u32, db);
+
+                        if (dist < best_dist) {
+                            best_dist = dist;
+                            best_idx = @intCast(idx);
+                        }
+                    }
+                    return best_idx;
+                }
+            };
+
+            // Start sixel sequence
+            try writer.print("\x1bP0;1;0q\"1;1;{d};{d}", .{ width, height });
+
+            // Define the adaptive palette
+            for (0..actual_palette_size) |i| {
+                const p = palette[i];
+                const r_val = (@as(u32, p.r) * 100 + 127) / 255;
+                const g_val = (@as(u32, p.g) * 100 + 127) / 255;
+                const b_val = (@as(u32, p.b) * 100 + 127) / 255;
+                try writer.print("#{d};2;{d};{d};{d}", .{ i, r_val, g_val, b_val });
+            }
+
+            // Encode pixels as sixels
+            var row: usize = 0;
+            while (row < height) : (row += 6) {
+                // Build a map of which colors are used in this sixel row
+                var colors_used = [_]bool{false} ** 256;
+                var color_map = [_][800]u8{[_]u8{0} ** 800} ** 256;
+
+                // First pass: build bitmaps for each color
+                for (0..width) |col| {
+                    var sixel_bits = [_]u8{0} ** 256;
+
+                    // Check all 6 pixels in this column
+                    for (0..6) |bit| {
+                        const pixel_row = row + bit;
+                        if (pixel_row < height) {
+                            const src_r = if (scale < 1.0) @as(usize, @intFromFloat(@as(f32, @floatFromInt(pixel_row)) / scale)) else pixel_row;
+                            const src_c = if (scale < 1.0) @as(usize, @intFromFloat(@as(f32, @floatFromInt(col)) / scale)) else col;
+
+                            if (src_r < self.rows and src_c < self.cols) {
+                                const pixel = self.at(src_r, src_c).*;
+                                const rgb = color.convertColor(Rgb, pixel);
+                                const color_idx = findNearestColor.find(palette[0..actual_palette_size], rgb);
+
+                                // Set the bit for this color
+                                sixel_bits[color_idx] |= @as(u8, 1) << @intCast(bit);
+                                colors_used[color_idx] = true;
+                            }
+                        }
+                    }
+
+                    // Store the sixel characters for each color
+                    for (0..actual_palette_size) |c| {
+                        if (sixel_bits[c] != 0) {
+                            color_map[c][col] = sixel_bits[c] + '?';
+                        }
+                    }
+                }
+
+                // Second pass: output sixels for each color
+                var current_color: u16 = 65535;
+                for (0..actual_palette_size) |c| {
+                    if (!colors_used[c]) continue;
+
+                    // Select color if different
+                    if (c != current_color) {
+                        current_color = @intCast(c);
+                        try writer.print("#{d}", .{current_color});
+                    }
+
+                    // Output all sixels for this color
+                    for (0..width) |col| {
+                        if (color_map[c][col] != 0) {
+                            try writer.print("{c}", .{color_map[c][col]});
+                        } else {
+                            try writer.print("?", .{});
+                        }
+                    }
+
+                    // Carriage return to go back to start of line (except for last color)
+                    var more_colors = false;
+                    for (c + 1..actual_palette_size) |nc| {
+                        if (colors_used[nc]) {
+                            more_colors = true;
+                            break;
+                        }
+                    }
+                    if (more_colors) {
+                        try writer.print("$", .{});
+                    }
+                }
+
+                // Move to next sixel row if not at end
+                if (row + 6 < height) {
+                    try writer.print("-", .{});
+                }
+            }
+
+            // End sixel sequence
             try writer.print("\x1b\\", .{});
         }
 
