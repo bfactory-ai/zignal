@@ -336,32 +336,29 @@ pub fn Image(comptime T: type) type {
             // Then add raster dimensions: "Pa;Pb;Ph;Pv where Pa=Pb=1 (aspect ratio), Ph=width, Pv=height
             try writer.print("\x1bP0;1;0q\"1;1;{d};{d}", .{ width, height });
 
-            // Quantization to 216-color palette (6x6x6 web-safe colors)
-            // This provides much better color accuracy than 64 colors
+            // Quantization to 252-color palette (6x7x6 distribution)
+            // 7 levels for green (most sensitive), 6 for red and blue
             const quantize = struct {
                 fn rgb(r: u8, g: u8, b: u8) u16 {
-                    // Quantize each channel to 6 levels (0-5)
-                    // Using proper rounding to minimize artifacts
-                    const r_val = @as(u16, r) + 25;
-                    const g_val = @as(u16, g) + 25;
-                    const b_val = @as(u16, b) + 25;
-                    const r_q = @as(u16, @min(r_val / 51, 5));
-                    const g_q = @as(u16, @min(g_val / 51, 5));
-                    const b_q = @as(u16, @min(b_val / 51, 5));
-                    return r_q * 36 + g_q * 6 + b_q;
+                    // Quantize without upward bias
+                    // For 6 levels: map 0-42 to 0, 43-85 to 1, etc.
+                    const r_q = @as(u16, @min(r / 43, 5)); // 0-5 levels
+                    const g_q = @as(u16, @min(g / 37, 6)); // 0-6 levels (0-36 to 0, 37-73 to 1, etc.)
+                    const b_q = @as(u16, @min(b / 43, 5)); // 0-5 levels
+                    return r_q * 42 + g_q * 6 + b_q; // 6*7*6 = 252
                 }
             };
 
-            // Define the 216-color palette (6x6x6 web-safe colors)
+            // Define the 252-color palette (6x7x6 distribution)
             var palette_idx: u16 = 0;
             for (0..6) |r| {
-                for (0..6) |g| {
+                for (0..7) |g| {
                     for (0..6) |b| {
                         // Sixel uses 0-100 range for RGB values
-                        // Convert 0-5 to 0-255 then to 0-100 with proper rounding
-                        const r_255 = @as(u32, @intCast(r)) * 51; // 0, 51, 102, 153, 204, 255
-                        const g_255 = @as(u32, @intCast(g)) * 51;
-                        const b_255 = @as(u32, @intCast(b)) * 51;
+                        // Convert to 0-255 then to 0-100 with proper rounding
+                        const r_255 = (@as(u32, @intCast(r)) * 255) / 5; // 0, 51, 102, 153, 204, 255
+                        const g_255 = (@as(u32, @intCast(g)) * 255) / 6; // 0, 42.5, 85, 127.5, 170, 212.5, 255
+                        const b_255 = (@as(u32, @intCast(b)) * 255) / 5;
                         const r_val = (r_255 * 100 + 127) / 255;
                         const g_val = (g_255 * 100 + 127) / 255;
                         const b_val = (b_255 * 100 + 127) / 255;
@@ -375,12 +372,12 @@ pub fn Image(comptime T: type) type {
             var row: usize = 0;
             while (row < height) : (row += 6) {
                 // Build a map of which colors are used in this sixel row
-                var colors_used = [_]bool{false} ** 216;
-                var color_map = [_][800]u8{[_]u8{0} ** 800} ** 216; // Max width 800
+                var colors_used = [_]bool{false} ** 252;
+                var color_map = [_][800]u8{[_]u8{0} ** 800} ** 252; // Max width 800
 
                 // First pass: build bitmaps for each color
                 for (0..width) |col| {
-                    var sixel_bits = [_]u8{0} ** 216; // Bits for each color
+                    var sixel_bits = [_]u8{0} ** 252; // Bits for each color
 
                     // Check all 6 pixels in this column
                     for (0..6) |bit| {
@@ -402,7 +399,7 @@ pub fn Image(comptime T: type) type {
                     }
 
                     // Store the sixel characters for each color
-                    for (0..216) |c| {
+                    for (0..252) |c| {
                         if (sixel_bits[c] != 0) {
                             color_map[c][col] = sixel_bits[c] + '?'; // Add to '?' to get sixel char
                         }
@@ -411,7 +408,7 @@ pub fn Image(comptime T: type) type {
 
                 // Second pass: output sixels for each color
                 var current_color: u16 = 65535; // Invalid color
-                for (0..216) |c| {
+                for (0..252) |c| {
                     if (!colors_used[c]) continue;
 
                     // Select color if different
@@ -431,7 +428,7 @@ pub fn Image(comptime T: type) type {
 
                     // Carriage return to go back to start of line (except for last color)
                     var more_colors = false;
-                    for (c + 1..216) |nc| {
+                    for (c + 1..252) |nc| {
                         if (colors_used[nc]) {
                             more_colors = true;
                             break;
