@@ -184,12 +184,7 @@ fn applyColorTransform(
     var src_cov_matrix = src_cov_ops.toOwned();
     defer src_cov_matrix.deinit();
 
-    var src_cov: SMatrix(f64, 3, 3) = .{};
-    for (0..3) |r| {
-        for (0..3) |c| {
-            src_cov.items[r][c] = src_cov_matrix.at(r, c).*;
-        }
-    }
+    const src_cov = src_cov_matrix.toSMatrix(3, 3);
 
     const src_svd = svd(f64, 3, 3, src_cov, .{
         .with_u = true,
@@ -211,12 +206,7 @@ fn applyColorTransform(
     var ref_cov_matrix = ref_cov_ops.toOwned();
     defer ref_cov_matrix.deinit();
 
-    var ref_cov: SMatrix(f64, 3, 3) = .{};
-    for (0..3) |r| {
-        for (0..3) |c| {
-            ref_cov.items[r][c] = ref_cov_matrix.at(r, c).*;
-        }
-    }
+    const ref_cov = ref_cov_matrix.toSMatrix(3, 3);
 
     const ref_svd = svd(f64, 3, 3, ref_cov, .{
         .with_u = true,
