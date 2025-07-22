@@ -261,6 +261,190 @@ pub fn Image(comptime T: type) type {
         /// with the appropriate background color. This provides a visual representation of the image
         /// in terminal output.
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            // Check sixel support - if it fails, just use ANSI
+            const use_sixel = isSixelSupported() catch false;
+
+            if (use_sixel) {
+                try self.formatSixel(writer);
+            } else {
+                try self.formatAnsi(writer);
+            }
+        }
+
+        /// Checks if the terminal supports sixel graphics.
+        /// Returns true if sixel is supported, false otherwise.
+        fn isSixelSupported() !bool {
+            const allocator = std.heap.page_allocator;
+
+            // Check SIXEL environment variable override
+            if (std.process.getEnvVarOwned(allocator, "SIXEL")) |sixel_env| {
+                defer allocator.free(sixel_env);
+                if (std.mem.eql(u8, sixel_env, "1") or std.mem.eql(u8, sixel_env, "true")) {
+                    return true;
+                }
+            } else |_| {}
+
+            // Check TERM environment variable for known sixel-capable terminals
+            if (std.process.getEnvVarOwned(allocator, "TERM")) |term| {
+                defer allocator.free(term);
+                const sixel_terminals = [_][]const u8{
+                    "xterm-256color",
+                    "foot",
+                    "mlterm",
+                    "yaft-256color",
+                    "mintty",
+                    "wezterm",
+                };
+                for (sixel_terminals) |sixel_term| {
+                    if (std.mem.indexOf(u8, term, sixel_term) != null) {
+                        return true;
+                    }
+                }
+            } else |_| {}
+
+            return false;
+        }
+
+        /// Formats the image using sixel graphics protocol.
+        fn formatSixel(self: Self, writer: *std.Io.Writer) !void {
+            const Rgb = @import("color.zig").Rgb;
+
+            // Limit size to reasonable dimensions
+            const max_width = 800;
+            const max_height = 600;
+            var width = self.cols;
+            var height = self.rows;
+
+            // Calculate scaling if needed
+            var scale_x: f32 = 1.0;
+            var scale_y: f32 = 1.0;
+            if (width > max_width) {
+                scale_x = @as(f32, @floatFromInt(max_width)) / @as(f32, @floatFromInt(width));
+            }
+            if (height > max_height) {
+                scale_y = @as(f32, @floatFromInt(max_height)) / @as(f32, @floatFromInt(height));
+            }
+            const scale = @min(scale_x, scale_y);
+
+            if (scale < 1.0) {
+                width = @intFromFloat(@as(f32, @floatFromInt(width)) * scale);
+                height = @intFromFloat(@as(f32, @floatFromInt(height)) * scale);
+            }
+
+            // Start sixel sequence with DCS and parameters
+            // P1;P2;P3;q where P1=0 (aspect ratio), P2=1 (background), P3=0 (no grid)
+            try writer.print("\x1bP0;1;0q", .{});
+
+            // Simple quantization to 6-bit RGB (64 colors)
+            // This avoids needing a hash map for color palette management
+            const quantize = struct {
+                fn rgb(r: u8, g: u8, b: u8) u8 {
+                    // Quantize each channel to 2 bits (0-3)
+                    const r_q = r / 85; // 255 / 3 = 85
+                    const g_q = g / 85;
+                    const b_q = b / 85;
+                    return r_q * 16 + g_q * 4 + b_q;
+                }
+            };
+
+            // Define the 64-color palette
+            var palette_idx: u8 = 0;
+            for (0..4) |r| {
+                for (0..4) |g| {
+                    for (0..4) |b| {
+                        // Sixel uses 0-100 range for RGB values
+                        const r_val = (@as(u32, @intCast(r)) * 100 + 1) / 3;
+                        const g_val = (@as(u32, @intCast(g)) * 100 + 1) / 3;
+                        const b_val = (@as(u32, @intCast(b)) * 100 + 1) / 3;
+                        try writer.print("#{d};2;{d};{d};{d}", .{ palette_idx, r_val, g_val, b_val });
+                        palette_idx += 1;
+                    }
+                }
+            }
+
+            // Encode pixels as sixels
+            var row: usize = 0;
+            while (row < height) : (row += 6) {
+                // Build a map of which colors are used in this sixel row
+                var colors_used = [_]bool{false} ** 64;
+                var color_map = [_][800]u8{[_]u8{0} ** 800} ** 64; // Max width 800
+
+                // First pass: build bitmaps for each color
+                for (0..width) |col| {
+                    var sixel_bits = [_]u8{0} ** 64; // Bits for each color
+
+                    // Check all 6 pixels in this column
+                    for (0..6) |bit| {
+                        const pixel_row = row + bit;
+                        if (pixel_row < height) {
+                            const src_r = if (scale < 1.0) @as(usize, @intFromFloat(@as(f32, @floatFromInt(pixel_row)) / scale)) else pixel_row;
+                            const src_c = if (scale < 1.0) @as(usize, @intFromFloat(@as(f32, @floatFromInt(col)) / scale)) else col;
+
+                            if (src_r < self.rows and src_c < self.cols) {
+                                const pixel = self.at(src_r, src_c).*;
+                                const rgb = color.convertColor(Rgb, pixel);
+                                const color_idx = quantize.rgb(rgb.r, rgb.g, rgb.b);
+
+                                // Set the bit for this color
+                                sixel_bits[color_idx] |= @as(u8, 1) << @intCast(bit);
+                                colors_used[color_idx] = true;
+                            }
+                        }
+                    }
+
+                    // Store the sixel characters for each color
+                    for (0..64) |c| {
+                        if (sixel_bits[c] != 0) {
+                            color_map[c][col] = sixel_bits[c] + '?'; // Add to '?' to get sixel char
+                        }
+                    }
+                }
+
+                // Second pass: output sixels for each color
+                var current_color: u8 = 255; // Invalid color
+                for (0..64) |c| {
+                    if (!colors_used[c]) continue;
+
+                    // Select color if different
+                    if (c != current_color) {
+                        current_color = @intCast(c);
+                        try writer.print("#{d}", .{current_color});
+                    }
+
+                    // Output all sixels for this color
+                    for (0..width) |col| {
+                        if (color_map[c][col] != 0) {
+                            try writer.print("{c}", .{color_map[c][col]});
+                        } else {
+                            try writer.print("?", .{}); // Empty sixel
+                        }
+                    }
+
+                    // Carriage return to go back to start of line (except for last color)
+                    var more_colors = false;
+                    for (c + 1..64) |nc| {
+                        if (colors_used[nc]) {
+                            more_colors = true;
+                            break;
+                        }
+                    }
+                    if (more_colors) {
+                        try writer.print("$", .{}); // Graphics carriage return
+                    }
+                }
+
+                // Move to next sixel row if not at end
+                if (row + 6 < height) {
+                    try writer.print("-", .{}); // Graphics new line
+                }
+            }
+
+            // End sixel sequence with ST
+            try writer.print("\x1b\\", .{});
+        }
+
+        /// Formats the image using ANSI escape codes (fallback).
+        fn formatAnsi(self: Self, writer: *std.Io.Writer) !void {
             const Rgb = @import("color.zig").Rgb;
             for (0..self.rows) |r| {
                 for (0..self.cols) |c| {
