@@ -791,6 +791,109 @@ pub fn Image(comptime T: type) type {
                 }
             };
 
+            // Helper function to apply Floyd-Steinberg error diffusion
+            const applyFloydSteinbergDither = struct {
+                fn diffuseError(data: []u8, w: usize, h: usize, x: usize, y: usize, ch: usize, err: i16) void {
+                    // Floyd-Steinberg error distribution:
+                    //          X   7/16
+                    //  3/16  5/16  1/16
+
+                    const diffusePixel = struct {
+                        fn apply(d: []u8, dw: usize, dh: usize, px: usize, py: usize, channel: usize, e: i16, weight: i16, divisor: i16) void {
+                            if (px >= dw or py >= dh) return;
+
+                            const pos = (py * dw + px) * 3 + channel;
+                            const new_val = @as(i16, d[pos]) + @divTrunc(e * weight, divisor);
+                            d[pos] = @intCast(@min(@max(new_val, 0), 255));
+                        }
+                    };
+
+                    // Distribute error to neighboring pixels
+                    if (x + 1 < w) {
+                        diffusePixel.apply(data, w, h, x + 1, y, ch, err, 7, 16); // right
+                    }
+                    if (y + 1 < h) {
+                        if (x > 0) {
+                            diffusePixel.apply(data, w, h, x - 1, y + 1, ch, err, 3, 16); // bottom-left
+                        }
+                        diffusePixel.apply(data, w, h, x, y + 1, ch, err, 5, 16); // bottom
+                        if (x + 1 < w) {
+                            diffusePixel.apply(data, w, h, x + 1, y + 1, ch, err, 1, 16); // bottom-right
+                        }
+                    }
+                }
+
+                fn apply(data: []u8, w: usize, h: usize, pal: []const Rgb, pal_size: usize) void {
+                    // Process each pixel and apply error diffusion
+                    for (0..h) |y| {
+                        for (0..w) |x| {
+                            const pos = (y * w + x) * 3;
+                            const original = Rgb{
+                                .r = data[pos],
+                                .g = data[pos + 1],
+                                .b = data[pos + 2],
+                            };
+
+                            // Find nearest palette color
+                            const idx = findNearestColor.find(pal[0..pal_size], original);
+                            const quantized = pal[idx];
+
+                            // Calculate and diffuse error for each channel
+                            const r_error = @as(i16, original.r) - @as(i16, quantized.r);
+                            const g_error = @as(i16, original.g) - @as(i16, quantized.g);
+                            const b_error = @as(i16, original.b) - @as(i16, quantized.b);
+
+                            // Update pixel to quantized color
+                            data[pos] = quantized.r;
+                            data[pos + 1] = quantized.g;
+                            data[pos + 2] = quantized.b;
+
+                            // Diffuse errors
+                            diffuseError(data, w, h, x, y, 0, r_error);
+                            diffuseError(data, w, h, x, y, 1, g_error);
+                            diffuseError(data, w, h, x, y, 2, b_error);
+                        }
+                    }
+                }
+            };
+
+            // Check if dithering is enabled
+            const use_dithering = blk: {
+                if (std.process.getEnvVarOwned(allocator, "SIXEL_DITHER")) |dither_env| {
+                    defer allocator.free(dither_env);
+                    break :blk std.mem.eql(u8, dither_env, "1") or std.mem.eql(u8, dither_env, "true");
+                } else |_| {
+                    break :blk true; // Default to enabled for adaptive palette
+                }
+            };
+
+            // Prepare working data for dithering
+            var working_data: ?[]u8 = null;
+            if (use_dithering) {
+                working_data = try allocator.alloc(u8, width * height * 3);
+
+                // Copy image data to working buffer
+                for (0..height) |row| {
+                    for (0..width) |col| {
+                        const src_r = if (scale < 1.0) @as(usize, @intFromFloat(@as(f32, @floatFromInt(row)) / scale)) else row;
+                        const src_c = if (scale < 1.0) @as(usize, @intFromFloat(@as(f32, @floatFromInt(col)) / scale)) else col;
+
+                        if (src_r < self.rows and src_c < self.cols) {
+                            const pixel = self.at(src_r, src_c).*;
+                            const rgb = color.convertColor(Rgb, pixel);
+                            const pos = (row * width + col) * 3;
+                            working_data.?[pos] = rgb.r;
+                            working_data.?[pos + 1] = rgb.g;
+                            working_data.?[pos + 2] = rgb.b;
+                        }
+                    }
+                }
+
+                // Apply Floyd-Steinberg dithering
+                applyFloydSteinbergDither.apply(working_data.?, width, height, palette[0..actual_palette_size], actual_palette_size);
+            }
+            defer if (working_data) |data| allocator.free(data);
+
             // Start sixel sequence
             try writer.print("\x1bP0;1;0q\"1;1;{d};{d}", .{ width, height });
 
@@ -818,18 +921,32 @@ pub fn Image(comptime T: type) type {
                     for (0..6) |bit| {
                         const pixel_row = row + bit;
                         if (pixel_row < height) {
-                            const src_r = if (scale < 1.0) @as(usize, @intFromFloat(@as(f32, @floatFromInt(pixel_row)) / scale)) else pixel_row;
-                            const src_c = if (scale < 1.0) @as(usize, @intFromFloat(@as(f32, @floatFromInt(col)) / scale)) else col;
+                            const color_idx = if (working_data) |data| blk: {
+                                // Use dithered data
+                                const pos = (pixel_row * width + col) * 3;
+                                const rgb = Rgb{
+                                    .r = data[pos],
+                                    .g = data[pos + 1],
+                                    .b = data[pos + 2],
+                                };
+                                break :blk findNearestColor.find(palette[0..actual_palette_size], rgb);
+                            } else blk: {
+                                // Use original data without dithering
+                                const src_r = if (scale < 1.0) @as(usize, @intFromFloat(@as(f32, @floatFromInt(pixel_row)) / scale)) else pixel_row;
+                                const src_c = if (scale < 1.0) @as(usize, @intFromFloat(@as(f32, @floatFromInt(col)) / scale)) else col;
 
-                            if (src_r < self.rows and src_c < self.cols) {
-                                const pixel = self.at(src_r, src_c).*;
-                                const rgb = color.convertColor(Rgb, pixel);
-                                const color_idx = findNearestColor.find(palette[0..actual_palette_size], rgb);
+                                if (src_r < self.rows and src_c < self.cols) {
+                                    const pixel = self.at(src_r, src_c).*;
+                                    const rgb = color.convertColor(Rgb, pixel);
+                                    break :blk findNearestColor.find(palette[0..actual_palette_size], rgb);
+                                } else {
+                                    continue;
+                                }
+                            };
 
-                                // Set the bit for this color
-                                sixel_bits[color_idx] |= @as(u8, 1) << @intCast(bit);
-                                colors_used[color_idx] = true;
-                            }
+                            // Set the bit for this color
+                            sixel_bits[color_idx] |= @as(u8, 1) << @intCast(bit);
+                            colors_used[color_idx] = true;
                         }
                     }
 
@@ -2583,11 +2700,27 @@ test "image format function" {
     image.at(1, 1).* = Rgb.white;
 
     // Test that format function works without error
-    var buffer: [256]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
+    // Call format directly instead of using {f} to handle potential OutOfMemory
+    // Create a test file to write to
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
 
-    try std.fmt.format(stream.writer(), "{f}", .{image});
-    const result = stream.getWritten();
+    const file = try tmp_dir.dir.createFile("test_output.txt", .{ .read = true });
+    defer file.close();
+
+    var file_buffer: [4096]u8 = undefined;
+    var file_writer = file.writer(&file_buffer);
+
+    // Force ANSI mode for consistent testing
+    try std.testing.expectEqual(std.process.hasEnvVarConstant("SIXEL_TEST_DISABLE"), false);
+
+    try image.format(&file_writer.interface);
+    try file_writer.interface.flush();
+
+    // Read back the result
+    try file.seekTo(0);
+    const result = try file.readToEndAlloc(std.testing.allocator, 4096);
+    defer std.testing.allocator.free(result);
 
     // The expected output should be:
     // Row 0: red_bg + green_bg + newline
