@@ -217,7 +217,7 @@ pub fn build(b: *Build) void {
 
     const output_name = b.fmt("lib/_zignal{s}", .{extension});
     const install_py_module = b.addInstallFile(py_module.getEmittedBin(), output_name);
-    
+
     // Make python-bindings depend on stub generation so stubs are always up to date
     py_bindings_step.dependOn(&run_stub_generator.step);
     py_bindings_step.dependOn(&install_py_module.step);
