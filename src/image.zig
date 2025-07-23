@@ -86,7 +86,10 @@ pub fn DisplayFormatter(comptime T: type) type {
                 .auto => {
                     // Try sixel with default options if supported
                     if (sixel.isSixelSupported() catch false) {
-                        const allocator = std.heap.page_allocator;
+                        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+                        defer arena.deinit();
+                        const allocator = arena.allocator();
+
                         const default_options = sixel.SixelOptions{};
 
                         // Try to convert to sixel
@@ -106,7 +109,6 @@ pub fn DisplayFormatter(comptime T: type) type {
                         };
 
                         if (sixel_data) |data| {
-                            defer allocator.free(data);
                             try writer.writeAll(data);
                             return;
                         }
@@ -114,7 +116,9 @@ pub fn DisplayFormatter(comptime T: type) type {
                 },
                 .sixel => |options| {
                     // Force sixel with specific options
-                    const allocator = std.heap.page_allocator;
+                    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+                    defer arena.deinit();
+                    const allocator = arena.allocator();
 
                     // Try to convert to sixel
                     const sixel_data = sixel.imageToSixel(T, self.image.*, allocator, options) catch |err| blk: {
@@ -133,7 +137,6 @@ pub fn DisplayFormatter(comptime T: type) type {
                     };
 
                     if (sixel_data) |data| {
-                        defer allocator.free(data);
                         try writer.writeAll(data);
                         return;
                     }
@@ -380,7 +383,9 @@ pub fn Image(comptime T: type) type {
 
             // Try sixel if supported
             if (sixel.isSixelSupported() catch false) {
-                const allocator = std.heap.page_allocator;
+                var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+                defer arena.deinit();
+                const allocator = arena.allocator();
 
                 // Default options for automatic formatting
                 const default_options = sixel.SixelOptions{
@@ -407,7 +412,6 @@ pub fn Image(comptime T: type) type {
                 };
 
                 if (sixel_data) |data| {
-                    defer allocator.free(data);
                     try writer.writeAll(data);
                     return;
                 }

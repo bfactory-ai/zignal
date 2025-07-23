@@ -107,14 +107,10 @@ pub fn imageToSixel(
             generateWeb216Palette(&palette);
         },
         .adaptive => |adaptive_opts| {
-            const actual_size = try generateAdaptivePalette(T, image, allocator, &palette, adaptive_opts.max_colors);
-            if (actual_size == 0) {
-                // Fallback to fixed palette if adaptive fails
+            palette_size = generateAdaptivePalette(T, allocator, image, &palette, adaptive_opts.max_colors) catch blk: {
                 generateFixed6x7x6Palette(&palette);
-                palette_size = 252;
-            } else {
-                palette_size = actual_size;
-            }
+                break :blk 252;
+            };
         },
     }
 
@@ -586,8 +582,8 @@ fn generateWeb216Palette(palette: []Rgb) void {
 /// Generates an adaptive palette using median cut algorithm
 fn generateAdaptivePalette(
     comptime T: type,
-    image: Image(T),
     allocator: Allocator,
+    image: Image(T),
     palette: []Rgb,
     max_colors: u16,
 ) !usize {
@@ -644,7 +640,7 @@ fn generateAdaptivePalette(
 
     const palette_size = @min(@min(color_list.items.len, max_colors), palette.len);
     if (palette_size == 0) {
-        return 0;
+        return error.NoPaletteColors;
     }
 
     // Initialize first box with all colors
