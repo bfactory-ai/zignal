@@ -114,6 +114,16 @@ pub fn imageToSixel(
         },
     }
 
+    // Build lookup table for adaptive palettes
+    var color_lut: ColorLookupTable = undefined;
+    const use_lut = switch (options.palette_mode) {
+        .adaptive => true,
+        else => false,
+    };
+    if (use_lut) {
+        color_lut.build(palette[0..], palette_size);
+    }
+
     // Determine dithering mode
     const dither_mode = switch (options.dither_mode) {
         .auto => if (palette_size <= 16) DitherMode.atkinson else DitherMode.floyd_steinberg,
@@ -144,8 +154,20 @@ pub fn imageToSixel(
 
         // Apply dithering
         switch (dither_mode) {
-            .floyd_steinberg => FloydSteinbergDither.apply(working_data.?, width, height, palette[0..palette_size], palette_size),
-            .atkinson => AtkinsonDither.apply(working_data.?, width, height, palette[0..palette_size], palette_size),
+            .floyd_steinberg => {
+                if (use_lut) {
+                    FloydSteinbergDither.applyWithLut(working_data.?, width, height, palette[0..palette_size], &color_lut);
+                } else {
+                    FloydSteinbergDither.apply(working_data.?, width, height, palette[0..palette_size], palette_size);
+                }
+            },
+            .atkinson => {
+                if (use_lut) {
+                    AtkinsonDither.applyWithLut(working_data.?, width, height, palette[0..palette_size], &color_lut);
+                } else {
+                    AtkinsonDither.apply(working_data.?, width, height, palette[0..palette_size], palette_size);
+                }
+            },
             else => {},
         }
     }
@@ -236,6 +258,13 @@ pub fn imageToSixel(
                             switch (options.palette_mode) {
                                 .fixed_6x7x6 => break :blk @as(u8, @intCast(quantize6x7x6(rgb.r, rgb.g, rgb.b))),
                                 .fixed_web216 => break :blk quantizeWeb216(rgb.r, rgb.g, rgb.b),
+                                .adaptive => {
+                                    if (use_lut) {
+                                        break :blk color_lut.lookup(rgb);
+                                    } else {
+                                        break :blk findNearestColor(palette[0..palette_size], rgb);
+                                    }
+                                },
                                 else => break :blk findNearestColor(palette[0..palette_size], rgb),
                             }
                         } else {
@@ -344,6 +373,36 @@ const ColorBox = struct {
     }
 };
 
+/// 3D lookup table for fast color mapping
+const ColorLookupTable = struct {
+    table: [32][32][32]u8, // 5-bit per channel lookup
+
+    fn build(self: *ColorLookupTable, palette: []const Rgb, palette_size: usize) void {
+        // For each cell in 32x32x32 grid
+        for (0..32) |r| {
+            for (0..32) |g| {
+                for (0..32) |b| {
+                    // Find nearest palette color to this grid cell
+                    const rgb = Rgb{
+                        .r = @intCast(r << 3 | (r >> 2)), // Convert 5-bit to 8-bit
+                        .g = @intCast(g << 3 | (g >> 2)),
+                        .b = @intCast(b << 3 | (b >> 2)),
+                    };
+                    self.table[r][g][b] = findNearestColor(palette[0..palette_size], rgb);
+                }
+            }
+        }
+    }
+
+    fn lookup(self: *const ColorLookupTable, rgb: Rgb) u8 {
+        // Quantize to 5-bit per channel
+        const r5 = rgb.r >> 3;
+        const g5 = rgb.g >> 3;
+        const b5 = rgb.b >> 3;
+        return self.table[r5][g5][b5];
+    }
+};
+
 /// Finds the nearest color in a palette to the target color
 fn findNearestColor(pal: []const Rgb, target: Rgb) u8 {
     var best_idx: u8 = 0;
@@ -428,6 +487,38 @@ const FloydSteinbergDither = struct {
             }
         }
     }
+
+    pub fn applyWithLut(data: []u8, w: usize, h: usize, pal: []const Rgb, lut: *const ColorLookupTable) void {
+        for (0..h) |y| {
+            for (0..w) |x| {
+                const pos = (y * w + x) * 3;
+                const original = Rgb{
+                    .r = data[pos],
+                    .g = data[pos + 1],
+                    .b = data[pos + 2],
+                };
+
+                // Find nearest palette color using LUT
+                const idx = lut.lookup(original);
+                const quantized = pal[idx];
+
+                // Calculate and diffuse error for each channel
+                const r_error = @as(i16, original.r) - @as(i16, quantized.r);
+                const g_error = @as(i16, original.g) - @as(i16, quantized.g);
+                const b_error = @as(i16, original.b) - @as(i16, quantized.b);
+
+                // Update pixel to quantized color
+                data[pos] = quantized.r;
+                data[pos + 1] = quantized.g;
+                data[pos + 2] = quantized.b;
+
+                // Diffuse errors
+                diffuseError(data, w, h, x, y, 0, r_error);
+                diffuseError(data, w, h, x, y, 1, g_error);
+                diffuseError(data, w, h, x, y, 2, b_error);
+            }
+        }
+    }
 };
 
 /// Atkinson dithering (used by original Macintosh)
@@ -481,6 +572,38 @@ const AtkinsonDither = struct {
 
                 // Find nearest palette color
                 const idx = findNearestColor(pal[0..pal_size], original);
+                const quantized = pal[idx];
+
+                // Calculate and diffuse error for each channel
+                const r_error = @as(i16, original.r) - @as(i16, quantized.r);
+                const g_error = @as(i16, original.g) - @as(i16, quantized.g);
+                const b_error = @as(i16, original.b) - @as(i16, quantized.b);
+
+                // Update pixel to quantized color
+                data[pos] = quantized.r;
+                data[pos + 1] = quantized.g;
+                data[pos + 2] = quantized.b;
+
+                // Diffuse errors
+                diffuseError(data, w, h, x, y, 0, r_error);
+                diffuseError(data, w, h, x, y, 1, g_error);
+                diffuseError(data, w, h, x, y, 2, b_error);
+            }
+        }
+    }
+
+    pub fn applyWithLut(data: []u8, w: usize, h: usize, pal: []const Rgb, lut: *const ColorLookupTable) void {
+        for (0..h) |y| {
+            for (0..w) |x| {
+                const pos = (y * w + x) * 3;
+                const original = Rgb{
+                    .r = data[pos],
+                    .g = data[pos + 1],
+                    .b = data[pos + 2],
+                };
+
+                // Find nearest palette color using LUT
+                const idx = lut.lookup(original);
                 const quantized = pal[idx];
 
                 // Calculate and diffuse error for each channel
