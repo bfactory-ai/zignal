@@ -195,10 +195,16 @@ pub fn imageToSixel(
         defer allocator.free(colors_used);
         @memset(colors_used, false);
 
-        var color_map = try allocator.alloc([800]u8, palette_size);
-        defer allocator.free(color_map);
+        var color_map = try allocator.alloc([]u8, palette_size);
+        defer {
+            for (color_map) |cm| {
+                allocator.free(cm);
+            }
+            allocator.free(color_map);
+        }
         for (color_map) |*cm| {
-            @memset(cm, 0);
+            cm.* = try allocator.alloc(u8, width);
+            @memset(cm.*, 0);
         }
 
         // First pass: build bitmaps for each color
