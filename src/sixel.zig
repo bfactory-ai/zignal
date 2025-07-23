@@ -853,11 +853,11 @@ const win_api = if (builtin.os.tag == .windows) struct {
     const STD_OUTPUT_HANDLE: i32 = -11;
 
     // API functions
-    extern "kernel32" fn GetStdHandle(nStdHandle: i32) callconv(.C) ?*anyopaque;
-    extern "kernel32" fn GetConsoleMode(hConsoleHandle: ?*anyopaque, lpMode: *u32) callconv(.C) i32;
-    extern "kernel32" fn SetConsoleMode(hConsoleHandle: ?*anyopaque, dwMode: u32) callconv(.C) i32;
-    extern "msvcrt" fn _kbhit() callconv(.C) c_int;
-    extern "msvcrt" fn _getch() callconv(.C) c_int;
+    extern "kernel32" fn GetStdHandle(nStdHandle: i32) callconv(.c) ?*anyopaque;
+    extern "kernel32" fn GetConsoleMode(hConsoleHandle: ?*anyopaque, lpMode: *u32) callconv(.c) i32;
+    extern "kernel32" fn SetConsoleMode(hConsoleHandle: ?*anyopaque, dwMode: u32) callconv(.c) i32;
+    extern "msvcrt" fn _kbhit() callconv(.c) c_int;
+    extern "msvcrt" fn _getch() callconv(.c) c_int;
 } else void;
 
 /// Terminal state for restoration
