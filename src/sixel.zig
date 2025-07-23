@@ -191,27 +191,24 @@ pub fn imageToSixel(
     var row: usize = 0;
     while (row < height) : (row += 6) {
         // Build a map of which colors are used in this sixel row
-        var colors_used = try allocator.alloc(bool, palette_size);
-        defer allocator.free(colors_used);
-        @memset(colors_used, false);
+        var colors_used: [256]bool = undefined;
+        @memset(colors_used[0..palette_size], false);
 
-        var color_map = try allocator.alloc([]u8, palette_size);
-        defer {
-            for (color_map) |cm| {
-                allocator.free(cm);
-            }
-            allocator.free(color_map);
+        // Use a flat array for color_map to avoid nested allocations
+        // Maximum width we support is based on max_width option (default 800)
+        const max_supported_width = 2048; // Reasonable maximum
+        if (width > max_supported_width) {
+            return error.ImageTooWide;
         }
-        for (color_map) |*cm| {
-            cm.* = try allocator.alloc(u8, width);
-            @memset(cm.*, 0);
-        }
+
+        var color_map_storage: [256 * 2048]u8 = undefined;
+        // Initialize only the portion we'll use
+        @memset(color_map_storage[0..(palette_size * width)], 0);
 
         // First pass: build bitmaps for each color
         for (0..width) |col| {
-            var sixel_bits = try allocator.alloc(u8, palette_size);
-            defer allocator.free(sixel_bits);
-            @memset(sixel_bits, 0);
+            var sixel_bits: [256]u8 = undefined;
+            @memset(sixel_bits[0..palette_size], 0);
 
             // Check all 6 pixels in this column
             for (0..6) |bit| {
@@ -255,7 +252,8 @@ pub fn imageToSixel(
             // Store the sixel characters for each color
             for (0..palette_size) |c| {
                 if (sixel_bits[c] != 0) {
-                    color_map[c][col] = sixel_bits[c] + '?'; // Add to '?' to get sixel char
+                    // Access flat array: color_map[c][col] becomes color_map_storage[c * width + col]
+                    color_map_storage[c * width + col] = sixel_bits[c] + '?'; // Add to '?' to get sixel char
                 }
             }
         }
@@ -273,8 +271,9 @@ pub fn imageToSixel(
 
             // Output all sixels for this color
             for (0..width) |col| {
-                if (color_map[c][col] != 0) {
-                    try output.writer().print("{c}", .{color_map[c][col]});
+                const char = color_map_storage[c * width + col];
+                if (char != 0) {
+                    try output.writer().print("{c}", .{char});
                 } else {
                     try output.writer().print("?", .{}); // Empty sixel
                 }
