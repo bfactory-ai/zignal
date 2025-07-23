@@ -54,6 +54,7 @@ pub fn build(b: *Build) void {
         "fdm",
         "jpeg",
         "pca",
+        "sixel",
     }) |module| {
         const module_test = b.addTest(.{
             .name = module,

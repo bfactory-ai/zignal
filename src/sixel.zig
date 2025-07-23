@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const expect = std.testing.expect;
 
 const convertColor = @import("color.zig").convertColor;
 const Image = @import("image.zig").Image;
@@ -1007,4 +1008,178 @@ pub fn isSixelSupported() !bool {
     // We're in a terminal, so perform actual detection
     const options = SixelDetectionOptions{};
     return detectTerminalSixelCapability(options) catch false;
+}
+
+test "basic sixel encoding - 2x2 image" {
+    const allocator = std.testing.allocator;
+
+    // Create a 2x2 test image with distinct colors
+    var img = try Image(Rgb).initAlloc(allocator, 2, 2);
+    defer img.deinit(allocator);
+
+    img.at(0, 0).* = .{ .r = 255, .g = 0, .b = 0 }; // Red
+    img.at(0, 1).* = .{ .r = 0, .g = 255, .b = 0 }; // Green
+    img.at(1, 0).* = .{ .r = 0, .g = 0, .b = 255 }; // Blue
+    img.at(1, 1).* = .{ .r = 255, .g = 255, .b = 0 }; // Yellow
+
+    const sixel_data = try imageToSixel(Rgb, img, allocator, .{
+        .palette_mode = .fixed_6x7x6,
+        .dither_mode = .none,
+        .max_width = 100,
+        .max_height = 100,
+    });
+    defer allocator.free(sixel_data);
+
+    // Verify sixel starts with DCS sequence
+    try expect(std.mem.startsWith(u8, sixel_data, "\x1bP"));
+
+    // Verify sixel ends with ST sequence
+    try expect(std.mem.endsWith(u8, sixel_data, "\x1b\\"));
+
+    // Verify it contains raster attributes (width;height)
+    try expect(std.mem.indexOf(u8, sixel_data, "\"") != null);
+}
+
+test "basic sixel encoding - verify palette format" {
+    const allocator = std.testing.allocator;
+
+    // Create a 4x4 test image
+    var img = try Image(Rgb).initAlloc(allocator, 4, 4);
+    defer img.deinit(allocator);
+
+    // Fill with a single color to ensure it appears in palette
+    for (0..4) |r| {
+        for (0..4) |c| {
+            img.at(r, c).* = .{ .r = 128, .g = 64, .b = 192 };
+        }
+    }
+
+    const sixel_data = try imageToSixel(Rgb, img, allocator, .{
+        .palette_mode = .{ .adaptive = .{ .max_colors = 16 } },
+        .dither_mode = .none,
+        .max_width = 100,
+        .max_height = 100,
+    });
+    defer allocator.free(sixel_data);
+
+    // Verify palette entry format #P;R;G;B
+    try expect(std.mem.indexOf(u8, sixel_data, "#") != null);
+}
+
+test "palette mode - fixed 6x7x6 color mapping" {
+    const allocator = std.testing.allocator;
+
+    // Create image with colors that map to specific palette indices
+    var img = try Image(Rgb).initAlloc(allocator, 1, 3);
+    defer img.deinit(allocator);
+
+    // Colors chosen to map to specific 6x7x6 palette entries
+    img.at(0, 0).* = .{ .r = 0, .g = 0, .b = 0 }; // Black - index 0
+    img.at(0, 1).* = .{ .r = 255, .g = 255, .b = 255 }; // White - last index
+    img.at(0, 2).* = .{ .r = 255, .g = 0, .b = 0 }; // Red
+
+    const sixel_data = try imageToSixel(Rgb, img, allocator, .{
+        .palette_mode = .fixed_6x7x6,
+        .dither_mode = .none,
+        .max_width = 100,
+        .max_height = 100,
+    });
+    defer allocator.free(sixel_data);
+
+    // Basic validation - should have palette entries
+    try expect(sixel_data.len > 0);
+    try expect(std.mem.indexOf(u8, sixel_data, "#0;2;0;0;0") != null); // Black
+}
+
+test "palette mode - adaptive with color reduction" {
+    const allocator = std.testing.allocator;
+
+    // Create image with 8 distinct colors
+    var img = try Image(Rgb).initAlloc(allocator, 4, 4);
+    defer img.deinit(allocator);
+
+    const colors = [_]Rgb{
+        .{ .r = 255, .g = 0, .b = 0 }, // Red
+        .{ .r = 0, .g = 255, .b = 0 }, // Green
+        .{ .r = 0, .g = 0, .b = 255 }, // Blue
+        .{ .r = 255, .g = 255, .b = 0 }, // Yellow
+        .{ .r = 255, .g = 0, .b = 255 }, // Magenta
+        .{ .r = 0, .g = 255, .b = 255 }, // Cyan
+        .{ .r = 128, .g = 128, .b = 128 }, // Gray
+        .{ .r = 255, .g = 128, .b = 0 }, // Orange
+    };
+
+    // Fill image with 8 colors (2x2 blocks for each color)
+    var color_idx: usize = 0;
+    for (0..4) |r| {
+        for (0..4) |c| {
+            img.at(r, c).* = colors[color_idx];
+            if ((r * 4 + c + 1) % 2 == 0) {
+                color_idx = (color_idx + 1) % 8;
+            }
+        }
+    }
+
+    // Test with max_colors = 4 (force color reduction)
+    const sixel_data = try imageToSixel(Rgb, img, allocator, .{
+        .palette_mode = .{ .adaptive = .{ .max_colors = 4 } },
+        .dither_mode = .none,
+        .max_width = 100,
+        .max_height = 100,
+    });
+    defer allocator.free(sixel_data);
+
+    // Should have at most 4 colors in palette (0-3)
+    try expect(std.mem.indexOf(u8, sixel_data, "#0;") != null);
+    // Should not have color index 4 or higher
+    try expect(std.mem.indexOf(u8, sixel_data, "#4;") == null);
+}
+
+test "edge case - single pixel image" {
+    const allocator = std.testing.allocator;
+
+    var img = try Image(Rgb).initAlloc(allocator, 1, 1);
+    defer img.deinit(allocator);
+
+    img.at(0, 0).* = .{ .r = 128, .g = 128, .b = 128 };
+
+    const sixel_data = try imageToSixel(Rgb, img, allocator, .{
+        .palette_mode = .fixed_web216,
+        .dither_mode = .none,
+        .max_width = 100,
+        .max_height = 100,
+    });
+    defer allocator.free(sixel_data);
+
+    // Should produce valid sixel with proper structure
+    try expect(std.mem.startsWith(u8, sixel_data, "\x1bP"));
+    try expect(std.mem.endsWith(u8, sixel_data, "\x1b\\"));
+    try expect(std.mem.indexOf(u8, sixel_data, "\"1;1;") != null);
+}
+
+test "edge case - uniform color image" {
+    const allocator = std.testing.allocator;
+
+    var img = try Image(Rgb).initAlloc(allocator, 8, 8);
+    defer img.deinit(allocator);
+
+    // Fill entire image with same color
+    const uniform_color = Rgb{ .r = 64, .g = 128, .b = 192 };
+    for (0..img.rows) |r| {
+        for (0..img.cols) |c| {
+            img.at(r, c).* = uniform_color;
+        }
+    }
+
+    const sixel_data = try imageToSixel(Rgb, img, allocator, .{
+        .palette_mode = .{ .adaptive = .{ .max_colors = 256 } },
+        .dither_mode = .none,
+        .max_width = 100,
+        .max_height = 100,
+    });
+    defer allocator.free(sixel_data);
+
+    // Should have only one color in adaptive palette
+    try expect(std.mem.indexOf(u8, sixel_data, "#0;") != null);
+    try expect(std.mem.indexOf(u8, sixel_data, "#1;") == null);
 }
