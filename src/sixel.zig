@@ -10,7 +10,6 @@ const convertColor = @import("color.zig").convertColor;
 const Image = @import("image.zig").Image;
 const Rgb = @import("color.zig").Rgb;
 
-const max_palete_size: usize = 256;
 const sixel_char_offset: u8 = '?'; // ASCII 63 - base for sixel characters
 const max_supported_width: usize = 2048;
 const color_quantize_bits: u5 = 5; // For 32x32x32 color lookup table
@@ -37,7 +36,7 @@ pub const PaletteMode = union(enum) {
             .fixed_6x7x6 => 252, // 6*7*6 = 252 colors
             .fixed_vga16 => 16, // Standard VGA palette
             .fixed_web216 => 216, // 6*6*6 = 216 web-safe colors
-            .adaptive => |opts| opts.max_colors,
+            .adaptive => |opts| @min(opts.max_colors, 256),
         };
     }
 };
@@ -125,7 +124,7 @@ pub fn imageToSixel(
     }
 
     // Prepare palette based on mode
-    var palette: [max_palete_size]Rgb = undefined;
+    var palette: [256]Rgb = undefined;
     var palette_size: usize = options.palette_mode.size();
 
     switch (options.palette_mode) {
@@ -267,7 +266,7 @@ pub fn imageToSixel(
     var row: usize = 0;
     while (row < height) : (row += 6) {
         // Build a map of which colors are used in this sixel row
-        var colors_used: [max_palete_size]bool = undefined;
+        var colors_used: [256]bool = undefined;
         @memset(colors_used[0..palette_size], false);
 
         // Use a flat array for color_map to avoid nested allocations
@@ -275,13 +274,13 @@ pub fn imageToSixel(
             return error.ImageTooWide;
         }
 
-        var color_map_storage: [max_palete_size * max_supported_width]u8 = undefined;
+        var color_map_storage: [256 * max_supported_width]u8 = undefined;
         // Initialize only the portion we'll use
         @memset(color_map_storage[0..(palette_size * width)], 0);
 
         // First pass: build bitmaps for each color
         for (0..width) |col| {
-            var sixel_bits: [max_palete_size]u8 = undefined;
+            var sixel_bits: [256]u8 = undefined;
             @memset(sixel_bits[0..palette_size], 0);
 
             // Check all 6 pixels in this column
