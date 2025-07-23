@@ -997,7 +997,7 @@ const TerminalDetector = struct {
                 }
 
                 // Small delay to prevent busy waiting
-                std.time.sleep(1_000_000); // 1ms
+                std.Thread.sleep(1_000_000); // 1ms
             }
 
             return total_read;
