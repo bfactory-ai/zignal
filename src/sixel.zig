@@ -55,13 +55,14 @@ pub const DitherMode = enum {
 /// Options for sixel encoding
 pub const SixelOptions = struct {
     /// Palette generation mode
-    palette_mode: PaletteMode = .fixed_6x7x6,
+    palette_mode: PaletteMode,
     /// Dithering algorithm to use
-    dither_mode: DitherMode = .auto,
+    dither_mode: DitherMode,
     /// Maximum output width (image will be scaled if larger)
-    max_width: u32 = 800,
+    max_width: u32,
     /// Maximum output height (image will be scaled if larger)
-    max_height: u32 = 600,
+    max_height: u32,
+
     /// Default options for automatic formatting
     pub const default: SixelOptions = .{
         .palette_mode = .{ .adaptive = .{ .max_colors = 256 } },
