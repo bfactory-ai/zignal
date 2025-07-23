@@ -13,7 +13,6 @@ const Rgb = @import("color.zig").Rgb;
 const sixel_char_offset: u8 = '?'; // ASCII 63 - base for sixel characters
 const max_supported_width: usize = 2048;
 const color_quantize_bits: u5 = 5; // For 32x32x32 color lookup table
-const color_quantize_mask: u8 = 0xF8; // Top 5 bits
 const response_buffer_size: usize = 256;
 
 /// Available palette modes for sixel encoding
