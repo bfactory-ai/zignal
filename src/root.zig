@@ -71,7 +71,6 @@ pub const DisplayFormat = @import("image.zig").DisplayFormat;
 const sixel = @import("sixel.zig");
 pub const imageToSixel = sixel.imageToSixel;
 pub const isSixelSupported = sixel.isSixelSupported;
-pub const SixelDetectionOptions = sixel.SixelDetectionOptions;
 pub const SixelOptions = sixel.SixelOptions;
 pub const PaletteMode = sixel.PaletteMode;
 pub const DitherMode = sixel.DitherMode;

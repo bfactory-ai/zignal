@@ -10,6 +10,27 @@ const convertColor = @import("color.zig").convertColor;
 const Image = @import("image.zig").Image;
 const Rgb = @import("color.zig").Rgb;
 
+// ========== Constants ==========
+
+// Sixel encoding constants
+const SIXEL_CHAR_OFFSET: u8 = '?'; // ASCII 63 - base for sixel characters
+const MAX_SUPPORTED_WIDTH: usize = 2048;
+
+// Palette constants
+const MAX_PALETTE_SIZE: usize = 256;
+const PALETTE_6X7X6_SIZE: usize = 252;
+const PALETTE_VGA16_SIZE: usize = 16;
+const PALETTE_WEB216_SIZE: usize = 216;
+
+// Color quantization constants
+const COLOR_QUANTIZE_BITS: u5 = 5; // For 32x32x32 color lookup table
+const COLOR_QUANTIZE_MASK: u8 = 0xF8; // Top 5 bits
+
+// Terminal detection constants
+const RESPONSE_BUFFER_SIZE: usize = 256;
+
+// ========== Public Types ==========
+
 /// Available palette modes for sixel encoding
 pub const PaletteMode = union(enum) {
     /// Fixed 252-color palette with 6x7x6 RGB distribution
@@ -49,17 +70,7 @@ pub const SixelOptions = struct {
     max_height: u32 = 600,
 };
 
-/// Result of sixel encoding operation
-pub const SixelResult = struct {
-    /// The encoded sixel data
-    data: []u8,
-    /// Final width after scaling
-    width: u32,
-    /// Final height after scaling
-    height: u32,
-    /// Number of colors in the palette
-    palette_size: u16,
-};
+// ========== Utility Functions ==========
 
 /// Fast integer to ASCII conversion
 fn writeInt(buf: []u8, value: u32) usize {
@@ -89,6 +100,8 @@ fn writeInt(buf: []u8, value: u32) usize {
     return j;
 }
 
+// ========== Main Entry Point ==========
+
 /// Converts an image to sixel format
 pub fn imageToSixel(
     comptime T: type,
@@ -116,28 +129,28 @@ pub fn imageToSixel(
     }
 
     // Prepare palette based on mode
-    var palette: [256]Rgb = undefined;
+    var palette: [MAX_PALETTE_SIZE]Rgb = undefined;
     var palette_size: usize = 0;
 
     switch (options.palette_mode) {
         .fixed_6x7x6 => {
             generateFixed6x7x6Palette(&palette);
-            palette_size = 252;
+            palette_size = PALETTE_6X7X6_SIZE;
         },
         .fixed_vga16 => {
-            @memcpy(palette[0..16], &vga16_palette);
-            palette_size = 16;
+            @memcpy(palette[0..PALETTE_VGA16_SIZE], &vga16_palette);
+            palette_size = PALETTE_VGA16_SIZE;
         },
         .fixed_web216 => {
             generateWeb216Palette(&palette);
-            palette_size = 216;
+            palette_size = PALETTE_WEB216_SIZE;
         },
         .adaptive => |adaptive_opts| {
             palette_size = try generateAdaptivePalette(T, image, allocator, &palette, adaptive_opts.max_colors);
             if (palette_size == 0) {
                 // Fallback to fixed palette if adaptive fails
                 generateFixed6x7x6Palette(&palette);
-                palette_size = 252;
+                palette_size = PALETTE_6X7X6_SIZE;
             }
         },
     }
@@ -194,8 +207,8 @@ pub fn imageToSixel(
 
         // Apply dithering
         switch (dither_mode) {
-            .floyd_steinberg => FloydSteinbergDither.apply(working_data.?, width, height, palette[0..palette_size], &color_lut),
-            .atkinson => AtkinsonDither.apply(working_data.?, width, height, palette[0..palette_size], &color_lut),
+            .floyd_steinberg => applyErrorDiffusion(working_data.?, width, height, palette[0..palette_size], &color_lut, floyd_steinberg_config),
+            .atkinson => applyErrorDiffusion(working_data.?, width, height, palette[0..palette_size], &color_lut, atkinson_config),
             else => {},
         }
     }
@@ -218,94 +231,62 @@ pub fn imageToSixel(
     // Start sixel sequence with DCS, then add raster dimensions
     try output.writer().print("\x1bPq\"1;1;{d};{d}", .{ width, height });
 
-    // Define palette
-    switch (options.palette_mode) {
-        .fixed_6x7x6 => {
-            // For fixed palette, we need to define all colors - optimized version
-            var palette_buf: [64]u8 = undefined;
-            var idx: u16 = 0;
+    // Define palette - unified approach
+    var palette_buf: [64]u8 = undefined; // Buffer for building palette strings
 
-            for (0..6) |r| {
-                for (0..7) |g| {
-                    for (0..6) |b| {
-                        const r_val = (@as(u32, @intCast(r)) * 100 + 2) / 5;
-                        const g_val = (@as(u32, @intCast(g)) * 100 + 3) / 6;
-                        const b_val = (@as(u32, @intCast(b)) * 100 + 2) / 5;
+    for (0..palette_size) |i| {
+        const p = if (options.palette_mode == .fixed_6x7x6) blk: {
+            // Calculate 6x7x6 color directly
+            const r_idx = i / 42;
+            const g_idx = (i % 42) / 6;
+            const b_idx = i % 6;
+            break :blk Rgb{
+                .r = @intCast((r_idx * 255 + 2) / 5),
+                .g = @intCast((g_idx * 255 + 3) / 6),
+                .b = @intCast((b_idx * 255 + 2) / 5),
+            };
+        } else palette[i];
 
-                        // Build palette definition manually
-                        palette_buf[0] = '#';
-                        var pos: usize = 1;
-                        pos += writeInt(palette_buf[pos..], idx);
-                        palette_buf[pos] = ';';
-                        palette_buf[pos + 1] = '2';
-                        palette_buf[pos + 2] = ';';
-                        pos += 3;
-                        pos += writeInt(palette_buf[pos..], r_val);
-                        palette_buf[pos] = ';';
-                        pos += 1;
-                        pos += writeInt(palette_buf[pos..], g_val);
-                        palette_buf[pos] = ';';
-                        pos += 1;
-                        pos += writeInt(palette_buf[pos..], b_val);
+        const r_val = (@as(u32, p.r) * 100 + 127) / 255;
+        const g_val = (@as(u32, p.g) * 100 + 127) / 255;
+        const b_val = (@as(u32, p.b) * 100 + 127) / 255;
 
-                        try output.appendSlice(palette_buf[0..pos]);
-                        idx += 1;
-                    }
-                }
-            }
-        },
-        .fixed_vga16, .fixed_web216, .adaptive => {
-            // Define only the colors in the palette - optimized version
-            var palette_buf: [64]u8 = undefined; // Buffer for building palette strings
+        // Build palette definition
+        palette_buf[0] = '#';
+        var pos: usize = 1;
+        pos += writeInt(palette_buf[pos..], @intCast(i));
+        palette_buf[pos..][0..3].* = ";2;".*;
+        pos += 3;
+        pos += writeInt(palette_buf[pos..], r_val);
+        palette_buf[pos] = ';';
+        pos += 1;
+        pos += writeInt(palette_buf[pos..], g_val);
+        palette_buf[pos] = ';';
+        pos += 1;
+        pos += writeInt(palette_buf[pos..], b_val);
 
-            for (0..palette_size) |i| {
-                const p = palette[i];
-                const r_val = (@as(u32, p.r) * 100 + 127) / 255;
-                const g_val = (@as(u32, p.g) * 100 + 127) / 255;
-                const b_val = (@as(u32, p.b) * 100 + 127) / 255;
-
-                // Build palette definition manually
-                palette_buf[0] = '#';
-                var pos: usize = 1;
-                pos += writeInt(palette_buf[pos..], @intCast(i));
-                palette_buf[pos] = ';';
-                palette_buf[pos + 1] = '2';
-                palette_buf[pos + 2] = ';';
-                pos += 3;
-                pos += writeInt(palette_buf[pos..], r_val);
-                palette_buf[pos] = ';';
-                pos += 1;
-                pos += writeInt(palette_buf[pos..], g_val);
-                palette_buf[pos] = ';';
-                pos += 1;
-                pos += writeInt(palette_buf[pos..], b_val);
-
-                try output.appendSlice(palette_buf[0..pos]);
-            }
-        },
+        try output.appendSlice(palette_buf[0..pos]);
     }
 
     // Encode pixels as sixels
     var row: usize = 0;
     while (row < height) : (row += 6) {
         // Build a map of which colors are used in this sixel row
-        var colors_used: [256]bool = undefined;
+        var colors_used: [MAX_PALETTE_SIZE]bool = undefined;
         @memset(colors_used[0..palette_size], false);
 
         // Use a flat array for color_map to avoid nested allocations
-        // Maximum width we support is based on max_width option (default 800)
-        const max_supported_width = 2048; // Reasonable maximum
-        if (width > max_supported_width) {
+        if (width > MAX_SUPPORTED_WIDTH) {
             return error.ImageTooWide;
         }
 
-        var color_map_storage: [256 * 2048]u8 = undefined;
+        var color_map_storage: [MAX_PALETTE_SIZE * MAX_SUPPORTED_WIDTH]u8 = undefined;
         // Initialize only the portion we'll use
         @memset(color_map_storage[0..(palette_size * width)], 0);
 
         // First pass: build bitmaps for each color
         for (0..width) |col| {
-            var sixel_bits: [256]u8 = undefined;
+            var sixel_bits: [MAX_PALETTE_SIZE]u8 = undefined;
             @memset(sixel_bits[0..palette_size], 0);
 
             // Check all 6 pixels in this column
@@ -347,7 +328,7 @@ pub fn imageToSixel(
             for (0..palette_size) |c| {
                 if (sixel_bits[c] != 0) {
                     // Access flat array: color_map[c][col] becomes color_map_storage[c * width + col]
-                    color_map_storage[c * width + col] = sixel_bits[c] + '?'; // Add to '?' to get sixel char
+                    color_map_storage[c * width + col] = sixel_bits[c] + SIXEL_CHAR_OFFSET; // Add to '?' to get sixel char
                 }
             }
         }
@@ -368,7 +349,7 @@ pub fn imageToSixel(
             }
 
             // Output all sixels for this color - build complete row first
-            var row_buffer: [2048]u8 = undefined; // Stack buffer for row data
+            var row_buffer: [MAX_SUPPORTED_WIDTH]u8 = undefined; // Stack buffer for row data
             if (width > row_buffer.len) {
                 return error.ImageTooWide;
             }
@@ -376,7 +357,7 @@ pub fn imageToSixel(
             // Build the entire row in the buffer
             for (0..width) |col| {
                 const char = color_map_storage[c * width + col];
-                row_buffer[col] = if (char != 0) char else '?';
+                row_buffer[col] = if (char != 0) char else SIXEL_CHAR_OFFSET;
             }
 
             // Write the entire row at once
@@ -451,16 +432,38 @@ const ColorBox = struct {
 const ColorLookupTable = struct {
     table: [32][32][32]u8, // 5-bit per channel lookup
 
+    /// Finds the nearest color in a palette to the target color
+    fn findNearestColor(pal: []const Rgb, target: Rgb) u8 {
+        var best_idx: u8 = 0;
+        var best_dist: u32 = std.math.maxInt(u32);
+
+        for (pal, 0..) |p, idx| {
+            const dr = if (target.r > p.r) target.r - p.r else p.r - target.r;
+            const dg = if (target.g > p.g) target.g - p.g else p.g - target.g;
+            const db = if (target.b > p.b) target.b - p.b else p.b - target.b;
+            const dist = @as(u32, dr) * @as(u32, dr) +
+                @as(u32, dg) * @as(u32, dg) +
+                @as(u32, db) * @as(u32, db);
+
+            if (dist < best_dist) {
+                best_dist = dist;
+                best_idx = @intCast(idx);
+            }
+        }
+        return best_idx;
+    }
+
     fn build(self: *ColorLookupTable, palette: []const Rgb, palette_size: usize) void {
+        const LUT_SIZE = @as(usize, 1) << COLOR_QUANTIZE_BITS;
         // For each cell in 32x32x32 grid
-        for (0..32) |r| {
-            for (0..32) |g| {
-                for (0..32) |b| {
+        for (0..LUT_SIZE) |r| {
+            for (0..LUT_SIZE) |g| {
+                for (0..LUT_SIZE) |b| {
                     // Find nearest palette color to this grid cell
                     const rgb = Rgb{
-                        .r = @intCast(r << 3 | (r >> 2)), // Convert 5-bit to 8-bit
-                        .g = @intCast(g << 3 | (g >> 2)),
-                        .b = @intCast(b << 3 | (b >> 2)),
+                        .r = @intCast(r << (8 - COLOR_QUANTIZE_BITS) | (r >> (2 * COLOR_QUANTIZE_BITS - 8))), // Convert 5-bit to 8-bit
+                        .g = @intCast(g << (8 - COLOR_QUANTIZE_BITS) | (g >> (2 * COLOR_QUANTIZE_BITS - 8))),
+                        .b = @intCast(b << (8 - COLOR_QUANTIZE_BITS) | (b >> (2 * COLOR_QUANTIZE_BITS - 8))),
                     };
                     self.table[r][g][b] = findNearestColor(palette[0..palette_size], rgb);
                 }
@@ -470,173 +473,100 @@ const ColorLookupTable = struct {
 
     fn lookup(self: *const ColorLookupTable, rgb: Rgb) u8 {
         // Quantize to 5-bit per channel
-        const r5 = rgb.r >> 3;
-        const g5 = rgb.g >> 3;
-        const b5 = rgb.b >> 3;
+        const r5 = rgb.r >> (8 - COLOR_QUANTIZE_BITS);
+        const g5 = rgb.g >> (8 - COLOR_QUANTIZE_BITS);
+        const b5 = rgb.b >> (8 - COLOR_QUANTIZE_BITS);
         return self.table[r5][g5][b5];
     }
 };
 
-/// Finds the nearest color in a palette to the target color
-fn findNearestColor(pal: []const Rgb, target: Rgb) u8 {
-    var best_idx: u8 = 0;
-    var best_dist: u32 = std.math.maxInt(u32);
+/// Error diffusion dithering configuration
+const DitherConfig = struct {
+    // Error distribution matrix offsets and weights
+    // Format: {dx, dy, weight, divisor}
+    distributions: []const [4]i16,
+};
 
-    for (pal, 0..) |p, idx| {
-        const dr = if (target.r > p.r) target.r - p.r else p.r - target.r;
-        const dg = if (target.g > p.g) target.g - p.g else p.g - target.g;
-        const db = if (target.b > p.b) target.b - p.b else p.b - target.b;
-        const dist = @as(u32, dr) * @as(u32, dr) +
-            @as(u32, dg) * @as(u32, dg) +
-            @as(u32, db) * @as(u32, db);
+// Floyd-Steinberg error distribution:
+//          X   7/16
+//  3/16  5/16  1/16
+const floyd_steinberg_config = DitherConfig{
+    .distributions = &[_][4]i16{
+        .{ 1, 0, 7, 16 }, // right
+        .{ -1, 1, 3, 16 }, // bottom-left
+        .{ 0, 1, 5, 16 }, // bottom
+        .{ 1, 1, 1, 16 }, // bottom-right
+    },
+};
 
-        if (dist < best_dist) {
-            best_dist = dist;
-            best_idx = @intCast(idx);
+// Atkinson error distribution (only 75% of error is diffused):
+//          X   1/8  1/8
+//   1/8   1/8  1/8
+//         1/8
+const atkinson_config = DitherConfig{
+    .distributions = &[_][4]i16{
+        .{ 1, 0, 1, 8 }, // right
+        .{ 2, 0, 1, 8 }, // right+1
+        .{ -1, 1, 1, 8 }, // bottom-left
+        .{ 0, 1, 1, 8 }, // bottom
+        .{ 1, 1, 1, 8 }, // bottom-right
+        .{ 0, 2, 1, 8 }, // bottom+1
+    },
+};
+
+/// Unified error diffusion dithering implementation
+fn applyErrorDiffusion(
+    data: []u8,
+    w: usize,
+    h: usize,
+    pal: []const Rgb,
+    lut: *const ColorLookupTable,
+    config: DitherConfig,
+) void {
+    for (0..h) |y| {
+        for (0..w) |x| {
+            const pos = (y * w + x) * 3;
+            const original = Rgb{
+                .r = data[pos],
+                .g = data[pos + 1],
+                .b = data[pos + 2],
+            };
+
+            // Find nearest palette color using LUT
+            const idx = lut.lookup(original);
+            const quantized = pal[idx];
+
+            // Calculate error for each channel
+            const r_error = @as(i16, original.r) - @as(i16, quantized.r);
+            const g_error = @as(i16, original.g) - @as(i16, quantized.g);
+            const b_error = @as(i16, original.b) - @as(i16, quantized.b);
+
+            // Update pixel to quantized color
+            data[pos] = quantized.r;
+            data[pos + 1] = quantized.g;
+            data[pos + 2] = quantized.b;
+
+            // Distribute error to neighboring pixels
+            for (config.distributions) |dist| {
+                const nx = @as(isize, @intCast(x)) + dist[0];
+                const ny = @as(isize, @intCast(y)) + dist[1];
+
+                if (nx >= 0 and nx < w and ny >= 0 and ny < h) {
+                    const npos = (@as(usize, @intCast(ny)) * w + @as(usize, @intCast(nx))) * 3;
+
+                    // Apply error diffusion for each channel
+                    inline for (.{ r_error, g_error, b_error }, 0..) |err, ch| {
+                        const new_val = @as(i16, data[npos + ch]) + @divTrunc(err * dist[2], dist[3]);
+                        data[npos + ch] = @intCast(@min(@max(new_val, 0), 255));
+                    }
+                }
+            }
         }
     }
-    return best_idx;
 }
 
-/// Floyd-Steinberg error diffusion dithering
-const FloydSteinbergDither = struct {
-    fn diffuseError(data: []u8, w: usize, h: usize, x: usize, y: usize, ch: usize, err: i16) void {
-        // Floyd-Steinberg error distribution:
-        //          X   7/16
-        //  3/16  5/16  1/16
-
-        const diffusePixel = struct {
-            fn apply(d: []u8, dw: usize, dh: usize, px: usize, py: usize, channel: usize, e: i16, weight: i16, divisor: i16) void {
-                if (px >= dw or py >= dh) return;
-
-                const pos = (py * dw + px) * 3 + channel;
-                const new_val = @as(i16, d[pos]) + @divTrunc(e * weight, divisor);
-                d[pos] = @intCast(@min(@max(new_val, 0), 255));
-            }
-        };
-
-        // Distribute error to neighboring pixels
-        if (x + 1 < w) {
-            diffusePixel.apply(data, w, h, x + 1, y, ch, err, 7, 16); // right
-        }
-        if (y + 1 < h) {
-            if (x > 0) {
-                diffusePixel.apply(data, w, h, x - 1, y + 1, ch, err, 3, 16); // bottom-left
-            }
-            diffusePixel.apply(data, w, h, x, y + 1, ch, err, 5, 16); // bottom
-            if (x + 1 < w) {
-                diffusePixel.apply(data, w, h, x + 1, y + 1, ch, err, 1, 16); // bottom-right
-            }
-        }
-    }
-
-    pub fn apply(data: []u8, w: usize, h: usize, pal: []const Rgb, lut: *const ColorLookupTable) void {
-        for (0..h) |y| {
-            for (0..w) |x| {
-                const pos = (y * w + x) * 3;
-                const original = Rgb{
-                    .r = data[pos],
-                    .g = data[pos + 1],
-                    .b = data[pos + 2],
-                };
-
-                // Find nearest palette color using LUT
-                const idx = lut.lookup(original);
-                const quantized = pal[idx];
-
-                // Calculate and diffuse error for each channel
-                const r_error = @as(i16, original.r) - @as(i16, quantized.r);
-                const g_error = @as(i16, original.g) - @as(i16, quantized.g);
-                const b_error = @as(i16, original.b) - @as(i16, quantized.b);
-
-                // Update pixel to quantized color
-                data[pos] = quantized.r;
-                data[pos + 1] = quantized.g;
-                data[pos + 2] = quantized.b;
-
-                // Diffuse errors
-                diffuseError(data, w, h, x, y, 0, r_error);
-                diffuseError(data, w, h, x, y, 1, g_error);
-                diffuseError(data, w, h, x, y, 2, b_error);
-            }
-        }
-    }
-};
-
-/// Atkinson dithering (used by original Macintosh)
-const AtkinsonDither = struct {
-    fn diffuseError(data: []u8, w: usize, h: usize, x: usize, y: usize, ch: usize, err: i16) void {
-        // Atkinson error distribution (only 75% of error is diffused):
-        //          X   1/8  1/8
-        //   1/8   1/8  1/8
-        //         1/8
-
-        const diffusePixel = struct {
-            fn apply(d: []u8, dw: usize, dh: usize, px: usize, py: usize, channel: usize, e: i16) void {
-                if (px >= dw or py >= dh) return;
-
-                const pos = (py * dw + px) * 3 + channel;
-                const new_val = @as(i16, d[pos]) + @divTrunc(e, 8);
-                d[pos] = @intCast(@min(@max(new_val, 0), 255));
-            }
-        };
-
-        // Distribute error to neighboring pixels
-        if (x + 1 < w) {
-            diffusePixel.apply(data, w, h, x + 1, y, ch, err); // right
-            if (x + 2 < w) {
-                diffusePixel.apply(data, w, h, x + 2, y, ch, err); // right+1
-            }
-        }
-        if (y + 1 < h) {
-            if (x > 0) {
-                diffusePixel.apply(data, w, h, x - 1, y + 1, ch, err); // bottom-left
-            }
-            diffusePixel.apply(data, w, h, x, y + 1, ch, err); // bottom
-            if (x + 1 < w) {
-                diffusePixel.apply(data, w, h, x + 1, y + 1, ch, err); // bottom-right
-            }
-        }
-        if (y + 2 < h) {
-            diffusePixel.apply(data, w, h, x, y + 2, ch, err); // bottom+1
-        }
-    }
-
-    pub fn apply(data: []u8, w: usize, h: usize, pal: []const Rgb, lut: *const ColorLookupTable) void {
-        for (0..h) |y| {
-            for (0..w) |x| {
-                const pos = (y * w + x) * 3;
-                const original = Rgb{
-                    .r = data[pos],
-                    .g = data[pos + 1],
-                    .b = data[pos + 2],
-                };
-
-                // Find nearest palette color using LUT
-                const idx = lut.lookup(original);
-                const quantized = pal[idx];
-
-                // Calculate and diffuse error for each channel
-                const r_error = @as(i16, original.r) - @as(i16, quantized.r);
-                const g_error = @as(i16, original.g) - @as(i16, quantized.g);
-                const b_error = @as(i16, original.b) - @as(i16, quantized.b);
-
-                // Update pixel to quantized color
-                data[pos] = quantized.r;
-                data[pos + 1] = quantized.g;
-                data[pos + 2] = quantized.b;
-
-                // Diffuse errors
-                diffuseError(data, w, h, x, y, 0, r_error);
-                diffuseError(data, w, h, x, y, 1, g_error);
-                diffuseError(data, w, h, x, y, 2, b_error);
-            }
-        }
-    }
-};
-
 /// Standard VGA 16-color palette
-const vga16_palette = [16]Rgb{
+const vga16_palette = [PALETTE_VGA16_SIZE]Rgb{
     Rgb{ .r = 0, .g = 0, .b = 0 }, // Black
     Rgb{ .r = 128, .g = 0, .b = 0 }, // Maroon
     Rgb{ .r = 0, .g = 128, .b = 0 }, // Green
@@ -655,21 +585,13 @@ const vga16_palette = [16]Rgb{
     Rgb{ .r = 255, .g = 255, .b = 255 }, // White
 };
 
-/// Quantizes RGB color to fixed 6x7x6 palette index
-fn quantize6x7x6(r: u8, g: u8, b: u8) u16 {
-    // Quantize to 6 levels for red and blue, 7 for green (most sensitive)
-    const r_q = @as(u16, @min(r / 43, 5)); // 0-5 levels
-    const g_q = @as(u16, @min(g / 37, 6)); // 0-6 levels
-    const b_q = @as(u16, @min(b / 43, 5)); // 0-5 levels
-    return r_q * 42 + g_q * 6 + b_q; // 6*7*6 = 252
-}
-
 /// Generates the fixed 6x7x6 palette (252 colors)
 fn generateFixed6x7x6Palette(palette: []Rgb) void {
     var idx: usize = 0;
     for (0..6) |r| {
         for (0..7) |g| {
             for (0..6) |b| {
+                // Evenly distribute colors across RGB space
                 palette[idx] = Rgb{
                     .r = @intCast((r * 255 + 2) / 5),
                     .g = @intCast((g * 255 + 3) / 6),
@@ -679,14 +601,6 @@ fn generateFixed6x7x6Palette(palette: []Rgb) void {
             }
         }
     }
-}
-
-/// Quantizes RGB color to web-safe 6x6x6 palette index
-fn quantizeWeb216(r: u8, g: u8, b: u8) u8 {
-    const r_q = @as(u8, @min(r / 51, 5)); // 0-5 levels
-    const g_q = @as(u8, @min(g / 51, 5)); // 0-5 levels
-    const b_q = @as(u8, @min(b / 51, 5)); // 0-5 levels
-    return r_q * 36 + g_q * 6 + b_q; // 6*6*6 = 216
 }
 
 /// Generates the web-safe 216-color palette
@@ -725,10 +639,10 @@ fn generateAdaptivePalette(
             const rgb = convertColor(Rgb, pixel);
 
             // Quantize to 5-bit per channel for histogram
-            const r5 = rgb.r >> 3;
-            const g5 = rgb.g >> 3;
-            const b5 = rgb.b >> 3;
-            const key = (@as(u16, r5) << 10) | (@as(u16, g5) << 5) | @as(u16, b5);
+            const r5 = rgb.r >> (8 - COLOR_QUANTIZE_BITS);
+            const g5 = rgb.g >> (8 - COLOR_QUANTIZE_BITS);
+            const b5 = rgb.b >> (8 - COLOR_QUANTIZE_BITS);
+            const key = (@as(u16, r5) << (2 * COLOR_QUANTIZE_BITS)) | (@as(u16, g5) << COLOR_QUANTIZE_BITS) | @as(u16, b5);
 
             const result = try histogram.getOrPut(key);
             if (result.found_existing) {
@@ -748,14 +662,14 @@ fn generateAdaptivePalette(
         const key = entry.key_ptr.*;
         const count = entry.value_ptr.*;
 
-        const r5 = @as(u8, @intCast((key >> 10) & 0x1F));
-        const g5 = @as(u8, @intCast((key >> 5) & 0x1F));
+        const r5 = @as(u8, @intCast((key >> (2 * COLOR_QUANTIZE_BITS)) & 0x1F));
+        const g5 = @as(u8, @intCast((key >> COLOR_QUANTIZE_BITS) & 0x1F));
         const b5 = @as(u8, @intCast(key & 0x1F));
 
         // Convert back to 8-bit with proper scaling
-        const r8 = (r5 << 3) | (r5 >> 2);
-        const g8 = (g5 << 3) | (g5 >> 2);
-        const b8 = (b5 << 3) | (b5 >> 2);
+        const r8 = (r5 << (8 - COLOR_QUANTIZE_BITS)) | (r5 >> (2 * COLOR_QUANTIZE_BITS - 8));
+        const g8 = (g5 << (8 - COLOR_QUANTIZE_BITS)) | (g5 >> (2 * COLOR_QUANTIZE_BITS - 8));
+        const b8 = (b5 << (8 - COLOR_QUANTIZE_BITS)) | (b5 >> (2 * COLOR_QUANTIZE_BITS - 8));
 
         try color_list.append(.{
             .r = r8,
@@ -1001,7 +915,7 @@ const TerminalDetector = struct {
         // std.posix.tcflush(self.stdin.handle, .I) catch {};
 
         // Alternative: consume any pending input
-        var discard_buf: [256]u8 = undefined;
+        var discard_buf: [RESPONSE_BUFFER_SIZE]u8 = undefined;
         _ = self.stdin.read(&discard_buf) catch 0;
 
         // Send query sequence
@@ -1016,102 +930,85 @@ const TerminalDetector = struct {
     }
 };
 
-/// Check sixel support using DECRQSS (Request Status String)
-fn checkSixelByParamQuery() !bool {
-    var detector = try TerminalDetector.init();
-    defer detector.deinit();
+/// Check sixel support using a specific query
+fn checkSixelSupport(detector: *TerminalDetector, method: enum { param_query, device_attributes, functional_test }) !bool {
+    var response_buf: [RESPONSE_BUFFER_SIZE]u8 = undefined;
 
-    // Query sixel graphics parameter
-    var response_buf: [256]u8 = undefined;
-    const response = detector.query("\x1b[?2;1;0S", &response_buf, 100) catch {
-        return false;
-    };
+    switch (method) {
+        .param_query => {
+            // Query sixel graphics parameter
+            const response = detector.query("\x1b[?2;1;0S", &response_buf, 100) catch {
+                return false;
+            };
 
-    // Look for positive response indicating sixel support
-    // Expected format: ESC P 1 $ r <params> ESC \
-    if (response.len >= 4) {
-        if (std.mem.indexOf(u8, response, "\x1bP") != null) {
-            return true;
-        }
-    }
+            // Look for positive response indicating sixel support
+            // Expected format: ESC P 1 $ r <params> ESC \
+            return response.len >= 4 and std.mem.indexOf(u8, response, "\x1bP") != null;
+        },
+        .device_attributes => {
+            // Send Primary Device Attributes query
+            const response = detector.query("\x1b[c", &response_buf, 100) catch {
+                return false;
+            };
 
-    return false;
-}
-
-/// Check sixel support using Device Attributes query
-fn checkSixelByDeviceAttributes() !bool {
-    var detector = try TerminalDetector.init();
-    defer detector.deinit();
-
-    // Send Primary Device Attributes query
-    var response_buf: [256]u8 = undefined;
-    const response = detector.query("\x1b[c", &response_buf, 100) catch {
-        return false;
-    };
-
-    // Parse response looking for attribute 4 (sixel graphics)
-    // Format: ESC [ ? <attributes> c
-    if (response.len >= 4 and response[0] == '\x1b' and response[1] == '[' and response[2] == '?') {
-        // Look for '4' in the attribute list
-        var i: usize = 3;
-        while (i < response.len and response[i] != 'c') : (i += 1) {
-            if (response[i] == '4') {
-                // Check it's a standalone 4, not part of another number
-                const prev_is_separator = (i == 3 or response[i - 1] == ';');
-                const next_is_separator = (i + 1 >= response.len or response[i + 1] == ';' or response[i + 1] == 'c');
-                if (prev_is_separator and next_is_separator) {
-                    return true;
+            // Parse response looking for attribute 4 (sixel graphics)
+            // Format: ESC [ ? <attributes> c
+            if (response.len >= 4 and response[0] == '\x1b' and response[1] == '[' and response[2] == '?') {
+                // Look for '4' in the attribute list
+                var i: usize = 3;
+                while (i < response.len and response[i] != 'c') : (i += 1) {
+                    if (response[i] == '4') {
+                        // Check it's a standalone 4, not part of another number
+                        const prev_is_separator = (i == 3 or response[i - 1] == ';');
+                        const next_is_separator = (i + 1 >= response.len or response[i + 1] == ';' or response[i + 1] == 'c');
+                        if (prev_is_separator and next_is_separator) {
+                            return true;
+                        }
+                    }
                 }
             }
-        }
+            return false;
+        },
+        .functional_test => {
+            // Get cursor position before
+            _ = try detector.stdout.write("\x1b[6n");
+            const pos_before = detector.query("", &response_buf, 100) catch {
+                return false;
+            };
+
+            // Copy position to a separate buffer
+            var pos_before_copy: [RESPONSE_BUFFER_SIZE]u8 = undefined;
+            @memcpy(pos_before_copy[0..pos_before.len], pos_before);
+
+            // Send minimal sixel (1x1 transparent pixel)
+            _ = try detector.stdout.write("\x1bPq\"1;1;1;1#0;2;0;0;0#0~-\x1b\\");
+
+            // Get cursor position after
+            _ = try detector.stdout.write("\x1b[6n");
+            const pos_after = detector.query("", &response_buf, 100) catch {
+                return false;
+            };
+
+            // If positions differ, sixel was processed
+            return !std.mem.eql(u8, pos_before_copy[0..pos_before.len], pos_after);
+        },
     }
-
-    return false;
-}
-
-/// Check sixel support using a functional test (may have visible effects)
-fn checkSixelByFunctionalTest() !bool {
-    var detector = try TerminalDetector.init();
-    defer detector.deinit();
-
-    // Get cursor position before
-    _ = try detector.stdout.write("\x1b[6n");
-    var pos_before_buf: [256]u8 = undefined;
-    const pos_before = detector.query("", &pos_before_buf, 100) catch {
-        return false;
-    };
-
-    // Send minimal sixel (1x1 transparent pixel)
-    _ = try detector.stdout.write("\x1bPq\"1;1;1;1#0;2;0;0;0#0~-\x1b\\");
-
-    // Get cursor position after
-    _ = try detector.stdout.write("\x1b[6n");
-    var pos_after_buf: [256]u8 = undefined;
-    const pos_after = detector.query("", &pos_after_buf, 100) catch {
-        return false;
-    };
-
-    // If positions differ, sixel was processed
-    return !std.mem.eql(u8, pos_before, pos_after);
 }
 
 /// Detect terminal sixel capability using multiple methods
 fn detectTerminalSixelCapability(options: SixelDetectionOptions) !bool {
+    var detector = try TerminalDetector.init();
+    defer detector.deinit();
+
     // Try DECRQSS - Request Status String (no visible output)
-    if (checkSixelByParamQuery()) |result| {
-        if (result) return true;
-    } else |_| {}
+    if (try checkSixelSupport(&detector, .param_query)) return true;
 
     // Try Device Attributes (no visible output)
-    if (checkSixelByDeviceAttributes()) |result| {
-        if (result) return true;
-    } else |_| {}
+    if (try checkSixelSupport(&detector, .device_attributes)) return true;
 
     // Functional test as last resort (may have visible effects)
     if (options.enable_functional_test) {
-        if (checkSixelByFunctionalTest()) |result| {
-            if (result) return true;
-        } else |_| {}
+        if (try checkSixelSupport(&detector, .functional_test)) return true;
     }
 
     return false;
