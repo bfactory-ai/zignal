@@ -941,8 +941,10 @@ const TerminalDetector = struct {
                 }
             },
             .posix => |termios| {
-                // Restore original terminal settings
-                std.posix.tcsetattr(self.stdin.handle, .FLUSH, termios) catch {};
+                if (builtin.os.tag != .windows) {
+                    // Restore original terminal settings
+                    std.posix.tcsetattr(self.stdin.handle, .FLUSH, termios) catch {};
+                }
             },
         }
     }
@@ -953,17 +955,19 @@ const TerminalDetector = struct {
                 // Already in raw mode from init
             },
             .posix => |original| {
-                var raw = original;
+                if (builtin.os.tag != .windows) {
+                    var raw = original;
 
-                // Disable canonical mode and echo
-                raw.lflag.ICANON = false;
-                raw.lflag.ECHO = false;
+                    // Disable canonical mode and echo
+                    raw.lflag.ICANON = false;
+                    raw.lflag.ECHO = false;
 
-                // Set minimum characters and timeout
-                raw.cc[@intFromEnum(std.posix.V.MIN)] = 0;
-                raw.cc[@intFromEnum(std.posix.V.TIME)] = 1; // 0.1 second timeout
+                    // Set minimum characters and timeout
+                    raw.cc[@intFromEnum(std.posix.V.MIN)] = 0;
+                    raw.cc[@intFromEnum(std.posix.V.TIME)] = 1; // 0.1 second timeout
 
-                try std.posix.tcsetattr(self.stdin.handle, .FLUSH, raw);
+                    try std.posix.tcsetattr(self.stdin.handle, .FLUSH, raw);
+                }
             },
         }
     }
@@ -1011,7 +1015,9 @@ const TerminalDetector = struct {
             switch (self.original_state) {
                 .windows => {},
                 .posix => |termios| {
-                    std.posix.tcsetattr(self.stdin.handle, .FLUSH, termios) catch {};
+                    if (builtin.os.tag != .windows) {
+                        std.posix.tcsetattr(self.stdin.handle, .FLUSH, termios) catch {};
+                    }
                 },
             }
         }
