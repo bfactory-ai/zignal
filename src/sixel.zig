@@ -4,6 +4,7 @@
 //! which is supported by various terminal emulators for displaying graphics.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const expect = std.testing.expect;
 
@@ -841,7 +842,22 @@ pub const SixelDetectionOptions = struct {
 };
 
 /// Terminal control and detection utilities
-const TerminalDetector = struct {
+const TerminalDetector = if (builtin.os.tag == .windows) struct {
+    // Stub implementation for Windows
+    fn init() !TerminalDetector {
+        return error.Unsupported;
+    }
+    fn deinit(self: *TerminalDetector) void {
+        _ = self;
+    }
+    fn query(self: *TerminalDetector, sequence: []const u8, buffer: []u8, timeout_ms: u64) ![]const u8 {
+        _ = self;
+        _ = sequence;
+        _ = buffer;
+        _ = timeout_ms;
+        return error.Unsupported;
+    }
+} else struct {
     stdin: std.fs.File,
     stdout: std.fs.File,
     stderr: std.fs.File,
@@ -976,6 +992,11 @@ fn checkSixelSupport(detector: *TerminalDetector, method: enum { param_query, de
 
 /// Detect terminal sixel capability using multiple methods
 fn detectTerminalSixelCapability(options: SixelDetectionOptions) !bool {
+    // Terminal detection is only supported on POSIX systems
+    if (builtin.os.tag == .windows) {
+        return false;
+    }
+
     var detector = try TerminalDetector.init();
     defer detector.deinit();
 
@@ -995,6 +1016,11 @@ fn detectTerminalSixelCapability(options: SixelDetectionOptions) !bool {
 
 /// Checks if the terminal supports sixel graphics
 pub fn isSixelSupported() !bool {
+    // On Windows, sixel is not supported
+    if (builtin.os.tag == .windows) {
+        return false;
+    }
+
     // Check if we're connected to a terminal
     const stdin = std.fs.File.stdin();
 
