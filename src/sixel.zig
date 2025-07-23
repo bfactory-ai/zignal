@@ -65,36 +65,6 @@ pub const SixelOptions = struct {
     max_height: u32 = 600,
 };
 
-// ========== Utility Functions ==========
-
-/// Fast integer to ASCII conversion
-fn writeInt(buf: []u8, value: u32) usize {
-    if (value == 0) {
-        buf[0] = '0';
-        return 1;
-    }
-
-    var n = value;
-    var i: usize = 0;
-    var temp: [10]u8 = undefined;
-
-    // Build digits in reverse
-    while (n > 0) : (i += 1) {
-        temp[i] = @intCast('0' + (n % 10));
-        n /= 10;
-    }
-
-    // Copy in correct order
-    var j: usize = 0;
-    while (i > 0) {
-        i -= 1;
-        buf[j] = temp[i];
-        j += 1;
-    }
-
-    return j;
-}
-
 // ========== Main Entry Point ==========
 
 /// Converts an image to sixel format
@@ -248,16 +218,16 @@ pub fn imageToSixel(
         // Build palette definition
         palette_buf[0] = '#';
         var pos: usize = 1;
-        pos += writeInt(palette_buf[pos..], @intCast(i));
+        pos += std.fmt.printInt(palette_buf[pos..], i, 10, .lower, .{});
         palette_buf[pos..][0..3].* = ";2;".*;
         pos += 3;
-        pos += writeInt(palette_buf[pos..], r_val);
+        pos += std.fmt.printInt(palette_buf[pos..], r_val, 10, .lower, .{});
         palette_buf[pos] = ';';
         pos += 1;
-        pos += writeInt(palette_buf[pos..], g_val);
+        pos += std.fmt.printInt(palette_buf[pos..], g_val, 10, .lower, .{});
         palette_buf[pos] = ';';
         pos += 1;
-        pos += writeInt(palette_buf[pos..], b_val);
+        pos += std.fmt.printInt(palette_buf[pos..], b_val, 10, .lower, .{});
 
         try output.appendSlice(palette_buf[0..pos]);
     }
@@ -338,7 +308,7 @@ pub fn imageToSixel(
                 // Use fast integer conversion
                 var color_select_buf: [16]u8 = undefined;
                 color_select_buf[0] = '#';
-                const len = writeInt(color_select_buf[1..], @intCast(current_color));
+                const len = std.fmt.printInt(color_select_buf[1..], current_color, 10, .lower, .{});
                 try output.appendSlice(color_select_buf[0 .. len + 1]);
             }
 
