@@ -61,6 +61,34 @@ pub const SixelResult = struct {
     palette_size: u16,
 };
 
+/// Fast integer to ASCII conversion
+fn writeInt(buf: []u8, value: u32) usize {
+    if (value == 0) {
+        buf[0] = '0';
+        return 1;
+    }
+
+    var n = value;
+    var i: usize = 0;
+    var temp: [10]u8 = undefined;
+
+    // Build digits in reverse
+    while (n > 0) : (i += 1) {
+        temp[i] = @intCast('0' + (n % 10));
+        n /= 10;
+    }
+
+    // Copy in correct order
+    var j: usize = 0;
+    while (i > 0) {
+        i -= 1;
+        buf[j] = temp[i];
+        j += 1;
+    }
+
+    return j;
+}
+
 /// Converts an image to sixel format
 pub fn imageToSixel(
     comptime T: type,
@@ -173,8 +201,18 @@ pub fn imageToSixel(
     }
     defer if (working_data) |data| allocator.free(data);
 
-    // Create output buffer - estimate size generously
-    var output = std.ArrayList(u8).init(allocator);
+    // Pre-allocate output buffer with estimated size
+    // Header: ~50 bytes
+    // Palette definitions: palette_size * 20 bytes
+    // Sixel data: (height/6 + 1) rows * width chars * avg 2 bytes per position
+    // Control sequences: (height/6 + 1) rows * palette_size * 5 bytes
+    const sixel_rows = (height + 5) / 6;
+    const estimated_size = 50 +
+        palette_size * 20 +
+        sixel_rows * width * 2 +
+        sixel_rows * palette_size * 5;
+
+    var output = try std.ArrayList(u8).initCapacity(allocator, estimated_size);
     defer output.deinit();
 
     // Start sixel sequence with DCS, then add raster dimensions
@@ -183,28 +221,66 @@ pub fn imageToSixel(
     // Define palette
     switch (options.palette_mode) {
         .fixed_6x7x6 => {
-            // For fixed palette, we need to define all colors
+            // For fixed palette, we need to define all colors - optimized version
+            var palette_buf: [64]u8 = undefined;
             var idx: u16 = 0;
+
             for (0..6) |r| {
                 for (0..7) |g| {
                     for (0..6) |b| {
                         const r_val = (@as(u32, @intCast(r)) * 100 + 2) / 5;
                         const g_val = (@as(u32, @intCast(g)) * 100 + 3) / 6;
                         const b_val = (@as(u32, @intCast(b)) * 100 + 2) / 5;
-                        try output.writer().print("#{d};2;{d};{d};{d}", .{ idx, r_val, g_val, b_val });
+
+                        // Build palette definition manually
+                        palette_buf[0] = '#';
+                        var pos: usize = 1;
+                        pos += writeInt(palette_buf[pos..], idx);
+                        palette_buf[pos] = ';';
+                        palette_buf[pos + 1] = '2';
+                        palette_buf[pos + 2] = ';';
+                        pos += 3;
+                        pos += writeInt(palette_buf[pos..], r_val);
+                        palette_buf[pos] = ';';
+                        pos += 1;
+                        pos += writeInt(palette_buf[pos..], g_val);
+                        palette_buf[pos] = ';';
+                        pos += 1;
+                        pos += writeInt(palette_buf[pos..], b_val);
+
+                        try output.appendSlice(palette_buf[0..pos]);
                         idx += 1;
                     }
                 }
             }
         },
         .fixed_vga16, .fixed_web216, .adaptive => {
-            // Define only the colors in the palette
+            // Define only the colors in the palette - optimized version
+            var palette_buf: [64]u8 = undefined; // Buffer for building palette strings
+
             for (0..palette_size) |i| {
                 const p = palette[i];
                 const r_val = (@as(u32, p.r) * 100 + 127) / 255;
                 const g_val = (@as(u32, p.g) * 100 + 127) / 255;
                 const b_val = (@as(u32, p.b) * 100 + 127) / 255;
-                try output.writer().print("#{d};2;{d};{d};{d}", .{ i, r_val, g_val, b_val });
+
+                // Build palette definition manually
+                palette_buf[0] = '#';
+                var pos: usize = 1;
+                pos += writeInt(palette_buf[pos..], @intCast(i));
+                palette_buf[pos] = ';';
+                palette_buf[pos + 1] = '2';
+                palette_buf[pos + 2] = ';';
+                pos += 3;
+                pos += writeInt(palette_buf[pos..], r_val);
+                palette_buf[pos] = ';';
+                pos += 1;
+                pos += writeInt(palette_buf[pos..], g_val);
+                palette_buf[pos] = ';';
+                pos += 1;
+                pos += writeInt(palette_buf[pos..], b_val);
+
+                try output.appendSlice(palette_buf[0..pos]);
             }
         },
     }
@@ -284,18 +360,27 @@ pub fn imageToSixel(
             // Select color if different
             if (c != current_color) {
                 current_color = c;
-                try output.writer().print("#{d}", .{current_color});
+                // Use fast integer conversion
+                var color_select_buf: [16]u8 = undefined;
+                color_select_buf[0] = '#';
+                const len = writeInt(color_select_buf[1..], @intCast(current_color));
+                try output.appendSlice(color_select_buf[0 .. len + 1]);
             }
 
-            // Output all sixels for this color
+            // Output all sixels for this color - build complete row first
+            var row_buffer: [2048]u8 = undefined; // Stack buffer for row data
+            if (width > row_buffer.len) {
+                return error.ImageTooWide;
+            }
+
+            // Build the entire row in the buffer
             for (0..width) |col| {
                 const char = color_map_storage[c * width + col];
-                if (char != 0) {
-                    try output.writer().print("{c}", .{char});
-                } else {
-                    try output.writer().print("?", .{}); // Empty sixel
-                }
+                row_buffer[col] = if (char != 0) char else '?';
             }
+
+            // Write the entire row at once
+            try output.appendSlice(row_buffer[0..width]);
 
             // Carriage return to go back to start of line (except for last color)
             var more_colors = false;
