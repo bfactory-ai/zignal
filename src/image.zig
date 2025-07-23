@@ -17,6 +17,7 @@ const isStruct = @import("meta.zig").isStruct;
 const jpeg = @import("jpeg.zig");
 const png = @import("png.zig");
 const Rectangle = @import("geometry.zig").Rectangle;
+const sixel = @import("sixel.zig");
 
 /// Supported image formats for automatic detection and loading
 pub const ImageFormat = enum {
@@ -57,43 +58,86 @@ pub const ImageFormat = enum {
     }
 };
 
+/// Display format options
+pub const DisplayFormat = union(enum) {
+    /// Automatically detect the best format (sixel if supported, ANSI otherwise)
+    auto,
+    /// Force ANSI escape codes output
+    ansi,
+    /// Force sixel output with specific options
+    sixel: sixel.SixelOptions,
+};
+
 /// Formatter struct for terminal display with progressive degradation
 pub fn DisplayFormatter(comptime T: type) type {
     return struct {
         image: *const Image(T),
-        options: @import("sixel.zig").SixelOptions,
+        display_format: DisplayFormat,
 
         const Self = @This();
 
         pub fn format(self: Self, writer: anytype) !void {
-            const sixel = @import("sixel.zig");
 
-            // Try sixel if supported
-            if (sixel.isSixelSupported() catch false) {
-                const allocator = std.heap.page_allocator;
+            // Handle different format cases
+            switch (self.display_format) {
+                .ansi => {
+                    // Force ANSI output
+                },
+                .auto => {
+                    // Try sixel with default options if supported
+                    if (sixel.isSixelSupported() catch false) {
+                        const allocator = std.heap.page_allocator;
+                        const default_options = sixel.SixelOptions{};
 
-                // Try to convert to sixel
-                const sixel_data = sixel.imageToSixel(T, self.image.*, allocator, self.options) catch |err| blk: {
-                    // On OutOfMemory, try with a simpler palette
-                    if (err == error.OutOfMemory) {
-                        const fallback_options = sixel.SixelOptions{
-                            .palette_mode = .fixed_6x7x6,
-                            .dither_mode = self.options.dither_mode,
-                            .max_colors = 16,
-                            .max_width = self.options.max_width,
-                            .max_height = self.options.max_height,
+                        // Try to convert to sixel
+                        const sixel_data = sixel.imageToSixel(T, self.image.*, allocator, default_options) catch |err| blk: {
+                            // On OutOfMemory, try with a simpler palette
+                            if (err == error.OutOfMemory) {
+                                const fallback_options = sixel.SixelOptions{
+                                    .palette_mode = .fixed_6x7x6,
+                                    .dither_mode = default_options.dither_mode,
+                                    .max_width = default_options.max_width,
+                                    .max_height = default_options.max_height,
+                                };
+                                break :blk sixel.imageToSixel(T, self.image.*, allocator, fallback_options) catch null;
+                            } else {
+                                break :blk null;
+                            }
                         };
-                        break :blk sixel.imageToSixel(T, self.image.*, allocator, fallback_options) catch null;
-                    } else {
-                        break :blk null;
-                    }
-                };
 
-                if (sixel_data) |data| {
-                    defer allocator.free(data);
-                    try writer.writeAll(data);
-                    return;
-                }
+                        if (sixel_data) |data| {
+                            defer allocator.free(data);
+                            try writer.writeAll(data);
+                            return;
+                        }
+                    }
+                },
+                .sixel => |options| {
+                    // Force sixel with specific options
+                    const allocator = std.heap.page_allocator;
+
+                    // Try to convert to sixel
+                    const sixel_data = sixel.imageToSixel(T, self.image.*, allocator, options) catch |err| blk: {
+                        // On OutOfMemory, try with a simpler palette
+                        if (err == error.OutOfMemory) {
+                            const fallback_options = sixel.SixelOptions{
+                                .palette_mode = .fixed_6x7x6,
+                                .dither_mode = options.dither_mode,
+                                .max_width = options.max_width,
+                                .max_height = options.max_height,
+                            };
+                            break :blk sixel.imageToSixel(T, self.image.*, allocator, fallback_options) catch null;
+                        } else {
+                            break :blk null;
+                        }
+                    };
+
+                    if (sixel_data) |data| {
+                        defer allocator.free(data);
+                        try writer.writeAll(data);
+                        return;
+                    }
+                },
             }
 
             // Fallback to ANSI
@@ -319,12 +363,13 @@ pub fn Image(comptime T: type) type {
         /// Example:
         /// ```zig
         /// const img = try Image(Rgb).load(allocator, "test.png");
-        /// std.debug.print("{f}", .{img.display(.{ .palette_mode = .adaptive })});
+        /// std.debug.print("{f}", .{img.display(.ansi)});
+        /// std.debug.print("{f}", .{img.display(.{ .sixel = .{ .palette_mode = .adaptive } })});
         /// ```
-        pub fn display(self: *const Self, options: @import("sixel.zig").SixelOptions) DisplayFormatter(T) {
+        pub fn display(self: *const Self, display_format: DisplayFormat) DisplayFormatter(T) {
             return DisplayFormatter(T){
                 .image = self,
-                .options = options,
+                .display_format = display_format,
             };
         }
 
@@ -332,7 +377,6 @@ pub fn Image(comptime T: type) type {
         /// Automatically tries sixel with sensible defaults, falling back to ANSI blocks if needed.
         /// For explicit control over output format, use the display() method instead.
         pub fn format(self: Self, writer: anytype) !void {
-            const sixel = @import("sixel.zig");
 
             // Try sixel if supported
             if (sixel.isSixelSupported() catch false) {
@@ -340,9 +384,8 @@ pub fn Image(comptime T: type) type {
 
                 // Default options for automatic formatting
                 const default_options = sixel.SixelOptions{
-                    .palette_mode = .adaptive,
+                    .palette_mode = .{ .adaptive = .{ .max_colors = 256 } },
                     .dither_mode = .auto,
-                    .max_colors = 256,
                     .max_width = 800,
                     .max_height = 600,
                 };
@@ -354,7 +397,6 @@ pub fn Image(comptime T: type) type {
                         const fallback_options = sixel.SixelOptions{
                             .palette_mode = .fixed_6x7x6,
                             .dither_mode = .auto,
-                            .max_colors = 216,
                             .max_width = default_options.max_width,
                             .max_height = default_options.max_height,
                         };
@@ -2072,7 +2114,8 @@ test "image format function" {
     var buffer: [256]u8 = undefined;
     var stream = std.io.fixedBufferStream(&buffer);
 
-    try std.fmt.format(stream.writer(), "{f}", .{image});
+    // Force ANSI format for testing
+    try std.fmt.format(stream.writer(), "{f}", .{image.display(.ansi)});
     const result = stream.getWritten();
 
     // The expected output should be:

@@ -5,12 +5,13 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+
+const convertColor = @import("color.zig").convertColor;
 const Image = @import("image.zig").Image;
-const color = @import("color.zig");
-const Rgb = color.Rgb;
+const Rgb = @import("color.zig").Rgb;
 
 /// Available palette modes for sixel encoding
-pub const PaletteMode = enum {
+pub const PaletteMode = union(enum) {
     /// Fixed 252-color palette with 6x7x6 RGB distribution
     fixed_6x7x6,
     /// Fixed 16-color VGA palette
@@ -18,7 +19,10 @@ pub const PaletteMode = enum {
     /// Fixed 216-color web-safe palette (6x6x6 RGB cube)
     fixed_web216,
     /// Adaptive palette using median cut algorithm
-    adaptive,
+    adaptive: struct {
+        /// Maximum colors for adaptive palette (1-256)
+        max_colors: u16 = 256,
+    },
 };
 
 /// Dithering modes for color quantization
@@ -39,8 +43,6 @@ pub const SixelOptions = struct {
     palette_mode: PaletteMode = .fixed_6x7x6,
     /// Dithering algorithm to use
     dither_mode: DitherMode = .auto,
-    /// Maximum colors for adaptive palette (1-256)
-    max_colors: u16 = 256,
     /// Maximum output width (image will be scaled if larger)
     max_width: u32 = 800,
     /// Maximum output height (image will be scaled if larger)
@@ -102,8 +104,8 @@ pub fn imageToSixel(
             generateWeb216Palette(&palette);
             palette_size = 216;
         },
-        .adaptive => {
-            palette_size = try generateAdaptivePalette(T, image, allocator, &palette, options.max_colors);
+        .adaptive => |adaptive_opts| {
+            palette_size = try generateAdaptivePalette(T, image, allocator, &palette, adaptive_opts.max_colors);
             if (palette_size == 0) {
                 // Fallback to fixed palette if adaptive fails
                 generateFixed6x7x6Palette(&palette);
@@ -131,7 +133,7 @@ pub fn imageToSixel(
 
                 if (src_r < image.rows and src_c < image.cols) {
                     const pixel = image.at(src_r, src_c).*;
-                    const rgb = color.convertColor(Rgb, pixel);
+                    const rgb = convertColor(Rgb, pixel);
                     const pos = (row * width + col) * 3;
                     working_data.?[pos] = rgb.r;
                     working_data.?[pos + 1] = rgb.g;
@@ -225,7 +227,7 @@ pub fn imageToSixel(
 
                         if (src_r < image.rows and src_c < image.cols) {
                             const pixel = image.at(src_r, src_c).*;
-                            const rgb = color.convertColor(Rgb, pixel);
+                            const rgb = convertColor(Rgb, pixel);
 
                             // Direct quantization for fixed palettes when not dithering
                             switch (options.palette_mode) {
@@ -582,7 +584,7 @@ fn generateAdaptivePalette(
     for (0..image.rows) |r| {
         for (0..image.cols) |c| {
             const pixel = image.at(r, c).*;
-            const rgb = color.convertColor(Rgb, pixel);
+            const rgb = convertColor(Rgb, pixel);
 
             // Quantize to 5-bit per channel for histogram
             const r5 = rgb.r >> 3;
@@ -981,14 +983,14 @@ fn detectTerminalSixelCapability(options: SixelDetectionOptions) !bool {
 pub fn isSixelSupported() !bool {
     // Check if we're connected to a terminal
     const stdin = std.fs.File.stdin();
-    
+
     // Try to get terminal attributes - if this fails with NotATerminal,
     // we're redirected to a file/pipe, so allow sixel output
     _ = std.posix.tcgetattr(stdin.handle) catch |err| switch (err) {
         error.NotATerminal => return true, // Not a TTY, allow sixel for file output
         else => return err,
     };
-    
+
     // We're in a terminal, so perform actual detection
     const options = SixelDetectionOptions{};
     return detectTerminalSixelCapability(options) catch false;
