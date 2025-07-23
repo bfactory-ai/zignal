@@ -124,6 +124,24 @@ pub fn imageToSixel(
         else => options.dither_mode,
     };
 
+    // Pre-calculate source pixel mappings for scaling
+    var src_row_map: ?[]usize = null;
+    var src_col_map: ?[]usize = null;
+    if (scale < 1.0) {
+        src_row_map = try allocator.alloc(usize, height);
+        src_col_map = try allocator.alloc(usize, width);
+
+        // Pre-compute all source positions
+        for (0..height) |row| {
+            src_row_map.?[row] = @as(usize, @intFromFloat(@as(f32, @floatFromInt(row)) / scale));
+        }
+        for (0..width) |col| {
+            src_col_map.?[col] = @as(usize, @intFromFloat(@as(f32, @floatFromInt(col)) / scale));
+        }
+    }
+    defer if (src_row_map) |map| allocator.free(map);
+    defer if (src_col_map) |map| allocator.free(map);
+
     // Prepare working data for dithering if needed
     var working_data: ?[]u8 = null;
     if (dither_mode != .none) {
@@ -132,8 +150,8 @@ pub fn imageToSixel(
         // Copy scaled image data to working buffer
         for (0..height) |row| {
             for (0..width) |col| {
-                const src_r = if (scale < 1.0) @as(usize, @intFromFloat(@as(f32, @floatFromInt(row)) / scale)) else row;
-                const src_c = if (scale < 1.0) @as(usize, @intFromFloat(@as(f32, @floatFromInt(col)) / scale)) else col;
+                const src_r = if (src_row_map) |map| map[row] else row;
+                const src_c = if (src_col_map) |map| map[col] else col;
 
                 if (src_r < image.rows and src_c < image.cols) {
                     const pixel = image.at(src_r, src_c).*;
@@ -229,8 +247,8 @@ pub fn imageToSixel(
                         break :blk color_lut.lookup(rgb);
                     } else blk: {
                         // Use original data without dithering
-                        const src_r = if (scale < 1.0) @as(usize, @intFromFloat(@as(f32, @floatFromInt(pixel_row)) / scale)) else pixel_row;
-                        const src_c = if (scale < 1.0) @as(usize, @intFromFloat(@as(f32, @floatFromInt(col)) / scale)) else col;
+                        const src_r = if (src_row_map) |map| map[pixel_row] else pixel_row;
+                        const src_c = if (src_col_map) |map| map[col] else col;
 
                         if (src_r < image.rows and src_c < image.cols) {
                             const pixel = image.at(src_r, src_c).*;
