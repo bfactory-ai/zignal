@@ -226,7 +226,7 @@ pub fn imageToSixel(
                             .g = data[pos + 1],
                             .b = data[pos + 2],
                         };
-                        break :blk findNearestColor(palette[0..palette_size], rgb);
+                        break :blk color_lut.lookup(rgb);
                     } else blk: {
                         // Use original data without dithering
                         const src_r = if (scale < 1.0) @as(usize, @intFromFloat(@as(f32, @floatFromInt(pixel_row)) / scale)) else pixel_row;
