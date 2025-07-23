@@ -202,6 +202,10 @@ pub fn imageToSixel(
     defer output.deinit();
 
     // Start sixel sequence with DCS, then add raster dimensions
+    // Format: ESC P q " P1 ; P2 ; width ; height
+    // P1=1 (aspect ratio 1:1), P2=1 (keep background)
+    // Note: Some terminals don't respect the height parameter and will show
+    // black padding for images whose height is not a multiple of 6
     try output.writer().print("\x1bPq\"1;1;{d};{d}", .{ width, height });
 
     // Define palette - unified approach
