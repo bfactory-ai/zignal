@@ -10,26 +10,12 @@ const convertColor = @import("color.zig").convertColor;
 const Image = @import("image.zig").Image;
 const Rgb = @import("color.zig").Rgb;
 
-// ========== Constants ==========
-
-// Sixel encoding constants
-const SIXEL_CHAR_OFFSET: u8 = '?'; // ASCII 63 - base for sixel characters
-const MAX_SUPPORTED_WIDTH: usize = 2048;
-
-// Palette constants
-const MAX_PALETTE_SIZE: usize = 256;
-const PALETTE_6X7X6_SIZE: usize = 252;
-const PALETTE_VGA16_SIZE: usize = 16;
-const PALETTE_WEB216_SIZE: usize = 216;
-
-// Color quantization constants
-const COLOR_QUANTIZE_BITS: u5 = 5; // For 32x32x32 color lookup table
-const COLOR_QUANTIZE_MASK: u8 = 0xF8; // Top 5 bits
-
-// Terminal detection constants
-const RESPONSE_BUFFER_SIZE: usize = 256;
-
-// ========== Public Types ==========
+const max_palete_size: usize = 256;
+const sixel_char_offset: u8 = '?'; // ASCII 63 - base for sixel characters
+const max_supported_width: usize = 2048;
+const color_quantize_bits: u5 = 5; // For 32x32x32 color lookup table
+const color_quantize_mask: u8 = 0xF8; // Top 5 bits
+const response_buffer_size: usize = 256;
 
 /// Available palette modes for sixel encoding
 pub const PaletteMode = union(enum) {
@@ -44,6 +30,16 @@ pub const PaletteMode = union(enum) {
         /// Maximum colors for adaptive palette (1-256)
         max_colors: u16 = 256,
     },
+
+    /// Get the palette size for this mode
+    pub fn size(self: PaletteMode) usize {
+        return switch (self) {
+            .fixed_6x7x6 => 252, // 6*7*6 = 252 colors
+            .fixed_vga16 => 16, // Standard VGA palette
+            .fixed_web216 => 216, // 6*6*6 = 216 web-safe colors
+            .adaptive => |opts| opts.max_colors,
+        };
+    }
 };
 
 /// Dithering modes for color quantization
@@ -129,28 +125,27 @@ pub fn imageToSixel(
     }
 
     // Prepare palette based on mode
-    var palette: [MAX_PALETTE_SIZE]Rgb = undefined;
-    var palette_size: usize = 0;
+    var palette: [max_palete_size]Rgb = undefined;
+    var palette_size: usize = options.palette_mode.size();
 
     switch (options.palette_mode) {
         .fixed_6x7x6 => {
             generateFixed6x7x6Palette(&palette);
-            palette_size = PALETTE_6X7X6_SIZE;
         },
         .fixed_vga16 => {
-            @memcpy(palette[0..PALETTE_VGA16_SIZE], &vga16_palette);
-            palette_size = PALETTE_VGA16_SIZE;
+            @memcpy(palette[0..16], &vga16_palette);
         },
         .fixed_web216 => {
             generateWeb216Palette(&palette);
-            palette_size = PALETTE_WEB216_SIZE;
         },
         .adaptive => |adaptive_opts| {
-            palette_size = try generateAdaptivePalette(T, image, allocator, &palette, adaptive_opts.max_colors);
-            if (palette_size == 0) {
+            const actual_size = try generateAdaptivePalette(T, image, allocator, &palette, adaptive_opts.max_colors);
+            if (actual_size == 0) {
                 // Fallback to fixed palette if adaptive fails
                 generateFixed6x7x6Palette(&palette);
-                palette_size = PALETTE_6X7X6_SIZE;
+                palette_size = 252;
+            } else {
+                palette_size = actual_size;
             }
         },
     }
@@ -272,21 +267,21 @@ pub fn imageToSixel(
     var row: usize = 0;
     while (row < height) : (row += 6) {
         // Build a map of which colors are used in this sixel row
-        var colors_used: [MAX_PALETTE_SIZE]bool = undefined;
+        var colors_used: [max_palete_size]bool = undefined;
         @memset(colors_used[0..palette_size], false);
 
         // Use a flat array for color_map to avoid nested allocations
-        if (width > MAX_SUPPORTED_WIDTH) {
+        if (width > max_supported_width) {
             return error.ImageTooWide;
         }
 
-        var color_map_storage: [MAX_PALETTE_SIZE * MAX_SUPPORTED_WIDTH]u8 = undefined;
+        var color_map_storage: [max_palete_size * max_supported_width]u8 = undefined;
         // Initialize only the portion we'll use
         @memset(color_map_storage[0..(palette_size * width)], 0);
 
         // First pass: build bitmaps for each color
         for (0..width) |col| {
-            var sixel_bits: [MAX_PALETTE_SIZE]u8 = undefined;
+            var sixel_bits: [max_palete_size]u8 = undefined;
             @memset(sixel_bits[0..palette_size], 0);
 
             // Check all 6 pixels in this column
@@ -328,7 +323,7 @@ pub fn imageToSixel(
             for (0..palette_size) |c| {
                 if (sixel_bits[c] != 0) {
                     // Access flat array: color_map[c][col] becomes color_map_storage[c * width + col]
-                    color_map_storage[c * width + col] = sixel_bits[c] + SIXEL_CHAR_OFFSET; // Add to '?' to get sixel char
+                    color_map_storage[c * width + col] = sixel_bits[c] + sixel_char_offset; // Add to '?' to get sixel char
                 }
             }
         }
@@ -349,7 +344,7 @@ pub fn imageToSixel(
             }
 
             // Output all sixels for this color - build complete row first
-            var row_buffer: [MAX_SUPPORTED_WIDTH]u8 = undefined; // Stack buffer for row data
+            var row_buffer: [max_supported_width]u8 = undefined; // Stack buffer for row data
             if (width > row_buffer.len) {
                 return error.ImageTooWide;
             }
@@ -357,7 +352,7 @@ pub fn imageToSixel(
             // Build the entire row in the buffer
             for (0..width) |col| {
                 const char = color_map_storage[c * width + col];
-                row_buffer[col] = if (char != 0) char else SIXEL_CHAR_OFFSET;
+                row_buffer[col] = if (char != 0) char else sixel_char_offset;
             }
 
             // Write the entire row at once
@@ -454,16 +449,16 @@ const ColorLookupTable = struct {
     }
 
     fn build(self: *ColorLookupTable, palette: []const Rgb, palette_size: usize) void {
-        const LUT_SIZE = @as(usize, 1) << COLOR_QUANTIZE_BITS;
+        const LUT_SIZE = @as(usize, 1) << color_quantize_bits;
         // For each cell in 32x32x32 grid
         for (0..LUT_SIZE) |r| {
             for (0..LUT_SIZE) |g| {
                 for (0..LUT_SIZE) |b| {
                     // Find nearest palette color to this grid cell
                     const rgb = Rgb{
-                        .r = @intCast(r << (8 - COLOR_QUANTIZE_BITS) | (r >> (2 * COLOR_QUANTIZE_BITS - 8))), // Convert 5-bit to 8-bit
-                        .g = @intCast(g << (8 - COLOR_QUANTIZE_BITS) | (g >> (2 * COLOR_QUANTIZE_BITS - 8))),
-                        .b = @intCast(b << (8 - COLOR_QUANTIZE_BITS) | (b >> (2 * COLOR_QUANTIZE_BITS - 8))),
+                        .r = @intCast(r << (8 - color_quantize_bits) | (r >> (2 * color_quantize_bits - 8))), // Convert 5-bit to 8-bit
+                        .g = @intCast(g << (8 - color_quantize_bits) | (g >> (2 * color_quantize_bits - 8))),
+                        .b = @intCast(b << (8 - color_quantize_bits) | (b >> (2 * color_quantize_bits - 8))),
                     };
                     self.table[r][g][b] = findNearestColor(palette[0..palette_size], rgb);
                 }
@@ -473,9 +468,9 @@ const ColorLookupTable = struct {
 
     fn lookup(self: *const ColorLookupTable, rgb: Rgb) u8 {
         // Quantize to 5-bit per channel
-        const r5 = rgb.r >> (8 - COLOR_QUANTIZE_BITS);
-        const g5 = rgb.g >> (8 - COLOR_QUANTIZE_BITS);
-        const b5 = rgb.b >> (8 - COLOR_QUANTIZE_BITS);
+        const r5 = rgb.r >> (8 - color_quantize_bits);
+        const g5 = rgb.g >> (8 - color_quantize_bits);
+        const b5 = rgb.b >> (8 - color_quantize_bits);
         return self.table[r5][g5][b5];
     }
 };
@@ -566,7 +561,7 @@ fn applyErrorDiffusion(
 }
 
 /// Standard VGA 16-color palette
-const vga16_palette = [PALETTE_VGA16_SIZE]Rgb{
+const vga16_palette = [16]Rgb{
     Rgb{ .r = 0, .g = 0, .b = 0 }, // Black
     Rgb{ .r = 128, .g = 0, .b = 0 }, // Maroon
     Rgb{ .r = 0, .g = 128, .b = 0 }, // Green
@@ -639,10 +634,10 @@ fn generateAdaptivePalette(
             const rgb = convertColor(Rgb, pixel);
 
             // Quantize to 5-bit per channel for histogram
-            const r5 = rgb.r >> (8 - COLOR_QUANTIZE_BITS);
-            const g5 = rgb.g >> (8 - COLOR_QUANTIZE_BITS);
-            const b5 = rgb.b >> (8 - COLOR_QUANTIZE_BITS);
-            const key = (@as(u16, r5) << (2 * COLOR_QUANTIZE_BITS)) | (@as(u16, g5) << COLOR_QUANTIZE_BITS) | @as(u16, b5);
+            const r5 = rgb.r >> (8 - color_quantize_bits);
+            const g5 = rgb.g >> (8 - color_quantize_bits);
+            const b5 = rgb.b >> (8 - color_quantize_bits);
+            const key = (@as(u16, r5) << (2 * color_quantize_bits)) | (@as(u16, g5) << color_quantize_bits) | @as(u16, b5);
 
             const result = try histogram.getOrPut(key);
             if (result.found_existing) {
@@ -662,14 +657,14 @@ fn generateAdaptivePalette(
         const key = entry.key_ptr.*;
         const count = entry.value_ptr.*;
 
-        const r5 = @as(u8, @intCast((key >> (2 * COLOR_QUANTIZE_BITS)) & 0x1F));
-        const g5 = @as(u8, @intCast((key >> COLOR_QUANTIZE_BITS) & 0x1F));
+        const r5 = @as(u8, @intCast((key >> (2 * color_quantize_bits)) & 0x1F));
+        const g5 = @as(u8, @intCast((key >> color_quantize_bits) & 0x1F));
         const b5 = @as(u8, @intCast(key & 0x1F));
 
         // Convert back to 8-bit with proper scaling
-        const r8 = (r5 << (8 - COLOR_QUANTIZE_BITS)) | (r5 >> (2 * COLOR_QUANTIZE_BITS - 8));
-        const g8 = (g5 << (8 - COLOR_QUANTIZE_BITS)) | (g5 >> (2 * COLOR_QUANTIZE_BITS - 8));
-        const b8 = (b5 << (8 - COLOR_QUANTIZE_BITS)) | (b5 >> (2 * COLOR_QUANTIZE_BITS - 8));
+        const r8 = (r5 << (8 - color_quantize_bits)) | (r5 >> (2 * color_quantize_bits - 8));
+        const g8 = (g5 << (8 - color_quantize_bits)) | (g5 >> (2 * color_quantize_bits - 8));
+        const b8 = (b5 << (8 - color_quantize_bits)) | (b5 >> (2 * color_quantize_bits - 8));
 
         try color_list.append(.{
             .r = r8,
@@ -915,7 +910,7 @@ const TerminalDetector = struct {
         // std.posix.tcflush(self.stdin.handle, .I) catch {};
 
         // Alternative: consume any pending input
-        var discard_buf: [RESPONSE_BUFFER_SIZE]u8 = undefined;
+        var discard_buf: [response_buffer_size]u8 = undefined;
         _ = self.stdin.read(&discard_buf) catch 0;
 
         // Send query sequence
@@ -932,7 +927,7 @@ const TerminalDetector = struct {
 
 /// Check sixel support using a specific query
 fn checkSixelSupport(detector: *TerminalDetector, method: enum { param_query, device_attributes, functional_test }) !bool {
-    var response_buf: [RESPONSE_BUFFER_SIZE]u8 = undefined;
+    var response_buf: [response_buffer_size]u8 = undefined;
 
     switch (method) {
         .param_query => {
@@ -977,7 +972,7 @@ fn checkSixelSupport(detector: *TerminalDetector, method: enum { param_query, de
             };
 
             // Copy position to a separate buffer
-            var pos_before_copy: [RESPONSE_BUFFER_SIZE]u8 = undefined;
+            var pos_before_copy: [response_buffer_size]u8 = undefined;
             @memcpy(pos_before_copy[0..pos_before.len], pos_before);
 
             // Send minimal sixel (1x1 transparent pixel)
