@@ -62,6 +62,20 @@ pub const SixelOptions = struct {
     max_width: u32 = 800,
     /// Maximum output height (image will be scaled if larger)
     max_height: u32 = 600,
+    /// Default options for automatic formatting
+    pub const default: SixelOptions = .{
+        .palette_mode = .{ .adaptive = .{ .max_colors = 256 } },
+        .dither_mode = .auto,
+        .max_width = 800,
+        .max_height = 600,
+    };
+    /// Fallback options without dithering
+    pub const fallback: SixelOptions = .{
+        .palette_mode = .{ .adaptive = .{ .max_colors = 256 } },
+        .dither_mode = .none,
+        .max_width = 800,
+        .max_height = 600,
+    };
 };
 
 // ========== Main Entry Point ==========

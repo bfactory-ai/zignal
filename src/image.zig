@@ -77,11 +77,13 @@ pub fn DisplayFormatter(comptime T: type) type {
         const Self = @This();
 
         pub fn format(self: Self, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            const Rgb = @import("color.zig").Rgb;
 
-            // Handle different format cases
+            // Determine if we can fallback to ANSI
+            const can_fallback = self.display_format == .auto;
+
             fmt: switch (self.display_format) {
                 .ansi => {
-                    const Rgb = @import("color.zig").Rgb;
                     for (0..self.image.rows) |r| {
                         for (0..self.image.cols) |c| {
                             const pixel = self.image.at(r, c).*;
@@ -95,51 +97,18 @@ pub fn DisplayFormatter(comptime T: type) type {
                 },
                 .auto => {
                     if (!(sixel.isSixelSupported() catch false)) continue :fmt .ansi;
-                    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-                    defer arena.deinit();
-                    const allocator = arena.allocator();
-
-                    const default_options = sixel.SixelOptions{};
-
-                    // Try to convert to sixel
-                    const sixel_data = sixel.imageToSixel(T, self.image.*, allocator, default_options) catch |err| blk: {
-                        // On OutOfMemory, try with a simpler palette
-                        if (err == error.OutOfMemory) {
-                            const fallback_options = sixel.SixelOptions{
-                                .palette_mode = .fixed_6x7x6,
-                                .dither_mode = default_options.dither_mode,
-                                .max_width = default_options.max_width,
-                                .max_height = default_options.max_height,
-                            };
-                            break :blk sixel.imageToSixel(T, self.image.*, allocator, fallback_options) catch null;
-                        } else {
-                            continue :fmt .ansi;
-                        }
-                    };
-
-                    if (sixel_data) |data| {
-                        try writer.writeAll(data);
-                    } else {
-                        continue :fmt .ansi;
-                    }
+                    continue :fmt .{ .sixel = .default };
                 },
                 .sixel => |options| {
-                    // Force sixel with specific options
-                    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+                    var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
                     defer arena.deinit();
                     const allocator = arena.allocator();
 
                     // Try to convert to sixel
                     const sixel_data = sixel.imageToSixel(T, self.image.*, allocator, options) catch |err| blk: {
-                        // On OutOfMemory, try with a simpler palette
+                        // On OutOfMemory, try without dithering
                         if (err == error.OutOfMemory) {
-                            const fallback_options = sixel.SixelOptions{
-                                .palette_mode = .fixed_6x7x6,
-                                .dither_mode = options.dither_mode,
-                                .max_width = options.max_width,
-                                .max_height = options.max_height,
-                            };
-                            break :blk sixel.imageToSixel(T, self.image.*, allocator, fallback_options) catch null;
+                            break :blk sixel.imageToSixel(T, self.image.*, allocator, .fallback) catch null;
                         } else {
                             break :blk null;
                         }
@@ -147,12 +116,15 @@ pub fn DisplayFormatter(comptime T: type) type {
 
                     if (sixel_data) |data| {
                         try writer.writeAll(data);
-                        return;
+                    } else if (can_fallback) {
+                        continue :fmt .ansi;
+                    } else {
+                        // Output minimal sixel sequence to indicate failure
+                        // This ensures we always output valid sixel when explicitly requested
+                        try writer.writeAll("\x1bPq\x1b\\");
                     }
                 },
             }
-
-            // Fallback to ANSI
         }
     };
 }
@@ -377,56 +349,8 @@ pub fn Image(comptime T: type) type {
         /// Formats the image using the best available terminal format.
         /// Automatically tries sixel with sensible defaults, falling back to ANSI blocks if needed.
         /// For explicit control over output format, use the display() method instead.
-        pub fn format(self: Self, writer: anytype) !void {
-
-            // Try sixel if supported
-            if (sixel.isSixelSupported() catch false) {
-                var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-                defer arena.deinit();
-                const allocator = arena.allocator();
-
-                // Default options for automatic formatting
-                const default_options = sixel.SixelOptions{
-                    .palette_mode = .{ .adaptive = .{ .max_colors = 256 } },
-                    .dither_mode = .auto,
-                    .max_width = 800,
-                    .max_height = 600,
-                };
-
-                // Try with adaptive palette first
-                const sixel_data = sixel.imageToSixel(T, self, allocator, default_options) catch |err| blk: {
-                    // On OutOfMemory, try with a simpler fixed palette
-                    if (err == error.OutOfMemory) {
-                        const fallback_options = sixel.SixelOptions{
-                            .palette_mode = .fixed_6x7x6,
-                            .dither_mode = .auto,
-                            .max_width = default_options.max_width,
-                            .max_height = default_options.max_height,
-                        };
-                        break :blk sixel.imageToSixel(T, self, allocator, fallback_options) catch null;
-                    } else {
-                        break :blk null;
-                    }
-                };
-
-                if (sixel_data) |data| {
-                    try writer.writeAll(data);
-                    return;
-                }
-            }
-
-            // Fallback to ANSI blocks
-            const Rgb = @import("color.zig").Rgb;
-            for (0..self.rows) |r| {
-                for (0..self.cols) |c| {
-                    const pixel = self.at(r, c).*;
-                    const rgb = color.convertColor(Rgb, pixel);
-                    try writer.print("\x1b[48;2;{d};{d};{d}m \x1b[0m", .{ rgb.r, rgb.g, rgb.b });
-                }
-                if (r < self.rows - 1) {
-                    try writer.print("\n", .{});
-                }
-            }
+        pub fn format(self: Self, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            try self.display(.auto).format(writer);
         }
 
         /// Returns the optional value at row, col in the image.
