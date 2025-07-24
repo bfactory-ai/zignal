@@ -35,12 +35,21 @@ const DisplayFormatter = @import("display.zig").DisplayFormatter;
 /// | Catmull-Rom | ★★★★☆   | ★★★☆☆ | Natural images      | No        |
 /// | Lanczos3    | ★★★★★   | ★★☆☆☆ | High-quality resize | Yes       |
 /// | Mitchell    | ★★★★☆   | ★★☆☆☆ | Balanced quality    | Yes       |
-pub const InterpolationMethod = enum {
+pub const InterpolationMethod = union(enum) {
     nearest_neighbor,
     bilinear,
     bicubic,
     catmull_rom,
     lanczos,
+    mitchell: struct {
+        /// Blur parameter (controls blur vs sharpness)
+        /// Common values: 1/3 (Mitchell), 1 (B-spline), 0 (Catmull-Rom-like)
+        b: f32,
+        /// Ringing parameter (controls ringing vs blur)
+        /// Common values: 1/3 (Mitchell), 0 (B-spline), 0.5 (Catmull-Rom)
+        c: f32,
+        pub const default: @This() = .{ .b = 1 / 3, .c = 1 / 3 };
+    },
 };
 
 /// A simple image struct that encapsulates the size and the data.
@@ -325,6 +334,7 @@ pub fn Image(comptime T: type) type {
                 .bicubic => self.interpolateBicubic(x, y),
                 .catmull_rom => self.interpolateCatmullRom(x, y),
                 .lanczos => self.interpolateLanczos(x, y),
+                .mitchell => |params| self.interpolateMitchell(x, y, params.b, params.c),
             };
         }
 
@@ -590,6 +600,89 @@ pub fn Image(comptime T: type) type {
                     }
                 },
                 else => @compileError("Image(" ++ @typeName(T) ++ ").interpolateLanczos: unsupported image type"),
+            }
+
+            return result;
+        }
+
+        /// Mitchell-Netravali kernel function.
+        /// A parameterized cubic filter where B controls blur and C controls ringing.
+        /// Common values: B=1/3, C=1/3 (Mitchell), B=1, C=0 (B-spline), B=0, C=0.5 (Catmull-Rom)
+        fn mitchellKernel(x: f32, b: f32, c: f32) f32 {
+            const abs_x = @abs(x);
+
+            if (abs_x < 1.0) {
+                // For |x| < 1
+                const x2 = abs_x * abs_x;
+                const x3 = x2 * abs_x;
+                return ((12.0 - 9.0 * b - 6.0 * c) * x3 +
+                    (-18.0 + 12.0 * b + 6.0 * c) * x2 +
+                    (6.0 - 2.0 * b)) / 6.0;
+            } else if (abs_x < 2.0) {
+                // For 1 <= |x| < 2
+                const x2 = abs_x * abs_x;
+                const x3 = x2 * abs_x;
+                return ((-b - 6.0 * c) * x3 +
+                    (6.0 * b + 30.0 * c) * x2 +
+                    (-12.0 * b - 48.0 * c) * abs_x +
+                    (8.0 * b + 24.0 * c)) / 6.0;
+            }
+
+            return 0.0;
+        }
+
+        /// Performs Mitchell-Netravali interpolation at position x, y.
+        /// Uses a 4x4 pixel neighborhood with parameterized cubic filter.
+        /// B controls blur (0 = sharp, 1 = blurry), C controls ringing (0 = smooth, 1 = ringy).
+        /// Returns `null` if there aren't enough pixels for interpolation.
+        fn interpolateMitchell(self: Self, x: f32, y: f32, b: f32, c: f32) ?T {
+            const ix: isize = @intFromFloat(@floor(x));
+            const iy: isize = @intFromFloat(@floor(y));
+
+            // Check bounds - need 4x4 neighborhood
+            if (ix < 1 or iy < 1 or ix >= self.cols - 2 or iy >= self.rows - 2) {
+                return null;
+            }
+
+            const fx = x - as(f32, ix);
+            const fy = y - as(f32, iy);
+
+            var result: T = std.mem.zeroes(T);
+
+            switch (@typeInfo(T)) {
+                .int, .float => {
+                    var sum: f32 = 0.0;
+                    for (0..4) |j| {
+                        const y_idx = iy - 1 + @as(isize, @intCast(j));
+                        const wy = mitchellKernel(as(f32, @as(isize, @intCast(j)) - 1) - fy, b, c);
+
+                        for (0..4) |i| {
+                            const x_idx = ix - 1 + @as(isize, @intCast(i));
+                            const wx = mitchellKernel(as(f32, @as(isize, @intCast(i)) - 1) - fx, b, c);
+
+                            sum += wx * wy * as(f32, self.at(@intCast(y_idx), @intCast(x_idx)).*);
+                        }
+                    }
+                    result = as(T, sum);
+                },
+                .@"struct" => {
+                    inline for (std.meta.fields(T)) |f| {
+                        var sum: f32 = 0.0;
+                        for (0..4) |j| {
+                            const y_idx = iy - 1 + @as(isize, @intCast(j));
+                            const wy = mitchellKernel(as(f32, @as(isize, @intCast(j)) - 1) - fy, b, c);
+
+                            for (0..4) |i| {
+                                const x_idx = ix - 1 + @as(isize, @intCast(i));
+                                const wx = mitchellKernel(as(f32, @as(isize, @intCast(i)) - 1) - fx, b, c);
+
+                                sum += wx * wy * as(f32, @field(self.at(@intCast(y_idx), @intCast(x_idx)).*, f.name));
+                            }
+                        }
+                        @field(result, f.name) = as(f.type, sum);
+                    }
+                },
+                else => @compileError("Image(" ++ @typeName(T) ++ ").interpolateMitchell: unsupported image type"),
             }
 
             return result;
