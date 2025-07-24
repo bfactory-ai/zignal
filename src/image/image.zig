@@ -429,7 +429,10 @@ pub fn Image(comptime T: type) type {
                             sum += wx * wy * as(f32, self.at(@intCast(y_idx), @intCast(x_idx)).*);
                         }
                     }
-                    result = as(T, sum);
+                    result = if (@typeInfo(T) == .int)
+                        @intFromFloat(@max(std.math.minInt(T), @min(std.math.maxInt(T), @round(sum))))
+                    else
+                        as(T, sum);
                 },
                 .@"struct" => {
                     inline for (std.meta.fields(T)) |f| {
@@ -445,7 +448,11 @@ pub fn Image(comptime T: type) type {
                                 sum += wx * wy * as(f32, @field(self.at(@intCast(y_idx), @intCast(x_idx)).*, f.name));
                             }
                         }
-                        @field(result, f.name) = as(f.type, sum);
+                        @field(result, f.name) = switch (@typeInfo(f.type)) {
+                            .int => @intFromFloat(@max(std.math.minInt(f.type), @min(std.math.maxInt(f.type), @round(sum)))),
+                            .float => as(f.type, sum),
+                            else => @compileError("Unsupported field type for interpolation"),
+                        };
                     }
                 },
                 else => @compileError("Image(" ++ @typeName(T) ++ ").interpolateBicubic: unsupported image type"),
@@ -498,7 +505,10 @@ pub fn Image(comptime T: type) type {
                             sum += wx * wy * as(f32, self.at(@intCast(y_idx), @intCast(x_idx)).*);
                         }
                     }
-                    result = as(T, sum);
+                    result = if (@typeInfo(T) == .int)
+                        @intFromFloat(@max(std.math.minInt(T), @min(std.math.maxInt(T), @round(sum))))
+                    else
+                        as(T, sum);
                 },
                 .@"struct" => {
                     inline for (std.meta.fields(T)) |f| {
@@ -514,7 +524,11 @@ pub fn Image(comptime T: type) type {
                                 sum += wx * wy * as(f32, @field(self.at(@intCast(y_idx), @intCast(x_idx)).*, f.name));
                             }
                         }
-                        @field(result, f.name) = as(f.type, sum);
+                        @field(result, f.name) = switch (@typeInfo(f.type)) {
+                            .int => @intFromFloat(@max(std.math.minInt(f.type), @min(std.math.maxInt(f.type), @round(sum)))),
+                            .float => as(f.type, sum),
+                            else => @compileError("Unsupported field type for interpolation"),
+                        };
                     }
                 },
                 else => @compileError("Image(" ++ @typeName(T) ++ ").interpolateCatmullRom: unsupported image type"),
@@ -574,7 +588,11 @@ pub fn Image(comptime T: type) type {
                             weight_sum += w;
                         }
                     }
-                    result = as(T, if (weight_sum != 0.0) sum / weight_sum else sum);
+                    const final_value = if (weight_sum != 0.0) sum / weight_sum else sum;
+                    result = if (@typeInfo(T) == .int)
+                        @intFromFloat(@max(std.math.minInt(T), @min(std.math.maxInt(T), @round(final_value))))
+                    else
+                        as(T, final_value);
                 },
                 .@"struct" => {
                     inline for (std.meta.fields(T)) |f| {
@@ -596,7 +614,12 @@ pub fn Image(comptime T: type) type {
                                 weight_sum += w;
                             }
                         }
-                        @field(result, f.name) = as(f.type, if (weight_sum != 0.0) sum / weight_sum else sum);
+                        const final_value = if (weight_sum != 0.0) sum / weight_sum else sum;
+                        @field(result, f.name) = switch (@typeInfo(f.type)) {
+                            .int => @intFromFloat(@max(std.math.minInt(f.type), @min(std.math.maxInt(f.type), @round(final_value)))),
+                            .float => as(f.type, final_value),
+                            else => @compileError("Unsupported field type for interpolation"),
+                        };
                     }
                 },
                 else => @compileError("Image(" ++ @typeName(T) ++ ").interpolateLanczos: unsupported image type"),
@@ -663,7 +686,10 @@ pub fn Image(comptime T: type) type {
                             sum += wx * wy * as(f32, self.at(@intCast(y_idx), @intCast(x_idx)).*);
                         }
                     }
-                    result = as(T, sum);
+                    result = if (@typeInfo(T) == .int)
+                        @intFromFloat(@max(std.math.minInt(T), @min(std.math.maxInt(T), @round(sum))))
+                    else
+                        as(T, sum);
                 },
                 .@"struct" => {
                     inline for (std.meta.fields(T)) |f| {
@@ -679,7 +705,11 @@ pub fn Image(comptime T: type) type {
                                 sum += wx * wy * as(f32, @field(self.at(@intCast(y_idx), @intCast(x_idx)).*, f.name));
                             }
                         }
-                        @field(result, f.name) = as(f.type, sum);
+                        @field(result, f.name) = switch (@typeInfo(f.type)) {
+                            .int => @intFromFloat(@max(std.math.minInt(f.type), @min(std.math.maxInt(f.type), @round(sum)))),
+                            .float => as(f.type, sum),
+                            else => @compileError("Unsupported field type for interpolation"),
+                        };
                     }
                 },
                 else => @compileError("Image(" ++ @typeName(T) ++ ").interpolateMitchell: unsupported image type"),
@@ -689,7 +719,7 @@ pub fn Image(comptime T: type) type {
         }
 
         /// Resizes an image to fit in out, using bilinear interpolation.
-        pub fn resize(self: Self, out: Self) void {
+        pub fn resize(self: Self, out: Self, method: InterpolationMethod) void {
             const x_scale: f32 = as(f32, self.cols - 1) / as(f32, @max(out.cols - 1, 1));
             const y_scale: f32 = as(f32, self.rows - 1) / as(f32, @max(out.rows - 1, 1));
             var sy: f32 = -y_scale;
@@ -698,7 +728,7 @@ pub fn Image(comptime T: type) type {
                 var sx: f32 = -x_scale;
                 for (0..out.cols) |c| {
                     sx += x_scale;
-                    out.at(r, c).* = if (self.interpolate(sx, sy, .bilinear)) |val| val else std.mem.zeroes(T);
+                    out.at(r, c).* = if (self.interpolate(sx, sy, method)) |val| val else std.mem.zeroes(T);
                 }
             }
         }
