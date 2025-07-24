@@ -26,9 +26,21 @@ const DisplayFormat = @import("display.zig").DisplayFormat;
 const DisplayFormatter = @import("display.zig").DisplayFormatter;
 
 /// Interpolation methods for image operations like resize and rotate.
+///
+/// | Method      | Quality | Speed | Best Use Case       | Overshoot |
+/// |-------------|---------|-------|---------------------|-----------|
+/// | Nearest     | ★☆☆☆☆   | ★★★★★ | Pixel art, masks    | No        |
+/// | Bilinear    | ★★☆☆☆   | ★★★★☆ | Real-time, preview  | No        |
+/// | Bicubic     | ★★★☆☆   | ★★★☆☆ | General purpose     | Yes       |
+/// | Catmull-Rom | ★★★★☆   | ★★★☆☆ | Natural images      | No        |
+/// | Lanczos3    | ★★★★★   | ★★☆☆☆ | High-quality resize | Yes       |
+/// | Mitchell    | ★★★★☆   | ★★☆☆☆ | Balanced quality    | Yes       |
 pub const InterpolationMethod = enum {
-    nearest,
+    nearest_neighbor,
     bilinear,
+    bicubic,
+    catmull_rom,
+    lanczos,
 };
 
 /// A simple image struct that encapsulates the size and the data.
@@ -308,14 +320,17 @@ pub fn Image(comptime T: type) type {
         /// Returns `null` if the coordinates are outside valid bounds for the chosen method.
         pub fn interpolate(self: Self, x: f32, y: f32, method: InterpolationMethod) ?T {
             return switch (method) {
-                .nearest => self.interpolateNearest(x, y),
+                .nearest_neighbor => self.interpolateNearestNeighbor(x, y),
                 .bilinear => self.interpolateBilinear(x, y),
+                .bicubic => self.interpolateBicubic(x, y),
+                .catmull_rom => self.interpolateCatmullRom(x, y),
+                .lanczos => self.interpolateLanczos(x, y),
             };
         }
 
         /// Performs nearest neighbor interpolation at position x, y.
         /// Returns `null` if the coordinates are outside the image bounds.
-        fn interpolateNearest(self: Self, x: f32, y: f32) ?T {
+        fn interpolateNearestNeighbor(self: Self, x: f32, y: f32) ?T {
             const col: isize = @intFromFloat(@round(x));
             const row: isize = @intFromFloat(@round(y));
             return if (self.atOrNull(row, col)) |pixel| pixel.* else null;
@@ -359,6 +374,225 @@ pub fn Image(comptime T: type) type {
                 else => @compileError("Image(" ++ @typeName(T) ++ ").interpolateBilinear: unsupported image type"),
             }
             return temp;
+        }
+
+        /// Cubic convolution kernel for bicubic interpolation.
+        /// Uses the standard bicubic kernel with a = -0.5.
+        fn cubicKernel(x: f32) f32 {
+            const abs_x = @abs(x);
+            if (abs_x <= 1.0) {
+                return 1.5 * abs_x * abs_x * abs_x - 2.5 * abs_x * abs_x + 1.0;
+            } else if (abs_x < 2.0) {
+                return -0.5 * abs_x * abs_x * abs_x + 2.5 * abs_x * abs_x - 4.0 * abs_x + 2.0;
+            }
+            return 0.0;
+        }
+
+        /// Performs bicubic interpolation at position x, y.
+        /// Uses a 4x4 pixel neighborhood with cubic convolution.
+        /// Returns `null` if there aren't enough pixels for interpolation.
+        fn interpolateBicubic(self: Self, x: f32, y: f32) ?T {
+            const ix: isize = @intFromFloat(@floor(x));
+            const iy: isize = @intFromFloat(@floor(y));
+
+            // Check bounds - need 4x4 neighborhood
+            if (ix < 1 or iy < 1 or ix >= self.cols - 2 or iy >= self.rows - 2) {
+                return null;
+            }
+
+            const fx = x - as(f32, ix);
+            const fy = y - as(f32, iy);
+
+            var result: T = std.mem.zeroes(T);
+
+            switch (@typeInfo(T)) {
+                .int, .float => {
+                    var sum: f32 = 0.0;
+                    for (0..4) |j| {
+                        const y_idx = iy - 1 + @as(isize, @intCast(j));
+                        const wy = cubicKernel(as(f32, @as(isize, @intCast(j)) - 1) - fy);
+
+                        for (0..4) |i| {
+                            const x_idx = ix - 1 + @as(isize, @intCast(i));
+                            const wx = cubicKernel(as(f32, @as(isize, @intCast(i)) - 1) - fx);
+
+                            sum += wx * wy * as(f32, self.at(@intCast(y_idx), @intCast(x_idx)).*);
+                        }
+                    }
+                    result = as(T, sum);
+                },
+                .@"struct" => {
+                    inline for (std.meta.fields(T)) |f| {
+                        var sum: f32 = 0.0;
+                        for (0..4) |j| {
+                            const y_idx = iy - 1 + @as(isize, @intCast(j));
+                            const wy = cubicKernel(as(f32, @as(isize, @intCast(j)) - 1) - fy);
+
+                            for (0..4) |i| {
+                                const x_idx = ix - 1 + @as(isize, @intCast(i));
+                                const wx = cubicKernel(as(f32, @as(isize, @intCast(i)) - 1) - fx);
+
+                                sum += wx * wy * as(f32, @field(self.at(@intCast(y_idx), @intCast(x_idx)).*, f.name));
+                            }
+                        }
+                        @field(result, f.name) = as(f.type, sum);
+                    }
+                },
+                else => @compileError("Image(" ++ @typeName(T) ++ ").interpolateBicubic: unsupported image type"),
+            }
+
+            return result;
+        }
+
+        /// Catmull-Rom spline kernel.
+        /// Provides interpolation without overshoot.
+        fn catmullRomKernel(x: f32) f32 {
+            const abs_x = @abs(x);
+            if (abs_x <= 1.0) {
+                return 1.0 - (2.5 - 1.5 * abs_x) * abs_x * abs_x;
+            } else if (abs_x < 2.0) {
+                return 2.0 - (4.0 - (2.5 - 0.5 * abs_x) * abs_x) * abs_x;
+            }
+            return 0.0;
+        }
+
+        /// Performs Catmull-Rom interpolation at position x, y.
+        /// Uses a 4x4 pixel neighborhood with Catmull-Rom splines.
+        /// This method avoids overshoot, keeping values within the original range.
+        /// Returns `null` if there aren't enough pixels for interpolation.
+        fn interpolateCatmullRom(self: Self, x: f32, y: f32) ?T {
+            const ix: isize = @intFromFloat(@floor(x));
+            const iy: isize = @intFromFloat(@floor(y));
+
+            // Check bounds - need 4x4 neighborhood
+            if (ix < 1 or iy < 1 or ix >= self.cols - 2 or iy >= self.rows - 2) {
+                return null;
+            }
+
+            const fx = x - as(f32, ix);
+            const fy = y - as(f32, iy);
+
+            var result: T = std.mem.zeroes(T);
+
+            switch (@typeInfo(T)) {
+                .int, .float => {
+                    var sum: f32 = 0.0;
+                    for (0..4) |j| {
+                        const y_idx = iy - 1 + @as(isize, @intCast(j));
+                        const wy = catmullRomKernel(as(f32, @as(isize, @intCast(j)) - 1) - fy);
+
+                        for (0..4) |i| {
+                            const x_idx = ix - 1 + @as(isize, @intCast(i));
+                            const wx = catmullRomKernel(as(f32, @as(isize, @intCast(i)) - 1) - fx);
+
+                            sum += wx * wy * as(f32, self.at(@intCast(y_idx), @intCast(x_idx)).*);
+                        }
+                    }
+                    result = as(T, sum);
+                },
+                .@"struct" => {
+                    inline for (std.meta.fields(T)) |f| {
+                        var sum: f32 = 0.0;
+                        for (0..4) |j| {
+                            const y_idx = iy - 1 + @as(isize, @intCast(j));
+                            const wy = catmullRomKernel(as(f32, @as(isize, @intCast(j)) - 1) - fy);
+
+                            for (0..4) |i| {
+                                const x_idx = ix - 1 + @as(isize, @intCast(i));
+                                const wx = catmullRomKernel(as(f32, @as(isize, @intCast(i)) - 1) - fx);
+
+                                sum += wx * wy * as(f32, @field(self.at(@intCast(y_idx), @intCast(x_idx)).*, f.name));
+                            }
+                        }
+                        @field(result, f.name) = as(f.type, sum);
+                    }
+                },
+                else => @compileError("Image(" ++ @typeName(T) ++ ").interpolateCatmullRom: unsupported image type"),
+            }
+
+            return result;
+        }
+
+        /// Lanczos kernel function.
+        /// Uses Lanczos3 (3-lobe) which is the most common variant.
+        fn lanczosKernel(x: f32, a: f32) f32 {
+            if (x == 0.0) return 1.0;
+            const abs_x = @abs(x);
+            if (abs_x >= a) return 0.0;
+
+            const pi_x = std.math.pi * x;
+            const pi_x_over_a = pi_x / a;
+            return (a * @sin(pi_x) * @sin(pi_x_over_a)) / (pi_x * pi_x);
+        }
+
+        /// Performs Lanczos interpolation at position x, y.
+        /// Uses Lanczos3 resampling with a 6x6 pixel neighborhood.
+        /// Provides high-quality results, especially for downscaling.
+        /// Returns `null` if there aren't enough pixels for interpolation.
+        fn interpolateLanczos(self: Self, x: f32, y: f32) ?T {
+            const ix: isize = @intFromFloat(@floor(x));
+            const iy: isize = @intFromFloat(@floor(y));
+            const a: f32 = 3.0; // Lanczos3
+
+            // Check bounds - need 6x6 neighborhood for Lanczos3
+            if (ix < 2 or iy < 2 or ix >= self.cols - 3 or iy >= self.rows - 3) {
+                return null;
+            }
+
+            const fx = x - as(f32, ix);
+            const fy = y - as(f32, iy);
+
+            var result: T = std.mem.zeroes(T);
+
+            switch (@typeInfo(T)) {
+                .int, .float => {
+                    var sum: f32 = 0.0;
+                    var weight_sum: f32 = 0.0;
+
+                    for (0..6) |j| {
+                        const y_idx = iy - 2 + @as(isize, @intCast(j));
+                        const dy = as(f32, @as(isize, @intCast(j)) - 2) - fy;
+                        const wy = lanczosKernel(dy, a);
+
+                        for (0..6) |i| {
+                            const x_idx = ix - 2 + @as(isize, @intCast(i));
+                            const dx = as(f32, @as(isize, @intCast(i)) - 2) - fx;
+                            const wx = lanczosKernel(dx, a);
+                            const w = wx * wy;
+
+                            sum += w * as(f32, self.at(@intCast(y_idx), @intCast(x_idx)).*);
+                            weight_sum += w;
+                        }
+                    }
+                    result = as(T, if (weight_sum != 0.0) sum / weight_sum else sum);
+                },
+                .@"struct" => {
+                    inline for (std.meta.fields(T)) |f| {
+                        var sum: f32 = 0.0;
+                        var weight_sum: f32 = 0.0;
+
+                        for (0..6) |j| {
+                            const y_idx = iy - 2 + @as(isize, @intCast(j));
+                            const dy = as(f32, @as(isize, @intCast(j)) - 2) - fy;
+                            const wy = lanczosKernel(dy, a);
+
+                            for (0..6) |i| {
+                                const x_idx = ix - 2 + @as(isize, @intCast(i));
+                                const dx = as(f32, @as(isize, @intCast(i)) - 2) - fx;
+                                const wx = lanczosKernel(dx, a);
+                                const w = wx * wy;
+
+                                sum += w * as(f32, @field(self.at(@intCast(y_idx), @intCast(x_idx)).*, f.name));
+                                weight_sum += w;
+                            }
+                        }
+                        @field(result, f.name) = as(f.type, if (weight_sum != 0.0) sum / weight_sum else sum);
+                    }
+                },
+                else => @compileError("Image(" ++ @typeName(T) ++ ").interpolateLanczos: unsupported image type"),
+            }
+
+            return result;
         }
 
         /// Resizes an image to fit in out, using bilinear interpolation.
