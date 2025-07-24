@@ -10,7 +10,7 @@ test "integral image scalar" {
     defer image.deinit(std.testing.allocator);
     for (image.data) |*i| i.* = 1;
     var integral: Image(f32) = undefined;
-    try image.integralImage(std.testing.allocator, &integral);
+    try image.integral(std.testing.allocator, &integral);
     defer integral.deinit(std.testing.allocator);
     try expectEqual(image.rows, integral.rows);
     try expectEqual(image.cols, integral.cols);
@@ -29,7 +29,7 @@ test "integral image view scalar" {
     for (image.data) |*i| i.* = 1;
     const view = image.view(.{ .l = 2, .t = 3, .r = 8, .b = 10 });
     var integral: Image(f32) = undefined;
-    try view.integralImage(std.testing.allocator, &integral);
+    try view.integral(std.testing.allocator, &integral);
     defer integral.deinit(std.testing.allocator);
     try expectEqual(view.rows, integral.rows);
     try expectEqual(view.cols, integral.cols);
@@ -46,7 +46,7 @@ test "integral image struct" {
     defer image.deinit(std.testing.allocator);
     for (image.data) |*i| i.* = .{ .r = 1, .g = 1, .b = 1, .a = 1 };
     var integral: Image([4]f32) = undefined;
-    try image.integralImage(std.testing.allocator, &integral);
+    try image.integral(std.testing.allocator, &integral);
 
     defer integral.deinit(std.testing.allocator);
     try expectEqual(image.rows, integral.rows);
@@ -88,13 +88,13 @@ test "integral image RGB vs RGBA with full alpha produces same RGB values" {
         }
     }
 
-    // Apply integralImage to both
+    // Apply integral to both
     var rgb_integral: Image([3]f32) = undefined;
-    try rgb_img.integralImage(std.testing.allocator, &rgb_integral);
+    try rgb_img.integral(std.testing.allocator, &rgb_integral);
     defer rgb_integral.deinit(std.testing.allocator);
 
     var rgba_integral: Image([4]f32) = undefined;
-    try rgba_img.integralImage(std.testing.allocator, &rgba_integral);
+    try rgba_img.integral(std.testing.allocator, &rgba_integral);
     defer rgba_integral.deinit(std.testing.allocator);
 
     // Compare RGB channels - they should be identical

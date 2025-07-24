@@ -54,6 +54,15 @@ pub fn Image(comptime T: type) type {
             return .{ .rows = rows, .cols = cols, .data = data, .stride = cols };
         }
 
+        /// Sets the image rows and cols to zero and frees the memory from the image.  It should
+        /// only be called if the image owns the memory.
+        pub fn deinit(self: *Self, allocator: Allocator) void {
+            self.rows = 0;
+            self.cols = 0;
+            self.stride = 0;
+            allocator.free(self.data);
+        }
+
         /// Constructs an image of rows and cols size allocating its own memory.
         pub fn initAlloc(allocator: std.mem.Allocator, rows: usize, cols: usize) !Image(T) {
             return .{ .rows = rows, .cols = cols, .data = try allocator.alloc(T, rows * cols), .stride = cols };
@@ -69,6 +78,14 @@ pub fn Image(comptime T: type) type {
                 .data = @as([*]T, @ptrCast(@alignCast(bytes.ptr)))[0 .. bytes.len / @sizeOf(T)],
                 .stride = cols,
             };
+        }
+
+        /// Returns the image data reinterpreted as a slice of bytes.
+        /// Note: The image should not be a view; this is enforced by an assertion.
+        pub fn asBytes(self: Self) []u8 {
+            assert(self.rows * self.cols == self.data.len);
+            assert(!self.isView());
+            return @as([*]u8, @ptrCast(@alignCast(self.data.ptr)))[0 .. self.data.len * @sizeOf(T)];
         }
 
         /// Loads an image from a file with automatic format detection.
@@ -97,21 +114,9 @@ pub fn Image(comptime T: type) type {
             try png.save(T, allocator, self, file_path);
         }
 
-        /// Returns the image data reinterpreted as a slice of bytes.
-        /// Note: The image should not be a view; this is enforced by an assertion.
-        pub fn asBytes(self: Self) []u8 {
-            assert(self.rows * self.cols == self.data.len);
-            assert(!self.isView());
-            return @as([*]u8, @ptrCast(@alignCast(self.data.ptr)))[0 .. self.data.len * @sizeOf(T)];
-        }
-
-        /// Sets the image rows and cols to zero and frees the memory from the image.  It should
-        /// only be called if the image owns the memory.
-        pub fn deinit(self: *Self, allocator: Allocator) void {
-            self.rows = 0;
-            self.cols = 0;
-            self.stride = 0;
-            allocator.free(self.data);
+        /// Returns the total number of pixels in the image (rows * cols).
+        pub inline fn size(self: Self) usize {
+            return self.rows * self.cols;
         }
 
         /// Returns the number of channels or depth of this image type.
@@ -128,11 +133,6 @@ pub fn Image(comptime T: type) type {
         /// It does not compare pixel data or types.
         pub fn hasSameShape(self: Self, other: anytype) bool {
             return self.rows == other.rows and self.cols == other.cols;
-        }
-
-        /// Returns the total number of pixels in the image (rows * cols).
-        pub inline fn size(self: Self) usize {
-            return self.rows * self.cols;
         }
 
         /// Returns the bounding rectangle for the current image.
@@ -234,6 +234,17 @@ pub fn Image(comptime T: type) type {
             return &self.data[row * self.stride + col];
         }
 
+        /// Returns the optional value at row, col in the image.
+        pub fn atOrNull(self: Self, row: isize, col: isize) ?*T {
+            const irows: isize = @intCast(self.rows);
+            const icols: isize = @intCast(self.cols);
+            if (row < 0 or col < 0 or row >= irows or col >= icols) {
+                return null;
+            } else {
+                return self.at(@intCast(row), @intCast(col));
+            }
+        }
+
         /// Creates a formatter for terminal display with custom options.
         /// Provides fine-grained control over output format, palette modes, and dithering.
         /// Will still gracefully degrade from sixel to ANSI if needed.
@@ -267,17 +278,6 @@ pub fn Image(comptime T: type) type {
         /// For explicit control over output format, use the display() method instead.
         pub fn format(self: Self, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             try self.display(.auto).format(writer);
-        }
-
-        /// Returns the optional value at row, col in the image.
-        pub fn atOrNull(self: Self, row: isize, col: isize) ?*T {
-            const irows: isize = @intCast(self.rows);
-            const icols: isize = @intCast(self.cols);
-            if (row < 0 or col < 0 or row >= irows or col >= icols) {
-                return null;
-            } else {
-                return self.at(@intCast(row), @intCast(col));
-            }
         }
 
         /// Flips an image from left to right (mirror effect).
@@ -596,17 +596,17 @@ pub fn Image(comptime T: type) type {
             }
         }
 
-        /// Computes the integral image (also known as a summed-area table) of `self`.
+        /// Computes the integral image, also known as a summed-area table (SAT), of `self`.
         /// For multi-channel images (e.g., structs like `Rgba`), it computes a per-channel
         /// integral image, storing the result as an array of floats per pixel in the output `integral` image.
         /// Uses SIMD optimizations for improved performance with a two-pass approach.
-        pub fn integralImage(
+        pub fn integral(
             self: Self,
             allocator: Allocator,
-            integral: *Image(if (isScalar(T)) f32 else [Self.channels()]f32),
+            sat: *Image(if (isScalar(T)) f32 else [Self.channels()]f32),
         ) !void {
-            if (!self.hasSameShape(integral.*)) {
-                integral.* = try .initAlloc(allocator, self.rows, self.cols);
+            if (!self.hasSameShape(sat.*)) {
+                sat.* = try .initAlloc(allocator, self.rows, self.cols);
             }
             switch (@typeInfo(T)) {
                 .int, .float => {
@@ -614,30 +614,30 @@ pub fn Image(comptime T: type) type {
                     for (0..self.rows) |r| {
                         var tmp: f32 = 0;
                         const row_offset = r * self.stride;
-                        const out_offset = r * integral.cols;
+                        const out_offset = r * sat.cols;
                         for (0..self.cols) |c| {
                             tmp += as(f32, self.data[row_offset + c]);
-                            integral.data[out_offset + c] = tmp;
+                            sat.data[out_offset + c] = tmp;
                         }
                     }
 
                     // Second pass: add column-wise cumulative sums using SIMD
                     const simd_len = std.simd.suggestVectorLength(f32) orelse 1;
                     for (1..self.rows) |r| {
-                        const prev_row_offset = (r - 1) * integral.cols;
-                        const curr_row_offset = r * integral.cols;
+                        const prev_row_offset = (r - 1) * sat.cols;
+                        const curr_row_offset = r * sat.cols;
                         var c: usize = 0;
 
                         // Process SIMD-width chunks
                         while (c + simd_len <= self.cols) : (c += simd_len) {
-                            const prev_vals: @Vector(simd_len, f32) = integral.data[prev_row_offset + c ..][0..simd_len].*;
-                            const curr_vals: @Vector(simd_len, f32) = integral.data[curr_row_offset + c ..][0..simd_len].*;
-                            integral.data[curr_row_offset + c ..][0..simd_len].* = prev_vals + curr_vals;
+                            const prev_vals: @Vector(simd_len, f32) = sat.data[prev_row_offset + c ..][0..simd_len].*;
+                            const curr_vals: @Vector(simd_len, f32) = sat.data[curr_row_offset + c ..][0..simd_len].*;
+                            sat.data[curr_row_offset + c ..][0..simd_len].* = prev_vals + curr_vals;
                         }
 
                         // Handle remaining columns
                         while (c < self.cols) : (c += 1) {
-                            integral.data[curr_row_offset + c] += integral.data[prev_row_offset + c];
+                            sat.data[curr_row_offset + c] += sat.data[prev_row_offset + c];
                         }
                     }
                 },
@@ -648,7 +648,7 @@ pub fn Image(comptime T: type) type {
                         for (0..self.rows) |r| {
                             var tmp: @Vector(4, f32) = @splat(0);
                             const row_offset = r * self.stride;
-                            const out_offset = r * integral.cols;
+                            const out_offset = r * sat.cols;
 
                             for (0..self.cols) |c| {
                                 const pixel = self.data[row_offset + c];
@@ -657,19 +657,19 @@ pub fn Image(comptime T: type) type {
                                     pixel_vec[i] = @floatFromInt(@field(pixel, field.name));
                                 }
                                 tmp += pixel_vec;
-                                integral.data[out_offset + c] = tmp;
+                                sat.data[out_offset + c] = tmp;
                             }
                         }
 
                         // Second pass: column-wise cumulative sums
                         for (1..self.rows) |r| {
-                            const prev_row_offset = (r - 1) * integral.cols;
-                            const curr_row_offset = r * integral.cols;
+                            const prev_row_offset = (r - 1) * sat.cols;
+                            const curr_row_offset = r * sat.cols;
 
                             for (0..self.cols) |c| {
-                                const prev_vec: @Vector(4, f32) = integral.data[prev_row_offset + c];
-                                const curr_vec: @Vector(4, f32) = integral.data[curr_row_offset + c];
-                                integral.data[curr_row_offset + c] = prev_vec + curr_vec;
+                                const prev_vec: @Vector(4, f32) = sat.data[prev_row_offset + c];
+                                const curr_vec: @Vector(4, f32) = sat.data[curr_row_offset + c];
+                                sat.data[curr_row_offset + c] = prev_vec + curr_vec;
                             }
                         }
                     } else {
@@ -680,22 +680,22 @@ pub fn Image(comptime T: type) type {
                         for (0..self.rows) |r| {
                             var tmp = [_]f32{0} ** num_channels;
                             const row_offset = r * self.stride;
-                            const out_offset = r * integral.cols;
+                            const out_offset = r * sat.cols;
                             for (0..self.cols) |c| {
                                 inline for (std.meta.fields(T), 0..) |f, i| {
                                     tmp[i] += as(f32, @field(self.data[row_offset + c], f.name));
-                                    integral.data[out_offset + c][i] = tmp[i];
+                                    sat.data[out_offset + c][i] = tmp[i];
                                 }
                             }
                         }
 
                         // Second pass: add column-wise cumulative sums
                         for (1..self.rows) |r| {
-                            const prev_row_offset = (r - 1) * integral.cols;
-                            const curr_row_offset = r * integral.cols;
+                            const prev_row_offset = (r - 1) * sat.cols;
+                            const curr_row_offset = r * sat.cols;
                             for (0..self.cols) |c| {
                                 inline for (0..num_channels) |i| {
-                                    integral.data[curr_row_offset + c][i] += integral.data[prev_row_offset + c][i];
+                                    sat.data[curr_row_offset + c][i] += sat.data[prev_row_offset + c][i];
                                 }
                             }
                         }
@@ -719,9 +719,9 @@ pub fn Image(comptime T: type) type {
 
             switch (@typeInfo(T)) {
                 .int, .float => {
-                    var integral: Image(f32) = undefined;
-                    try self.integralImage(allocator, &integral);
-                    defer integral.deinit(allocator);
+                    var sat: Image(f32) = undefined;
+                    try self.integral(allocator, &sat);
+                    defer sat.deinit(allocator);
 
                     const simd_len = std.simd.suggestVectorLength(f32) orelse 1;
 
@@ -742,8 +742,8 @@ pub fn Image(comptime T: type) type {
                                 const c1 = c -| radius;
                                 const c2 = @min(c + radius, self.cols - 1);
                                 const area: f32 = @floatFromInt((r2 - r1) * (c2 - c1));
-                                const sum = integral.at(r2, c2).* - integral.at(r2, c1).* -
-                                    integral.at(r1, c2).* + integral.at(r1, c1).*;
+                                const sum = sat.at(r2, c2).* - sat.at(r2, c1).* -
+                                    sat.at(r1, c2).* + sat.at(r1, c1).*;
                                 blurred.at(r, c).* = if (@typeInfo(T) == .int)
                                     @intFromFloat(@max(std.math.minInt(T), @min(std.math.maxInt(T), @round(sum / area))))
                                 else
@@ -759,10 +759,10 @@ pub fn Image(comptime T: type) type {
                                 while (c <= safe_end) : (c += simd_len) {
                                     const c1 = c - radius;
                                     const c2 = c + radius;
-                                    const int11: @Vector(simd_len, f32) = integral.data[r1_offset + c1 ..][0..simd_len].*;
-                                    const int12: @Vector(simd_len, f32) = integral.data[r1_offset + c2 ..][0..simd_len].*;
-                                    const int21: @Vector(simd_len, f32) = integral.data[r2_offset + c1 ..][0..simd_len].*;
-                                    const int22: @Vector(simd_len, f32) = integral.data[r2_offset + c2 ..][0..simd_len].*;
+                                    const int11: @Vector(simd_len, f32) = sat.data[r1_offset + c1 ..][0..simd_len].*;
+                                    const int12: @Vector(simd_len, f32) = sat.data[r1_offset + c2 ..][0..simd_len].*;
+                                    const int21: @Vector(simd_len, f32) = sat.data[r2_offset + c1 ..][0..simd_len].*;
+                                    const int22: @Vector(simd_len, f32) = sat.data[r2_offset + c2 ..][0..simd_len].*;
                                     const sums = int22 - int21 - int12 + int11;
                                     const vals = sums / area_vec;
 
@@ -781,7 +781,7 @@ pub fn Image(comptime T: type) type {
                             const c1 = c -| radius;
                             const c2 = @min(c + radius, self.cols - 1);
                             const area: f32 = @floatFromInt((r2 - r1) * (c2 - c1));
-                            const sum = integral.at(r2, c2).* - integral.at(r2, c1).* - integral.at(r1, c2).* + integral.at(r1, c1).*;
+                            const sum = sat.at(r2, c2).* - sat.at(r2, c1).* - sat.at(r1, c2).* + sat.at(r1, c1).*;
                             blurred.at(r, c).* = if (@typeInfo(T) == .int)
                                 @intFromFloat(@max(std.math.minInt(T), @min(std.math.maxInt(T), @round(sum / area))))
                             else
@@ -794,9 +794,9 @@ pub fn Image(comptime T: type) type {
                         try self.boxBlur4xu8Simd(allocator, blurred, radius);
                     } else {
                         // Generic struct path for other color types
-                        var integral: Image([Self.channels()]f32) = undefined;
-                        try self.integralImage(allocator, &integral);
-                        defer integral.deinit(allocator);
+                        var sat: Image([Self.channels()]f32) = undefined;
+                        try self.integral(allocator, &sat);
+                        defer sat.deinit(allocator);
 
                         for (0..self.rows) |r| {
                             for (0..self.cols) |c| {
@@ -807,8 +807,8 @@ pub fn Image(comptime T: type) type {
                                 const area: f32 = @floatFromInt((r2 - r1) * (c2 - c1));
 
                                 inline for (std.meta.fields(T), 0..) |f, i| {
-                                    const sum = integral.at(r2, c2)[i] - integral.at(r2, c1)[i] -
-                                        integral.at(r1, c2)[i] + integral.at(r1, c1)[i];
+                                    const sum = sat.at(r2, c2)[i] - sat.at(r2, c1)[i] -
+                                        sat.at(r1, c2)[i] + sat.at(r1, c1)[i];
                                     @field(blurred.at(r, c).*, f.name) = switch (@typeInfo(f.type)) {
                                         .int => @intFromFloat(@max(std.math.minInt(f.type), @min(std.math.maxInt(f.type), @round(sum / area)))),
                                         .float => as(f.type, sum / area),
@@ -845,14 +845,14 @@ pub fn Image(comptime T: type) type {
             }
 
             // Create integral image with 4 channels
-            var integral = try Image([4]f32).initAlloc(allocator, self.rows, self.cols);
-            defer integral.deinit(allocator);
+            var sat = try Image([4]f32).initAlloc(allocator, self.rows, self.cols);
+            defer sat.deinit(allocator);
 
             // Build integral image - first pass: row-wise cumulative sums
             for (0..self.rows) |r| {
                 var tmp: @Vector(4, f32) = @splat(0);
                 const row_offset = r * self.stride;
-                const out_offset = r * integral.cols;
+                const out_offset = r * sat.cols;
 
                 for (0..self.cols) |c| {
                     const pixel = self.data[row_offset + c];
@@ -861,19 +861,19 @@ pub fn Image(comptime T: type) type {
                         pixel_vec[i] = @floatFromInt(@field(pixel, field.name));
                     }
                     tmp += pixel_vec;
-                    integral.data[out_offset + c] = tmp;
+                    sat.data[out_offset + c] = tmp;
                 }
             }
 
             // Second pass: column-wise cumulative sums
             for (1..self.rows) |r| {
-                const prev_row_offset = (r - 1) * integral.cols;
-                const curr_row_offset = r * integral.cols;
+                const prev_row_offset = (r - 1) * sat.cols;
+                const curr_row_offset = r * sat.cols;
 
                 for (0..self.cols) |c| {
-                    const prev_vec: @Vector(4, f32) = integral.data[prev_row_offset + c];
-                    const curr_vec: @Vector(4, f32) = integral.data[curr_row_offset + c];
-                    integral.data[curr_row_offset + c] = prev_vec + curr_vec;
+                    const prev_vec: @Vector(4, f32) = sat.data[prev_row_offset + c];
+                    const curr_vec: @Vector(4, f32) = sat.data[curr_row_offset + c];
+                    sat.data[curr_row_offset + c] = prev_vec + curr_vec;
                 }
             }
 
@@ -888,10 +888,10 @@ pub fn Image(comptime T: type) type {
                     const area_vec: @Vector(4, f32) = @splat(area);
 
                     // Use vectors for the box sum calculation
-                    const v_r2c2: @Vector(4, f32) = integral.at(r2, c2).*;
-                    const v_r2c1: @Vector(4, f32) = integral.at(r2, c1).*;
-                    const v_r1c2: @Vector(4, f32) = integral.at(r1, c2).*;
-                    const v_r1c1: @Vector(4, f32) = integral.at(r1, c1).*;
+                    const v_r2c2: @Vector(4, f32) = sat.at(r2, c2).*;
+                    const v_r2c1: @Vector(4, f32) = sat.at(r2, c1).*;
+                    const v_r1c2: @Vector(4, f32) = sat.at(r1, c2).*;
+                    const v_r1c1: @Vector(4, f32) = sat.at(r1, c1).*;
 
                     const sum_vec = v_r2c2 - v_r2c1 - v_r1c2 + v_r1c1;
                     const avg_vec = sum_vec / area_vec;
@@ -928,14 +928,14 @@ pub fn Image(comptime T: type) type {
             }
 
             // Create integral image with 4 channels
-            var integral = try Image([4]f32).initAlloc(allocator, self.rows, self.cols);
-            defer integral.deinit(allocator);
+            var sat = try Image([4]f32).initAlloc(allocator, self.rows, self.cols);
+            defer sat.deinit(allocator);
 
             // Build integral image - first pass: row-wise cumulative sums
             for (0..self.rows) |r| {
                 var tmp: @Vector(4, f32) = @splat(0);
                 const row_offset = r * self.stride;
-                const out_offset = r * integral.cols;
+                const out_offset = r * sat.cols;
 
                 for (0..self.cols) |c| {
                     const pixel = self.data[row_offset + c];
@@ -944,19 +944,19 @@ pub fn Image(comptime T: type) type {
                         pixel_vec[i] = @floatFromInt(@field(pixel, field.name));
                     }
                     tmp += pixel_vec;
-                    integral.data[out_offset + c] = tmp;
+                    sat.data[out_offset + c] = tmp;
                 }
             }
 
             // Second pass: column-wise cumulative sums
             for (1..self.rows) |r| {
-                const prev_row_offset = (r - 1) * integral.cols;
-                const curr_row_offset = r * integral.cols;
+                const prev_row_offset = (r - 1) * sat.cols;
+                const curr_row_offset = r * sat.cols;
 
                 for (0..self.cols) |c| {
-                    const prev_vec: @Vector(4, f32) = integral.data[prev_row_offset + c];
-                    const curr_vec: @Vector(4, f32) = integral.data[curr_row_offset + c];
-                    integral.data[curr_row_offset + c] = prev_vec + curr_vec;
+                    const prev_vec: @Vector(4, f32) = sat.data[prev_row_offset + c];
+                    const curr_vec: @Vector(4, f32) = sat.data[curr_row_offset + c];
+                    sat.data[curr_row_offset + c] = prev_vec + curr_vec;
                 }
             }
 
@@ -971,10 +971,10 @@ pub fn Image(comptime T: type) type {
                     const area_vec: @Vector(4, f32) = @splat(area);
 
                     // Use vectors for the box sum calculation (blur)
-                    const v_r2c2: @Vector(4, f32) = integral.at(r2, c2).*;
-                    const v_r2c1: @Vector(4, f32) = integral.at(r2, c1).*;
-                    const v_r1c2: @Vector(4, f32) = integral.at(r1, c2).*;
-                    const v_r1c1: @Vector(4, f32) = integral.at(r1, c1).*;
+                    const v_r2c2: @Vector(4, f32) = sat.at(r2, c2).*;
+                    const v_r2c1: @Vector(4, f32) = sat.at(r2, c1).*;
+                    const v_r1c2: @Vector(4, f32) = sat.at(r1, c2).*;
+                    const v_r1c1: @Vector(4, f32) = sat.at(r1, c1).*;
 
                     const sum_vec = v_r2c2 - v_r2c1 - v_r1c2 + v_r1c1;
                     const blurred_vec = sum_vec / area_vec;
@@ -1015,9 +1015,9 @@ pub fn Image(comptime T: type) type {
 
             switch (@typeInfo(T)) {
                 .int, .float => {
-                    var integral: Image(f32) = undefined;
-                    defer integral.deinit(allocator);
-                    try self.integralImage(allocator, &integral);
+                    var sat: Image(f32) = undefined;
+                    defer sat.deinit(allocator);
+                    try self.integral(allocator, &sat);
 
                     const simd_len = std.simd.suggestVectorLength(f32) orelse 1;
 
@@ -1038,8 +1038,8 @@ pub fn Image(comptime T: type) type {
                                 const c1 = c -| radius;
                                 const c2 = @min(c + radius, self.cols - 1);
                                 const area: f32 = @floatFromInt((r2 - r1) * (c2 - c1));
-                                const sum = integral.at(r2, c2).* - integral.at(r2, c1).* -
-                                    integral.at(r1, c2).* + integral.at(r1, c1).*;
+                                const sum = sat.at(r2, c2).* - sat.at(r2, c1).* -
+                                    sat.at(r1, c2).* + sat.at(r1, c1).*;
                                 const blurred = sum / area;
                                 sharpened.at(r, c).* = if (@typeInfo(T) == .int)
                                     @intFromFloat(@max(std.math.minInt(T), @min(std.math.maxInt(T), @round(2 * as(f32, self.at(r, c).*) - blurred))))
@@ -1056,10 +1056,10 @@ pub fn Image(comptime T: type) type {
                                 while (c <= safe_end) : (c += simd_len) {
                                     const c1 = c - radius;
                                     const c2 = c + radius;
-                                    const int11: @Vector(simd_len, f32) = integral.data[r1_offset + c1 ..][0..simd_len].*;
-                                    const int12: @Vector(simd_len, f32) = integral.data[r1_offset + c2 ..][0..simd_len].*;
-                                    const int21: @Vector(simd_len, f32) = integral.data[r2_offset + c1 ..][0..simd_len].*;
-                                    const int22: @Vector(simd_len, f32) = integral.data[r2_offset + c2 ..][0..simd_len].*;
+                                    const int11: @Vector(simd_len, f32) = sat.data[r1_offset + c1 ..][0..simd_len].*;
+                                    const int12: @Vector(simd_len, f32) = sat.data[r1_offset + c2 ..][0..simd_len].*;
+                                    const int21: @Vector(simd_len, f32) = sat.data[r2_offset + c1 ..][0..simd_len].*;
+                                    const int22: @Vector(simd_len, f32) = sat.data[r2_offset + c2 ..][0..simd_len].*;
                                     const sums = int22 - int21 - int12 + int11;
                                     const blurred_vals = sums / area_vec;
 
@@ -1079,8 +1079,8 @@ pub fn Image(comptime T: type) type {
                             const c1 = c -| radius;
                             const c2 = @min(c + radius, self.cols - 1);
                             const area: f32 = @floatFromInt((r2 - r1) * (c2 - c1));
-                            const sum = integral.at(r2, c2).* - integral.at(r2, c1).* -
-                                integral.at(r1, c2).* + integral.at(r1, c1).*;
+                            const sum = sat.at(r2, c2).* - sat.at(r2, c1).* -
+                                sat.at(r1, c2).* + sat.at(r1, c1).*;
                             const blurred = sum / area;
                             sharpened.at(r, c).* = if (@typeInfo(T) == .int)
                                 @intFromFloat(@max(std.math.minInt(T), @min(std.math.maxInt(T), @round(2 * as(f32, self.at(r, c).*) - blurred))))
@@ -1094,9 +1094,9 @@ pub fn Image(comptime T: type) type {
                         try self.sharpen4xu8Simd(allocator, sharpened, radius);
                     } else {
                         // Generic struct path for other color types
-                        var integral: Image([Self.channels()]f32) = undefined;
-                        try self.integralImage(allocator, &integral);
-                        defer integral.deinit(allocator);
+                        var sat: Image([Self.channels()]f32) = undefined;
+                        try self.integral(allocator, &sat);
+                        defer sat.deinit(allocator);
 
                         for (0..self.rows) |r| {
                             for (0..self.cols) |c| {
@@ -1107,8 +1107,8 @@ pub fn Image(comptime T: type) type {
                                 const area: f32 = @floatFromInt((r2 - r1) * (c2 - c1));
 
                                 inline for (std.meta.fields(T), 0..) |f, i| {
-                                    const sum = integral.at(r2, c2)[i] - integral.at(r2, c1)[i] -
-                                        integral.at(r1, c2)[i] + integral.at(r1, c1)[i];
+                                    const sum = sat.at(r2, c2)[i] - sat.at(r2, c1)[i] -
+                                        sat.at(r1, c2)[i] + sat.at(r1, c1)[i];
                                     const blurred = sum / area;
                                     const original = @field(self.at(r, c).*, f.name);
                                     @field(sharpened.at(r, c).*, f.name) = switch (@typeInfo(f.type)) {
