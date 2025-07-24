@@ -67,6 +67,9 @@ pub fn loadImage(comptime T: type, allocator: Allocator, file_path: []const u8) 
 pub const ImageFormat = @import("image.zig").ImageFormat;
 pub const DisplayFormat = @import("image.zig").DisplayFormat;
 
+// Terminal support utilities
+pub const TerminalSupport = @import("TerminalSupport.zig");
+
 // Sixel graphics support
 const sixel = @import("sixel.zig");
 pub const imageToSixel = sixel.imageToSixel;
