@@ -194,8 +194,13 @@ pub fn DisplayFormatter(comptime T: type) type {
                     }
                 },
                 .auto => {
-                    if (!(sixel.isSixelSupported() catch false)) continue :fmt .ansi_blocks;
-                    continue :fmt .{ .sixel = .default };
+                    if (kitty.isKittySupported()) {
+                        continue :fmt .{ .kitty = .default };
+                    } else if (sixel.isSixelSupported()) {
+                        continue :fmt .{ .sixel = .default };
+                    } else {
+                        continue :fmt .ansi_blocks;
+                    }
                 },
                 .sixel => |options| {
                     var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);

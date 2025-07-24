@@ -851,7 +851,7 @@ fn generateAdaptivePalette(
 }
 
 /// Checks if the terminal supports sixel graphics
-pub fn isSixelSupported() !bool {
+pub fn isSixelSupported() bool {
     // Check if we're connected to a terminal
     if (!TerminalSupport.isStdoutTty()) {
         // Not a TTY, allow sixel for file output
@@ -859,7 +859,7 @@ pub fn isSixelSupported() !bool {
     }
 
     // We're in a terminal, so perform actual detection
-    var terminal = try TerminalSupport.init();
+    var terminal = TerminalSupport.init() catch return false;
     defer terminal.deinit();
 
     return terminal.detectSixelSupport() catch false;

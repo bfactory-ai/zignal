@@ -132,7 +132,7 @@ pub fn imageToKitty(
 }
 
 /// Detects if the terminal supports Kitty graphics protocol
-pub fn isKittySupported() !bool {
+pub fn isKittySupported() bool {
     // Check if we're connected to a terminal
     if (!TerminalSupport.isStdoutTty()) {
         // Not a TTY, don't support Kitty for file output
@@ -141,45 +141,15 @@ pub fn isKittySupported() !bool {
 
     // Try terminal detection first
     var terminal = TerminalSupport.init() catch {
-        // If we can't initialize terminal support, fall back to env vars
-        return isKittySupportedByEnv();
+        return false;
     };
     defer terminal.deinit();
 
     if (terminal.detectKittySupport() catch false) {
         return true;
-    }
-
-    // Fall back to environment variable detection
-    return isKittySupportedByEnv();
-}
-
-/// Check Kitty support using environment variables (fallback method)
-fn isKittySupportedByEnv() bool {
-    // Check if we're in a known Kitty-compatible terminal
-    if (builtin.os.tag == .windows) {
-        // Kitty protocol is rarely supported on Windows terminals
+    } else {
         return false;
     }
-
-    // Check TERM environment variable
-    const term = std.process.getEnvVarOwned(std.heap.page_allocator, "TERM") catch {
-        return false;
-    };
-    defer std.heap.page_allocator.free(term);
-
-    // Check for known Kitty-compatible terminals
-    if (std.mem.indexOf(u8, term, "kitty") != null) {
-        return true;
-    }
-
-    // Check KITTY_WINDOW_ID environment variable (specific to Kitty)
-    const kitty_id = std.process.getEnvVarOwned(std.heap.page_allocator, "KITTY_WINDOW_ID") catch {
-        return false;
-    };
-    defer std.heap.page_allocator.free(kitty_id);
-
-    return true; // Has KITTY_WINDOW_ID
 }
 
 // Tests

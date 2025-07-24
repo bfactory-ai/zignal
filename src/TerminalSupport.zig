@@ -136,10 +136,10 @@ pub fn isStdoutTty() bool {
 /// Detect if the terminal supports sixel graphics protocol
 pub fn detectSixelSupport(self: *TerminalSupport) !bool {
     // Try DECRQSS - Request Status String (no visible output)
-    if (try self.checkSixelSupport(.param_query)) return true;
+    if (self.checkSixelSupport(.param_query)) return true;
 
     // Try Device Attributes (no visible output)
-    if (try self.checkSixelSupport(.device_attributes)) return true;
+    if (self.checkSixelSupport(.device_attributes)) return true;
 
     return false;
 }
@@ -257,7 +257,7 @@ fn query(self: *TerminalSupport, sequence: []const u8, buffer: []u8, timeout_ms:
 }
 
 /// Check sixel support using a specific query method
-fn checkSixelSupport(self: *TerminalSupport, method: enum { param_query, device_attributes }) !bool {
+fn checkSixelSupport(self: *TerminalSupport, method: enum { param_query, device_attributes }) bool {
     var response_buf: [response_buffer_size]u8 = undefined;
 
     switch (method) {
