@@ -25,6 +25,12 @@ const ImageFormat = @import("format.zig").ImageFormat;
 const DisplayFormat = @import("display.zig").DisplayFormat;
 const DisplayFormatter = @import("display.zig").DisplayFormatter;
 
+/// Interpolation methods for image operations like resize and rotate.
+pub const InterpolationMethod = enum {
+    nearest,
+    bilinear,
+};
+
 /// A simple image struct that encapsulates the size and the data.
 pub fn Image(comptime T: type) type {
     return struct {
@@ -298,9 +304,26 @@ pub fn Image(comptime T: type) type {
             }
         }
 
+        /// Performs interpolation at position x, y using the specified method.
+        /// Returns `null` if the coordinates are outside valid bounds for the chosen method.
+        pub fn interpolate(self: Self, x: f32, y: f32, method: InterpolationMethod) ?T {
+            return switch (method) {
+                .nearest => self.interpolateNearest(x, y),
+                .bilinear => self.interpolateBilinear(x, y),
+            };
+        }
+
+        /// Performs nearest neighbor interpolation at position x, y.
+        /// Returns `null` if the coordinates are outside the image bounds.
+        fn interpolateNearest(self: Self, x: f32, y: f32) ?T {
+            const col: isize = @intFromFloat(@round(x));
+            const row: isize = @intFromFloat(@round(y));
+            return if (self.atOrNull(row, col)) |pixel| pixel.* else null;
+        }
+
         /// Performs bilinear interpolation at position x, y.
         /// Returns `null` if the coordinates `(x, y)` are too close to the image border for valid interpolation.
-        pub fn interpolateBilinear(self: Self, x: f32, y: f32) ?T {
+        fn interpolateBilinear(self: Self, x: f32, y: f32) ?T {
             const left: isize = @intFromFloat(@floor(x));
             const top: isize = @intFromFloat(@floor(y));
             const right = left + 1;
@@ -348,7 +371,7 @@ pub fn Image(comptime T: type) type {
                 var sx: f32 = -x_scale;
                 for (0..out.cols) |c| {
                     sx += x_scale;
-                    out.at(r, c).* = if (self.interpolateBilinear(sx, sy)) |val| val else std.mem.zeroes(T);
+                    out.at(r, c).* = if (self.interpolate(sx, sy, .bilinear)) |val| val else std.mem.zeroes(T);
                 }
             }
         }
@@ -501,7 +524,7 @@ pub fn Image(comptime T: type) type {
                     const src_x = rotated_dx + center.x();
                     const src_y = rotated_dy + center.y();
 
-                    rotated.at(r, c).* = if (self.interpolateBilinear(src_x, src_y)) |val| val else std.mem.zeroes(T);
+                    rotated.at(r, c).* = if (self.interpolate(src_x, src_y, .bilinear)) |val| val else std.mem.zeroes(T);
                 }
             }
         }
