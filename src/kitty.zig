@@ -18,7 +18,6 @@ const TerminalSupport = @import("TerminalSupport.zig");
 
 // Kitty protocol constants
 const max_chunk_size: usize = 4096; // Maximum payload size per escape sequence
-const kitty_response_timeout_ms = 100; // Timeout for terminal response detection
 
 /// Options for Kitty graphics protocol encoding
 pub const KittyOptions = struct {
@@ -30,6 +29,8 @@ pub const KittyOptions = struct {
     placement_id: ?u32 = null,
     /// Delete image after display
     delete_after: bool = false,
+    /// Enable chunking for increased reliability (Ghostty doesn't support it)
+    enable_chunking: bool = false,
 
     /// Default options for automatic formatting
     pub const default: KittyOptions = .{
@@ -37,6 +38,7 @@ pub const KittyOptions = struct {
         .image_id = null,
         .placement_id = null,
         .delete_after = false,
+        .enable_chunking = false,
     };
 };
 
@@ -66,16 +68,46 @@ pub fn imageToKitty(
     var output = std.ArrayList(u8).init(allocator);
     errdefer output.deinit();
 
-    // Calculate how many chunks we need
-    const num_chunks = (base64_data.len + max_chunk_size - 1) / max_chunk_size;
+    // If chunking is disabled, send everything in one go
+    if (!options.enable_chunking) {
+        // Write escape sequence start
+        try output.appendSlice("\x1b_G");
 
-    // Process each chunk
+        // Write control data
+        try output.appendSlice("a=T");
+        try output.appendSlice(",f=100");
+        try output.writer().print(",q={d}", .{options.quiet});
+
+        // Optional parameters
+        if (options.image_id) |id| {
+            try output.writer().print(",i={d}", .{id});
+        }
+        if (options.placement_id) |id| {
+            try output.writer().print(",p={d}", .{id});
+        }
+        if (options.delete_after) {
+            try output.appendSlice(",d=1");
+        }
+
+        // Separator and payload
+        try output.appendSlice(";");
+        try output.appendSlice(base64_data);
+        try output.appendSlice("\x1b\\");
+
+        return output.toOwnedSlice();
+    }
+
+    // Process each chunk (original chunking logic)
     var offset: usize = 0;
     var chunk_index: usize = 0;
     while (offset < base64_data.len) : (chunk_index += 1) {
-        const chunk_end = @min(offset + max_chunk_size, base64_data.len);
+        const is_last = offset + max_chunk_size >= base64_data.len;
+        const chunk_end = if (is_last)
+            base64_data.len
+        else
+            // Non-final chunks must be multiples of 4
+            offset + (max_chunk_size & ~@as(usize, 3));
         const chunk = base64_data[offset..chunk_end];
-        const is_last = chunk_index == num_chunks - 1;
 
         // Write escape sequence start
         try output.appendSlice("\x1b_G");
