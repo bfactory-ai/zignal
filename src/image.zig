@@ -123,7 +123,10 @@ pub fn DisplayFormatter(comptime T: type) type {
                             const rgb_lower = color.convertColor(Rgb, lower_pixel);
 
                             // Use upper half block (▀) with foreground=upper, background=lower
-                            try writer.print("\x1b[38;2;{d};{d};{d};48;2;{d};{d};{d}m▀\x1b[0m", .{ rgb_upper.r, rgb_upper.g, rgb_upper.b, rgb_lower.r, rgb_lower.g, rgb_lower.b });
+                            try writer.print("\x1b[38;2;{d};{d};{d};48;2;{d};{d};{d}m▀\x1b[0m", .{
+                                rgb_upper.r, rgb_upper.g, rgb_upper.b,
+                                rgb_lower.r, rgb_lower.g, rgb_lower.b,
+                            });
                         }
                         if (pair_idx < row_pairs - 1) {
                             try writer.print("\n", .{});
