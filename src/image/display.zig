@@ -7,7 +7,8 @@ const Rgb = @import("../color.zig").Rgb;
 const kitty = @import("../kitty.zig");
 const sixel = @import("../sixel.zig");
 
-// Import Image type - using anytype in function to avoid circular dependency
+// Import Image type directly - Zig's lazy compilation handles circular imports
+const Image = @import("image.zig").Image;
 
 /// Display format options
 pub const DisplayFormat = union(enum) {
@@ -34,42 +35,40 @@ pub const DisplayFormat = union(enum) {
 /// Formatter struct for terminal display with progressive degradation
 pub fn DisplayFormatter(comptime T: type) type {
     return struct {
-        image: *const anyopaque, // Will be cast to *const Image(T) in methods
+        image: *const Image(T),
         display_format: DisplayFormat,
 
         const Self = @This();
 
         pub fn format(self: Self, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            const ImageType = @import("image.zig").Image(T);
-            const image = @as(*const ImageType, @ptrCast(@alignCast(self.image)));
 
             // Determine if we can fallback to ANSI
             const can_fallback = self.display_format == .auto;
 
             fmt: switch (self.display_format) {
                 .ansi_basic => {
-                    for (0..image.rows) |r| {
-                        for (0..image.cols) |c| {
-                            const pixel = image.at(r, c).*;
+                    for (0..self.image.rows) |r| {
+                        for (0..self.image.cols) |c| {
+                            const pixel = self.image.at(r, c).*;
                             const rgb = color.convertColor(Rgb, pixel);
                             try writer.print("\x1b[48;2;{d};{d};{d}m \x1b[0m", .{ rgb.r, rgb.g, rgb.b });
                         }
-                        if (r < image.rows - 1) {
+                        if (r < self.image.rows - 1) {
                             try writer.print("\n", .{});
                         }
                     }
                 },
                 .ansi_blocks => {
                     // Process image in 2-row chunks for half-block characters
-                    const row_pairs = (image.rows + 1) / 2;
+                    const row_pairs = (self.image.rows + 1) / 2;
 
                     for (0..row_pairs) |pair_idx| {
-                        for (0..image.cols) |col| {
+                        for (0..self.image.cols) |col| {
                             const row1 = pair_idx * 2;
-                            const row2 = if (row1 + 1 < image.rows) row1 + 1 else row1;
+                            const row2 = if (row1 + 1 < self.image.rows) row1 + 1 else row1;
 
-                            const upper_pixel = image.at(row1, col).*;
-                            const lower_pixel = image.at(row2, col).*;
+                            const upper_pixel = self.image.at(row1, col).*;
+                            const lower_pixel = self.image.at(row2, col).*;
 
                             const rgb_upper = color.convertColor(Rgb, upper_pixel);
                             const rgb_lower = color.convertColor(Rgb, lower_pixel);
@@ -95,8 +94,8 @@ pub fn DisplayFormatter(comptime T: type) type {
                         .{ 6, 7 }, // dots 7, 8
                     };
                     // Process image in 2x4 blocks for Braille patterns
-                    const block_rows = (image.rows + 3) / 4;
-                    const block_cols = (image.cols + 1) / 2;
+                    const block_rows = (self.image.rows + 3) / 4;
+                    const block_cols = (self.image.cols + 1) / 2;
 
                     for (0..block_rows) |block_row| {
                         for (0..block_cols) |block_col| {
@@ -108,8 +107,8 @@ pub fn DisplayFormatter(comptime T: type) type {
                                     const y = block_row * 4 + dy;
                                     const x = block_col * 2 + dx;
 
-                                    if (y < image.rows and x < image.cols) {
-                                        const pixel = image.at(y, x).*;
+                                    if (y < self.image.rows and x < self.image.cols) {
+                                        const pixel = self.image.at(y, x).*;
 
                                         // Convert to grayscale brightness
                                         const brightness: f32 = switch (@typeInfo(@TypeOf(pixel))) {
@@ -163,10 +162,10 @@ pub fn DisplayFormatter(comptime T: type) type {
                     const allocator = arena.allocator();
 
                     // Try to convert to sixel
-                    const sixel_data = sixel.imageToSixel(T, image.*, allocator, options) catch |err| blk: {
+                    const sixel_data = sixel.imageToSixel(T, self.image.*, allocator, options) catch |err| blk: {
                         // On OutOfMemory, try without dithering
                         if (err == error.OutOfMemory) {
-                            break :blk sixel.imageToSixel(T, image.*, allocator, .fallback) catch null;
+                            break :blk sixel.imageToSixel(T, self.image.*, allocator, .fallback) catch null;
                         } else {
                             break :blk null;
                         }
@@ -188,10 +187,10 @@ pub fn DisplayFormatter(comptime T: type) type {
                     const allocator = arena.allocator();
 
                     // Try to convert to Kitty format
-                    const kitty_data = kitty.imageToKitty(T, image.*, allocator, options) catch |err| blk: {
+                    const kitty_data = kitty.imageToKitty(T, self.image.*, allocator, options) catch |err| blk: {
                         // On error, try with default options
                         if (err == error.OutOfMemory) {
-                            break :blk kitty.imageToKitty(T, image.*, allocator, .default) catch null;
+                            break :blk kitty.imageToKitty(T, self.image.*, allocator, .default) catch null;
                         } else {
                             break :blk null;
                         }

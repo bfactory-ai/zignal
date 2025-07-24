@@ -257,7 +257,7 @@ pub fn Image(comptime T: type) type {
         /// ```
         pub fn display(self: *const Self, display_format: DisplayFormat) DisplayFormatter(T) {
             return DisplayFormatter(T){
-                .image = @ptrCast(self),
+                .image = self,
                 .display_format = display_format,
             };
         }
