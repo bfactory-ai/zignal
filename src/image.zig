@@ -466,12 +466,11 @@ pub fn Image(comptime T: type) type {
         ///
         /// Display modes:
         /// - `.ansi_basic`: Uses background colors with spaces (universally compatible)
-        /// - `.ansi_blocks`: Uses Unicode half-block characters for 2x vertical resolution
-        ///   (requires monospace font with U+2580 support)
-        /// - `.braille`: Uses Braille patterns for 2x4 monochrome resolution
-        ///   (requires Unicode Braille support U+2800-U+28FF, converts to grayscale)
-        /// - `.sixel`: Uses sixel graphics protocol if supported
-        /// - `.auto`: Automatically selects best available format
+        /// - `.ansi_blocks`: Uses Unicode half-block characters for 2x vertical resolution (requires monospace font with U+2580 support)
+        /// - `.braille`: Uses Braille patterns for 2x4 monochrome resolution (requires Unicode Braille support U+2800-U+28FF, converts to grayscale)
+        /// - `.sixel`: Uses the sixel graphics protocol if supported
+        /// - `.kitty`: Uses the kitty graphics protocol if supported
+        /// - `.auto`: Automatically selects best available format: kitty -> sixek -> ansi_blocks
         ///
         /// Example:
         /// ```zig
