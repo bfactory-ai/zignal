@@ -1,0 +1,222 @@
+//! Kitty graphics protocol support for image rendering
+//!
+//! This module provides functionality to convert images to Kitty graphics protocol format,
+//! which is supported by Kitty terminal and other compatible terminal emulators.
+//!
+//! The Kitty graphics protocol allows displaying raster images directly in the terminal
+//! with features like alpha blending, positioning, and scaling.
+
+const std = @import("std");
+const builtin = @import("builtin");
+const Allocator = std.mem.Allocator;
+
+const Image = @import("image.zig").Image;
+const png = @import("png.zig");
+const convertColor = @import("color.zig").convertColor;
+const Rgb = @import("color.zig").Rgb;
+
+// Kitty protocol constants
+const max_chunk_size: usize = 4096; // Maximum payload size per escape sequence
+const kitty_response_timeout_ms = 100; // Timeout for terminal response detection
+
+/// Options for Kitty graphics protocol encoding
+pub const KittyOptions = struct {
+    /// Suppress terminal responses (0=normal, 1=suppress OK, 2=suppress all)
+    quiet: u2 = 1,
+    /// Image placement ID (optional, for referencing the image later)
+    image_id: ?u32 = null,
+    /// Placement ID (optional, for multiple placements of same image)
+    placement_id: ?u32 = null,
+    /// Delete image after display
+    delete_after: bool = false,
+
+    /// Default options for automatic formatting
+    pub const default: KittyOptions = .{
+        .quiet = 1,
+        .image_id = null,
+        .placement_id = null,
+        .delete_after = false,
+    };
+};
+
+/// Converts an image to Kitty graphics protocol format
+pub fn imageToKitty(
+    comptime T: type,
+    image: Image(T),
+    allocator: Allocator,
+    options: KittyOptions,
+) ![]u8 {
+    // First, encode the image as PNG
+    const png_data = try png.encodeImage(T, allocator, image);
+    defer allocator.free(png_data);
+
+    // Calculate base64 encoded size
+    const encoder = std.base64.standard.Encoder;
+    const encoded_size = encoder.calcSize(png_data.len);
+
+    // Allocate buffer for base64 data
+    const base64_data = try allocator.alloc(u8, encoded_size);
+    defer allocator.free(base64_data);
+
+    // Encode to base64
+    _ = encoder.encode(base64_data, png_data);
+
+    // Build the output with proper escape sequences
+    var output = std.ArrayList(u8).init(allocator);
+    errdefer output.deinit();
+
+    // Calculate how many chunks we need
+    const num_chunks = (base64_data.len + max_chunk_size - 1) / max_chunk_size;
+
+    // Process each chunk
+    var offset: usize = 0;
+    var chunk_index: usize = 0;
+    while (offset < base64_data.len) : (chunk_index += 1) {
+        const chunk_end = @min(offset + max_chunk_size, base64_data.len);
+        const chunk = base64_data[offset..chunk_end];
+        const is_last = chunk_index == num_chunks - 1;
+
+        // Write escape sequence start
+        try output.appendSlice("\x1b_G");
+
+        // Write control data for first chunk
+        if (chunk_index == 0) {
+            // Action: transmit and display
+            try output.appendSlice("a=T");
+
+            // Format: PNG
+            try output.appendSlice(",f=100");
+
+            // Quiet mode
+            try output.writer().print(",q={d}", .{options.quiet});
+
+            // Optional image ID
+            if (options.image_id) |id| {
+                try output.writer().print(",i={d}", .{id});
+            }
+
+            // Optional placement ID
+            if (options.placement_id) |id| {
+                try output.writer().print(",p={d}", .{id});
+            }
+
+            // Delete after display
+            if (options.delete_after) {
+                try output.appendSlice(",d=1");
+            }
+        }
+
+        // More data indicator (m=1 for continuation, m=0 or omitted for final)
+        if (!is_last) {
+            if (chunk_index == 0) {
+                try output.appendSlice(",m=1");
+            } else {
+                try output.appendSlice("m=1");
+            }
+        }
+
+        // Separator between control and payload
+        try output.appendSlice(";");
+
+        // Write chunk data
+        try output.appendSlice(chunk);
+
+        // Write escape sequence end
+        try output.appendSlice("\x1b\\");
+
+        offset = chunk_end;
+    }
+
+    return output.toOwnedSlice();
+}
+
+/// Detects if the terminal supports Kitty graphics protocol
+pub fn isKittySupported() !bool {
+    // Check if we're in a known Kitty-compatible terminal
+    if (builtin.os.tag == .windows) {
+        // Kitty protocol is rarely supported on Windows terminals
+        return false;
+    }
+
+    // Check TERM environment variable
+    const term = std.process.getEnvVarOwned(std.heap.page_allocator, "TERM") catch |err| switch (err) {
+        error.EnvironmentVariableNotFound => return false,
+        else => return err,
+    };
+    defer std.heap.page_allocator.free(term);
+
+    // Check for known Kitty-compatible terminals
+    if (std.mem.indexOf(u8, term, "kitty") != null) {
+        return true;
+    }
+
+    // Check KITTY_WINDOW_ID environment variable (specific to Kitty)
+    _ = std.process.getEnvVarOwned(std.heap.page_allocator, "KITTY_WINDOW_ID") catch |err| switch (err) {
+        error.EnvironmentVariableNotFound => {},
+        else => return err,
+    };
+
+    // Could implement actual detection by sending a query sequence,
+    // but that requires terminal I/O which is more complex
+    // For now, we'll be conservative and return false if not clearly Kitty
+    return false;
+}
+
+// Tests
+test "imageToKitty basic functionality" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Create a small test image
+    var img = try Image(Rgb).initAlloc(allocator, 2, 2);
+    defer img.deinit(allocator);
+
+    // Fill with test colors
+    img.at(0, 0).* = Rgb{ .r = 255, .g = 0, .b = 0 };
+    img.at(0, 1).* = Rgb{ .r = 0, .g = 255, .b = 0 };
+    img.at(1, 0).* = Rgb{ .r = 0, .g = 0, .b = 255 };
+    img.at(1, 1).* = Rgb{ .r = 255, .g = 255, .b = 255 };
+
+    // Convert to Kitty format
+    const kitty_data = try imageToKitty(Rgb, img, allocator, .default);
+    defer allocator.free(kitty_data);
+
+    // Basic validation - should start with Kitty escape sequence
+    try testing.expect(std.mem.startsWith(u8, kitty_data, "\x1b_G"));
+
+    // Should end with escape sequence terminator
+    try testing.expect(std.mem.endsWith(u8, kitty_data, "\x1b\\"));
+
+    // Should contain PNG format specifier
+    try testing.expect(std.mem.indexOf(u8, kitty_data, "f=100") != null);
+
+    // Should contain action=transmit
+    try testing.expect(std.mem.indexOf(u8, kitty_data, "a=T") != null);
+}
+
+test "imageToKitty with options" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Create a small test image
+    var img = try Image(u8).initAlloc(allocator, 1, 1);
+    defer img.deinit(allocator);
+    img.at(0, 0).* = 128;
+
+    // Test with custom options
+    const options = KittyOptions{
+        .quiet = 2,
+        .image_id = 42,
+        .placement_id = 7,
+        .delete_after = true,
+    };
+
+    const kitty_data = try imageToKitty(u8, img, allocator, options);
+    defer allocator.free(kitty_data);
+
+    // Check that options are included
+    try testing.expect(std.mem.indexOf(u8, kitty_data, "q=2") != null);
+    try testing.expect(std.mem.indexOf(u8, kitty_data, "i=42") != null);
+    try testing.expect(std.mem.indexOf(u8, kitty_data, "p=7") != null);
+    try testing.expect(std.mem.indexOf(u8, kitty_data, "d=1") != null);
+}

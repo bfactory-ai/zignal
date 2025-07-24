@@ -18,6 +18,7 @@ const jpeg = @import("jpeg.zig");
 const png = @import("png.zig");
 const Rectangle = @import("geometry.zig").Rectangle;
 const sixel = @import("sixel.zig");
+const kitty = @import("kitty.zig");
 
 /// Supported image formats for automatic detection and loading
 pub const ImageFormat = enum {
@@ -75,6 +76,8 @@ pub const DisplayFormat = union(enum) {
     },
     /// Force sixel output with specific options
     sixel: sixel.SixelOptions,
+    /// Kitty graphics protocol with options
+    kitty: kitty.KittyOptions,
 };
 
 /// Formatter struct for terminal display with progressive degradation
@@ -217,6 +220,31 @@ pub fn DisplayFormatter(comptime T: type) type {
                         // Output minimal sixel sequence to indicate failure
                         // This ensures we always output valid sixel when explicitly requested
                         try writer.writeAll("\x1bPq\x1b\\");
+                    }
+                },
+                .kitty => |options| {
+                    var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+                    defer arena.deinit();
+                    const allocator = arena.allocator();
+
+                    // Try to convert to Kitty format
+                    const kitty_data = kitty.imageToKitty(T, self.image.*, allocator, options) catch |err| blk: {
+                        // On error, try with default options
+                        if (err == error.OutOfMemory) {
+                            break :blk kitty.imageToKitty(T, self.image.*, allocator, .default) catch null;
+                        } else {
+                            break :blk null;
+                        }
+                    };
+
+                    if (kitty_data) |data| {
+                        try writer.writeAll(data);
+                    } else if (can_fallback) {
+                        continue :fmt .ansi_blocks;
+                    } else {
+                        // Output minimal Kitty sequence to indicate failure
+                        // Empty image with delete command
+                        try writer.writeAll("\x1b_Ga=d\x1b\\");
                     }
                 },
             }
@@ -444,6 +472,7 @@ pub fn Image(comptime T: type) type {
         /// std.debug.print("{f}", .{img.display(.ansi_blocks)});    // 2x vertical resolution
         /// std.debug.print("{f}", .{img.display(.{ .braille = .{ .threshold = 0.5 } })}); // 2x4 monochrome
         /// std.debug.print("{f}", .{img.display(.{ .sixel = .{ .palette_mode = .adaptive } })});
+        /// std.debug.print("{f}", .{img.display(.{ .kitty = .default })});  // Kitty graphics protocol
         /// ```
         pub fn display(self: *const Self, display_format: DisplayFormat) DisplayFormatter(T) {
             return DisplayFormatter(T){

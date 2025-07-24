@@ -75,6 +75,12 @@ pub const SixelOptions = sixel.SixelOptions;
 pub const PaletteMode = sixel.PaletteMode;
 pub const DitherMode = sixel.DitherMode;
 
+// Kitty graphics protocol
+const kitty = @import("kitty.zig");
+pub const imageToKitty = kitty.imageToKitty;
+pub const isKittySupported = kitty.isKittySupported;
+pub const KittyOptions = kitty.KittyOptions;
+
 const png = @import("png.zig");
 pub const savePng = png.savePng;
 pub const loadPng = png.loadPng;
@@ -92,13 +98,13 @@ pub const perlin = perlin_mod.perlin;
 pub const PerlinOptions = perlin_mod.PerlinOptions;
 
 // New unified Point system with arbitrary dimensions and SIMD acceleration
-const point_module = @import("geometry/Point.zig");
-pub const Point = point_module.Point;
-pub const Point1d = point_module.Point1d;
-pub const Point2d = point_module.Point2d;
-pub const Point3d = point_module.Point3d;
-pub const Point4d = point_module.Point4d;
-pub const makePoint = point_module.makePoint;
+const point = @import("geometry/Point.zig");
+pub const Point = point.Point;
+pub const Point1d = point.Point1d;
+pub const Point2d = point.Point2d;
+pub const Point3d = point.Point3d;
+pub const Point4d = point.Point4d;
+pub const makePoint = point.makePoint;
 
 pub const pointInTriangle = geometry.pointInTriangle;
 pub const findBarycenter = geometry.findBarycenter;
