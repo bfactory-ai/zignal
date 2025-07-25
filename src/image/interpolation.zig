@@ -67,6 +67,18 @@ pub fn interpolate(comptime T: type, self: anytype, x: f32, y: f32, method: Inte
 /// - out: The destination image (must be pre-allocated)
 /// - method: The interpolation method to use
 pub fn resize(comptime T: type, self: anytype, out: anytype, method: InterpolationMethod) void {
+    // Check for scale = 1 (just copy)
+    if (self.rows == out.rows and self.cols == out.cols) {
+        // If dimensions match exactly, just copy the data
+        if (self.data.ptr == out.data.ptr) {
+            // Same buffer, nothing to do
+            return;
+        }
+        // Different buffers, need to copy
+        @memcpy(out.data[0..out.data.len], self.data[0..self.data.len]);
+        return;
+    }
+
     // SIMD optimizations for nearest neighbor
     if (method == .nearest_neighbor) {
         if (is4xu8Struct(T)) {
@@ -76,11 +88,12 @@ pub fn resize(comptime T: type, self: anytype, out: anytype, method: Interpolati
 
     // SIMD optimizations for bilinear
     if (method == .bilinear) {
-        // Check for special case: exact 2x upscaling for RGBA
-        if (out.rows == self.rows * 2 and out.cols == self.cols * 2) {
-            if (is4xu8Struct(T)) {
+        if (is4xu8Struct(T)) {
+            // Check for 2x upscaling special case
+            if (out.rows == self.rows * 2 and out.cols == self.cols * 2) {
                 return resize2xUpscale4xu8(T, self, out);
             }
+            return resizeBilinear4xu8(T, self, out);
         }
     }
 
@@ -608,6 +621,68 @@ fn resizeNearestNeighbor4xu8(comptime T: type, self: anytype, out: anytype) void
             const src_x_f = @as(f32, @floatFromInt(c)) * x_scale;
             const src_x = @min(self.cols - 1, @as(usize, @intFromFloat(@round(src_x_f))));
             out.at(r, c).* = self.at(src_y, src_x).*;
+        }
+    }
+}
+
+/// SIMD-optimized bilinear resize for 4xu8 types (RGBA) - works for all scales
+fn resizeBilinear4xu8(comptime T: type, self: anytype, out: anytype) void {
+    comptime std.debug.assert(is4xu8Struct(T));
+
+    const x_scale = @as(f32, @floatFromInt(self.cols - 1)) / @as(f32, @floatFromInt(out.cols - 1));
+    const y_scale = @as(f32, @floatFromInt(self.rows - 1)) / @as(f32, @floatFromInt(out.rows - 1));
+
+    for (0..out.rows) |r| {
+        const src_y = @as(f32, @floatFromInt(r)) * y_scale;
+        const y0 = @as(usize, @intFromFloat(@floor(src_y)));
+        const y1 = @min(y0 + 1, self.rows - 1);
+        const fy = src_y - @as(f32, @floatFromInt(y0));
+
+        for (0..out.cols) |c| {
+            const src_x = @as(f32, @floatFromInt(c)) * x_scale;
+            const x0 = @as(usize, @intFromFloat(@floor(src_x)));
+            const x1 = @min(x0 + 1, self.cols - 1);
+            const fx = src_x - @as(f32, @floatFromInt(x0));
+
+            // Load the 4 neighboring pixels
+            const tl = self.at(y0, x0).*;
+            const tr = self.at(y0, x1).*;
+            const bl = self.at(y1, x0).*;
+            const br = self.at(y1, x1).*;
+
+            // Convert to f32 vectors - same pattern as boxBlur4xu8Simd
+            var tl_vec: @Vector(4, f32) = undefined;
+            var tr_vec: @Vector(4, f32) = undefined;
+            var bl_vec: @Vector(4, f32) = undefined;
+            var br_vec: @Vector(4, f32) = undefined;
+
+            inline for (std.meta.fields(T), 0..) |field, i| {
+                tl_vec[i] = @floatFromInt(@field(tl, field.name));
+                tr_vec[i] = @floatFromInt(@field(tr, field.name));
+                bl_vec[i] = @floatFromInt(@field(bl, field.name));
+                br_vec[i] = @floatFromInt(@field(br, field.name));
+            }
+
+            // Bilinear interpolation using f32 vectors
+            const fx_vec: @Vector(4, f32) = @splat(fx);
+            const fy_vec: @Vector(4, f32) = @splat(fy);
+            const one_minus_fx_vec: @Vector(4, f32) = @splat(1.0 - fx);
+            const one_minus_fy_vec: @Vector(4, f32) = @splat(1.0 - fy);
+
+            // Horizontal interpolation
+            const top = tl_vec * one_minus_fx_vec + tr_vec * fx_vec;
+            const bottom = bl_vec * one_minus_fx_vec + br_vec * fx_vec;
+
+            // Vertical interpolation
+            const result_vec = top * one_minus_fy_vec + bottom * fy_vec;
+
+            // Convert back to struct with clamping
+            var result: T = undefined;
+            inline for (std.meta.fields(T), 0..) |field, i| {
+                @field(result, field.name) = @intFromFloat(@max(0, @min(255, @round(result_vec[i]))));
+            }
+
+            out.at(r, c).* = result;
         }
     }
 }
