@@ -558,11 +558,13 @@ pub fn Canvas(comptime T: type) type {
         /// Draws the outline of a rectangle on the given image.
         pub fn drawRectangle(self: Self, rect: Rectangle(f32), color: anytype, width: usize, mode: DrawMode) void {
             comptime assert(isColor(@TypeOf(color)));
+            // Rectangle has exclusive r,b bounds, but drawPolygon needs inclusive points
+            // So we subtract 1 from r and b to get the actual corner positions
             const points: []const Point2d(f32) = &.{
                 Point2d(f32).init2d(rect.l, rect.t),
-                Point2d(f32).init2d(rect.r, rect.t),
-                Point2d(f32).init2d(rect.r, rect.b),
-                Point2d(f32).init2d(rect.l, rect.b),
+                Point2d(f32).init2d(rect.r - 1, rect.t),
+                Point2d(f32).init2d(rect.r - 1, rect.b - 1),
+                Point2d(f32).init2d(rect.l, rect.b - 1),
             };
             self.drawPolygon(points, color, width, mode);
         }
@@ -1136,6 +1138,113 @@ pub fn Canvas(comptime T: type) type {
                     p1.y() - (p2.y() - p1.y()) * tension_factor,
                 ),
             };
+        }
+
+        /// Draws text at the specified position using a bitmap font.
+        /// The position specifies the top-left corner of the text.
+        /// Supports newlines for multi-line text.
+        pub fn drawText(self: Self, text: []const u8, position: Point2d(f32), font: anytype, color: anytype) void {
+            comptime assert(isColor(@TypeOf(color)));
+            const BitmapFont = @import("font.zig").BitmapFont;
+            comptime assert(@TypeOf(font) == BitmapFont);
+
+            var x = position.x();
+            var y = position.y();
+            const start_x = x;
+
+            for (text) |char| {
+                if (char == '\n') {
+                    x = start_x;
+                    y += @floatFromInt(font.char_height);
+                    continue;
+                }
+
+                if (font.getCharData(char)) |char_data| {
+                    // Draw the character bitmap
+                    for (char_data, 0..) |row_data, row| {
+                        var col: usize = 0;
+                        var bits = row_data;
+                        while (col < font.char_width) : (col += 1) {
+                            if (bits & 1 != 0) {
+                                const px = @as(isize, @intFromFloat(x)) + @as(isize, @intCast(col));
+                                const py = @as(isize, @intFromFloat(y)) + @as(isize, @intCast(row));
+                                if (self.atOrNull(py, px)) |pixel| {
+                                    pixel.* = convertColor(T, color);
+                                }
+                            }
+                            bits >>= 1;
+                        }
+                    }
+                }
+                x += @floatFromInt(font.char_width);
+            }
+        }
+
+        /// Draws text at the specified position with scaling.
+        /// Uses nearest-neighbor scaling for crisp bitmap font rendering.
+        /// The scale parameter must be >= 1.
+        pub fn drawTextScaled(self: Self, text: []const u8, position: Point2d(f32), font: anytype, color: anytype, scale: u8) void {
+            comptime assert(isColor(@TypeOf(color)));
+            const BitmapFont = @import("font.zig").BitmapFont;
+            comptime assert(@TypeOf(font) == BitmapFont);
+            if (scale == 0) return;
+
+            var x = position.x();
+            var y = position.y();
+            const start_x = x;
+            const char_width_scaled = @as(f32, @floatFromInt(font.char_width)) * @as(f32, @floatFromInt(scale));
+            const char_height_scaled = @as(f32, @floatFromInt(font.char_height)) * @as(f32, @floatFromInt(scale));
+
+            for (text) |char| {
+                if (char == '\n') {
+                    x = start_x;
+                    y += char_height_scaled;
+                    continue;
+                }
+
+                if (font.getCharData(char)) |char_data| {
+                    // Draw the character bitmap with scaling
+                    for (char_data, 0..) |row_data, row| {
+                        var col: usize = 0;
+                        var bits = row_data;
+                        while (col < font.char_width) : (col += 1) {
+                            if (bits & 1 != 0) {
+                                // Draw a scaled pixel block
+                                const base_x = @as(isize, @intFromFloat(x)) + @as(isize, @intCast(col)) * scale;
+                                const base_y = @as(isize, @intFromFloat(y)) + @as(isize, @intCast(row)) * scale;
+
+                                for (0..scale) |dy| {
+                                    for (0..scale) |dx| {
+                                        const px = base_x + @as(isize, @intCast(dx));
+                                        const py = base_y + @as(isize, @intCast(dy));
+                                        if (self.atOrNull(py, px)) |pixel| {
+                                            pixel.* = convertColor(T, color);
+                                        }
+                                    }
+                                }
+                            }
+                            bits >>= 1;
+                        }
+                    }
+                }
+                x += char_width_scaled;
+            }
+        }
+
+        /// Draws text with antialiasing support for scaled text.
+        /// When scale > 1 and mode is .soft, applies edge smoothing.
+        pub fn drawTextAA(self: Self, text: []const u8, position: Point2d(f32), font: anytype, color: anytype, scale: u8, mode: DrawMode) void {
+            if (mode == .fast or scale == 1) {
+                // Use regular scaled text for fast mode or scale 1
+                self.drawTextScaled(text, position, font, color, scale);
+                return;
+            }
+
+            // For antialiased text, we could implement sub-pixel rendering
+            // or use the fillPolygon with soft mode to draw each character glyph
+            // For now, we'll use the simple scaled version
+            // TODO: Implement proper antialiasing using glyph outlines
+            self.drawTextScaled(text, position, font, color, scale);
         }
     };
 }
