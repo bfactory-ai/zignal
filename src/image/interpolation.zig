@@ -689,7 +689,7 @@ fn resizeBilinear4xu8(comptime T: type, self: anytype, out: anytype) void {
 
 /// SIMD-optimized bicubic resize for 4xu8 types (RGBA)
 fn resizeBicubic4xu8(comptime T: type, self: anytype, out: anytype) void {
-    std.debug.assert(is4xu8Struct(T));
+    comptime std.debug.assert(is4xu8Struct(T));
 
     const x_scale = @as(f32, @floatFromInt(self.cols - 1)) / @as(f32, @floatFromInt(out.cols - 1));
     const y_scale = @as(f32, @floatFromInt(self.rows - 1)) / @as(f32, @floatFromInt(out.rows - 1));
@@ -758,34 +758,37 @@ fn resizeBicubic4xu8(comptime T: type, self: anytype, out: anytype) void {
             // Accumulate weighted sum for each channel using SIMD
             var sums = @Vector(4, f32){ 0, 0, 0, 0 }; // RGBA channels
 
-            // Process the 4x4 neighborhood
+            // Process the 4x4 neighborhood more efficiently
             inline for (0..4) |j| {
                 const y_idx = @as(usize, @intCast(iy - 1 + @as(isize, @intCast(j))));
-                const wy = y_weights[j];
+                const wy_vec: @Vector(4, f32) = @splat(y_weights[j]);
+
+                // Process all 4 x positions for this row
+                var row_sum = @Vector(4, f32){ 0, 0, 0, 0 };
 
                 inline for (0..4) |i| {
                     const x_idx = @as(usize, @intCast(ix - 1 + @as(isize, @intCast(i))));
-                    const wx = x_weights[i];
-                    const weight = wx * wy;
-
                     const pixel = self.at(y_idx, x_idx).*;
 
-                    // Convert pixel to vector
+                    // Convert pixel to vector - same pattern as bilinear
                     var pixel_vec: @Vector(4, f32) = undefined;
                     inline for (std.meta.fields(T), 0..) |field, k| {
                         pixel_vec[k] = @floatFromInt(@field(pixel, field.name));
                     }
 
-                    // Accumulate weighted contribution
-                    sums += @as(@Vector(4, f32), @splat(weight)) * pixel_vec;
+                    // Accumulate with x weight
+                    const wx_vec: @Vector(4, f32) = @splat(x_weights[i]);
+                    row_sum += pixel_vec * wx_vec;
                 }
+
+                // Apply y weight to entire row
+                sums += row_sum * wy_vec;
             }
 
-            // Clamp and convert back to u8
+            // Clamp and convert back to struct
             var result: T = undefined;
             inline for (std.meta.fields(T), 0..) |field, k| {
-                const clamped = @max(0, @min(255, @round(sums[k])));
-                @field(result, field.name) = @intFromFloat(clamped);
+                @field(result, field.name) = @intFromFloat(@max(0, @min(255, @round(sums[k]))));
             }
 
             out.at(r, c).* = result;
