@@ -114,20 +114,17 @@ pub fn resize(comptime T: type, self: anytype, out: anytype, method: Interpolati
 
     // SIMD optimizations for 4xu8 structs (RGBA)
     if (is4xu8Struct(T)) {
-        switch (method) {
-            .nearest_neighbor => return resizeNearestNeighbor4xu8(T, self, out),
-            .bilinear => {
-                // Check for 2x upscaling special case
-                if (out.rows == self.rows * 2 and out.cols == self.cols * 2) {
-                    return resize2xUpscale4xu8(T, self, out);
-                }
-                return resizeBilinear4xu8(T, self, out);
-            },
-            .bicubic => return resizeBicubic4xu8(T, self, out),
-            .catmull_rom => return resizeCatmullRom4xu8(T, self, out),
-            .lanczos => return resizeLanczos4xu8(T, self, out),
-            .mitchell => |m| return resizeMitchell4xu8(T, self, out, m.b, m.c),
-        }
+        return switch (method) {
+            .nearest_neighbor => resizeNearestNeighbor4xu8(T, self, out),
+            .bilinear => if (out.rows == self.rows * 2 and out.cols == self.cols * 2)
+                resize2xUpscale4xu8(T, self, out)
+            else
+                resizeBilinear4xu8(T, self, out),
+            .bicubic => resizeBicubic4xu8(T, self, out),
+            .catmull_rom => resizeCatmullRom4xu8(T, self, out),
+            .lanczos => resizeLanczos4xu8(T, self, out),
+            .mitchell => |m| resizeMitchell4xu8(T, self, out, m.b, m.c),
+        };
     }
 
     // Fall back to generic implementation
@@ -624,17 +621,17 @@ fn resizeKernel4xu8(
 
                     // Calculate weight
                     const wx = x_weights[i];
-                    const w = wx * wy;
 
                     if (normalize_weights) {
                         // For Lanczos - accumulate with individual weights
+                        const w = wx * wy;
                         const w_vec: @Vector(4, f32) = @splat(w);
                         row_sum += pixel_vec * w_vec;
                         row_weight += w;
                     } else {
-                        // For others - direct accumulation
-                        const w_vec: @Vector(4, f32) = @splat(w);
-                        row_sum += pixel_vec * w_vec;
+                        // For others - accumulate with x weight only
+                        const wx_vec: @Vector(4, f32) = @splat(wx);
+                        row_sum += pixel_vec * wx_vec;
                     }
                 }
 
