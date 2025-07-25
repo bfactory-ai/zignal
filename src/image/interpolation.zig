@@ -104,6 +104,13 @@ pub fn resize(comptime T: type, self: anytype, out: anytype, method: Interpolati
         }
     }
 
+    // SIMD optimizations for lanczos
+    if (method == .lanczos) {
+        if (is4xu8Struct(T)) {
+            return resizeLanczos4xu8(T, self, out);
+        }
+    }
+
     // Fall back to generic implementation
     const x_scale = @as(f32, @floatFromInt(self.cols - 1)) / @as(f32, @floatFromInt(out.cols - 1));
     const y_scale = @as(f32, @floatFromInt(self.rows - 1)) / @as(f32, @floatFromInt(out.rows - 1));
@@ -789,6 +796,135 @@ fn resizeBicubic4xu8(comptime T: type, self: anytype, out: anytype) void {
             var result: T = undefined;
             inline for (std.meta.fields(T), 0..) |field, k| {
                 @field(result, field.name) = @intFromFloat(@max(0, @min(255, @round(sums[k]))));
+            }
+
+            out.at(r, c).* = result;
+        }
+    }
+}
+/// SIMD-optimized Lanczos resize for 4xu8 types (RGBA)
+fn resizeLanczos4xu8(comptime T: type, self: anytype, out: anytype) void {
+    comptime std.debug.assert(is4xu8Struct(T));
+
+    const x_scale = @as(f32, @floatFromInt(self.cols - 1)) / @as(f32, @floatFromInt(out.cols - 1));
+    const y_scale = @as(f32, @floatFromInt(self.rows - 1)) / @as(f32, @floatFromInt(out.rows - 1));
+
+    // Lanczos kernel function (inlined for performance)
+    const kernel = struct {
+        inline fn eval(x: f32, a: f32) f32 {
+            if (x == 0) return 1;
+            const ax = @abs(x);
+            if (ax >= a) return 0;
+
+            const pi_x = std.math.pi * x;
+            const pi_x_over_a = pi_x / a;
+            return (a * @sin(pi_x) * @sin(pi_x_over_a)) / (pi_x * pi_x);
+        }
+    };
+
+    const a: f32 = 3.0; // Lanczos3
+
+    // Process each output pixel
+    for (0..out.rows) |r| {
+        const src_y = @as(f32, @floatFromInt(r)) * y_scale;
+        const iy = @as(isize, @intFromFloat(@floor(src_y)));
+        const fy = src_y - @as(f32, @floatFromInt(iy));
+
+        // Skip if we can't get a 6x6 neighborhood
+        if (iy < 2 or iy >= self.rows - 3) {
+            // Fall back to nearest neighbor for edge pixels
+            for (0..out.cols) |c| {
+                const src_x = @as(f32, @floatFromInt(c)) * x_scale;
+                const ix_clamped = @max(0, @min(self.cols - 1, @as(usize, @intFromFloat(@round(src_x)))));
+                const iy_clamped = @max(0, @min(self.rows - 1, @as(usize, @intCast(@max(0, @min(@as(isize, @intCast(self.rows - 1)), iy))))));
+                out.at(r, c).* = self.at(iy_clamped, ix_clamped).*;
+            }
+            continue;
+        }
+
+        // Pre-compute y weights
+        const y_weights = @Vector(6, f32){
+            kernel.eval(-2 - fy, a),
+            kernel.eval(-1 - fy, a),
+            kernel.eval(0 - fy, a),
+            kernel.eval(1 - fy, a),
+            kernel.eval(2 - fy, a),
+            kernel.eval(3 - fy, a),
+        };
+
+        for (0..out.cols) |c| {
+            const src_x = @as(f32, @floatFromInt(c)) * x_scale;
+            const ix = @as(isize, @intFromFloat(@floor(src_x)));
+            const fx = src_x - @as(f32, @floatFromInt(ix));
+
+            // Skip if we can't get a 6x6 neighborhood
+            if (ix < 2 or ix >= self.cols - 3) {
+                // Fall back to nearest neighbor for edge pixels
+                const ix_clamped = @max(0, @min(self.cols - 1, @as(usize, @intFromFloat(@round(src_x)))));
+                const iy_clamped = @as(usize, @intCast(iy));
+                out.at(r, c).* = self.at(iy_clamped, ix_clamped).*;
+                continue;
+            }
+
+            // Pre-compute x weights
+            const x_weights = @Vector(6, f32){
+                kernel.eval(-2 - fx, a),
+                kernel.eval(-1 - fx, a),
+                kernel.eval(0 - fx, a),
+                kernel.eval(1 - fx, a),
+                kernel.eval(2 - fx, a),
+                kernel.eval(3 - fx, a),
+            };
+
+            // Accumulate weighted sum for each channel using SIMD
+            var sums = @Vector(4, f32){ 0, 0, 0, 0 }; // RGBA channels
+            var weight_sum: f32 = 0;
+
+            // Process the 6x6 neighborhood more efficiently
+            inline for (0..6) |j| {
+                const y_idx = @as(usize, @intCast(iy - 2 + @as(isize, @intCast(j))));
+                const wy = y_weights[j];
+
+                // Process all 6 x positions for this row
+                var row_sum = @Vector(4, f32){ 0, 0, 0, 0 };
+                var row_weight: f32 = 0;
+
+                inline for (0..6) |i| {
+                    const x_idx = @as(usize, @intCast(ix - 2 + @as(isize, @intCast(i))));
+                    const pixel = self.at(y_idx, x_idx).*;
+
+                    // Convert pixel to vector - same pattern as bilinear
+                    var pixel_vec: @Vector(4, f32) = undefined;
+                    inline for (std.meta.fields(T), 0..) |field, k| {
+                        pixel_vec[k] = @floatFromInt(@field(pixel, field.name));
+                    }
+
+                    // Calculate combined weight
+                    const wx = x_weights[i];
+                    const w = wx * wy;
+
+                    // Accumulate
+                    const w_vec: @Vector(4, f32) = @splat(w);
+                    row_sum += pixel_vec * w_vec;
+                    row_weight += w;
+                }
+
+                sums += row_sum;
+                weight_sum += row_weight;
+            }
+
+            // Normalize by weight sum and convert back to struct
+            var result: T = undefined;
+            if (weight_sum != 0) {
+                const inv_weight: @Vector(4, f32) = @splat(1.0 / weight_sum);
+                const normalized = sums * inv_weight;
+                inline for (std.meta.fields(T), 0..) |field, k| {
+                    @field(result, field.name) = @intFromFloat(@max(0, @min(255, @round(normalized[k]))));
+                }
+            } else {
+                // Fallback to center pixel if weights sum to zero
+                const center_pixel = self.at(@intCast(iy), @intCast(ix)).*;
+                result = center_pixel;
             }
 
             out.at(r, c).* = result;
