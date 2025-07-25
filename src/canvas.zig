@@ -1225,18 +1225,18 @@ pub fn Canvas(comptime T: type) type {
 
         /// Draws text at the specified position with scaling.
         /// Uses nearest-neighbor scaling for crisp bitmap font rendering.
-        /// The scale parameter must be >= 1.
-        pub fn drawTextScaled(self: Self, text: []const u8, position: Point2d(f32), font: anytype, color: anytype, scale: u8) void {
+        /// The scale parameter must be > 0.
+        pub fn drawTextScaled(self: Self, text: []const u8, position: Point2d(f32), font: anytype, color: anytype, scale: f32) void {
             comptime assert(isColor(@TypeOf(color)));
             const BitmapFont = @import("font.zig").BitmapFont;
             comptime assert(@TypeOf(font) == BitmapFont);
-            if (scale == 0) return;
+            if (scale <= 0) return;
 
             var x = position.x();
             var y = position.y();
             const start_x = x;
-            const char_width_scaled = @as(f32, @floatFromInt(font.char_width)) * @as(f32, @floatFromInt(scale));
-            const char_height_scaled = @as(f32, @floatFromInt(font.char_height)) * @as(f32, @floatFromInt(scale));
+            const char_width_scaled = @as(f32, @floatFromInt(font.char_width)) * scale;
+            const char_height_scaled = @as(f32, @floatFromInt(font.char_height)) * scale;
 
             for (text) |char| {
                 if (char == '\n') {
@@ -1253,13 +1253,20 @@ pub fn Canvas(comptime T: type) type {
                         while (col < font.char_width) : (col += 1) {
                             if (bits & 1 != 0) {
                                 // Draw a scaled pixel block
-                                const base_x = @as(isize, @intFromFloat(x)) + @as(isize, @intCast(col)) * scale;
-                                const base_y = @as(isize, @intFromFloat(y)) + @as(isize, @intCast(row)) * scale;
+                                const base_x = x + @as(f32, @floatFromInt(col)) * scale;
+                                const base_y = y + @as(f32, @floatFromInt(row)) * scale;
+                                
+                                // Calculate the integer bounds of the scaled pixel
+                                const x_start = @as(isize, @intFromFloat(@floor(base_x)));
+                                const y_start = @as(isize, @intFromFloat(@floor(base_y)));
+                                const x_end = @as(isize, @intFromFloat(@ceil(base_x + scale)));
+                                const y_end = @as(isize, @intFromFloat(@ceil(base_y + scale)));
 
-                                for (0..scale) |dy| {
-                                    for (0..scale) |dx| {
-                                        const px = base_x + @as(isize, @intCast(dx));
-                                        const py = base_y + @as(isize, @intCast(dy));
+                                // Fill the pixel block
+                                var py = y_start;
+                                while (py < y_end) : (py += 1) {
+                                    var px = x_start;
+                                    while (px < x_end) : (px += 1) {
                                         if (self.atOrNull(py, px)) |pixel| {
                                             pixel.* = convertColor(T, color);
                                         }
@@ -1276,8 +1283,8 @@ pub fn Canvas(comptime T: type) type {
 
         /// Draws text with antialiasing support for scaled text.
         /// When scale > 1 and mode is .soft, applies edge smoothing.
-        pub fn drawTextAA(self: Self, text: []const u8, position: Point2d(f32), font: anytype, color: anytype, scale: u8, mode: DrawMode) void {
-            if (mode == .fast or scale == 1) {
+        pub fn drawTextAA(self: Self, text: []const u8, position: Point2d(f32), font: anytype, color: anytype, scale: f32, mode: DrawMode) void {
+            if (mode == .fast or scale == 1.0) {
                 // Use regular scaled text for fast mode or scale 1
                 self.drawTextScaled(text, position, font, color, scale);
                 return;

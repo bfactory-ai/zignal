@@ -38,11 +38,14 @@ pub const BitmapFont = struct {
     /// Calculate the bounding rectangle for rendering text
     /// Returns bounds where l,t are inclusive and r,b are exclusive
     /// For example, an 8x8 character has pixels at positions 0-7, so bounds are (0,0) to (8,8)
-    pub fn getTextBounds(self: BitmapFont, text: []const u8, scale: u8) Rectangle(f32) {
-        var width: usize = 0;
-        var height: usize = self.char_height * scale;
-        var current_line_width: usize = 0;
-        var lines: usize = 1;
+    pub fn getTextBounds(self: BitmapFont, text: []const u8, scale: f32) Rectangle(f32) {
+        var width: f32 = 0;
+        var height: f32 = @as(f32, @floatFromInt(self.char_height)) * scale;
+        var current_line_width: f32 = 0;
+        var lines: f32 = 1;
+
+        const char_width_scaled = @as(f32, @floatFromInt(self.char_width)) * scale;
+        const char_height_scaled = @as(f32, @floatFromInt(self.char_height)) * scale;
 
         for (text) |char| {
             if (char == '\n') {
@@ -50,27 +53,22 @@ pub const BitmapFont = struct {
                 current_line_width = 0;
                 lines += 1;
             } else {
-                current_line_width += self.char_width * scale;
+                current_line_width += char_width_scaled;
             }
         }
         width = @max(width, current_line_width);
-        height = lines * self.char_height * scale;
+        height = lines * char_height_scaled;
 
         // Return bounds where l,t are inclusive and r,b are exclusive
         // For an 8x8 character, bounds should be (0,0) to (8,8)
         // This follows the standard rectangle convention
-        return Rectangle(f32){
-            .l = 0,
-            .t = 0,
-            .r = @as(f32, @floatFromInt(width)),
-            .b = @as(f32, @floatFromInt(height)),
-        };
+        return .{ .l = 0, .t = 0, .r = width, .b = height };
     }
 
     /// Calculate the tight bounding rectangle for rendering text
     /// Returns bounds that exactly encompass the visible pixels
     /// Unlike getTextBounds, this excludes character padding
-    pub fn getTextBoundsTight(self: BitmapFont, text: []const u8, scale: u8) Rectangle(f32) {
+    pub fn getTextBoundsTight(self: BitmapFont, text: []const u8, scale: f32) Rectangle(f32) {
         if (text.len == 0) {
             return Rectangle(f32){ .l = 0, .t = 0, .r = 0, .b = 0 };
         }
@@ -83,8 +81,8 @@ pub const BitmapFont = struct {
 
         var x: f32 = 0;
         var y: f32 = 0;
-        const char_width_scaled = @as(f32, @floatFromInt(self.char_width * scale));
-        const char_height_scaled = @as(f32, @floatFromInt(self.char_height * scale));
+        const char_width_scaled = @as(f32, @floatFromInt(self.char_width)) * scale;
+        const char_height_scaled = @as(f32, @floatFromInt(self.char_height)) * scale;
 
         for (text) |char| {
             if (char == '\n') {
@@ -98,10 +96,10 @@ pub const BitmapFont = struct {
 
             if (tight.has_pixels) {
                 has_any_pixels = true;
-                const left = x + @as(f32, @floatFromInt(tight.bounds.l * scale));
-                const top = y + @as(f32, @floatFromInt(tight.bounds.t * scale));
-                const right = x + @as(f32, @floatFromInt(tight.bounds.r * scale));
-                const bottom = y + @as(f32, @floatFromInt(tight.bounds.b * scale));
+                const left = x + @as(f32, @floatFromInt(tight.bounds.l)) * scale;
+                const top = y + @as(f32, @floatFromInt(tight.bounds.t)) * scale;
+                const right = x + @as(f32, @floatFromInt(tight.bounds.r)) * scale;
+                const bottom = y + @as(f32, @floatFromInt(tight.bounds.b)) * scale;
 
                 min_x = @min(min_x, left);
                 max_x = @max(max_x, right);
@@ -116,12 +114,7 @@ pub const BitmapFont = struct {
             return Rectangle(f32){ .l = 0, .t = 0, .r = 0, .b = 0 };
         }
 
-        return Rectangle(f32){
-            .l = min_x,
-            .t = min_y,
-            .r = max_x,
-            .b = max_y,
-        };
+        return .{ .l = min_x, .t = min_y, .r = max_x, .b = max_y };
     }
 
     /// Get the visible bounds of a character (excluding padding)
@@ -159,7 +152,7 @@ pub const BitmapFont = struct {
         }
 
         return .{
-            .bounds = Rectangle(u8){
+            .bounds = .{
                 .l = min_x,
                 .t = min_y,
                 .r = max_x + 1, // Exclusive bound
