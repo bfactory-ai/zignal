@@ -104,6 +104,13 @@ pub fn resize(comptime T: type, self: anytype, out: anytype, method: Interpolati
         }
     }
 
+    // SIMD optimizations for catmull_rom
+    if (method == .catmull_rom) {
+        if (is4xu8Struct(T)) {
+            return resizeCatmullRom4xu8(T, self, out);
+        }
+    }
+
     // SIMD optimizations for lanczos
     if (method == .lanczos) {
         if (is4xu8Struct(T)) {
@@ -802,6 +809,116 @@ fn resizeBicubic4xu8(comptime T: type, self: anytype, out: anytype) void {
         }
     }
 }
+
+/// SIMD-optimized Catmull-Rom resize for 4xu8 types (RGBA)
+fn resizeCatmullRom4xu8(comptime T: type, self: anytype, out: anytype) void {
+    comptime std.debug.assert(is4xu8Struct(T));
+
+    const x_scale = @as(f32, @floatFromInt(self.cols - 1)) / @as(f32, @floatFromInt(out.cols - 1));
+    const y_scale = @as(f32, @floatFromInt(self.rows - 1)) / @as(f32, @floatFromInt(out.rows - 1));
+
+    // Catmull-Rom kernel function (inlined for performance)
+    const kernel = struct {
+        inline fn eval(t: f32) f32 {
+            const at = @abs(t);
+            if (at <= 1) {
+                return 1.5 * at * at * at - 2.5 * at * at + 1;
+            } else if (at <= 2) {
+                return -0.5 * at * at * at + 2.5 * at * at - 4 * at + 2;
+            }
+            return 0;
+        }
+    };
+
+    // Process each output pixel
+    for (0..out.rows) |r| {
+        const src_y = @as(f32, @floatFromInt(r)) * y_scale;
+        const iy = @as(isize, @intFromFloat(@floor(src_y)));
+        const fy = src_y - @as(f32, @floatFromInt(iy));
+
+        // Skip if we can't get a 4x4 neighborhood
+        if (iy < 1 or iy >= self.rows - 2) {
+            // Fall back to nearest neighbor for edge pixels
+            for (0..out.cols) |c| {
+                const src_x = @as(f32, @floatFromInt(c)) * x_scale;
+                const ix_clamped = @max(0, @min(self.cols - 1, @as(usize, @intFromFloat(@round(src_x)))));
+                const iy_clamped = @max(0, @min(self.rows - 1, @as(usize, @intCast(@max(0, @min(@as(isize, @intCast(self.rows - 1)), iy))))));
+                out.at(r, c).* = self.at(iy_clamped, ix_clamped).*;
+            }
+            continue;
+        }
+
+        // Pre-compute y weights
+        const y_weights = @Vector(4, f32){
+            kernel.eval(-1 - fy),
+            kernel.eval(0 - fy),
+            kernel.eval(1 - fy),
+            kernel.eval(2 - fy),
+        };
+
+        for (0..out.cols) |c| {
+            const src_x = @as(f32, @floatFromInt(c)) * x_scale;
+            const ix = @as(isize, @intFromFloat(@floor(src_x)));
+            const fx = src_x - @as(f32, @floatFromInt(ix));
+
+            // Skip if we can't get a 4x4 neighborhood
+            if (ix < 1 or ix >= self.cols - 2) {
+                // Fall back to nearest neighbor for edge pixels
+                const ix_clamped = @max(0, @min(self.cols - 1, @as(usize, @intFromFloat(@round(src_x)))));
+                const iy_clamped = @as(usize, @intCast(iy));
+                out.at(r, c).* = self.at(iy_clamped, ix_clamped).*;
+                continue;
+            }
+
+            // Pre-compute x weights
+            const x_weights = @Vector(4, f32){
+                kernel.eval(-1 - fx),
+                kernel.eval(0 - fx),
+                kernel.eval(1 - fx),
+                kernel.eval(2 - fx),
+            };
+
+            // Accumulate weighted sum for each channel using SIMD
+            var sums = @Vector(4, f32){ 0, 0, 0, 0 }; // RGBA channels
+
+            // Process the 4x4 neighborhood more efficiently
+            inline for (0..4) |j| {
+                const y_idx = @as(usize, @intCast(iy - 1 + @as(isize, @intCast(j))));
+                const wy_vec: @Vector(4, f32) = @splat(y_weights[j]);
+
+                // Process all 4 x positions for this row
+                var row_sum = @Vector(4, f32){ 0, 0, 0, 0 };
+
+                inline for (0..4) |i| {
+                    const x_idx = @as(usize, @intCast(ix - 1 + @as(isize, @intCast(i))));
+                    const pixel = self.at(y_idx, x_idx).*;
+
+                    // Convert pixel to vector - same pattern as bilinear
+                    var pixel_vec: @Vector(4, f32) = undefined;
+                    inline for (std.meta.fields(T), 0..) |field, k| {
+                        pixel_vec[k] = @floatFromInt(@field(pixel, field.name));
+                    }
+
+                    // Accumulate with x weight
+                    const wx_vec: @Vector(4, f32) = @splat(x_weights[i]);
+                    row_sum += pixel_vec * wx_vec;
+                }
+
+                // Apply y weight to entire row
+                sums += row_sum * wy_vec;
+            }
+
+            // Clamp and convert back to struct
+            var result: T = undefined;
+            inline for (std.meta.fields(T), 0..) |field, k| {
+                @field(result, field.name) = @intFromFloat(@max(0, @min(255, @round(sums[k]))));
+            }
+
+            out.at(r, c).* = result;
+        }
+    }
+}
+
 /// SIMD-optimized Lanczos resize for 4xu8 types (RGBA)
 fn resizeLanczos4xu8(comptime T: type, self: anytype, out: anytype) void {
     comptime std.debug.assert(is4xu8Struct(T));
