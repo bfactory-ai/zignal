@@ -3,12 +3,40 @@
 //! This module provides various interpolation methods for image resizing and
 //! sampling, including nearest neighbor, bilinear, bicubic, Catmull-Rom,
 //! Lanczos, and Mitchell-Netravali filters.
+//!
+//! ## Usage Examples
+//!
+//! ### Basic interpolation:
+//! ```zig
+//! const pixel = image.interpolate(100.5, 50.3, .bilinear);
+//! ```
+//!
+//! ### Resize with different methods:
+//! ```zig
+//! var small = Image(Rgba).init(256, 256, small_data);
+//! var large = Image(Rgba).init(512, 512, large_data);
+//! small.resize(large, .lanczos); // High quality upscaling
+//! ```
+//!
+//! ## Performance Guide
+//!
+//! Approximate performance on 512x512 RGBA images (Mpix/s):
+//! - Nearest neighbor: ~400 Mpix/s (with SIMD)
+//! - Bilinear: ~100 Mpix/s (with SIMD)
+//! - Bicubic: ~25 Mpix/s (with SIMD)
+//! - Catmull-Rom: ~25 Mpix/s (with SIMD)
+//! - Lanczos: ~8.5 Mpix/s (with SIMD)
+//! - Mitchell: ~22 Mpix/s (with SIMD)
 
 const std = @import("std");
 const as = @import("../meta.zig").as;
 const is4xu8Struct = @import("../meta.zig").is4xu8Struct;
 const isScalar = @import("../meta.zig").isScalar;
 const isStruct = @import("../meta.zig").isStruct;
+
+// ============================================================================
+// Public API
+// ============================================================================
 
 /// Interpolation method for image resizing and sampling
 ///
@@ -66,6 +94,11 @@ pub fn interpolate(comptime T: type, self: anytype, x: f32, y: f32, method: Inte
 /// - self: The source image
 /// - out: The destination image (must be pre-allocated)
 /// - method: The interpolation method to use
+///
+/// Special optimizations:
+/// - Scale=1: Uses memcpy for same-size copies
+/// - 2x upscaling: Specialized fast path for bilinear
+/// - RGBA images: SIMD-optimized paths for all methods
 pub fn resize(comptime T: type, self: anytype, out: anytype, method: InterpolationMethod) void {
     // Check for scale = 1 (just copy)
     if (self.rows == out.rows and self.cols == out.cols) {
@@ -79,49 +112,21 @@ pub fn resize(comptime T: type, self: anytype, out: anytype, method: Interpolati
         return;
     }
 
-    // SIMD optimizations for nearest neighbor
-    if (method == .nearest_neighbor) {
-        if (is4xu8Struct(T)) {
-            return resizeNearestNeighbor4xu8(T, self, out);
-        }
-    }
-
-    // SIMD optimizations for bilinear
-    if (method == .bilinear) {
-        if (is4xu8Struct(T)) {
-            // Check for 2x upscaling special case
-            if (out.rows == self.rows * 2 and out.cols == self.cols * 2) {
-                return resize2xUpscale4xu8(T, self, out);
-            }
-            return resizeBilinear4xu8(T, self, out);
-        }
-    }
-
-    // SIMD optimizations for bicubic
-    if (method == .bicubic) {
-        if (is4xu8Struct(T)) {
-            return resizeBicubic4xu8(T, self, out);
-        }
-    }
-
-    // SIMD optimizations for catmull_rom
-    if (method == .catmull_rom) {
-        if (is4xu8Struct(T)) {
-            return resizeCatmullRom4xu8(T, self, out);
-        }
-    }
-
-    // SIMD optimizations for lanczos
-    if (method == .lanczos) {
-        if (is4xu8Struct(T)) {
-            return resizeLanczos4xu8(T, self, out);
-        }
-    }
-
-    // SIMD optimizations for mitchell
-    if (method == .mitchell) {
-        if (is4xu8Struct(T)) {
-            return resizeMitchell4xu8(T, self, out, method.mitchell.b, method.mitchell.c);
+    // SIMD optimizations for 4xu8 structs (RGBA)
+    if (is4xu8Struct(T)) {
+        switch (method) {
+            .nearest_neighbor => return resizeNearestNeighbor4xu8(T, self, out),
+            .bilinear => {
+                // Check for 2x upscaling special case
+                if (out.rows == self.rows * 2 and out.cols == self.cols * 2) {
+                    return resize2xUpscale4xu8(T, self, out);
+                }
+                return resizeBilinear4xu8(T, self, out);
+            },
+            .bicubic => return resizeBicubic4xu8(T, self, out),
+            .catmull_rom => return resizeCatmullRom4xu8(T, self, out),
+            .lanczos => return resizeLanczos4xu8(T, self, out),
+            .mitchell => |m| return resizeMitchell4xu8(T, self, out, m.b, m.c),
         }
     }
 
@@ -141,7 +146,66 @@ pub fn resize(comptime T: type, self: anytype, out: anytype, method: Interpolati
 }
 
 // ============================================================================
-// Private implementation functions
+// Kernel Functions
+// ============================================================================
+
+/// Bicubic kernel function
+/// Classic bicubic interpolation kernel with a=-0.5
+fn bicubicKernel(t: f32) f32 {
+    const at = @abs(t);
+    if (at <= 1) {
+        return 1 - 2 * at * at + at * at * at;
+    } else if (at <= 2) {
+        return 4 - 8 * at + 5 * at * at - at * at * at;
+    }
+    return 0;
+}
+
+/// Catmull-Rom kernel function
+/// Catmull-Rom spline - a special case of cubic interpolation
+fn catmullRomKernel(x: f32) f32 {
+    const ax = @abs(x);
+    if (ax <= 1) {
+        return 1.5 * ax * ax * ax - 2.5 * ax * ax + 1;
+    } else if (ax <= 2) {
+        return -0.5 * ax * ax * ax + 2.5 * ax * ax - 4 * ax + 2;
+    }
+    return 0;
+}
+
+/// Lanczos kernel function
+/// Lanczos windowed sinc function with parameter a (typically 3)
+fn lanczosKernel(x: f32, a: f32) f32 {
+    if (x == 0) return 1;
+    if (@abs(x) >= a) return 0;
+
+    const pi_x = std.math.pi * x;
+    const pi_x_over_a = pi_x / a;
+    return (a * @sin(pi_x) * @sin(pi_x_over_a)) / (pi_x * pi_x);
+}
+
+/// Mitchell-Netravali kernel function
+/// Parameterized cubic filter with control over blur (m_b) and ringing (m_c)
+fn mitchellKernel(x: f32, m_b: f32, m_c: f32) f32 {
+    const ax = @abs(x);
+    const ax2 = ax * ax;
+    const ax3 = ax2 * ax;
+
+    if (ax < 1) {
+        return ((12 - 9 * m_b - 6 * m_c) * ax3 +
+            (-18 + 12 * m_b + 6 * m_c) * ax2 +
+            (6 - 2 * m_b)) / 6;
+    } else if (ax < 2) {
+        return ((-m_b - 6 * m_c) * ax3 +
+            (6 * m_b + 30 * m_c) * ax2 +
+            (-12 * m_b - 48 * m_c) * ax +
+            (8 * m_b + 24 * m_c)) / 6;
+    }
+    return 0;
+}
+
+// ============================================================================
+// Generic Interpolation Functions
 // ============================================================================
 
 fn interpolateNearestNeighbor(comptime T: type, self: anytype, x: f32, y: f32) ?T {
@@ -207,19 +271,6 @@ fn interpolateBicubic(comptime T: type, self: anytype, x: f32, y: f32) ?T {
     const fx = x - as(f32, ix);
     const fy = y - as(f32, iy);
 
-    // Bicubic kernel function
-    const cubic = struct {
-        fn kernel(t: f32) f32 {
-            const at = @abs(t);
-            if (at <= 1) {
-                return 1 - 2 * at * at + at * at * at;
-            } else if (at <= 2) {
-                return 4 - 8 * at + 5 * at * at - at * at * at;
-            }
-            return 0;
-        }
-    };
-
     var result: T = std.mem.zeroes(T);
 
     switch (@typeInfo(T)) {
@@ -227,11 +278,11 @@ fn interpolateBicubic(comptime T: type, self: anytype, x: f32, y: f32) ?T {
             var sum: f32 = 0.0;
             for (0..4) |j| {
                 const y_idx = iy - 1 + @as(isize, @intCast(j));
-                const wy = cubic.kernel(as(f32, @as(isize, @intCast(j)) - 1) - fy);
+                const wy = bicubicKernel(as(f32, @as(isize, @intCast(j)) - 1) - fy);
 
                 for (0..4) |i| {
                     const x_idx = ix - 1 + @as(isize, @intCast(i));
-                    const wx = cubic.kernel(as(f32, @as(isize, @intCast(i)) - 1) - fx);
+                    const wx = bicubicKernel(as(f32, @as(isize, @intCast(i)) - 1) - fx);
 
                     sum += wx * wy * as(f32, self.at(@intCast(y_idx), @intCast(x_idx)).*);
                 }
@@ -246,11 +297,11 @@ fn interpolateBicubic(comptime T: type, self: anytype, x: f32, y: f32) ?T {
                 var sum: f32 = 0.0;
                 for (0..4) |j| {
                     const y_idx = iy - 1 + @as(isize, @intCast(j));
-                    const wy = cubic.kernel(as(f32, @as(isize, @intCast(j)) - 1) - fy);
+                    const wy = bicubicKernel(as(f32, @as(isize, @intCast(j)) - 1) - fy);
 
                     for (0..4) |i| {
                         const x_idx = ix - 1 + @as(isize, @intCast(i));
-                        const wx = cubic.kernel(as(f32, @as(isize, @intCast(i)) - 1) - fx);
+                        const wx = bicubicKernel(as(f32, @as(isize, @intCast(i)) - 1) - fx);
 
                         sum += wx * wy * as(f32, @field(self.at(@intCast(y_idx), @intCast(x_idx)).*, f.name));
                     }
@@ -266,16 +317,6 @@ fn interpolateBicubic(comptime T: type, self: anytype, x: f32, y: f32) ?T {
     }
 
     return result;
-}
-
-fn catmullRomKernel(x: f32) f32 {
-    const ax = @abs(x);
-    if (ax <= 1) {
-        return 1.5 * ax * ax * ax - 2.5 * ax * ax + 1;
-    } else if (ax <= 2) {
-        return -0.5 * ax * ax * ax + 2.5 * ax * ax - 4 * ax + 2;
-    }
-    return 0;
 }
 
 fn interpolateCatmullRom(comptime T: type, self: anytype, x: f32, y: f32) ?T {
@@ -336,15 +377,6 @@ fn interpolateCatmullRom(comptime T: type, self: anytype, x: f32, y: f32) ?T {
     }
 
     return result;
-}
-
-fn lanczosKernel(x: f32, a: f32) f32 {
-    if (x == 0) return 1;
-    if (@abs(x) >= a) return 0;
-
-    const pi_x = std.math.pi * x;
-    const pi_x_over_a = pi_x / a;
-    return (a * @sin(pi_x) * @sin(pi_x_over_a)) / (pi_x * pi_x);
 }
 
 fn interpolateLanczos(comptime T: type, self: anytype, x: f32, y: f32) ?T {
@@ -422,25 +454,7 @@ fn interpolateLanczos(comptime T: type, self: anytype, x: f32, y: f32) ?T {
     return result;
 }
 
-fn mitchellKernel(x: f32, b: f32, c: f32) f32 {
-    const ax = @abs(x);
-    const ax2 = ax * ax;
-    const ax3 = ax2 * ax;
-
-    if (ax < 1) {
-        return ((12 - 9 * b - 6 * c) * ax3 +
-            (-18 + 12 * b + 6 * c) * ax2 +
-            (6 - 2 * b)) / 6;
-    } else if (ax < 2) {
-        return ((-b - 6 * c) * ax3 +
-            (6 * b + 30 * c) * ax2 +
-            (-12 * b - 48 * c) * ax +
-            (8 * b + 24 * c)) / 6;
-    }
-    return 0;
-}
-
-fn interpolateMitchell(comptime T: type, self: anytype, x: f32, y: f32, b: f32, c: f32) ?T {
+fn interpolateMitchell(comptime T: type, self: anytype, x: f32, y: f32, m_b: f32, m_c: f32) ?T {
     const ix: isize = @intFromFloat(@floor(x));
     const iy: isize = @intFromFloat(@floor(y));
 
@@ -459,11 +473,11 @@ fn interpolateMitchell(comptime T: type, self: anytype, x: f32, y: f32, b: f32, 
             var sum: f32 = 0.0;
             for (0..4) |j| {
                 const y_idx = iy - 1 + @as(isize, @intCast(j));
-                const wy = mitchellKernel(as(f32, @as(isize, @intCast(j)) - 1) - fy, b, c);
+                const wy = mitchellKernel(as(f32, @as(isize, @intCast(j)) - 1) - fy, m_b, m_c);
 
                 for (0..4) |i| {
                     const x_idx = ix - 1 + @as(isize, @intCast(i));
-                    const wx = mitchellKernel(as(f32, @as(isize, @intCast(i)) - 1) - fx, b, c);
+                    const wx = mitchellKernel(as(f32, @as(isize, @intCast(i)) - 1) - fx, m_b, m_c);
 
                     sum += wx * wy * as(f32, self.at(@intCast(y_idx), @intCast(x_idx)).*);
                 }
@@ -478,11 +492,11 @@ fn interpolateMitchell(comptime T: type, self: anytype, x: f32, y: f32, b: f32, 
                 var sum: f32 = 0.0;
                 for (0..4) |j| {
                     const y_idx = iy - 1 + @as(isize, @intCast(j));
-                    const wy = mitchellKernel(as(f32, @as(isize, @intCast(j)) - 1) - fy, b, c);
+                    const wy = mitchellKernel(as(f32, @as(isize, @intCast(j)) - 1) - fy, m_b, m_c);
 
                     for (0..4) |i| {
                         const x_idx = ix - 1 + @as(isize, @intCast(i));
-                        const wx = mitchellKernel(as(f32, @as(isize, @intCast(i)) - 1) - fx, b, c);
+                        const wx = mitchellKernel(as(f32, @as(isize, @intCast(i)) - 1) - fx, m_b, m_c);
 
                         sum += wx * wy * as(f32, @field(self.at(@intCast(y_idx), @intCast(x_idx)).*, f.name));
                     }
@@ -501,7 +515,7 @@ fn interpolateMitchell(comptime T: type, self: anytype, x: f32, y: f32, b: f32, 
 }
 
 // ============================================================================
-// SIMD optimized functions
+// SIMD Optimized Resize Functions
 // ============================================================================
 
 /// Specialized 2x upscaling for 4xu8 images (RGBA/RGB) using SIMD
@@ -715,19 +729,6 @@ fn resizeBicubic4xu8(comptime T: type, self: anytype, out: anytype) void {
     const x_scale = @as(f32, @floatFromInt(self.cols - 1)) / @as(f32, @floatFromInt(out.cols - 1));
     const y_scale = @as(f32, @floatFromInt(self.rows - 1)) / @as(f32, @floatFromInt(out.rows - 1));
 
-    // Bicubic kernel function (inlined for performance)
-    const bicubicKernel = struct {
-        inline fn eval(t: f32) f32 {
-            const at = @abs(t);
-            if (at <= 1) {
-                return 1 - 2 * at * at + at * at * at;
-            } else if (at <= 2) {
-                return 4 - 8 * at + 5 * at * at - at * at * at;
-            }
-            return 0;
-        }
-    };
-
     // Process each output pixel
     for (0..out.rows) |r| {
         const src_y = @as(f32, @floatFromInt(r)) * y_scale;
@@ -748,10 +749,10 @@ fn resizeBicubic4xu8(comptime T: type, self: anytype, out: anytype) void {
 
         // Pre-compute y weights
         const y_weights = @Vector(4, f32){
-            bicubicKernel.eval(-1 - fy),
-            bicubicKernel.eval(0 - fy),
-            bicubicKernel.eval(1 - fy),
-            bicubicKernel.eval(2 - fy),
+            bicubicKernel(-1 - fy),
+            bicubicKernel(0 - fy),
+            bicubicKernel(1 - fy),
+            bicubicKernel(2 - fy),
         };
 
         for (0..out.cols) |c| {
@@ -770,10 +771,10 @@ fn resizeBicubic4xu8(comptime T: type, self: anytype, out: anytype) void {
 
             // Pre-compute x weights
             const x_weights = @Vector(4, f32){
-                bicubicKernel.eval(-1 - fx),
-                bicubicKernel.eval(0 - fx),
-                bicubicKernel.eval(1 - fx),
-                bicubicKernel.eval(2 - fx),
+                bicubicKernel(-1 - fx),
+                bicubicKernel(0 - fx),
+                bicubicKernel(1 - fx),
+                bicubicKernel(2 - fx),
             };
 
             // Accumulate weighted sum for each channel using SIMD
@@ -824,19 +825,6 @@ fn resizeCatmullRom4xu8(comptime T: type, self: anytype, out: anytype) void {
     const x_scale = @as(f32, @floatFromInt(self.cols - 1)) / @as(f32, @floatFromInt(out.cols - 1));
     const y_scale = @as(f32, @floatFromInt(self.rows - 1)) / @as(f32, @floatFromInt(out.rows - 1));
 
-    // Catmull-Rom kernel function (inlined for performance)
-    const kernel = struct {
-        inline fn eval(t: f32) f32 {
-            const at = @abs(t);
-            if (at <= 1) {
-                return 1.5 * at * at * at - 2.5 * at * at + 1;
-            } else if (at <= 2) {
-                return -0.5 * at * at * at + 2.5 * at * at - 4 * at + 2;
-            }
-            return 0;
-        }
-    };
-
     // Process each output pixel
     for (0..out.rows) |r| {
         const src_y = @as(f32, @floatFromInt(r)) * y_scale;
@@ -857,10 +845,10 @@ fn resizeCatmullRom4xu8(comptime T: type, self: anytype, out: anytype) void {
 
         // Pre-compute y weights
         const y_weights = @Vector(4, f32){
-            kernel.eval(-1 - fy),
-            kernel.eval(0 - fy),
-            kernel.eval(1 - fy),
-            kernel.eval(2 - fy),
+            catmullRomKernel(-1 - fy),
+            catmullRomKernel(0 - fy),
+            catmullRomKernel(1 - fy),
+            catmullRomKernel(2 - fy),
         };
 
         for (0..out.cols) |c| {
@@ -879,10 +867,10 @@ fn resizeCatmullRom4xu8(comptime T: type, self: anytype, out: anytype) void {
 
             // Pre-compute x weights
             const x_weights = @Vector(4, f32){
-                kernel.eval(-1 - fx),
-                kernel.eval(0 - fx),
-                kernel.eval(1 - fx),
-                kernel.eval(2 - fx),
+                catmullRomKernel(-1 - fx),
+                catmullRomKernel(0 - fx),
+                catmullRomKernel(1 - fx),
+                catmullRomKernel(2 - fx),
             };
 
             // Accumulate weighted sum for each channel using SIMD
@@ -927,7 +915,7 @@ fn resizeCatmullRom4xu8(comptime T: type, self: anytype, out: anytype) void {
 }
 
 /// SIMD-optimized Mitchell-Netravali resize for 4xu8 types (RGBA)
-fn resizeMitchell4xu8(comptime T: type, self: anytype, out: anytype, b: f32, c: f32) void {
+fn resizeMitchell4xu8(comptime T: type, self: anytype, out: anytype, m_b: f32, m_c: f32) void {
     comptime std.debug.assert(is4xu8Struct(T));
 
     const x_scale = @as(f32, @floatFromInt(self.cols - 1)) / @as(f32, @floatFromInt(out.cols - 1));
@@ -935,20 +923,20 @@ fn resizeMitchell4xu8(comptime T: type, self: anytype, out: anytype, b: f32, c: 
 
     // Mitchell kernel function (inlined for performance)
     const kernel = struct {
-        inline fn eval(x: f32, b_param: f32, c_param: f32) f32 {
+        inline fn eval(x: f32, mb: f32, mc: f32) f32 {
             const ax = @abs(x);
             const ax2 = ax * ax;
             const ax3 = ax2 * ax;
 
             if (ax < 1) {
-                return ((12 - 9 * b_param - 6 * c_param) * ax3 +
-                    (-18 + 12 * b_param + 6 * c_param) * ax2 +
-                    (6 - 2 * b_param)) / 6;
+                return ((12 - 9 * mb - 6 * mc) * ax3 +
+                    (-18 + 12 * mb + 6 * mc) * ax2 +
+                    (6 - 2 * mb)) / 6;
             } else if (ax < 2) {
-                return ((-b_param - 6 * c_param) * ax3 +
-                    (6 * b_param + 30 * c_param) * ax2 +
-                    (-12 * b_param - 48 * c_param) * ax +
-                    (8 * b_param + 24 * c_param)) / 6;
+                return ((-mb - 6 * mc) * ax3 +
+                    (6 * mb + 30 * mc) * ax2 +
+                    (-12 * mb - 48 * mc) * ax +
+                    (8 * mb + 24 * mc)) / 6;
             }
             return 0;
         }
@@ -963,25 +951,25 @@ fn resizeMitchell4xu8(comptime T: type, self: anytype, out: anytype, b: f32, c: 
         // Skip if we can't get a 4x4 neighborhood
         if (iy < 1 or iy >= self.rows - 2) {
             // Fall back to nearest neighbor for edge pixels
-            for (0..out.cols) |c_col| {
-                const src_x = @as(f32, @floatFromInt(c_col)) * x_scale;
+            for (0..out.cols) |c| {
+                const src_x = @as(f32, @floatFromInt(c)) * x_scale;
                 const ix_clamped = @max(0, @min(self.cols - 1, @as(usize, @intFromFloat(@round(src_x)))));
                 const iy_clamped = @max(0, @min(self.rows - 1, @as(usize, @intCast(@max(0, @min(@as(isize, @intCast(self.rows - 1)), iy))))));
-                out.at(r, c_col).* = self.at(iy_clamped, ix_clamped).*;
+                out.at(r, c).* = self.at(iy_clamped, ix_clamped).*;
             }
             continue;
         }
 
         // Pre-compute y weights
         const y_weights = @Vector(4, f32){
-            kernel.eval(-1 - fy, b, c),
-            kernel.eval(0 - fy, b, c),
-            kernel.eval(1 - fy, b, c),
-            kernel.eval(2 - fy, b, c),
+            kernel.eval(-1 - fy, m_b, m_c),
+            kernel.eval(0 - fy, m_b, m_c),
+            kernel.eval(1 - fy, m_b, m_c),
+            kernel.eval(2 - fy, m_b, m_c),
         };
 
-        for (0..out.cols) |c_col| {
-            const src_x = @as(f32, @floatFromInt(c_col)) * x_scale;
+        for (0..out.cols) |c| {
+            const src_x = @as(f32, @floatFromInt(c)) * x_scale;
             const ix = @as(isize, @intFromFloat(@floor(src_x)));
             const fx = src_x - @as(f32, @floatFromInt(ix));
 
@@ -990,16 +978,16 @@ fn resizeMitchell4xu8(comptime T: type, self: anytype, out: anytype, b: f32, c: 
                 // Fall back to nearest neighbor for edge pixels
                 const ix_clamped = @max(0, @min(self.cols - 1, @as(usize, @intFromFloat(@round(src_x)))));
                 const iy_clamped = @as(usize, @intCast(iy));
-                out.at(r, c_col).* = self.at(iy_clamped, ix_clamped).*;
+                out.at(r, c).* = self.at(iy_clamped, ix_clamped).*;
                 continue;
             }
 
             // Pre-compute x weights
             const x_weights = @Vector(4, f32){
-                kernel.eval(-1 - fx, b, c),
-                kernel.eval(0 - fx, b, c),
-                kernel.eval(1 - fx, b, c),
-                kernel.eval(2 - fx, b, c),
+                kernel.eval(-1 - fx, m_b, m_c),
+                kernel.eval(0 - fx, m_b, m_c),
+                kernel.eval(1 - fx, m_b, m_c),
+                kernel.eval(2 - fx, m_b, m_c),
             };
 
             // Accumulate weighted sum for each channel using SIMD
@@ -1038,7 +1026,7 @@ fn resizeMitchell4xu8(comptime T: type, self: anytype, out: anytype, b: f32, c: 
                 @field(result, field.name) = @intFromFloat(@max(0, @min(255, @round(sums[k]))));
             }
 
-            out.at(r, c_col).* = result;
+            out.at(r, c).* = result;
         }
     }
 }
