@@ -170,7 +170,7 @@ fn image_to_numpy(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
 
     // Parse arguments - include_alpha defaults to true
     var include_alpha: c_int = 1;
-    const kwlist = [_][*c]const u8{ "include_alpha", null };
+    var kwlist = [_:null]?[*:0]u8{ @constCast("include_alpha"), null };
     const format = std.fmt.comptimePrint("|p", .{});
     if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(&kwlist), &include_alpha) == 0) {
         return null;
