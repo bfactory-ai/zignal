@@ -5,7 +5,7 @@ const expectEqual = std.testing.expectEqual;
 const expectEqualDeep = std.testing.expectEqualDeep;
 const expectApproxEqAbs = std.testing.expectApproxEqAbs;
 const Image = @import("../image.zig").Image;
-const InterpolationMethod = @import("../image.zig").InterpolationMethod;
+const InterpolationMethod = @import("../interpolation.zig").InterpolationMethod;
 const color = @import("../../color.zig");
 
 // Helper function to create a simple gradient test image
