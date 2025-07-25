@@ -85,9 +85,18 @@ pub fn resize(comptime T: type, self: anytype, out: anytype, method: Interpolati
             }
         }
 
-        // Use separable bilinear for other scales
-        if (T == u8 or T == f32) {
+        // Use fixed-point for u8 images
+        if (T == u8) {
+            return resizeBilinearFixedPointU8(self, out);
+        } else if (T == f32) {
             return resizeBilinearSeparable(T, self, out);
+        }
+    }
+
+    // SIMD optimizations for bicubic
+    if (method == .bicubic) {
+        if (is4xu8Struct(T)) {
+            return resizeBicubic4xu8(T, self, out);
         }
     }
 
@@ -806,6 +815,207 @@ fn resizeNearestNeighbor4xu8(comptime T: type, self: anytype, out: anytype) void
             const src_x_f = @as(f32, @floatFromInt(c)) * x_scale;
             const src_x = @min(self.cols - 1, @as(usize, @intFromFloat(@round(src_x_f))));
             out.at(r, c).* = self.at(src_y, src_x).*;
+        }
+    }
+}
+
+/// SIMD-optimized bicubic resize for 4xu8 types (RGBA)
+fn resizeBicubic4xu8(comptime T: type, self: anytype, out: anytype) void {
+    std.debug.assert(is4xu8Struct(T));
+
+    const x_scale = @as(f32, @floatFromInt(self.cols - 1)) / @as(f32, @floatFromInt(out.cols - 1));
+    const y_scale = @as(f32, @floatFromInt(self.rows - 1)) / @as(f32, @floatFromInt(out.rows - 1));
+
+    // Bicubic kernel function (inlined for performance)
+    const bicubicKernel = struct {
+        inline fn eval(t: f32) f32 {
+            const at = @abs(t);
+            if (at <= 1) {
+                return 1 - 2 * at * at + at * at * at;
+            } else if (at <= 2) {
+                return 4 - 8 * at + 5 * at * at - at * at * at;
+            }
+            return 0;
+        }
+    };
+
+    // Process each output pixel
+    for (0..out.rows) |r| {
+        const src_y = @as(f32, @floatFromInt(r)) * y_scale;
+        const iy = @as(isize, @intFromFloat(@floor(src_y)));
+        const fy = src_y - @as(f32, @floatFromInt(iy));
+
+        // Skip if we can't get a 4x4 neighborhood
+        if (iy < 1 or iy >= self.rows - 2) {
+            // Fall back to nearest neighbor for edge pixels
+            for (0..out.cols) |c| {
+                const src_x = @as(f32, @floatFromInt(c)) * x_scale;
+                const ix_clamped = @max(0, @min(self.cols - 1, @as(usize, @intFromFloat(@round(src_x)))));
+                const iy_clamped = @max(0, @min(self.rows - 1, @as(usize, @intCast(@max(0, @min(@as(isize, @intCast(self.rows - 1)), iy))))));
+                out.at(r, c).* = self.at(iy_clamped, ix_clamped).*;
+            }
+            continue;
+        }
+
+        // Pre-compute y weights
+        const y_weights = @Vector(4, f32){
+            bicubicKernel.eval(-1 - fy),
+            bicubicKernel.eval(0 - fy),
+            bicubicKernel.eval(1 - fy),
+            bicubicKernel.eval(2 - fy),
+        };
+
+        for (0..out.cols) |c| {
+            const src_x = @as(f32, @floatFromInt(c)) * x_scale;
+            const ix = @as(isize, @intFromFloat(@floor(src_x)));
+            const fx = src_x - @as(f32, @floatFromInt(ix));
+
+            // Skip if we can't get a 4x4 neighborhood
+            if (ix < 1 or ix >= self.cols - 2) {
+                // Fall back to nearest neighbor for edge pixels
+                const ix_clamped = @max(0, @min(self.cols - 1, @as(usize, @intFromFloat(@round(src_x)))));
+                const iy_clamped = @as(usize, @intCast(iy));
+                out.at(r, c).* = self.at(iy_clamped, ix_clamped).*;
+                continue;
+            }
+
+            // Pre-compute x weights
+            const x_weights = @Vector(4, f32){
+                bicubicKernel.eval(-1 - fx),
+                bicubicKernel.eval(0 - fx),
+                bicubicKernel.eval(1 - fx),
+                bicubicKernel.eval(2 - fx),
+            };
+
+            // Accumulate weighted sum for each channel using SIMD
+            var sums = @Vector(4, f32){ 0, 0, 0, 0 }; // RGBA channels
+
+            // Process the 4x4 neighborhood
+            inline for (0..4) |j| {
+                const y_idx = @as(usize, @intCast(iy - 1 + @as(isize, @intCast(j))));
+                const wy = y_weights[j];
+
+                inline for (0..4) |i| {
+                    const x_idx = @as(usize, @intCast(ix - 1 + @as(isize, @intCast(i))));
+                    const wx = x_weights[i];
+                    const weight = wx * wy;
+
+                    const pixel = self.at(y_idx, x_idx).*;
+
+                    // Convert pixel to vector
+                    var pixel_vec: @Vector(4, f32) = undefined;
+                    inline for (std.meta.fields(T), 0..) |field, k| {
+                        pixel_vec[k] = @floatFromInt(@field(pixel, field.name));
+                    }
+
+                    // Accumulate weighted contribution
+                    sums += @as(@Vector(4, f32), @splat(weight)) * pixel_vec;
+                }
+            }
+
+            // Clamp and convert back to u8
+            var result: T = undefined;
+            inline for (std.meta.fields(T), 0..) |field, k| {
+                const clamped = @max(0, @min(255, @round(sums[k])));
+                @field(result, field.name) = @intFromFloat(clamped);
+            }
+
+            out.at(r, c).* = result;
+        }
+    }
+}
+
+/// Fixed-point bilinear resize for u8 images
+fn resizeBilinearFixedPointU8(self: anytype, out: anytype) void {
+    // Fixed-point scale: 16 bits for fractional part
+    const FIXED_BITS = 16;
+    const FIXED_ONE = 1 << FIXED_BITS;
+
+    // Calculate scale factors in fixed-point
+    const x_scale_fp = (@as(u64, self.cols - 1) << FIXED_BITS) / @as(u64, out.cols - 1);
+    const y_scale_fp = (@as(u64, self.rows - 1) << FIXED_BITS) / @as(u64, out.rows - 1);
+
+    // Process 8 pixels at a time using SIMD
+    const vec_size = 8;
+
+    for (0..out.rows) |r| {
+        // Calculate source Y in fixed-point
+        const src_y_fp = @as(u64, r) * y_scale_fp;
+        const y0 = @as(usize, src_y_fp >> FIXED_BITS);
+        const y1 = @min(y0 + 1, self.rows - 1);
+        const fy = @as(u32, @intCast(src_y_fp & (FIXED_ONE - 1))); // Fractional part
+
+        var c: usize = 0;
+
+        // SIMD processing for groups of 8 pixels
+        while (c + vec_size <= out.cols) : (c += vec_size) {
+            // Calculate source X coordinates in fixed-point
+            var x_indices: [vec_size]usize = undefined;
+            var fx_values: [vec_size]u32 = undefined;
+
+            inline for (0..vec_size) |i| {
+                const src_x_fp = @as(u64, c + i) * x_scale_fp;
+                x_indices[i] = src_x_fp >> FIXED_BITS;
+                fx_values[i] = @intCast(src_x_fp & (FIXED_ONE - 1));
+            }
+
+            // Load pixels and perform bilinear interpolation using SIMD
+            var results: @Vector(vec_size, u16) = undefined;
+
+            inline for (0..vec_size) |i| {
+                const x0 = x_indices[i];
+                const x1 = @min(x0 + 1, self.cols - 1);
+                const fx = fx_values[i];
+
+                // Load the 4 neighboring pixels
+                const tl = @as(u32, self.at(y0, x0).*);
+                const tr = @as(u32, self.at(y0, x1).*);
+                const bl = @as(u32, self.at(y1, x0).*);
+                const br = @as(u32, self.at(y1, x1).*);
+
+                // Fixed-point bilinear interpolation
+                // top = tl * (1 - fx) + tr * fx
+                // bottom = bl * (1 - fx) + br * fx
+                // result = top * (1 - fy) + bottom * fy
+
+                const inv_fx = FIXED_ONE - fx;
+                const inv_fy = FIXED_ONE - fy;
+
+                const top = (tl * inv_fx + tr * fx) >> FIXED_BITS;
+                const bottom = (bl * inv_fx + br * fx) >> FIXED_BITS;
+                const result = (top * inv_fy + bottom * fy) >> FIXED_BITS;
+
+                results[i] = @intCast(result);
+            }
+
+            // Write results
+            inline for (0..vec_size) |i| {
+                out.at(r, c + i).* = @intCast(results[i]);
+            }
+        }
+
+        // Handle remaining pixels
+        while (c < out.cols) : (c += 1) {
+            const src_x_fp = @as(u64, c) * x_scale_fp;
+            const x0 = @as(usize, src_x_fp >> FIXED_BITS);
+            const x1 = @min(x0 + 1, self.cols - 1);
+            const fx = @as(u32, @intCast(src_x_fp & (FIXED_ONE - 1)));
+
+            // Load the 4 neighboring pixels
+            const tl = @as(u32, self.at(y0, x0).*);
+            const tr = @as(u32, self.at(y0, x1).*);
+            const bl = @as(u32, self.at(y1, x0).*);
+            const br = @as(u32, self.at(y1, x1).*);
+
+            // Fixed-point bilinear interpolation
+            const inv_fx = FIXED_ONE - fx;
+            const inv_fy = FIXED_ONE - fy;
+
+            const top = (tl * inv_fx + tr * fx) >> FIXED_BITS;
+            const bottom = (bl * inv_fx + br * fx) >> FIXED_BITS;
+            const result = (top * inv_fy + bottom * fy) >> FIXED_BITS;
+
+            out.at(r, c).* = @intCast(result);
         }
     }
 }
