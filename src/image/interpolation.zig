@@ -13,12 +13,12 @@ const isStruct = @import("../meta.zig").isStruct;
 /// Interpolation method for image resizing and sampling
 ///
 /// Performance and quality comparison:
-/// | Method      | Quality | Speed | Use Case            | Separable |
+/// | Method      | Quality | Speed | Best Use Case       | Overshoot |
 /// |-------------|---------|-------|---------------------|-----------|
-/// | Nearest     | ★☆☆☆☆   | ★★★★★ | Pixel art, speed    | N/A       |
-/// | Bilinear    | ★★☆☆☆   | ★★★★☆ | Fast smooth resize  | Yes       |
-/// | Bicubic     | ★★★☆☆   | ★★★☆☆ | Good quality        | Yes       |
-/// | Catmull-Rom | ★★★★☆   | ★★☆☆☆ | Sharp details       | Yes       |
+/// | Nearest     | ★☆☆☆☆   | ★★★★★ | Pixel art, masks    | No        |
+/// | Bilinear    | ★★☆☆☆   | ★★★★☆ | Real-time, preview  | No        |
+/// | Bicubic     | ★★★☆☆   | ★★★☆☆ | General purpose     | Yes       |
+/// | Catmull-Rom | ★★★★☆   | ★★★☆☆ | Natural images      | No        |
 /// | Lanczos3    | ★★★★★   | ★★☆☆☆ | High-quality resize | Yes       |
 /// | Mitchell    | ★★★★☆   | ★★☆☆☆ | Balanced quality    | Yes       |
 pub const InterpolationMethod = union(enum) {
@@ -67,6 +67,13 @@ pub fn interpolate(comptime T: type, self: anytype, x: f32, y: f32, method: Inte
 /// - out: The destination image (must be pre-allocated)
 /// - method: The interpolation method to use
 pub fn resize(comptime T: type, self: anytype, out: anytype, method: InterpolationMethod) void {
+    // SIMD optimizations for nearest neighbor
+    if (method == .nearest_neighbor) {
+        if (is4xu8Struct(T)) {
+            return resizeNearestNeighbor4xu8(T, self, out);
+        }
+    }
+
     // SIMD optimizations for bilinear
     if (method == .bilinear) {
         // Check for special case: exact 2x upscaling
@@ -77,13 +84,13 @@ pub fn resize(comptime T: type, self: anytype, out: anytype, method: Interpolati
                 return resize2xUpscale4xu8(T, self, out);
             }
         }
-        
+
         // Use separable bilinear for other scales
         if (T == u8 or T == f32) {
             return resizeBilinearSeparable(T, self, out);
         }
     }
-    
+
     // Fall back to generic implementation
     const x_scale = @as(f32, @floatFromInt(self.cols - 1)) / @as(f32, @floatFromInt(out.cols - 1));
     const y_scale = @as(f32, @floatFromInt(self.rows - 1)) / @as(f32, @floatFromInt(out.rows - 1));
@@ -106,7 +113,7 @@ pub fn resize(comptime T: type, self: anytype, out: anytype, method: Interpolati
 fn interpolateNearestNeighbor(comptime T: type, self: anytype, x: f32, y: f32) ?T {
     const col: isize = @intFromFloat(@round(x));
     const row: isize = @intFromFloat(@round(y));
-    
+
     if (col < 0 or row < 0 or col >= self.cols or row >= self.rows) return null;
     return self.at(@intCast(row), @intCast(col)).*;
 }
@@ -116,14 +123,14 @@ fn interpolateBilinear(comptime T: type, self: anytype, x: f32, y: f32) ?T {
     const top: isize = @intFromFloat(@floor(y));
     const right = left + 1;
     const bottom = top + 1;
-    
+
     if (!(left >= 0 and top >= 0 and right < self.cols and bottom < self.rows)) {
         return null;
     }
 
     const lr_frac: f32 = x - as(f32, left);
     const tb_frac: f32 = y - as(f32, top);
-    
+
     const tl: T = self.at(@intCast(top), @intCast(left)).*;
     const tr: T = self.at(@intCast(top), @intCast(right)).*;
     const bl: T = self.at(@intCast(bottom), @intCast(left)).*;
@@ -180,7 +187,7 @@ fn interpolateBicubic(comptime T: type, self: anytype, x: f32, y: f32) ?T {
     };
 
     var result: T = std.mem.zeroes(T);
-    
+
     switch (@typeInfo(T)) {
         .int, .float => {
             var sum: f32 = 0.0;
@@ -223,7 +230,7 @@ fn interpolateBicubic(comptime T: type, self: anytype, x: f32, y: f32) ?T {
         },
         else => @compileError("Image(" ++ @typeName(T) ++ ").interpolateBicubic: unsupported image type"),
     }
-    
+
     return result;
 }
 
@@ -293,14 +300,14 @@ fn interpolateCatmullRom(comptime T: type, self: anytype, x: f32, y: f32) ?T {
         },
         else => @compileError("Image(" ++ @typeName(T) ++ ").interpolateCatmullRom: unsupported image type"),
     }
-    
+
     return result;
 }
 
 fn lanczosKernel(x: f32, a: f32) f32 {
     if (x == 0) return 1;
     if (@abs(x) >= a) return 0;
-    
+
     const pi_x = std.math.pi * x;
     const pi_x_over_a = pi_x / a;
     return (a * @sin(pi_x) * @sin(pi_x_over_a)) / (pi_x * pi_x);
@@ -377,7 +384,7 @@ fn interpolateLanczos(comptime T: type, self: anytype, x: f32, y: f32) ?T {
         },
         else => @compileError("Image(" ++ @typeName(T) ++ ").interpolateLanczos: unsupported image type"),
     }
-    
+
     return result;
 }
 
@@ -385,16 +392,16 @@ fn mitchellKernel(x: f32, b: f32, c: f32) f32 {
     const ax = @abs(x);
     const ax2 = ax * ax;
     const ax3 = ax2 * ax;
-    
+
     if (ax < 1) {
-        return ((12 - 9 * b - 6 * c) * ax3 + 
-                (-18 + 12 * b + 6 * c) * ax2 + 
-                (6 - 2 * b)) / 6;
+        return ((12 - 9 * b - 6 * c) * ax3 +
+            (-18 + 12 * b + 6 * c) * ax2 +
+            (6 - 2 * b)) / 6;
     } else if (ax < 2) {
-        return ((-b - 6 * c) * ax3 + 
-                (6 * b + 30 * c) * ax2 + 
-                (-12 * b - 48 * c) * ax + 
-                (8 * b + 24 * c)) / 6;
+        return ((-b - 6 * c) * ax3 +
+            (6 * b + 30 * c) * ax2 +
+            (-12 * b - 48 * c) * ax +
+            (8 * b + 24 * c)) / 6;
     }
     return 0;
 }
@@ -455,7 +462,7 @@ fn interpolateMitchell(comptime T: type, self: anytype, x: f32, y: f32, b: f32, 
         },
         else => @compileError("Image(" ++ @typeName(T) ++ ").interpolateMitchell: unsupported image type"),
     }
-    
+
     return result;
 }
 
@@ -468,15 +475,15 @@ fn resize2xUpscaleU8(comptime T: type, self: anytype, out: anytype) void {
     std.debug.assert(T == u8);
     std.debug.assert(out.rows == self.rows * 2);
     std.debug.assert(out.cols == self.cols * 2);
-    
+
     // Process 8 pixels at a time using SIMD
     const VecSize = 8;
     const Vec = @Vector(VecSize, u16);
-    
+
     for (0..self.rows) |sr| {
         const dr = sr * 2;
         var col: usize = 0;
-        
+
         // SIMD path for blocks of 8 pixels
         while (col + VecSize <= self.cols) : (col += VecSize) {
             // Load 8 source pixels
@@ -484,16 +491,16 @@ fn resize2xUpscaleU8(comptime T: type, self: anytype, out: anytype) void {
             for (0..VecSize) |i| {
                 src_pixels[i] = self.at(sr, col + i).*;
             }
-            
+
             // Convert to u16 for averaging
             const src_vec: Vec = src_pixels;
-            
+
             // For horizontal interpolation: average adjacent pixels
             var horiz_avg: [VecSize - 1]u8 = undefined;
             for (0..VecSize - 1) |i| {
                 horiz_avg[i] = @intCast((src_vec[i] + src_vec[i + 1]) / 2);
             }
-            
+
             // Write output pixels in 2x2 blocks
             for (0..VecSize) |i| {
                 const dst_col = (col + i) * 2;
@@ -510,7 +517,7 @@ fn resize2xUpscaleU8(comptime T: type, self: anytype, out: anytype) void {
                     out.at(dr, dst_col + 1).* = src_pixels[i];
                 }
             }
-            
+
             // Vertical interpolation for bottom row
             if (sr < self.rows - 1) {
                 for (0..VecSize) |i| {
@@ -518,15 +525,15 @@ fn resize2xUpscaleU8(comptime T: type, self: anytype, out: anytype) void {
                     const top_val = src_pixels[i];
                     const bottom_val = self.at(sr + 1, col + i).*;
                     const vert_avg = @as(u8, @intCast((as(u16, top_val) + as(u16, bottom_val)) / 2));
-                    
+
                     // Bottom-left pixel
                     out.at(dr + 1, dst_col).* = vert_avg;
-                    
+
                     // Bottom-right pixel (bilinear interpolation)
                     if (i < VecSize - 1 and col + i < self.cols - 1) {
                         const br_val = self.at(sr + 1, col + i + 1).*;
-                        const diag_avg = @as(u8, @intCast((as(u16, top_val) + as(u16, src_pixels[i + 1]) + 
-                                                           as(u16, bottom_val) + as(u16, br_val)) / 4));
+                        const diag_avg = @as(u8, @intCast((as(u16, top_val) + as(u16, src_pixels[i + 1]) +
+                            as(u16, bottom_val) + as(u16, br_val)) / 4));
                         out.at(dr + 1, dst_col + 1).* = diag_avg;
                     } else {
                         out.at(dr + 1, dst_col + 1).* = vert_avg;
@@ -541,15 +548,15 @@ fn resize2xUpscaleU8(comptime T: type, self: anytype, out: anytype) void {
                 }
             }
         }
-        
+
         // Handle remaining pixels
         while (col < self.cols) : (col += 1) {
             const val = self.at(sr, col).*;
             const dst_col = col * 2;
-            
+
             // Top-left
             out.at(dr, dst_col).* = val;
-            
+
             // Top-right
             if (col < self.cols - 1) {
                 const next_val = self.at(sr, col + 1).*;
@@ -557,18 +564,18 @@ fn resize2xUpscaleU8(comptime T: type, self: anytype, out: anytype) void {
             } else {
                 out.at(dr, dst_col + 1).* = val;
             }
-            
+
             // Bottom row
             if (sr < self.rows - 1) {
                 const bottom_val = self.at(sr + 1, col).*;
                 const vert_avg = @as(u8, @intCast((as(u16, val) + as(u16, bottom_val)) / 2));
                 out.at(dr + 1, dst_col).* = vert_avg;
-                
+
                 if (col < self.cols - 1) {
                     const br_val = self.at(sr + 1, col + 1).*;
                     const next_val = self.at(sr, col + 1).*;
-                    const diag_avg = @as(u8, @intCast((as(u16, val) + as(u16, next_val) + 
-                                                      as(u16, bottom_val) + as(u16, br_val)) / 4));
+                    const diag_avg = @as(u8, @intCast((as(u16, val) + as(u16, next_val) +
+                        as(u16, bottom_val) + as(u16, br_val)) / 4));
                     out.at(dr + 1, dst_col + 1).* = diag_avg;
                 } else {
                     out.at(dr + 1, dst_col + 1).* = vert_avg;
@@ -586,25 +593,25 @@ fn resize2xUpscale4xu8(comptime T: type, self: anytype, out: anytype) void {
     std.debug.assert(is4xu8Struct(T));
     std.debug.assert(out.rows == self.rows * 2);
     std.debug.assert(out.cols == self.cols * 2);
-    
+
     // Process each row
     for (0..self.rows) |sr| {
         const dr = sr * 2;
-        
+
         // Process each pixel
         for (0..self.cols) |sc| {
             const dc = sc * 2;
             const src_pixel = self.at(sr, sc).*;
-            
+
             // Convert struct to vector for SIMD operations
             var src_vec: @Vector(4, u16) = undefined;
             inline for (std.meta.fields(T), 0..) |field, i| {
                 src_vec[i] = @field(src_pixel, field.name);
             }
-            
+
             // Write top-left pixel
             out.at(dr, dc).* = src_pixel;
-            
+
             // Top-right pixel (horizontal interpolation)
             if (sc < self.cols - 1) {
                 const next_pixel = self.at(sr, sc + 1).*;
@@ -612,7 +619,7 @@ fn resize2xUpscale4xu8(comptime T: type, self: anytype, out: anytype) void {
                 inline for (std.meta.fields(T), 0..) |field, i| {
                     next_vec[i] = @field(next_pixel, field.name);
                 }
-                
+
                 const horiz_avg = (src_vec + next_vec) / @as(@Vector(4, u16), @splat(2));
                 var result: T = undefined;
                 inline for (std.meta.fields(T), 0..) |field, i| {
@@ -622,7 +629,7 @@ fn resize2xUpscale4xu8(comptime T: type, self: anytype, out: anytype) void {
             } else {
                 out.at(dr, dc + 1).* = src_pixel;
             }
-            
+
             // Bottom row interpolation
             if (sr < self.rows - 1) {
                 const bottom_pixel = self.at(sr + 1, sc).*;
@@ -630,7 +637,7 @@ fn resize2xUpscale4xu8(comptime T: type, self: anytype, out: anytype) void {
                 inline for (std.meta.fields(T), 0..) |field, i| {
                     bottom_vec[i] = @field(bottom_pixel, field.name);
                 }
-                
+
                 // Bottom-left (vertical interpolation)
                 const vert_avg = (src_vec + bottom_vec) / @as(@Vector(4, u16), @splat(2));
                 var vert_result: T = undefined;
@@ -638,7 +645,7 @@ fn resize2xUpscale4xu8(comptime T: type, self: anytype, out: anytype) void {
                     @field(vert_result, field.name) = @intCast(vert_avg[i]);
                 }
                 out.at(dr + 1, dc).* = vert_result;
-                
+
                 // Bottom-right (bilinear interpolation)
                 if (sc < self.cols - 1) {
                     const br_pixel = self.at(sr + 1, sc + 1).*;
@@ -646,13 +653,13 @@ fn resize2xUpscale4xu8(comptime T: type, self: anytype, out: anytype) void {
                     inline for (std.meta.fields(T), 0..) |field, i| {
                         br_vec[i] = @field(br_pixel, field.name);
                     }
-                    
+
                     const next_pixel = self.at(sr, sc + 1).*;
                     var next_vec: @Vector(4, u16) = undefined;
                     inline for (std.meta.fields(T), 0..) |field, i| {
                         next_vec[i] = @field(next_pixel, field.name);
                     }
-                    
+
                     const bilinear_avg = (src_vec + next_vec + bottom_vec + br_vec) / @as(@Vector(4, u16), @splat(4));
                     var bilinear_result: T = undefined;
                     inline for (std.meta.fields(T), 0..) |field, i| {
@@ -675,12 +682,12 @@ fn resize2xUpscale4xu8(comptime T: type, self: anytype, out: anytype) void {
 fn resizeBilinearSeparable(comptime T: type, self: anytype, out: anytype) void {
     const x_scale = @as(f32, @floatFromInt(self.cols)) / @as(f32, @floatFromInt(out.cols));
     const y_scale = @as(f32, @floatFromInt(self.rows)) / @as(f32, @floatFromInt(out.rows));
-    
+
     // Allocate temporary buffer for horizontal pass
     // Try to use stack allocation for small buffers, heap for large
     const temp_size = out.cols * self.rows;
     const use_stack = temp_size <= 16384; // 64KB for f32
-    
+
     if (use_stack) {
         var stack_buffer: [16384]f32 = undefined;
         const temp_data = stack_buffer[0..temp_size];
@@ -703,32 +710,32 @@ fn resizeBilinearSeparableImpl(
     // Horizontal pass: resize each row from source to temp buffer
     for (0..self.rows) |r| {
         const row_offset = r * out.cols;
-        
+
         for (0..out.cols) |c| {
             const src_x = @as(f32, @floatFromInt(c)) * x_scale;
             const x0 = @as(usize, @intFromFloat(@floor(src_x)));
             const x1 = @min(x0 + 1, self.cols - 1);
             const fx = src_x - @as(f32, @floatFromInt(x0));
-            
+
             const p0 = self.at(r, x0).*;
             const p1 = self.at(r, x1).*;
-            
+
             const val = as(f32, p0) * (1 - fx) + as(f32, p1) * fx;
             temp_data[row_offset + c] = val;
         }
     }
-    
+
     // Vertical pass: resize each column from temp buffer to output
     for (0..out.rows) |r| {
         const src_y = @as(f32, @floatFromInt(r)) * y_scale;
         const y0 = @as(usize, @intFromFloat(@floor(src_y)));
         const y1 = @min(y0 + 1, self.rows - 1);
         const fy = src_y - @as(f32, @floatFromInt(y0));
-        
+
         for (0..out.cols) |c| {
             const p0 = temp_data[y0 * out.cols + c];
             const p1 = temp_data[y1 * out.cols + c];
-            
+
             const val = p0 * (1 - fy) + p1 * fy;
             out.at(r, c).* = if (T == f32) val else as(T, @round(val));
         }
@@ -747,6 +754,58 @@ fn resizeBilinearScalar(comptime T: type, self: anytype, out: anytype) void {
             if (interpolateBilinear(T, self, src_x, src_y)) |val| {
                 out.at(r, c).* = val;
             }
+        }
+    }
+}
+
+/// SIMD-optimized nearest neighbor resize for 4xu8 types (RGBA)
+fn resizeNearestNeighbor4xu8(comptime T: type, self: anytype, out: anytype) void {
+    std.debug.assert(is4xu8Struct(T));
+
+    const x_scale = @as(f32, @floatFromInt(self.cols)) / @as(f32, @floatFromInt(out.cols));
+    const y_scale = @as(f32, @floatFromInt(self.rows)) / @as(f32, @floatFromInt(out.rows));
+
+    // Process 4 output pixels at a time using SIMD
+    const vec_size = 4;
+
+    for (0..out.rows) |r| {
+        const src_y_f = @as(f32, @floatFromInt(r)) * y_scale;
+        const src_y = @min(self.rows - 1, @as(usize, @intFromFloat(@round(src_y_f))));
+
+        var c: usize = 0;
+
+        // SIMD processing for groups of 4 pixels
+        while (c + vec_size <= out.cols) : (c += vec_size) {
+            // Calculate source X coordinates for 4 pixels
+            const x_coords = @Vector(4, f32){
+                @floatFromInt(c),
+                @floatFromInt(c + 1),
+                @floatFromInt(c + 2),
+                @floatFromInt(c + 3),
+            };
+
+            const src_x_vec = x_coords * @as(@Vector(4, f32), @splat(x_scale));
+
+            // Round to nearest and clamp
+            const src_x_indices = @Vector(4, u32){
+                @min(self.cols - 1, @as(u32, @intFromFloat(@round(src_x_vec[0])))),
+                @min(self.cols - 1, @as(u32, @intFromFloat(@round(src_x_vec[1])))),
+                @min(self.cols - 1, @as(u32, @intFromFloat(@round(src_x_vec[2])))),
+                @min(self.cols - 1, @as(u32, @intFromFloat(@round(src_x_vec[3])))),
+            };
+
+            // Gather pixels from source
+            inline for (0..vec_size) |i| {
+                const src_pixel = self.at(src_y, src_x_indices[i]).*;
+                out.at(r, c + i).* = src_pixel;
+            }
+        }
+
+        // Handle remaining pixels
+        while (c < out.cols) : (c += 1) {
+            const src_x_f = @as(f32, @floatFromInt(c)) * x_scale;
+            const src_x = @min(self.cols - 1, @as(usize, @intFromFloat(@round(src_x_f))));
+            out.at(r, c).* = self.at(src_y, src_x).*;
         }
     }
 }
