@@ -66,6 +66,108 @@ pub const BitmapFont = struct {
             .b = @as(f32, @floatFromInt(height)),
         };
     }
+
+    /// Calculate the tight bounding rectangle for rendering text
+    /// Returns bounds that exactly encompass the visible pixels
+    /// Unlike getTextBounds, this excludes character padding
+    pub fn getTextBoundsTight(self: BitmapFont, text: []const u8, scale: u8) Rectangle(f32) {
+        if (text.len == 0) {
+            return Rectangle(f32){ .l = 0, .t = 0, .r = 0, .b = 0 };
+        }
+
+        var min_x: f32 = std.math.floatMax(f32);
+        var max_x: f32 = std.math.floatMin(f32);
+        var min_y: f32 = std.math.floatMax(f32);
+        var max_y: f32 = std.math.floatMin(f32);
+        var has_any_pixels = false;
+
+        var x: f32 = 0;
+        var y: f32 = 0;
+        const char_width_scaled = @as(f32, @floatFromInt(self.char_width * scale));
+        const char_height_scaled = @as(f32, @floatFromInt(self.char_height * scale));
+
+        for (text) |char| {
+            if (char == '\n') {
+                x = 0;
+                y += char_height_scaled;
+                continue;
+            }
+
+            // Get tight bounds for this character
+            const tight = self.getCharTightBounds(char);
+
+            if (tight.has_pixels) {
+                has_any_pixels = true;
+                const left = x + @as(f32, @floatFromInt(tight.bounds.l * scale));
+                const top = y + @as(f32, @floatFromInt(tight.bounds.t * scale));
+                const right = x + @as(f32, @floatFromInt(tight.bounds.r * scale));
+                const bottom = y + @as(f32, @floatFromInt(tight.bounds.b * scale));
+
+                min_x = @min(min_x, left);
+                max_x = @max(max_x, right);
+                min_y = @min(min_y, top);
+                max_y = @max(max_y, bottom);
+            }
+
+            x += char_width_scaled;
+        }
+
+        if (!has_any_pixels) {
+            return Rectangle(f32){ .l = 0, .t = 0, .r = 0, .b = 0 };
+        }
+
+        return Rectangle(f32){
+            .l = min_x,
+            .t = min_y,
+            .r = max_x,
+            .b = max_y,
+        };
+    }
+
+    /// Get the visible bounds of a character (excluding padding)
+    fn getCharTightBounds(self: BitmapFont, char: u8) struct { bounds: Rectangle(u8), has_pixels: bool } {
+        const char_data = self.getCharData(char) orelse return .{
+            .bounds = Rectangle(u8){ .l = 0, .t = 0, .r = 0, .b = 0 },
+            .has_pixels = false,
+        };
+
+        var min_x: u8 = 255;
+        var max_x: u8 = 0;
+        var min_y: u8 = 255;
+        var max_y: u8 = 0;
+        var has_pixels = false;
+
+        for (char_data, 0..) |row_data, row| {
+            var bits = row_data;
+            for (0..self.char_width) |col| {
+                if (bits & 1 != 0) {
+                    has_pixels = true;
+                    min_x = @min(min_x, @as(u8, @intCast(col)));
+                    max_x = @max(max_x, @as(u8, @intCast(col)));
+                    min_y = @min(min_y, @as(u8, @intCast(row)));
+                    max_y = @max(max_y, @as(u8, @intCast(row)));
+                }
+                bits >>= 1;
+            }
+        }
+
+        if (!has_pixels) {
+            return .{
+                .bounds = Rectangle(u8){ .l = 0, .t = 0, .r = 0, .b = 0 },
+                .has_pixels = false,
+            };
+        }
+
+        return .{
+            .bounds = Rectangle(u8){
+                .l = min_x,
+                .t = min_y,
+                .r = max_x + 1, // Exclusive bound
+                .b = max_y + 1, // Exclusive bound
+            },
+            .has_pixels = true,
+        };
+    }
 };
 
 /// Default 8x8 monospace bitmap font (public domain)
@@ -309,6 +411,34 @@ test "BitmapFont.getTextBounds" {
     const bounds3 = font.getTextBounds("Hello\nWorld", 1);
     try testing.expectEqual(@as(f32, 40), bounds3.r); // max line width (both 5 chars)
     try testing.expectEqual(@as(f32, 16), bounds3.b); // 2 lines * 8 pixels
+}
+
+test "BitmapFont.getTextBoundsTight" {
+    const font = default_font_8x8;
+
+    // Test single character 'A' - we know from earlier it uses columns 0-5
+    const bounds1 = font.getTextBoundsTight("A", 1);
+    try testing.expectEqual(@as(f32, 0), bounds1.l);
+    try testing.expectEqual(@as(f32, 0), bounds1.t);
+    try testing.expectEqual(@as(f32, 6), bounds1.r); // Actual width of 'A' is 6 pixels
+    try testing.expectEqual(@as(f32, 7), bounds1.b); // Height is 7 pixels (no bottom padding for 'A')
+
+    // Test with scaling
+    const bounds2 = font.getTextBoundsTight("A", 2);
+    try testing.expectEqual(@as(f32, 0), bounds2.l);
+    try testing.expectEqual(@as(f32, 0), bounds2.t);
+    try testing.expectEqual(@as(f32, 12), bounds2.r); // 6 * 2
+    try testing.expectEqual(@as(f32, 14), bounds2.b); // 7 * 2
+
+    // Test empty string
+    const bounds3 = font.getTextBoundsTight("", 1);
+    try testing.expectEqual(@as(f32, 0), bounds3.r);
+    try testing.expectEqual(@as(f32, 0), bounds3.b);
+
+    // Test space character (should have no pixels)
+    const bounds4 = font.getTextBoundsTight(" ", 1);
+    try testing.expectEqual(@as(f32, 0), bounds4.r);
+    try testing.expectEqual(@as(f32, 0), bounds4.b);
 }
 
 test "Text rendering on canvas" {

@@ -61,6 +61,28 @@ pub fn Canvas(comptime T: type) type {
             return .{ .image = image, .allocator = allocator };
         }
 
+        /// Clamps a floating-point coordinate to image bounds and converts to usize.
+        /// Returns the clamped coordinate as a usize index.
+        inline fn clampToImageBounds(coord: f32, max_size: usize) usize {
+            return @intFromFloat(@max(0, @min(@as(f32, @floatFromInt(max_size)), coord)));
+        }
+
+        /// Clamps a rectangle to image bounds and returns integer pixel coordinates.
+        /// Returns null if the rectangle is completely outside the image.
+        inline fn clampRectToImage(self: Self, rect: Rectangle(f32)) ?Rectangle(usize) {
+            const left = clampToImageBounds(rect.l, self.image.cols);
+            const top = clampToImageBounds(rect.t, self.image.rows);
+            const right = clampToImageBounds(rect.r, self.image.cols);
+            const bottom = clampToImageBounds(rect.b, self.image.rows);
+
+            // Check if rectangle is valid after clamping
+            if (left >= right or top >= bottom) {
+                return null;
+            }
+
+            return .{ .l = left, .t = top, .r = right, .b = bottom };
+        }
+
         /// Fills the entire canvas with a solid color using @memset.
         pub fn fill(self: Self, color: anytype) void {
             @memset(self.image.data, convertColor(T, color));
@@ -567,6 +589,27 @@ pub fn Canvas(comptime T: type) type {
                 Point2d(f32).init2d(rect.l, rect.b - 1),
             };
             self.drawPolygon(points, color, width, mode);
+        }
+
+        /// Fills a rectangle on the given image.
+        /// The rectangle is defined using standard conventions where l,t are inclusive and r,b are exclusive.
+        /// This means a rectangle from (0,0) to (10,10) will fill pixels at positions 0-9 in both dimensions.
+        /// Uses @memset for optimal performance.
+        pub fn fillRectangle(self: Self, rect: Rectangle(f32), color: anytype, mode: DrawMode) void {
+            _ = mode; // Mode is ignored for rectangle fills - always uses fast @memset
+            comptime assert(isColor(@TypeOf(color)));
+
+            // Use helper to clamp rectangle to image bounds
+            const bounds = self.clampRectToImage(rect) orelse return;
+
+            const target_color = convertColor(T, color);
+
+            // Use @memset for each row for optimal performance
+            for (bounds.t..bounds.b) |row| {
+                const start_idx = row * self.image.cols + bounds.l;
+                const end_idx = row * self.image.cols + bounds.r;
+                @memset(self.image.data[start_idx..end_idx], target_color);
+            }
         }
 
         /// Draws the outline of a circle on the given image.
@@ -1272,8 +1315,8 @@ const md5_checksums = [_]DrawTestCase{
     .{ .name = "circle_filled_solid", .md5sum = "3b3866e705fded47367902dedb825e4e", .draw_fn = drawCircleFilledSolid },
     .{ .name = "circle_filled_smooth", .md5sum = "4996924718641236276cdb1c166ae515", .draw_fn = drawCircleFilledSmooth },
     .{ .name = "circle_outline", .md5sum = "ae7e973d5644ff7bdde7338296e4ab40", .draw_fn = drawCircleOutline },
-    .{ .name = "rectangle_filled", .md5sum = "3783f1119b7d5482b5a333f76c322c92", .draw_fn = drawRectangleFilled },
-    .{ .name = "rectangle_outline", .md5sum = "033fdc24b89399af7b1810783e357b5f", .draw_fn = drawRectangleOutline },
+    .{ .name = "rectangle_filled", .md5sum = "1112ffbda92473effbd4d44c9722f563", .draw_fn = drawRectangleFilled },
+    .{ .name = "rectangle_outline", .md5sum = "d5ee7fe598a82d16e33068d5bb6c6696", .draw_fn = drawRectangleOutline },
     .{ .name = "triangle_filled", .md5sum = "283a9de3dd51dd00794559cc231ff5ac", .draw_fn = drawTriangleFilled },
     .{ .name = "bezier_cubic", .md5sum = "fe95149bead3b0a028057c8c7fb969af", .draw_fn = drawBezierCubic },
     .{ .name = "bezier_quadratic", .md5sum = "c3286e308aaaef5b302129cf67b713c6", .draw_fn = drawBezierQuadratic },
@@ -1320,13 +1363,7 @@ fn drawCircleOutline(canvas: Canvas(Rgba)) void {
 fn drawRectangleFilled(canvas: Canvas(Rgba)) void {
     const color = Rgba{ .r = 64, .g = 128, .b = 192, .a = 255 };
     const rect = Rectangle(f32){ .l = 20, .t = 30, .r = 80, .b = 70 };
-    const corners = [_]Point2d(f32){
-        Point2d(f32).init2d(rect.l, rect.t),
-        Point2d(f32).init2d(rect.r, rect.t),
-        Point2d(f32).init2d(rect.r, rect.b),
-        Point2d(f32).init2d(rect.l, rect.b),
-    };
-    canvas.fillPolygon(&corners, color, .fast) catch unreachable;
+    canvas.fillRectangle(rect, color, .fast);
 }
 
 fn drawRectangleOutline(canvas: Canvas(Rgba)) void {
