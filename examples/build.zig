@@ -21,6 +21,8 @@ pub fn build(b: *std.Build) void {
     const exec_examples = [_][]const u8{
         "png_example",
         "pca_example",
+        "test_stb_port",
+        "image_iterator_demo",
     };
 
     // Build exec_examples with run steps and check compilation
