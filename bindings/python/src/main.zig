@@ -5,6 +5,7 @@ const color = @import("color.zig");
 const image = @import("image.zig");
 const py_utils = @import("py_utils.zig");
 const fdm = @import("fdm.zig");
+const interpolation = @import("interpolation.zig");
 
 const c = @cImport({
     @cDefine("PY_SSIZE_T_CLEAN", {});
@@ -49,6 +50,13 @@ pub export fn PyInit__zignal() ?*c.PyObject {
     // Register all color types from the registry
     color.registerAllColorTypes(@ptrCast(m)) catch |err| {
         std.log.err("Failed to register color types: {}", .{err});
+        c.Py_DECREF(m);
+        return null;
+    };
+
+    // Register InterpolationMethod enum
+    interpolation.registerInterpolationMethod(@ptrCast(m)) catch |err| {
+        std.log.err("Failed to register InterpolationMethod: {}", .{err});
         c.Py_DECREF(m);
         return null;
     };
