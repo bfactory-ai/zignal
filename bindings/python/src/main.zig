@@ -42,14 +42,8 @@ pub export fn PyInit__zignal() ?*c.PyObject {
     if (m == null) return null;
 
     // Register Image type
-    py_utils.registerType(@ptrCast(m), "Image", @ptrCast(&image.ImageType)) catch {
-        c.Py_DECREF(m);
-        return null;
-    };
-
-    // Register all color types from the registry
-    color.registerAllColorTypes(@ptrCast(m)) catch |err| {
-        std.log.err("Failed to register color types: {}", .{err});
+    py_utils.registerType(@ptrCast(m), "Image", @ptrCast(&image.ImageType)) catch |err| {
+        std.log.err("Failed to register Image: {}", .{err});
         c.Py_DECREF(m);
         return null;
     };
@@ -57,6 +51,13 @@ pub export fn PyInit__zignal() ?*c.PyObject {
     // Register InterpolationMethod enum
     interpolation.registerInterpolationMethod(@ptrCast(m)) catch |err| {
         std.log.err("Failed to register InterpolationMethod: {}", .{err});
+        c.Py_DECREF(m);
+        return null;
+    };
+
+    // Register all color types from the registry
+    color.registerAllColorTypes(@ptrCast(m)) catch |err| {
+        std.log.err("Failed to register color types: {}", .{err});
         c.Py_DECREF(m);
         return null;
     };
