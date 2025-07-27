@@ -690,6 +690,47 @@ fn image_reshape(self: *ImageObject, rows: usize, cols: usize, method: Interpola
     return result;
 }
 
+// Documentation for the resize method
+pub const resize_doc =
+    \\resize(size, method=InterpolationMethod.BILINEAR, /)
+    \\--
+    \\
+    \\Resize the image using the specified interpolation method.
+    \\
+    \\Parameters
+    \\----------
+    \\size : float or tuple[int, int]
+    \\    Either a scale factor (float) or target dimensions (rows, cols).
+    \\    - If float: Image will be scaled by this factor (e.g., 2.0 doubles the size)
+    \\    - If tuple: Image will be resized to exactly (rows, cols) dimensions
+    \\method : InterpolationMethod, optional
+    \\    Interpolation method to use. Default is InterpolationMethod.BILINEAR.
+    \\    Available methods: NEAREST_NEIGHBOR, BILINEAR, BICUBIC, CATMULL_ROM, MITCHELL, LANCZOS
+    \\
+    \\Returns
+    \\-------
+    \\Image
+    \\    A new resized Image object
+    \\
+    \\Raises
+    \\------
+    \\ValueError
+    \\    If scale factor is <= 0, or if target dimensions contain zero or negative values
+    \\TypeError
+    \\    If size is neither a float nor a tuple of two integers
+    \\
+    \\Examples
+    \\--------
+    \\>>> img = Image.load("photo.png")
+    \\>>> # Scale by factor
+    \\>>> img2x = img.resize(2.0)  # Double the size
+    \\>>> img_half = img.resize(0.5)  # Half the size
+    \\>>> # Resize to specific dimensions
+    \\>>> thumbnail = img.resize((64, 64))
+    \\>>> # Use different interpolation
+    \\>>> smooth = img.resize(2.0, method=InterpolationMethod.LANCZOS)
+;
+
 // Python-facing resize method that handles both scale and dimensions
 fn image_resize(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*ImageObject, @ptrCast(self_obj.?));
@@ -807,29 +848,50 @@ var image_methods = [_]c.PyMethodDef{
     \\Returns:
     \\    NumPy array view of the image data (zero-copy when possible)
     },
-    .{ .ml_name = "save", .ml_meth = image_save, .ml_flags = c.METH_VARARGS, .ml_doc = "Save image to PNG file. File must have .png extension." },
+    .{ .ml_name = "save", .ml_meth = image_save, .ml_flags = c.METH_VARARGS, .ml_doc = 
+    \\save(path, /)
+    \\--
+    \\
+    \\Save image to PNG file. File must have .png extension.
+    },
     .{ .ml_name = "resize", .ml_meth = @ptrCast(&image_resize), .ml_flags = c.METH_VARARGS | c.METH_KEYWORDS, .ml_doc = 
+    \\resize(size, method=InterpolationMethod.BILINEAR, /)
+    \\--
+    \\
     \\Resize the image using the specified interpolation method.
     \\
-    \\Parameters:
-    \\    size: Either a float (scale factor) or tuple of (rows, cols) for target dimensions
-    \\    method: InterpolationMethod enum value (default: BILINEAR)
+    \\Parameters
+    \\----------
+    \\size : float or tuple[int, int]
+    \\    Either a scale factor (float) or target dimensions (rows, cols).
+    \\    - If float: Image will be scaled by this factor (e.g., 2.0 doubles the size)
+    \\    - If tuple: Image will be resized to exactly (rows, cols) dimensions
+    \\method : InterpolationMethod, optional
+    \\    Interpolation method to use. Default is InterpolationMethod.BILINEAR.
+    \\    Available methods: NEAREST_NEIGHBOR, BILINEAR, BICUBIC, CATMULL_ROM, MITCHELL, LANCZOS
     \\
-    \\Returns:
-    \\    New resized Image object
+    \\Returns
+    \\-------
+    \\Image
+    \\    A new resized Image object
     \\
-    \\Examples:
-    \\    # Scale by 2x
-    \\    larger = img.resize(2.0)
-    \\    
-    \\    # Scale down by half with Lanczos
-    \\    smaller = img.resize(0.5, method=InterpolationMethod.LANCZOS)
-    \\    
-    \\    # Resize to specific dimensions
-    \\    resized = img.resize((800, 600))
-    \\    
-    \\    # High-quality resize
-    \\    hq = img.resize((1920, 1080), method=InterpolationMethod.CATMULL_ROM)
+    \\Raises
+    \\------
+    \\ValueError
+    \\    If scale factor is <= 0, or if target dimensions contain zero or negative values
+    \\TypeError
+    \\    If size is neither a float nor a tuple of two integers
+    \\
+    \\Examples
+    \\--------
+    \\>>> img = Image.load("photo.png")
+    \\>>> # Scale by factor
+    \\>>> img2x = img.resize(2.0)  # Double the size
+    \\>>> img_half = img.resize(0.5)  # Half the size
+    \\>>> # Resize to specific dimensions
+    \\>>> thumbnail = img.resize((64, 64))
+    \\>>> # Use different interpolation
+    \\>>> smooth = img.resize(2.0, method=InterpolationMethod.LANCZOS)
     },
     .{ .ml_name = "__format__", .ml_meth = image_format, .ml_flags = c.METH_VARARGS, .ml_doc = 
     \\Format image for display. Supports format specifiers:
