@@ -607,7 +607,7 @@ fn pythonToZigInterpolation(py_value: c_long) !InterpolationMethod {
 }
 
 // Internal function to scale image by a factor
-fn image_scale_internal(self: *ImageObject, scale: f32, method: InterpolationMethod) !*ImageObject {
+fn image_scale(self: *ImageObject, scale: f32, method: InterpolationMethod) !*ImageObject {
     if (self.image_ptr == null) {
         c.PyErr_SetString(c.PyExc_ValueError, "Image not initialized");
         return error.ImageNotInitialized;
@@ -736,16 +736,16 @@ fn image_resize(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) 
     const self = @as(*ImageObject, @ptrCast(self_obj.?));
 
     // Parse arguments
-    var size_or_scale: ?*c.PyObject = null;
+    var shape_or_scale: ?*c.PyObject = null;
     var method_value: c_long = 1; // Default to BILINEAR
 
     var kwlist = [_:null]?[*:0]u8{ @constCast("size"), @constCast("method"), null };
     const format = std.fmt.comptimePrint("O|l", .{});
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(&kwlist), &size_or_scale, &method_value) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(&kwlist), &shape_or_scale, &method_value) == 0) {
         return null;
     }
 
-    if (size_or_scale == null) {
+    if (shape_or_scale == null) {
         c.PyErr_SetString(c.PyExc_TypeError, "resize() missing required argument: 'size' (pos 1)");
         return null;
     }
@@ -757,9 +757,9 @@ fn image_resize(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) 
     };
 
     // Check if argument is a number (scale) or tuple (dimensions)
-    if (c.PyFloat_Check(size_or_scale) != 0 or c.PyLong_Check(size_or_scale) != 0) {
+    if (c.PyFloat_Check(shape_or_scale) != 0 or c.PyLong_Check(shape_or_scale) != 0) {
         // It's a scale factor
-        const scale = c.PyFloat_AsDouble(size_or_scale);
+        const scale = c.PyFloat_AsDouble(shape_or_scale);
         if (scale == -1.0 and c.PyErr_Occurred() != null) {
             return null;
         }
@@ -768,17 +768,17 @@ fn image_resize(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) 
             return null;
         }
 
-        const result = image_scale_internal(self, @floatCast(scale), method) catch return null;
+        const result = image_scale(self, @floatCast(scale), method) catch return null;
         return @ptrCast(result);
-    } else if (c.PyTuple_Check(size_or_scale) != 0) {
+    } else if (c.PyTuple_Check(shape_or_scale) != 0) {
         // It's a tuple of dimensions
-        if (c.PyTuple_Size(size_or_scale) != 2) {
+        if (c.PyTuple_Size(shape_or_scale) != 2) {
             c.PyErr_SetString(c.PyExc_ValueError, "Size must be a 2-tuple of (rows, cols)");
             return null;
         }
 
-        const rows_obj = c.PyTuple_GetItem(size_or_scale, 0);
-        const cols_obj = c.PyTuple_GetItem(size_or_scale, 1);
+        const rows_obj = c.PyTuple_GetItem(shape_or_scale, 0);
+        const cols_obj = c.PyTuple_GetItem(shape_or_scale, 1);
 
         const rows = c.PyLong_AsLong(rows_obj);
         if (rows == -1 and c.PyErr_Occurred() != null) {
