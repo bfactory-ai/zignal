@@ -288,8 +288,15 @@ pub const Plot = struct {
         const width = @as(f32, @floatFromInt(self.image.cols));
         const height = @as(f32, @floatFromInt(self.image.rows));
 
+        // Adjust left margin if Y-axis label is present
+        var left_margin = self.margins.left;
+        if (self.y_label != null) {
+            // Add extra space for Y-axis label (text height * scale + padding)
+            left_margin += 20 * self.font_scale;
+        }
+
         self.plot_area = .{
-            .l = self.margins.left,
+            .l = left_margin,
             .t = self.margins.top,
             .r = width - self.margins.right,
             .b = height - self.margins.bottom,
@@ -429,7 +436,7 @@ pub const Plot = struct {
     }
 
     /// Draw text labels
-    fn drawLabels(self: Plot) void {
+    fn drawLabels(self: Plot) !void {
         // Title
         if (self.title) |title| {
             const x = (self.plot_area.l + self.plot_area.r) / 2 -
@@ -446,8 +453,51 @@ pub const Plot = struct {
             self.canvas.drawText(label, .init2d(x, y), self.font, self.axis_color, self.font_scale, .fast);
         }
 
-        // Y-axis label (would need rotation support)
-        // TODO: Add text rotation support
+        // Y-axis label (rotated 90 degrees counter-clockwise)
+        if (self.y_label) |label| {
+            // Create a temporary image for the text
+            const text_width = @as(usize, @intFromFloat(@as(f32, @floatFromInt(label.len * 8)) * self.font_scale));
+            const text_height = @as(usize, @intFromFloat(8 * self.font_scale));
+
+            var temp_image = try Image(Rgb).initAlloc(self.allocator, text_height + 4, text_width + 4);
+            defer temp_image.deinit(self.allocator);
+
+            // Create canvas and fill with background color
+            const temp_canvas = Canvas(Rgb).init(self.allocator, temp_image);
+            temp_canvas.fill(self.background_color);
+
+            // Draw text horizontally on temp image
+            temp_canvas.drawText(label, .init2d(2, 2), self.font, self.axis_color, self.font_scale, .fast);
+
+            // Rotate 90 degrees counter-clockwise
+            var rotated_image: Image(Rgb) = .empty;
+            try temp_image.rotate(self.allocator, -std.math.pi / 2.0, &rotated_image);
+            defer rotated_image.deinit(self.allocator);
+
+            // Calculate position for rotated text (centered vertically on Y-axis)
+            // Position between left edge and plot area
+            const x = (self.plot_area.l - 20 * self.font_scale) / 2 - @as(f32, @floatFromInt(rotated_image.cols)) / 2;
+            const y = (self.plot_area.t + self.plot_area.b) / 2 - @as(f32, @floatFromInt(rotated_image.rows)) / 2;
+
+            // Copy rotated text to main image
+            const dest_x = @as(usize, @intFromFloat(@max(0, x)));
+            const dest_y = @as(usize, @intFromFloat(@max(0, y)));
+
+            for (0..rotated_image.rows) |r| {
+                for (0..rotated_image.cols) |c| {
+                    const src_pixel = rotated_image.at(r, c).*;
+                    // Only copy non-background pixels
+                    if (src_pixel.r != self.background_color.r or
+                        src_pixel.g != self.background_color.g or
+                        src_pixel.b != self.background_color.b)
+                    {
+                        if (dest_y + r < self.image.rows and dest_x + c < self.image.cols) {
+                            self.image.at(dest_y + r, dest_x + c).* = src_pixel;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Draw a line series
@@ -658,7 +708,7 @@ pub const Plot = struct {
         try self.drawGrid();
         self.drawAxes();
         try self.drawTicks();
-        self.drawLabels();
+        try self.drawLabels();
 
         // Draw all series
         for (self.series.items) |series| {
