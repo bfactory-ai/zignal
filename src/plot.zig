@@ -18,6 +18,12 @@ const Rectangle = @import("geometry.zig").Rectangle;
 const BitmapFont = @import("font.zig").BitmapFont;
 const default_font_8x8 = @import("font.zig").default_font_8x8;
 
+// Import axis module
+const axis_mod = @import("plot/axis.zig");
+pub const Range = axis_mod.Range;
+pub const Axis = axis_mod.Axis;
+pub const AxisScale = axis_mod.AxisScale;
+
 /// Margins around the plot area
 pub const Margins = struct {
     left: f32 = 60,
@@ -62,77 +68,6 @@ pub const Series = struct {
     label: ?[]const u8 = null,
 };
 
-/// Range of values for an axis
-pub const Range = struct {
-    min: f32,
-    max: f32,
-
-    /// Calculate range from data with optional padding
-    pub fn fromData(data: []const f32, padding_pct: f32) Range {
-        if (data.len == 0) return .{ .min = 0, .max = 1 };
-
-        var min = data[0];
-        var max = data[0];
-        for (data[1..]) |val| {
-            min = @min(min, val);
-            max = @max(max, val);
-        }
-
-        // Add padding
-        const range = max - min;
-        const padding = range * padding_pct;
-        return .{
-            .min = min - padding,
-            .max = max + padding,
-        };
-    }
-
-    /// Get nice round numbers for the range
-    pub fn nice(self: Range) Range {
-        const range = self.max - self.min;
-        const magnitude = std.math.pow(f32, 10, @floor(std.math.log10(range)));
-        const normalized = range / magnitude;
-
-        // Find nice interval
-        const nice_interval: f32 = if (normalized <= 1) 1 else if (normalized <= 2) 2 else if (normalized <= 5) 5 else 10;
-
-        const interval = nice_interval * magnitude;
-        return .{
-            .min = @floor(self.min / interval) * interval,
-            .max = @ceil(self.max / interval) * interval,
-        };
-    }
-
-    /// Generate nice tick positions for this range
-    pub fn generateTicks(self: Range, allocator: Allocator, target_count: usize) ![]f32 {
-        const range = self.max - self.min;
-        if (range <= 0) return try allocator.alloc(f32, 0);
-
-        // Calculate nice tick interval
-        const rough_interval = range / @as(f32, @floatFromInt(target_count));
-        const magnitude = std.math.pow(f32, 10, @floor(std.math.log10(rough_interval)));
-        const normalized = rough_interval / magnitude;
-
-        const tick_interval = blk: {
-            if (normalized <= 1) break :blk magnitude;
-            if (normalized <= 2) break :blk 2 * magnitude;
-            if (normalized <= 5) break :blk 5 * magnitude;
-            break :blk 10 * magnitude;
-        };
-
-        // Generate ticks
-        const first_tick = @ceil(self.min / tick_interval) * tick_interval;
-        const tick_count = @as(usize, @intFromFloat(@floor((self.max - first_tick) / tick_interval))) + 1;
-
-        var ticks = try allocator.alloc(f32, tick_count);
-        for (0..tick_count) |i| {
-            ticks[i] = first_tick + @as(f32, @floatFromInt(i)) * tick_interval;
-        }
-
-        return ticks;
-    }
-};
-
 /// Main plot structure
 pub const Plot = struct {
     allocator: Allocator,
@@ -142,9 +77,9 @@ pub const Plot = struct {
     // Plot area (excluding margins)
     plot_area: Rectangle(f32),
 
-    // Data ranges
-    x_range: Range,
-    y_range: Range,
+    // Axes
+    x_axis: Axis,
+    y_axis: Axis,
     auto_range: bool = true,
 
     // Styling
@@ -186,8 +121,12 @@ pub const Plot = struct {
             .image = image,
             .canvas = canvas,
             .plot_area = plot_area,
-            .x_range = .{ .min = 0, .max = 1 },
-            .y_range = .{ .min = 0, .max = 1 },
+            .x_axis = Axis.init(.{ .min = 0, .max = 1 }, plot_area.l, plot_area.r),
+            .y_axis = blk: {
+                var axis = Axis.init(.{ .min = 0, .max = 1 }, plot_area.t, plot_area.b);
+                axis.inverted = true; // Y-axis is inverted in screen coordinates
+                break :blk axis;
+            },
             .series = std.ArrayList(Series).init(allocator),
         };
     }
@@ -215,13 +154,13 @@ pub const Plot = struct {
 
     /// Set the X-axis range manually
     pub fn setXRange(self: *Plot, min: f32, max: f32) void {
-        self.x_range = .{ .min = min, .max = max };
+        self.x_axis.range = .{ .min = min, .max = max };
         self.auto_range = false;
     }
 
     /// Set the Y-axis range manually
     pub fn setYRange(self: *Plot, min: f32, max: f32) void {
-        self.y_range = .{ .min = min, .max = max };
+        self.y_axis.range = .{ .min = min, .max = max };
         self.auto_range = false;
     }
 
@@ -301,6 +240,12 @@ pub const Plot = struct {
             .r = width - self.margins.right,
             .b = height - self.margins.bottom,
         };
+
+        // Update axis pixel ranges
+        self.x_axis.pixel_min = self.plot_area.l;
+        self.x_axis.pixel_max = self.plot_area.r;
+        self.y_axis.pixel_min = self.plot_area.t;
+        self.y_axis.pixel_max = self.plot_area.b;
     }
 
     /// Calculate data ranges from all series
@@ -324,16 +269,14 @@ pub const Plot = struct {
         }
 
         // Apply nice rounding
-        self.x_range = Range.fromData(&.{ x_min, x_max }, 0.05).nice();
-        self.y_range = Range.fromData(&.{ y_min, y_max }, 0.05).nice();
+        self.x_axis.range = Range.fromData(&.{ x_min, x_max }, 0.05).nice();
+        self.y_axis.range = Range.fromData(&.{ y_min, y_max }, 0.05).nice();
     }
 
     /// Convert data coordinates to pixel coordinates
     fn dataToPixel(self: Plot, x: f32, y: f32) Point2d(f32) {
-        const px = self.plot_area.l + (x - self.x_range.min) /
-            (self.x_range.max - self.x_range.min) * (self.plot_area.r - self.plot_area.l);
-        const py = self.plot_area.b - (y - self.y_range.min) /
-            (self.y_range.max - self.y_range.min) * (self.plot_area.b - self.plot_area.t);
+        const px = self.x_axis.dataToPixel(x);
+        const py = self.y_axis.dataToPixel(y);
         return .init2d(px, py);
     }
 
@@ -347,9 +290,9 @@ pub const Plot = struct {
         if (!self.show_grid) return;
 
         // Generate tick positions
-        const x_ticks = try self.x_range.generateTicks(self.allocator, 8);
+        const x_ticks = try self.x_axis.generateTicks(self.allocator, 8);
         defer self.allocator.free(x_ticks);
-        const y_ticks = try self.y_range.generateTicks(self.allocator, 8);
+        const y_ticks = try self.y_axis.generateTicks(self.allocator, 8);
         defer self.allocator.free(y_ticks);
 
         // Vertical grid lines
@@ -384,9 +327,9 @@ pub const Plot = struct {
         const tick_size: f32 = 5;
 
         // Generate tick positions
-        const x_ticks = try self.x_range.generateTicks(self.allocator, 8);
+        const x_ticks = try self.x_axis.generateTicks(self.allocator, 8);
         defer self.allocator.free(x_ticks);
-        const y_ticks = try self.y_range.generateTicks(self.allocator, 8);
+        const y_ticks = try self.y_axis.generateTicks(self.allocator, 8);
         defer self.allocator.free(y_ticks);
 
         // X-axis ticks and labels
@@ -397,7 +340,7 @@ pub const Plot = struct {
                 self.canvas.drawLine(.init2d(px, self.plot_area.b), .init2d(px, self.plot_area.b + tick_size), self.axis_color, 1, .fast);
 
                 // Draw label
-                const label = formatTickValue(tick_val, &buffer);
+                const label = Axis.formatTickValue(tick_val, &buffer);
                 const text_width = @as(f32, @floatFromInt(label.len * 8));
                 self.canvas.drawText(label, .init2d(px - text_width / 2, self.plot_area.b + tick_size + 5), self.font, self.axis_color, 1, .fast);
             }
@@ -411,27 +354,10 @@ pub const Plot = struct {
                 self.canvas.drawLine(.init2d(self.plot_area.l - tick_size, py), .init2d(self.plot_area.l, py), self.axis_color, 1, .fast);
 
                 // Draw label
-                const label = formatTickValue(tick_val, &buffer);
+                const label = Axis.formatTickValue(tick_val, &buffer);
                 const text_width = @as(f32, @floatFromInt(label.len * 8));
                 self.canvas.drawText(label, .init2d(self.plot_area.l - tick_size - text_width - 5, py - 4), self.font, self.axis_color, 1, .fast);
             }
-        }
-    }
-
-    /// Format a tick value to a string
-    fn formatTickValue(value: f32, buffer: []u8) []const u8 {
-        // Simple formatting - could be improved
-        const abs_val = @abs(value);
-
-        // Format based on magnitude
-        if (abs_val >= 100) {
-            return std.fmt.bufPrint(buffer, "{d:.0}", .{value}) catch "?";
-        } else if (abs_val >= 10) {
-            return std.fmt.bufPrint(buffer, "{d:.1}", .{value}) catch "?";
-        } else if (abs_val >= 1) {
-            return std.fmt.bufPrint(buffer, "{d:.1}", .{value}) catch "?";
-        } else {
-            return std.fmt.bufPrint(buffer, "{d:.2}", .{value}) catch "?";
         }
     }
 
@@ -768,16 +694,4 @@ test "Plot with line series" {
     }
 
     try testing.expect(non_white_pixels > 100);
-}
-
-test "Range calculations" {
-    const data = [_]f32{ -5, 3, 8, -2, 15 };
-    const range = Range.fromData(&data, 0.1);
-
-    try testing.expect(range.min < -5);
-    try testing.expect(range.max > 15);
-
-    const nice_range = range.nice();
-    try testing.expectEqual(@as(f32, -10), nice_range.min);
-    try testing.expectEqual(@as(f32, 20), nice_range.max);
 }
