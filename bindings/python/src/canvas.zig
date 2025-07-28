@@ -39,13 +39,41 @@ fn canvas_new(type_obj: ?*c.PyTypeObject, args: ?*c.PyObject, kwds: ?*c.PyObject
 }
 
 fn canvas_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) c_int {
-    _ = self_obj;
-    _ = args;
     _ = kwds;
+    const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
-    // Canvas cannot be instantiated directly
-    c.PyErr_SetString(c.PyExc_TypeError, "Canvas cannot be instantiated directly. Use Image.canvas() instead.");
-    return -1;
+    // Parse arguments - expect an Image object
+    var image_obj: ?*c.PyObject = undefined;
+    const format = std.fmt.comptimePrint("O", .{});
+    if (c.PyArg_ParseTuple(args, format.ptr, &image_obj) == 0) {
+        return -1;
+    }
+
+    // Import the image module to get the ImageType
+    const image_module = @import("image.zig");
+
+    // Check if it's an Image instance
+    if (c.PyObject_IsInstance(image_obj, @ptrCast(&image_module.ImageType)) <= 0) {
+        c.PyErr_SetString(c.PyExc_TypeError, "Argument must be an Image instance");
+        return -1;
+    }
+
+    const image = @as(*image_module.ImageObject, @ptrCast(image_obj.?));
+
+    // Check if image is initialized
+    if (image.image_ptr == null) {
+        c.PyErr_SetString(c.PyExc_ValueError, "Image not initialized");
+        return -1;
+    }
+
+    // Keep reference to parent Image to prevent garbage collection
+    c.Py_INCREF(image_obj.?);
+    self.image_ref = image_obj;
+
+    // Store image pointer for Canvas operations
+    self.canvas_image = image.image_ptr;
+
+    return 0;
 }
 
 fn canvas_dealloc(self_obj: ?*c.PyObject) callconv(.c) void {

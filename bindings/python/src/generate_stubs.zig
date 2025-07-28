@@ -178,7 +178,7 @@ fn generateCanvasClass(stub: *GeneratedStub) !void {
     try stub.write("    \"\"\"Canvas for drawing operations on images\"\"\"\n");
 
     // Constructor
-    try stub.write("    def __init__(self) -> None: ...\n");
+    try stub.write("    def __init__(self, image: Image) -> None: ...\n");
 
     // Methods
     try stub.write("    def fill(self, color: Union[Tuple[int, int, int], Tuple[int, int, int, int]]) -> None: ...\n");
