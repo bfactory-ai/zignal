@@ -131,16 +131,19 @@ class TestColorConversions:
             zignal.Oklab(0.5, 0.1, -0.1),
         ]
 
-        # Each should have to_rgb and to_rgba at minimum
+        # Each should have to_rgba at minimum
         for color in colors:
-            assert hasattr(color, "to_rgb")
             assert hasattr(color, "to_rgba")
 
-            # Test they work
-            rgb = color.to_rgb()
-            assert rgb is not None
+            # Test to_rgba works
             rgba = color.to_rgba()
             assert rgba is not None
+
+            # Test to_rgb works (except for Rgb itself)
+            if not isinstance(color, zignal.Rgb):
+                assert hasattr(color, "to_rgb")
+                rgb = color.to_rgb()
+                assert rgb is not None
 
 
 class TestColorValidation:
