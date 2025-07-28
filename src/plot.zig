@@ -522,6 +522,131 @@ pub const Plot = struct {
         }
     }
 
+    /// Draw the legend
+    fn drawLegend(self: Plot) void {
+        if (!self.show_legend) return;
+
+        // Count series with labels
+        var labeled_count: usize = 0;
+        for (self.series.items) |series| {
+            if (series.label != null) labeled_count += 1;
+        }
+        if (labeled_count == 0) return;
+
+        // Legend dimensions
+        const padding: f32 = 10;
+        const item_height: f32 = 20;
+        const sample_width: f32 = 30;
+        const text_offset: f32 = 5;
+
+        // Calculate legend size
+        var max_label_width: f32 = 0;
+        for (self.series.items) |series| {
+            if (series.label) |label| {
+                const label_width = @as(f32, @floatFromInt(label.len * 8));
+                max_label_width = @max(max_label_width, label_width);
+            }
+        }
+
+        const legend_width = padding * 2 + sample_width + text_offset + max_label_width;
+        const legend_height = padding * 2 + @as(f32, @floatFromInt(labeled_count)) * item_height;
+
+        // Position legend in top-right corner of plot area
+        const legend_x = self.plot_area.r - legend_width - 10;
+        const legend_y = self.plot_area.t + 10;
+
+        // Draw legend background
+        self.canvas.fillRectangle(.{
+            .l = legend_x,
+            .t = legend_y,
+            .r = legend_x + legend_width,
+            .b = legend_y + legend_height,
+        }, Rgb{ .r = 255, .g = 255, .b = 255 }, .fast);
+
+        // Draw legend border
+        self.canvas.drawRectangle(.{
+            .l = legend_x,
+            .t = legend_y,
+            .r = legend_x + legend_width,
+            .b = legend_y + legend_height,
+        }, Rgb{ .r = 200, .g = 200, .b = 200 }, 1, .fast);
+
+        // Draw legend items
+        var y_offset: f32 = legend_y + padding;
+        for (self.series.items) |series| {
+            const label = series.label orelse continue;
+
+            const sample_x = legend_x + padding;
+            const sample_y = y_offset + item_height / 2;
+
+            // Draw sample based on series type
+            switch (series.type) {
+                .line => {
+                    self.canvas.drawLine(.init2d(sample_x, sample_y), .init2d(sample_x + sample_width, sample_y), series.style.color, series.style.line_width, .soft);
+                },
+                .scatter => {
+                    const marker_x = sample_x + sample_width / 2;
+                    // Draw a single marker
+                    switch (series.style.marker_type) {
+                        .circle => {
+                            self.canvas.fillCircle(.init2d(marker_x, sample_y), series.style.marker_size, series.style.color, .soft);
+                        },
+                        .square => {
+                            const half = series.style.marker_size / 2;
+                            self.canvas.fillRectangle(.{
+                                .l = marker_x - half,
+                                .t = sample_y - half,
+                                .r = marker_x + half,
+                                .b = sample_y + half,
+                            }, series.style.color, .fast);
+                        },
+                        .triangle => {
+                            const size = series.style.marker_size;
+                            const h = size * 0.866;
+                            const half_base = size / 2;
+                            const points = [_]Point2d(f32){
+                                .init2d(marker_x, sample_y - h * 0.67),
+                                .init2d(marker_x - half_base, sample_y + h * 0.33),
+                                .init2d(marker_x + half_base, sample_y + h * 0.33),
+                            };
+                            self.canvas.fillPolygon(&points, series.style.color, .soft) catch {};
+                        },
+                        .cross => {
+                            const half = series.style.marker_size / 2;
+                            const line_width = @max(1, @as(usize, @intFromFloat(series.style.marker_size / 4)));
+                            self.canvas.drawLine(.init2d(marker_x - half, sample_y - half), .init2d(marker_x + half, sample_y + half), series.style.color, line_width, .soft);
+                            self.canvas.drawLine(.init2d(marker_x + half, sample_y - half), .init2d(marker_x - half, sample_y + half), series.style.color, line_width, .soft);
+                        },
+                        .plus => {
+                            const half = series.style.marker_size / 2;
+                            const line_width = @max(1, @as(usize, @intFromFloat(series.style.marker_size / 4)));
+                            self.canvas.drawLine(.init2d(marker_x - half, sample_y), .init2d(marker_x + half, sample_y), series.style.color, line_width, .soft);
+                            self.canvas.drawLine(.init2d(marker_x, sample_y - half), .init2d(marker_x, sample_y + half), series.style.color, line_width, .soft);
+                        },
+                        .diamond => {
+                            const half = series.style.marker_size / 2;
+                            const points = [_]Point2d(f32){
+                                .init2d(marker_x, sample_y - half),
+                                .init2d(marker_x + half, sample_y),
+                                .init2d(marker_x, sample_y + half),
+                                .init2d(marker_x - half, sample_y),
+                            };
+                            self.canvas.fillPolygon(&points, series.style.color, .soft) catch {};
+                        },
+                    }
+                },
+                else => {},
+            }
+
+            // Draw label text
+            const text_x = sample_x + sample_width + text_offset;
+            const text_y = sample_y - 4; // Center text vertically
+            self.canvas.drawText(label, .init2d(text_x, text_y), self.font, self.axis_color, 1, .fast);
+
+            y_offset += item_height;
+        }
+    }
+
     /// Render the plot
     pub fn render(self: *Plot) !void {
         // Update layout
@@ -544,7 +669,8 @@ pub const Plot = struct {
             }
         }
 
-        // TODO: Draw legend if enabled
+        // Draw legend if enabled
+        self.drawLegend();
     }
 
     /// Save the plot to a PNG file
