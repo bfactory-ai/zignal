@@ -188,6 +188,8 @@ fn generateCanvasClass(stub: *GeneratedStub) !void {
     try stub.write("    def rows(self) -> int: ...\n");
     try stub.write("    @property\n");
     try stub.write("    def cols(self) -> int: ...\n");
+    try stub.write("    @property\n");
+    try stub.write("    def image(self) -> Image: ...\n");
 
     // Standard Python methods
     try stub.write("    def __repr__(self) -> str: ...\n");

@@ -996,8 +996,25 @@ fn image_canvas(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyO
     c.Py_INCREF(self_obj.?);
     canvas_obj.?.image_ref = @ptrCast(self_obj);
 
-    // Store image pointer for Canvas operations
-    canvas_obj.?.canvas_image = self.image_ptr;
+    // Create and store the Canvas struct
+    const canvas_ptr = allocator.create(canvas.Canvas(zignal.Rgba)) catch {
+        c.Py_DECREF(self_obj.?);
+        c.Py_DECREF(@as(*c.PyObject, @ptrCast(canvas_obj)));
+        c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate Canvas");
+        return null;
+    };
+
+    // Initialize the Canvas
+    if (self.image_ptr) |img_ptr| {
+        canvas_ptr.* = canvas.Canvas(zignal.Rgba).init(allocator, img_ptr.*);
+    } else {
+        allocator.destroy(canvas_ptr);
+        c.Py_DECREF(self_obj.?);
+        c.Py_DECREF(@as(*c.PyObject, @ptrCast(canvas_obj)));
+        c.PyErr_SetString(c.PyExc_ValueError, "Image not initialized");
+        return null;
+    }
+    canvas_obj.?.canvas_ptr = canvas_ptr;
 
     return @as(?*c.PyObject, @ptrCast(canvas_obj));
 }

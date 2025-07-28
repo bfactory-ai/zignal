@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const zignal = @import("zignal");
-const Canvas = zignal.Canvas;
+pub const Canvas = zignal.Canvas;
 const DrawMode = zignal.DrawMode;
 
 const py_utils = @import("py_utils.zig");
@@ -21,9 +21,8 @@ pub const CanvasObject = extern struct {
     ob_base: c.PyObject,
     // Keep reference to parent Image to prevent garbage collection
     image_ref: ?*c.PyObject,
-    // Store the Canvas struct components directly (not a pointer to Canvas)
-    // This is because Canvas is a simple wrapper around Image
-    canvas_image: ?*zignal.Image(zignal.Rgba),
+    // Store a pointer to the heap-allocated Canvas struct
+    canvas_ptr: ?*Canvas(zignal.Rgba),
 };
 
 fn canvas_new(type_obj: ?*c.PyTypeObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
@@ -33,7 +32,7 @@ fn canvas_new(type_obj: ?*c.PyTypeObject, args: ?*c.PyObject, kwds: ?*c.PyObject
     const self = @as(?*CanvasObject, @ptrCast(c.PyType_GenericAlloc(type_obj, 0)));
     if (self) |obj| {
         obj.image_ref = null;
-        obj.canvas_image = null;
+        obj.canvas_ptr = null;
     }
     return @as(?*c.PyObject, @ptrCast(self));
 }
@@ -70,14 +69,34 @@ fn canvas_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
     c.Py_INCREF(image_obj.?);
     self.image_ref = image_obj;
 
-    // Store image pointer for Canvas operations
-    self.canvas_image = image.image_ptr;
+    // Create and store the Canvas struct
+    const canvas_ptr = allocator.create(Canvas(zignal.Rgba)) catch {
+        c.Py_DECREF(image_obj.?);
+        c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate Canvas");
+        return -1;
+    };
+
+    // Initialize the Canvas
+    if (image.image_ptr) |img_ptr| {
+        canvas_ptr.* = Canvas(zignal.Rgba).init(allocator, img_ptr.*);
+    } else {
+        allocator.destroy(canvas_ptr);
+        c.Py_DECREF(image_obj.?);
+        c.PyErr_SetString(c.PyExc_ValueError, "Image not initialized");
+        return -1;
+    }
+    self.canvas_ptr = canvas_ptr;
 
     return 0;
 }
 
 fn canvas_dealloc(self_obj: ?*c.PyObject) callconv(.c) void {
     const self = @as(*CanvasObject, @ptrCast(self_obj.?));
+
+    // Free the Canvas struct
+    if (self.canvas_ptr) |ptr| {
+        allocator.destroy(ptr);
+    }
 
     // Release reference to parent Image
     if (self.image_ref) |ref| {
@@ -90,9 +109,9 @@ fn canvas_dealloc(self_obj: ?*c.PyObject) callconv(.c) void {
 fn canvas_repr(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
-    if (self.canvas_image) |img| {
+    if (self.canvas_ptr) |canvas| {
         var buffer: [64]u8 = undefined;
-        const formatted = std.fmt.bufPrintZ(&buffer, "Canvas({d}x{d})", .{ img.rows, img.cols }) catch return null;
+        const formatted = std.fmt.bufPrintZ(&buffer, "Canvas({d}x{d})", .{ canvas.image.rows, canvas.image.cols }) catch return null;
         return c.PyUnicode_FromString(formatted.ptr);
     } else {
         return c.PyUnicode_FromString("Canvas(uninitialized)");
@@ -176,7 +195,7 @@ fn canvas_fill(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyOb
     const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
     // Check if canvas is initialized
-    if (self.canvas_image == null) {
+    if (self.canvas_ptr == null) {
         c.PyErr_SetString(c.PyExc_ValueError, "Canvas not initialized");
         return null;
     }
@@ -191,9 +210,8 @@ fn canvas_fill(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyOb
     // Convert color tuple to Rgba
     const color = parseColorTuple(color_obj) catch return null;
 
-    // Create Canvas and call fill
-    const canvas = Canvas(zignal.Rgba).init(allocator, self.canvas_image.?.*);
-    canvas.fill(color);
+    // Use the stored Canvas directly
+    self.canvas_ptr.?.fill(color);
 
     // Return None
     const none = c.Py_None();
@@ -206,8 +224,8 @@ fn canvas_get_rows(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*
     _ = closure;
     const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
-    if (self.canvas_image) |img| {
-        return c.PyLong_FromLong(@intCast(img.rows));
+    if (self.canvas_ptr) |canvas| {
+        return c.PyLong_FromLong(@intCast(canvas.image.rows));
     } else {
         c.PyErr_SetString(c.PyExc_ValueError, "Canvas not initialized");
         return null;
@@ -218,8 +236,21 @@ fn canvas_get_cols(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*
     _ = closure;
     const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
-    if (self.canvas_image) |img| {
-        return c.PyLong_FromLong(@intCast(img.cols));
+    if (self.canvas_ptr) |canvas| {
+        return c.PyLong_FromLong(@intCast(canvas.image.cols));
+    } else {
+        c.PyErr_SetString(c.PyExc_ValueError, "Canvas not initialized");
+        return null;
+    }
+}
+
+fn canvas_get_image(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
+    _ = closure;
+    const self = @as(*CanvasObject, @ptrCast(self_obj.?));
+
+    if (self.image_ref) |img_ref| {
+        c.Py_INCREF(img_ref);
+        return img_ref;
     } else {
         c.PyErr_SetString(c.PyExc_ValueError, "Canvas not initialized");
         return null;
@@ -252,6 +283,7 @@ var canvas_methods = [_]c.PyMethodDef{
 var canvas_getset = [_]c.PyGetSetDef{
     .{ .name = "rows", .get = canvas_get_rows, .set = null, .doc = "Number of rows (height) in the canvas", .closure = null },
     .{ .name = "cols", .get = canvas_get_cols, .set = null, .doc = "Number of columns (width) in the canvas", .closure = null },
+    .{ .name = "image", .get = canvas_get_image, .set = null, .doc = "The Image object this canvas draws on", .closure = null },
     .{ .name = null, .get = null, .set = null, .doc = null, .closure = null },
 };
 
