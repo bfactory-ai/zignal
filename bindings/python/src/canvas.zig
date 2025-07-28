@@ -136,8 +136,8 @@ fn canvas_fill(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyOb
         return null;
     }
 
-    // Convert color tuple to Rgba
-    const color = py_utils.parseColorTuple(@ptrCast(color_obj)) catch return null;
+    // Convert color to Rgba
+    const color = py_utils.parseColorToRgba(@ptrCast(color_obj)) catch return null;
 
     // Use the stored Canvas directly
     self.canvas_ptr.?.fill(color);
@@ -187,7 +187,7 @@ fn canvas_draw_line(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     // Convert Python objects to Zig types
     const p1 = py_utils.parsePointTuple(@ptrCast(p1_obj)) catch return null;
     const p2 = py_utils.parsePointTuple(@ptrCast(p2_obj)) catch return null;
-    const color = py_utils.parseColorTuple(@ptrCast(color_obj)) catch return null;
+    const color = py_utils.parseColorToRgba(@ptrCast(color_obj)) catch return null;
 
     // Convert mode to DrawMode enum
     const draw_mode: DrawMode = if (mode == 0) .fast else .soft;
@@ -248,16 +248,19 @@ var canvas_methods = [_]c.PyMethodDef{
     \\
     \\Parameters
     \\----------
-    \\color : tuple[int, int, int] or tuple[int, int, int, int]
-    \\    RGB or RGBA color tuple with values in range 0-255.
+    \\color : tuple[int, int, int] or tuple[int, int, int, int] or any color object
+    \\    RGB or RGBA color tuple with values in range 0-255, or any zignal color object
+    \\    (Rgb, Hsl, Hsv, Lab, Oklab, etc.). Color objects are automatically converted to RGBA.
     \\    If only RGB is provided, alpha defaults to 255 (fully opaque).
     \\
     \\Examples
     \\--------
     \\>>> img = Image.load("photo.png")
     \\>>> canvas = img.canvas()
-    \\>>> canvas.fill((255, 0, 0))      # Fill with red
+    \\>>> canvas.fill((255, 0, 0))      # Fill with red tuple
     \\>>> canvas.fill((0, 255, 0, 128)) # Fill with semi-transparent green
+    \\>>> canvas.fill(zignal.Rgb(255, 0, 0))  # Fill with red color object
+    \\>>> canvas.fill(zignal.Hsl(120, 100, 50))  # Fill with green HSL color
     },
     .{ .ml_name = "draw_line", .ml_meth = @ptrCast(&canvas_draw_line), .ml_flags = c.METH_VARARGS | c.METH_KEYWORDS, .ml_doc = 
     \\draw_line(p1, p2, color, width=1, mode=DrawMode.FAST)
@@ -271,8 +274,9 @@ var canvas_methods = [_]c.PyMethodDef{
     \\    Starting point (x, y) coordinates.
     \\p2 : tuple[float, float]
     \\    Ending point (x, y) coordinates.
-    \\color : tuple[int, int, int] or tuple[int, int, int, int]
-    \\    RGB or RGBA color tuple with values in range 0-255.
+    \\color : tuple[int, int, int] or tuple[int, int, int, int] or any color object
+    \\    RGB or RGBA color tuple with values in range 0-255, or any zignal color object
+    \\    (Rgb, Hsl, Hsv, Lab, Oklab, etc.). Color objects are automatically converted to RGBA.
     \\    If only RGB is provided, alpha defaults to 255 (fully opaque).
     \\width : int, optional
     \\    Line width in pixels (default: 1).
@@ -287,6 +291,8 @@ var canvas_methods = [_]c.PyMethodDef{
     \\>>> canvas.draw_line((10, 10), (100, 100), (255, 0, 0))  # Red diagonal line
     \\>>> canvas.draw_line((0, 50), (200, 50), (0, 255, 0), width=3)  # Thick green horizontal line
     \\>>> canvas.draw_line((50, 0), (50, 200), (0, 0, 255), width=2, mode=DrawMode.SOFT)  # Antialiased blue vertical line
+    \\>>> canvas.draw_line((0, 0), (100, 100), zignal.Rgb(255, 0, 0))  # Using color object
+    \\>>> canvas.draw_line((0, 0), (100, 100), zignal.Lab(53.24, 80.09, 67.20))  # Red in Lab color space
     },
     .{ .ml_name = null, .ml_meth = null, .ml_flags = 0, .ml_doc = null },
 };

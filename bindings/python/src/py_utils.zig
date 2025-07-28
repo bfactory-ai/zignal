@@ -264,16 +264,107 @@ pub fn convertWithValidation(
     return converted;
 }
 
-/// Parse a Python tuple representing a color (RGB or RGBA)
+/// Parse a Python color - either a tuple (RGB/RGBA) or a color object
 /// Returns a zignal.Rgba color with values in range 0-255
-pub fn parseColorTuple(color_obj: ?*c.PyObject) !zignal.Rgba {
+pub fn parseColorToRgba(color_obj: ?*c.PyObject) !zignal.Rgba {
     if (color_obj == null) {
         return error.InvalidColor;
     }
 
-    // Check if it's a tuple
-    if (c.PyTuple_Check(color_obj) == 0) {
-        c.PyErr_SetString(c.PyExc_TypeError, "Color must be a tuple of (r, g, b) or (r, g, b, a)");
+    // First check if it's a tuple
+    if (c.PyTuple_Check(color_obj) != 0) {
+        return parseColorTuple(color_obj);
+    }
+
+    // Otherwise, check if it has a to_rgba method (duck typing)
+    const to_rgba_str = c.PyUnicode_FromString("to_rgba");
+    defer c.Py_DECREF(to_rgba_str);
+
+    if (c.PyObject_HasAttr(color_obj, to_rgba_str) != 0) {
+        // Call to_rgba() method
+        const rgba_obj = c.PyObject_CallMethodObjArgs(color_obj, to_rgba_str, @as(?*c.PyObject, null));
+        if (rgba_obj == null) {
+            return error.InvalidColor;
+        }
+        defer c.Py_DECREF(rgba_obj);
+
+        // Extract r, g, b, a attributes from the returned Rgba object
+        const r_attr = c.PyObject_GetAttrString(rgba_obj, "r");
+        if (r_attr == null) return error.InvalidColor;
+        defer c.Py_DECREF(r_attr);
+
+        const g_attr = c.PyObject_GetAttrString(rgba_obj, "g");
+        if (g_attr == null) return error.InvalidColor;
+        defer c.Py_DECREF(g_attr);
+
+        const b_attr = c.PyObject_GetAttrString(rgba_obj, "b");
+        if (b_attr == null) return error.InvalidColor;
+        defer c.Py_DECREF(b_attr);
+
+        const a_attr = c.PyObject_GetAttrString(rgba_obj, "a");
+        if (a_attr == null) return error.InvalidColor;
+        defer c.Py_DECREF(a_attr);
+
+        const r = c.PyLong_AsLong(r_attr);
+        const g = c.PyLong_AsLong(g_attr);
+        const b = c.PyLong_AsLong(b_attr);
+        const a = c.PyLong_AsLong(a_attr);
+
+        if (c.PyErr_Occurred() != null) {
+            return error.InvalidColor;
+        }
+
+        return zignal.Rgba{
+            .r = @intCast(r),
+            .g = @intCast(g),
+            .b = @intCast(b),
+            .a = @intCast(a),
+        };
+    }
+
+    // Check if it's an Rgba object directly (no conversion needed)
+    const r_attr = c.PyObject_GetAttrString(color_obj, "r");
+    if (r_attr != null) {
+        defer c.Py_DECREF(r_attr);
+
+        const g_attr = c.PyObject_GetAttrString(color_obj, "g");
+        if (g_attr == null) return error.InvalidColor;
+        defer c.Py_DECREF(g_attr);
+
+        const b_attr = c.PyObject_GetAttrString(color_obj, "b");
+        if (b_attr == null) return error.InvalidColor;
+        defer c.Py_DECREF(b_attr);
+
+        const a_attr = c.PyObject_GetAttrString(color_obj, "a");
+        if (a_attr == null) return error.InvalidColor;
+        defer c.Py_DECREF(a_attr);
+
+        const r = c.PyLong_AsLong(r_attr);
+        const g = c.PyLong_AsLong(g_attr);
+        const b = c.PyLong_AsLong(b_attr);
+        const a = c.PyLong_AsLong(a_attr);
+
+        if (c.PyErr_Occurred() != null) {
+            return error.InvalidColor;
+        }
+
+        return zignal.Rgba{
+            .r = @intCast(r),
+            .g = @intCast(g),
+            .b = @intCast(b),
+            .a = @intCast(a),
+        };
+    }
+
+    c.PyErr_SetString(c.PyExc_TypeError, "Color must be a tuple of (r, g, b) or (r, g, b, a), or a color object with to_rgba() method");
+    return error.InvalidColor;
+}
+
+/// Parse a Python tuple representing a color (RGB or RGBA)
+/// Returns a zignal.Rgba color with values in range 0-255
+/// This is now a helper function used by parseColor
+fn parseColorTuple(color_obj: ?*c.PyObject) !zignal.Rgba {
+    if (color_obj == null) {
         return error.InvalidColor;
     }
 
