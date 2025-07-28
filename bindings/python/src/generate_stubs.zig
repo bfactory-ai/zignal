@@ -182,6 +182,7 @@ fn generateCanvasClass(stub: *GeneratedStub) !void {
 
     // Methods
     try stub.write("    def fill(self, color: Union[Tuple[int, int, int], Tuple[int, int, int, int]]) -> None: ...\n");
+    try stub.write("    def draw_line(self, p1: Tuple[float, float], p2: Tuple[float, float], color: Union[Tuple[int, int, int], Tuple[int, int, int, int]], width: int = 1, mode: DrawMode = ...) -> None: ...\n");
 
     // Properties
     try stub.write("    @property\n");
