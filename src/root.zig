@@ -106,3 +106,9 @@ pub const imageToColorPoints = pca.imageToColorPoints;
 pub const colorPointsToImage = pca.colorPointsToImage;
 pub const imageToIntensityPoints = pca.imageToIntensityPoints;
 pub const intensityPointsToImage = pca.intensityPointsToImage;
+
+// Plot module for data visualization
+const plot_mod = @import("plot.zig");
+pub const Plot = plot_mod.Plot;
+pub const SeriesStyle = plot_mod.SeriesStyle;
+pub const MarkerType = plot_mod.MarkerType;
