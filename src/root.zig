@@ -120,3 +120,9 @@ pub const optimization = @import("optimization.zig");
 // Statistics module
 const stats = @import("stats.zig");
 pub const RunningStats = stats.RunningStats;
+
+// Plot module for data visualization
+const plot_mod = @import("plot.zig");
+pub const Plot = plot_mod.Plot;
+pub const SeriesStyle = plot_mod.SeriesStyle;
+pub const MarkerType = plot_mod.MarkerType;
