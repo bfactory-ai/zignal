@@ -110,3 +110,9 @@ pub const MatchStats = features.MatchStats;
 
 // Optimization algorithms
 pub const optimization = @import("optimization.zig");
+
+// Plot module for data visualization
+const plot_mod = @import("plot.zig");
+pub const Plot = plot_mod.Plot;
+pub const SeriesStyle = plot_mod.SeriesStyle;
+pub const MarkerType = plot_mod.MarkerType;
