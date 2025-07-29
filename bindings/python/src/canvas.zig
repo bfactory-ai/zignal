@@ -249,7 +249,31 @@ pub const canvas_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .name = "fill",
         .meth = @ptrCast(&canvas_fill),
         .flags = c.METH_VARARGS,
-        .doc = "Fill the entire canvas with a color",
+        .doc =
+        \\fill(color, /)
+        \\--
+        \\
+        \\Fill the entire canvas with a color.
+        \\
+        \\Parameters
+        \\----------
+        \\color : tuple or color object
+        \\    Color to fill the canvas with. Can be:
+        \\    - RGB tuple: (r, g, b) with values 0-255
+        \\    - RGBA tuple: (r, g, b, a) with values 0-255
+        \\    - Any color object: Rgb, Rgba, Hsl, Hsv, Lab, Lch, Lms, Oklab, Oklch, Xyb, Xyz, Ycbcr
+        \\
+        \\Returns
+        \\-------
+        \\None
+        \\
+        \\Examples
+        \\--------
+        \\>>> img = Image.load("photo.png")
+        \\>>> canvas = img.canvas()
+        \\>>> canvas.fill((255, 0, 0))  # Fill with red
+        \\>>> canvas.fill(Rgb(0, 255, 0))  # Fill with green using Rgb object
+        ,
         .params = "self, color: Union[Tuple[int, int, int], Tuple[int, int, int, int], " ++ colors ++ "]",
         .returns = "None",
     },
@@ -257,7 +281,41 @@ pub const canvas_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .name = "draw_line",
         .meth = @ptrCast(&canvas_draw_line),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
-        .doc = "Draw a line between two points",
+        .doc =
+        \\draw_line(p1, p2, color, width=1, mode=DrawMode.FAST, /)
+        \\--
+        \\
+        \\Draw a line between two points.
+        \\
+        \\Parameters
+        \\----------
+        \\p1 : tuple[float, float]
+        \\    Starting point coordinates (x, y)
+        \\p2 : tuple[float, float]
+        \\    Ending point coordinates (x, y)
+        \\color : tuple or color object
+        \\    Color of the line. Can be:
+        \\    - RGB tuple: (r, g, b) with values 0-255
+        \\    - RGBA tuple: (r, g, b, a) with values 0-255
+        \\    - Any color object: Rgb, Rgba, Hsl, Hsv, Lab, Lch, Lms, Oklab, Oklch, Xyb, Xyz, Ycbcr
+        \\width : int, optional
+        \\    Line width in pixels (default: 1)
+        \\mode : DrawMode, optional
+        \\    Drawing mode - DrawMode.FAST or DrawMode.SOFT (default: DrawMode.FAST)
+        \\
+        \\Returns
+        \\-------
+        \\None
+        \\
+        \\Examples
+        \\--------
+        \\>>> img = Image.load("photo.png")
+        \\>>> canvas = img.canvas()
+        \\>>> # Draw a red line from top-left to bottom-right
+        \\>>> canvas.draw_line((0, 0), (100, 100), (255, 0, 0))
+        \\>>> # Draw a thick blue line with antialiasing
+        \\>>> canvas.draw_line((50, 50), (150, 50), (0, 0, 255), width=5, mode=DrawMode.SOFT)
+        ,
         .params = "self, p1: Tuple[float, float], p2: Tuple[float, float], color: Union[Tuple[int, int, int], Tuple[int, int, int, int], " ++ colors ++ "], width: int = 1, mode: DrawMode = ...",
         .returns = "None",
     },

@@ -694,47 +694,6 @@ fn image_reshape(self: *ImageObject, rows: usize, cols: usize, method: Interpola
     return result;
 }
 
-// Documentation for the resize method
-pub const resize_doc =
-    \\resize(size, method=InterpolationMethod.BILINEAR, /)
-    \\--
-    \\
-    \\Resize the image using the specified interpolation method.
-    \\
-    \\Parameters
-    \\----------
-    \\size : float or tuple[int, int]
-    \\    Either a scale factor (float) or target dimensions (rows, cols).
-    \\    - If float: Image will be scaled by this factor (e.g., 2.0 doubles the size)
-    \\    - If tuple: Image will be resized to exactly (rows, cols) dimensions
-    \\method : InterpolationMethod, optional
-    \\    Interpolation method to use. Default is InterpolationMethod.BILINEAR.
-    \\    Available methods: NEAREST_NEIGHBOR, BILINEAR, BICUBIC, CATMULL_ROM, MITCHELL, LANCZOS
-    \\
-    \\Returns
-    \\-------
-    \\Image
-    \\    A new resized Image object
-    \\
-    \\Raises
-    \\------
-    \\ValueError
-    \\    If scale factor is <= 0, or if target dimensions contain zero or negative values
-    \\TypeError
-    \\    If size is neither a float nor a tuple of two integers
-    \\
-    \\Examples
-    \\--------
-    \\>>> img = Image.load("photo.png")
-    \\>>> # Scale by factor
-    \\>>> img2x = img.resize(2.0)  # Double the size
-    \\>>> img_half = img.resize(0.5)  # Half the size
-    \\>>> # Resize to specific dimensions
-    \\>>> thumbnail = img.resize((64, 64))
-    \\>>> # Use different interpolation
-    \\>>> smooth = img.resize(2.0, method=InterpolationMethod.LANCZOS)
-;
-
 // Python-facing resize method that handles both scale and dimensions
 fn image_resize(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*ImageObject, @ptrCast(self_obj.?));
@@ -1027,7 +986,37 @@ pub const image_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .name = "load",
         .meth = @ptrCast(&image_load),
         .flags = c.METH_VARARGS | c.METH_CLASS,
-        .doc = "Load an image from file (PNG/JPEG)",
+        .doc =
+        \\load(path, /)
+        \\--
+        \\
+        \\Load an image from file (PNG/JPEG).
+        \\
+        \\Parameters
+        \\----------
+        \\path : str
+        \\    Path to the image file to load
+        \\
+        \\Returns
+        \\-------
+        \\Image
+        \\    Loaded image object
+        \\
+        \\Raises
+        \\------
+        \\FileNotFoundError
+        \\    If the image file is not found
+        \\ValueError
+        \\    If the image format is not supported
+        \\MemoryError
+        \\    If allocation fails
+        \\
+        \\Examples
+        \\--------
+        \\>>> img = Image.load("photo.png")
+        \\>>> print(img.rows, img.cols)
+        \\512 768
+        ,
         .params = "cls, path: str",
         .returns = "Image",
     },
@@ -1036,17 +1025,47 @@ pub const image_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&image_from_numpy),
         .flags = c.METH_VARARGS | c.METH_CLASS,
         .doc =
+        \\from_numpy(array, /)
+        \\--
+        \\
         \\Create Image from NumPy array with shape (rows, cols, 3) or (rows, cols, 4) and dtype uint8.
         \\
-        \\Note: The array must be C-contiguous. If your array is not C-contiguous
+        \\For 4-channel arrays, zero-copy is used. For 3-channel arrays, the data is
+        \\converted to RGBA format with alpha=255 (requires allocation).
+        \\To enable zero-copy for RGB arrays, use Image.add_alpha() first.
+        \\
+        \\Parameters
+        \\----------
+        \\array : np.ndarray
+        \\    NumPy array with shape (rows, cols, 3) or (rows, cols, 4) and dtype uint8.
+        \\    Must be C-contiguous.
+        \\
+        \\Returns
+        \\-------
+        \\Image
+        \\    New Image object from the array data
+        \\
+        \\Raises
+        \\------
+        \\TypeError
+        \\    If array is None or has wrong dtype
+        \\ValueError
+        \\    If array has wrong shape or is not C-contiguous
+        \\
+        \\Notes
+        \\-----
+        \\The array must be C-contiguous. If your array is not C-contiguous
         \\(e.g., from slicing or transposing), use np.ascontiguousarray() first:
         \\
         \\    arr = np.ascontiguousarray(arr)
         \\    img = Image.from_numpy(arr)
         \\
-        \\For 4-channel arrays, zero-copy is used. For 3-channel arrays, the data is
-        \\converted to RGBA format with alpha=255 (requires allocation).
-        \\To enable zero-copy for RGB arrays, use Image.add_alpha() first.
+        \\Examples
+        \\--------
+        \\>>> arr = np.zeros((100, 200, 3), dtype=np.uint8)
+        \\>>> img = Image.from_numpy(arr)
+        \\>>> print(img.rows, img.cols)
+        \\100 200
         ,
         .params = "cls, array: np.ndarray[Any, np.dtype[np.uint8]]",
         .returns = "Image",
@@ -1056,16 +1075,32 @@ pub const image_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&image_add_alpha),
         .flags = c.METH_VARARGS | c.METH_STATIC,
         .doc =
+        \\add_alpha(array, alpha=255, /)
+        \\--
+        \\
         \\Add alpha channel to a 3-channel RGB numpy array.
         \\
-        \\Parameters:
-        \\    array: numpy array with shape (rows, cols, 3) and dtype uint8
-        \\    alpha: alpha value to use (default: 255)
+        \\This is useful for enabling zero-copy when creating Images from RGB arrays.
         \\
-        \\Returns:
+        \\Parameters
+        \\----------
+        \\array : np.ndarray
+        \\    NumPy array with shape (rows, cols, 3) and dtype uint8
+        \\alpha : int, optional
+        \\    Alpha value to use for all pixels (default: 255)
+        \\
+        \\Returns
+        \\-------
+        \\np.ndarray
         \\    New array with shape (rows, cols, 4)
         \\
-        \\This is useful for enabling zero-copy when creating Images from RGB arrays.
+        \\Examples
+        \\--------
+        \\>>> rgb_arr = np.zeros((100, 200, 3), dtype=np.uint8)
+        \\>>> rgba_arr = Image.add_alpha(rgb_arr)
+        \\>>> print(rgba_arr.shape)
+        \\(100, 200, 4)
+        \\>>> img = Image.from_numpy(rgba_arr)  # Zero-copy creation
         ,
         .params = "array: np.ndarray[Any, np.dtype[np.uint8]], alpha: int = 255",
         .returns = "np.ndarray[Any, np.dtype[np.uint8]]",
@@ -1075,14 +1110,29 @@ pub const image_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&image_to_numpy),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc =
+        \\to_numpy(include_alpha=True, /)
+        \\--
+        \\
         \\Convert the image to a NumPy array.
         \\
-        \\Parameters:
-        \\    include_alpha: If True (default), returns array with shape (rows, cols, 4).
-        \\                   If False, returns array with shape (rows, cols, 3).
+        \\Parameters
+        \\----------
+        \\include_alpha : bool, optional
+        \\    If True (default), returns array with shape (rows, cols, 4).
+        \\    If False, returns array with shape (rows, cols, 3).
         \\
-        \\Returns:
+        \\Returns
+        \\-------
+        \\np.ndarray
         \\    NumPy array view of the image data (zero-copy when possible)
+        \\
+        \\Examples
+        \\--------
+        \\>>> img = Image.load("photo.png")
+        \\>>> arr_rgba = img.to_numpy()  # Include alpha
+        \\>>> arr_rgb = img.to_numpy(include_alpha=False)  # RGB only
+        \\>>> print(arr_rgba.shape, arr_rgb.shape)
+        \\(512, 768, 4) (512, 768, 3)
         ,
         .params = "self, include_alpha: bool = True",
         .returns = "np.ndarray[Any, np.dtype[np.uint8]]",
@@ -1091,7 +1141,37 @@ pub const image_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .name = "save",
         .meth = @ptrCast(&image_save),
         .flags = c.METH_VARARGS,
-        .doc = "Save the image to a PNG file",
+        .doc =
+        \\save(path, /)
+        \\--
+        \\
+        \\Save the image to a PNG file.
+        \\
+        \\Parameters
+        \\----------
+        \\path : str
+        \\    Path where the PNG file will be saved. Must have .png extension.
+        \\
+        \\Returns
+        \\-------
+        \\None
+        \\
+        \\Raises
+        \\------
+        \\ValueError
+        \\    If the file does not have .png extension
+        \\MemoryError
+        \\    If allocation fails during save
+        \\PermissionError
+        \\    If write permission is denied
+        \\FileNotFoundError
+        \\    If the directory does not exist
+        \\
+        \\Examples
+        \\--------
+        \\>>> img = Image.load("input.png")
+        \\>>> img.save("output.png")
+        ,
         .params = "self, path: str",
         .returns = "None",
     },
@@ -1155,22 +1235,37 @@ pub const image_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&image_format),
         .flags = c.METH_VARARGS,
         .doc =
-        \\Format image for display. Supports format specifiers:
-        \\  '' (empty): Returns text representation (e.g., 'Image(800x600)')
-        \\  'auto': Auto-detect best format with progressive degradation: kitty -> sixel -> blocks
-        \\  'ansi': Display using ANSI escape codes (spaces with background)
-        \\  'blocks': Display using ANSI escape codes (half colored half-blocks with background: 2x vertical resolution)
-        \\  'braille': Display using Braille patterns (good for monochrome images)
-        \\  'sixel': Display using sixel graphics protocol (up to 256 colors)
-        \\  'kitty': Display using kitty graphics protocol (24-bit color)
+        \\__format__(format_spec, /)
+        \\--
         \\
-        \\Example:
-        \\  print(f"{img}")         # Image(800x600)
-        \\  print(f"{img:ansi}")    # Display with ANSI colors
-        \\  print(f"{img:blocks}")  # Display with ANSI colors using unicode blocks (double vertical resolution, better aspect ratio)
-        \\  print(f"{img:braille}") # Display with ANSI colors using braille patterns (good for monochrome images)
-        \\  print(f"{img:sixel}")   # Display with sixel graphics
-        \\  print(f"{img:kitty}")   # Display with kitty graphics
+        \\Format image for display using various terminal graphics protocols.
+        \\
+        \\Parameters
+        \\----------
+        \\format_spec : str
+        \\    Format specifier for display:
+        \\    - '' (empty): Returns text representation (e.g., 'Image(800x600)')
+        \\    - 'auto': Auto-detect best format with progressive degradation: kitty -> sixel -> blocks
+        \\    - 'ansi': Display using ANSI escape codes (spaces with background)
+        \\    - 'blocks': Display using ANSI escape codes (half colored half-blocks with background: 2x vertical resolution)
+        \\    - 'braille': Display using Braille patterns (good for monochrome images)
+        \\    - 'sixel': Display using sixel graphics protocol (up to 256 colors)
+        \\    - 'kitty': Display using kitty graphics protocol (24-bit color)
+        \\
+        \\Returns
+        \\-------
+        \\str
+        \\    Formatted string for display
+        \\
+        \\Examples
+        \\--------
+        \\>>> img = Image.load("photo.png")
+        \\>>> print(f"{img}")         # Image(800x600)
+        \\>>> print(f"{img:ansi}")    # Display with ANSI colors
+        \\>>> print(f"{img:blocks}")  # Display with unicode blocks
+        \\>>> print(f"{img:braille}") # Display with braille patterns
+        \\>>> print(f"{img:sixel}")   # Display with sixel graphics
+        \\>>> print(f"{img:kitty}")   # Display with kitty graphics
         ,
         .params = "self, format_spec: str",
         .returns = "str",
@@ -1179,7 +1274,24 @@ pub const image_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .name = "canvas",
         .meth = @ptrCast(&image_canvas),
         .flags = c.METH_NOARGS,
-        .doc = "Create a Canvas object for drawing operations on this image",
+        .doc =
+        \\canvas(/)
+        \\--
+        \\
+        \\Create a Canvas object for drawing operations on this image.
+        \\
+        \\Returns
+        \\-------
+        \\Canvas
+        \\    Canvas object that can be used to draw on this image
+        \\
+        \\Examples
+        \\--------
+        \\>>> img = Image.load("photo.png")
+        \\>>> canvas = img.canvas()
+        \\>>> canvas.fill((255, 0, 0))  # Fill with red
+        \\>>> canvas.draw_line((0, 0), (100, 100), (0, 255, 0))  # Draw green line
+        ,
         .params = "self",
         .returns = "Canvas",
     },
