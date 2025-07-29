@@ -8,6 +8,7 @@ const allocator = py_utils.allocator;
 pub const registerType = py_utils.registerType;
 
 const canvas = @import("canvas.zig");
+const stub_metadata = @import("stub_metadata.zig");
 
 const c = @cImport({
     @cDefine("PY_SSIZE_T_CLEAN", {});
@@ -1202,4 +1203,29 @@ pub var ImageType = c.PyTypeObject{
     .tp_getset = &image_getset,
     .tp_init = image_init,
     .tp_new = image_new,
+};
+
+// ============================================================================
+// STUB GENERATION METADATA
+// ============================================================================
+
+pub const image_class_info = stub_metadata.ClassInfo{
+    .name = "Image",
+    .doc = "Image class with RGBA storage for SIMD-optimized operations",
+    .methods = &[_]stub_metadata.MethodInfo{
+        stub_metadata.classmethod("load", "cls, path: str", "Image"),
+        stub_metadata.classmethod("from_numpy", "cls, array: np.ndarray[Any, np.dtype[np.uint8]]", "Image"),
+        stub_metadata.staticmethod("add_alpha", "array: np.ndarray[Any, np.dtype[np.uint8]], alpha: int = 255", "np.ndarray[Any, np.dtype[np.uint8]]"),
+        stub_metadata.method("save", "self, path: str", "None"),
+        stub_metadata.method("to_numpy", "self, include_alpha: bool = True", "np.ndarray[Any, np.dtype[np.uint8]]"),
+        stub_metadata.method("resize", "self, size: Union[float, Tuple[int, int]], method: InterpolationMethod = InterpolationMethod.BILINEAR", "Image"),
+        stub_metadata.method("letterbox", "self, size: Union[int, Tuple[int, int]], method: InterpolationMethod = InterpolationMethod.BILINEAR", "Image"),
+        stub_metadata.method("canvas", "self", "Canvas"),
+        stub_metadata.method("__init__", "self", "None"),
+        stub_metadata.method("__repr__", "self", "str"),
+    },
+    .properties = &[_]stub_metadata.PropertyInfo{
+        stub_metadata.readonly_property("rows", "int"),
+        stub_metadata.readonly_property("cols", "int"),
+    },
 };

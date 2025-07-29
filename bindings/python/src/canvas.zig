@@ -8,6 +8,7 @@ const Point2d = zignal.Point2d;
 const py_utils = @import("py_utils.zig");
 const allocator = py_utils.allocator;
 pub const registerType = py_utils.registerType;
+const stub_metadata = @import("stub_metadata.zig");
 
 const c = @cImport({
     @cDefine("PY_SSIZE_T_CLEAN", {});
@@ -319,6 +320,33 @@ pub var CanvasType = c.PyTypeObject{
     .tp_getset = &canvas_getset,
     .tp_init = canvas_init,
     .tp_new = canvas_new,
+};
+
+// ============================================================================
+// CANVAS STUB GENERATION METADATA
+// ============================================================================
+
+pub const canvas_class_info = stub_metadata.ClassInfo{
+    .name = "Canvas",
+    .doc = "Canvas for drawing operations on images",
+    .methods = &[_]stub_metadata.MethodInfo{
+        stub_metadata.method("__init__", "self, image: Image", "None"),
+        stub_metadata.method("fill", "self, color: Union[Tuple[int, int, int], Tuple[int, int, int, int], 'Rgb', 'Rgba', 'Hsl', 'Hsv', 'Lab', 'Lch', 'Lms', 'Oklab', 'Oklch', 'Xyb', 'Xyz', 'Ycbcr']", "None"),
+        stub_metadata.method("draw_line", "self, p1: Tuple[float, float], p2: Tuple[float, float], color: Union[Tuple[int, int, int], Tuple[int, int, int, int], 'Rgb', 'Rgba', 'Hsl', 'Hsv', 'Lab', 'Lch', 'Lms', 'Oklab', 'Oklch', 'Xyb', 'Xyz', 'Ycbcr'], width: int = 1, mode: DrawMode = ...", "None"),
+        stub_metadata.method("__repr__", "self", "str"),
+    },
+    .properties = &[_]stub_metadata.PropertyInfo{
+        stub_metadata.readonly_property("rows", "int"),
+        stub_metadata.readonly_property("cols", "int"),
+        stub_metadata.readonly_property("image", "Image"),
+    },
+};
+
+// Enum metadata for DrawMode
+pub const drawmode_enum_info = stub_metadata.EnumInfo{
+    .name = "DrawMode",
+    .doc = "Rendering quality mode for drawing operations",
+    .zig_type = DrawMode,
 };
 
 // ============================================================================
