@@ -1,14 +1,13 @@
 const std = @import("std");
 const build_options = @import("build_options");
 
-const color = @import("color.zig");
-const image = @import("image.zig");
 const canvas = @import("canvas.zig");
-const py_utils = @import("py_utils.zig");
+const color = @import("color.zig");
 const fdm = @import("fdm.zig");
+const image = @import("image.zig");
 const interpolation = @import("interpolation.zig");
+const py_utils = @import("py_utils.zig");
 const stub_metadata = @import("stub_metadata.zig");
-const metadata_converter = @import("metadata_converter.zig");
 
 const c = @cImport({
     @cDefine("PY_SSIZE_T_CLEAN", {});
@@ -36,7 +35,7 @@ pub const module_functions_metadata = [_]stub_metadata.FunctionWithMetadata{
 };
 
 // Generate PyMethodDef array at compile time
-var zignal_methods = metadata_converter.functionsToPyMethodDefArray(&module_functions_metadata);
+var zignal_methods = stub_metadata.functionsToPyMethodDefArray(&module_functions_metadata);
 
 pub export fn PyInit__zignal() ?*c.PyObject {
     const m = c.PyModule_Create(&zignal_module);
