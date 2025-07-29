@@ -275,7 +275,7 @@ fn resolveVersion(b: *std.Build) std.SemanticVersion {
 /// @param target_info: Target platform information for platform-specific linking
 fn linkPython(b: *Build, artifact: *Build.Step.Compile, python_lib: []const u8, target_info: std.Target) void {
     // Link against libc for Python headers
-    artifact.linkLibC();
+    artifact.root_module.link_libc = true;
 
     // Add Python include directory if provided via environment variable
     if (std.process.getEnvVarOwned(b.allocator, "PYTHON_INCLUDE_DIR")) |python_include| {
