@@ -5,7 +5,11 @@ const std = @import("std");
 const zignal = @import("zignal");
 const color_registry = @import("color_registry.zig");
 const stub_metadata = @import("stub_metadata.zig");
-const all_metadata = @import("all_metadata.zig");
+
+// Import modules that contain metadata
+const image_module = @import("image.zig");
+const canvas_module = @import("canvas.zig");
+const main_module = @import("main.zig");
 
 const GeneratedStub = struct {
     content: std.ArrayList(u8),
@@ -223,20 +227,47 @@ fn generateStubFile(allocator: std.mem.Allocator) ![]u8 {
         try generateColorClass(&stub, ColorType);
     }
 
-    // Generate InterpolationMethod enum from metadata
-    try generateEnumFromMetadata(&stub, all_metadata.interpolation_enum_info);
+    // Generate InterpolationMethod enum
+    try generateEnumFromMetadata(&stub, .{
+        .name = "InterpolationMethod",
+        .base = "IntEnum",
+        .doc = "Interpolation methods for image resizing",
+        .zig_type = zignal.InterpolationMethod,
+    });
 
-    // Generate DrawMode enum from metadata
-    try generateEnumFromMetadata(&stub, all_metadata.drawmode_enum_info);
+    // Generate DrawMode enum
+    try generateEnumFromMetadata(&stub, .{
+        .name = "DrawMode",
+        .base = "IntEnum",
+        .doc = "Rendering quality mode for drawing operations",
+        .zig_type = zignal.DrawMode,
+    });
 
     // Generate Image class from metadata
-    try generateClassFromMetadata(&stub, all_metadata.image_class_info);
+    const image_methods = stub_metadata.extractMethodInfo(&image_module.image_methods_metadata);
+    const image_properties = stub_metadata.extractPropertyInfo(&image_module.image_properties_metadata);
+    try generateClassFromMetadata(&stub, .{
+        .name = "Image",
+        .doc = "Image class with RGBA storage for SIMD-optimized operations",
+        .methods = &image_methods,
+        .properties = &image_properties,
+        .bases = &.{},
+    });
 
     // Generate Canvas class from metadata
-    try generateClassFromMetadata(&stub, all_metadata.canvas_class_info);
+    const canvas_methods = stub_metadata.extractMethodInfo(&canvas_module.canvas_methods_metadata);
+    const canvas_properties = stub_metadata.extractPropertyInfo(&canvas_module.canvas_properties_metadata);
+    try generateClassFromMetadata(&stub, .{
+        .name = "Canvas",
+        .doc = "Canvas for drawing operations on images",
+        .methods = &canvas_methods,
+        .properties = &canvas_properties,
+        .bases = &.{},
+    });
 
     // Generate module-level functions from metadata
-    try generateModuleFunctionsFromMetadata(&stub, &all_metadata.module_functions);
+    const module_functions = stub_metadata.extractFunctionInfo(&main_module.module_functions_metadata);
+    try generateModuleFunctionsFromMetadata(&stub, &module_functions);
 
     // Module metadata
     try stub.write("\n__version__: str\n");

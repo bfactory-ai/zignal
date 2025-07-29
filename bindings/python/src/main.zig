@@ -8,6 +8,7 @@ const py_utils = @import("py_utils.zig");
 const fdm = @import("fdm.zig");
 const interpolation = @import("interpolation.zig");
 const stub_metadata = @import("stub_metadata.zig");
+const metadata_converter = @import("metadata_converter.zig");
 
 const c = @cImport({
     @cDefine("PY_SSIZE_T_CLEAN", {});
@@ -22,22 +23,27 @@ var zignal_module = c.PyModuleDef{
     .m_name = "zignal",
     .m_doc = "zero dependency image processing library",
     .m_size = -1,
-    .m_methods = &zignal_methods,
+    .m_methods = @ptrCast(&zignal_methods),
     .m_slots = null,
     .m_traverse = null,
     .m_clear = null,
     .m_free = null,
 };
 
-var zignal_methods = [_]c.PyMethodDef{
+// Module function metadata with co-located documentation
+pub const module_functions_metadata = [_]stub_metadata.FunctionWithMetadata{
     .{
-        .ml_name = "feature_distribution_match",
-        .ml_meth = @ptrCast(&fdm.feature_distribution_match),
-        .ml_flags = c.METH_VARARGS,
-        .ml_doc = fdm.feature_distribution_match_doc,
+        .name = "feature_distribution_match",
+        .meth = @constCast(@ptrCast(&fdm.feature_distribution_match)),
+        .flags = c.METH_VARARGS,
+        .doc = "Apply Feature Distribution Matching (FDM) to transfer color/style from reference to source image.\n\nThis function modifies the source image in-place to match the color distribution\n(mean and covariance) of the reference image while preserving the structure of the source.\n\nParameters\n----------\nsource : Image\n    Source image to be modified (modified in-place)\nreference : Image\n    Reference image providing target color distribution\n\nReturns\n-------\nNone\n    This function modifies the source image in-place",
+        .params = "source: Image, reference: Image",
+        .returns = "None",
     },
-    .{ .ml_name = null, .ml_meth = null, .ml_flags = 0, .ml_doc = null },
 };
+
+// Generate PyMethodDef array at compile time
+var zignal_methods = metadata_converter.functionsToPyMethodDefArray(&module_functions_metadata);
 
 pub export fn PyInit__zignal() ?*c.PyObject {
     const m = c.PyModule_Create(&zignal_module);
@@ -94,33 +100,3 @@ pub export fn PyInit__zignal() ?*c.PyObject {
 }
 
 pub fn main() void {}
-
-// ============================================================================
-// MODULE STUB GENERATION METADATA
-// ============================================================================
-
-pub const module_functions = [_]stub_metadata.FunctionInfo{
-    .{
-        .name = "feature_distribution_match",
-        .params = "source: Image, reference: Image",
-        .returns = "None",
-        .doc =
-        \\Apply Feature Distribution Matching (FDM) to transfer color/style from reference to source image.
-        \\
-        \\This function modifies the source image in-place to match the color distribution
-        \\(mean and covariance) of the reference image while preserving the structure of the source.
-        \\
-        \\Parameters
-        \\----------
-        \\source : Image
-        \\    Source image to be modified (modified in-place)
-        \\reference : Image
-        \\    Reference image providing target color distribution
-        \\
-        \\Returns
-        \\-------
-        \\None
-        \\    This function modifies the source image in-place
-        ,
-    },
-};

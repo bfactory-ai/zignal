@@ -4,6 +4,10 @@
 
 const std = @import("std");
 
+// Python method flags constants (matching Python C API values)
+pub const METH_CLASS = 0x0010;
+pub const METH_STATIC = 0x0020;
+
 /// Describes a Python method for stub generation
 pub const MethodInfo = struct {
     /// Method name as it appears in Python
@@ -83,7 +87,7 @@ pub const ModuleInfo = struct {
 };
 
 /// Helper to create method info for common patterns
-pub fn method(
+pub fn createMethod(
     name: []const u8,
     params: []const u8,
     returns: []const u8,
@@ -95,7 +99,7 @@ pub fn method(
     };
 }
 
-pub fn classmethod(
+pub fn createClassMethod(
     name: []const u8,
     params: []const u8,
     returns: []const u8,
@@ -108,7 +112,7 @@ pub fn classmethod(
     };
 }
 
-pub fn staticmethod(
+pub fn createStaticMethod(
     name: []const u8,
     params: []const u8,
     returns: []const u8,
@@ -121,7 +125,7 @@ pub fn staticmethod(
     };
 }
 
-pub fn property(
+pub fn createProperty(
     name: []const u8,
     prop_type: []const u8,
 ) PropertyInfo {
@@ -131,7 +135,7 @@ pub fn property(
     };
 }
 
-pub fn readonly_property(
+pub fn createReadOnlyProperty(
     name: []const u8,
     prop_type: []const u8,
 ) PropertyInfo {
@@ -140,4 +144,124 @@ pub fn readonly_property(
         .type = prop_type,
         .readonly = true,
     };
+}
+
+// ============================================================================
+// ENHANCED METHOD DEFINITION WITH METADATA
+// ============================================================================
+
+/// Enhanced method definition that includes both PyMethodDef fields and metadata
+/// This struct is designed to work with actual Python C API types when imported
+pub const MethodWithMetadata = struct {
+    /// Method name (required for both C and stub generation)
+    name: []const u8,
+    /// C function pointer (will be *anyopaque in stub context)
+    meth: *anyopaque,
+    /// Method flags (METH_VARARGS, METH_CLASS, etc.)
+    flags: c_int,
+    /// Documentation string
+    doc: []const u8,
+
+    // Additional metadata for stub generation
+    /// Method signature parameters (e.g., "self, x: int, y: int")
+    params: []const u8,
+    /// Return type annotation (e.g., "None", "int", "Image")
+    returns: []const u8,
+
+    /// Convert to MethodInfo for stub generation
+    pub fn toMethodInfo(self: MethodWithMetadata) MethodInfo {
+        return .{
+            .name = self.name,
+            .params = self.params,
+            .returns = self.returns,
+            .is_classmethod = (self.flags & METH_CLASS) != 0,
+            .is_staticmethod = (self.flags & METH_STATIC) != 0,
+            .doc = self.doc,
+        };
+    }
+};
+
+/// Extract MethodInfo array from MethodWithMetadata array for stub generation
+pub fn extractMethodInfo(
+    comptime methods: []const MethodWithMetadata,
+) [methods.len]MethodInfo {
+    var result: [methods.len]MethodInfo = undefined;
+    for (methods, 0..) |method, i| {
+        result[i] = method.toMethodInfo();
+    }
+    return result;
+}
+
+// Similar structures for properties and functions
+
+/// Enhanced property definition with metadata
+pub const PropertyWithMetadata = struct {
+    /// Property name
+    name: []const u8,
+    /// Getter function (*anyopaque in stub context)
+    get: *anyopaque,
+    /// Setter function (null for readonly)
+    set: ?*anyopaque,
+    /// Documentation string
+    doc: []const u8,
+    /// Type annotation for stub generation
+    type: []const u8,
+
+    /// Convert to PropertyInfo for stub generation
+    pub fn toPropertyInfo(self: PropertyWithMetadata) PropertyInfo {
+        return .{
+            .name = self.name,
+            .type = self.type,
+            .readonly = self.set == null,
+            .doc = self.doc,
+        };
+    }
+};
+
+/// Extract PropertyInfo array from PropertyWithMetadata array for stub generation
+pub fn extractPropertyInfo(
+    comptime props: []const PropertyWithMetadata,
+) [props.len]PropertyInfo {
+    var result: [props.len]PropertyInfo = undefined;
+    for (props, 0..) |prop, i| {
+        result[i] = prop.toPropertyInfo();
+    }
+    return result;
+}
+
+/// Enhanced function definition for module-level functions
+pub const FunctionWithMetadata = struct {
+    /// Function name
+    name: []const u8,
+    /// C function pointer (*anyopaque in stub context)
+    meth: *anyopaque,
+    /// Method flags
+    flags: c_int,
+    /// Documentation string
+    doc: []const u8,
+    /// Parameters for stub generation
+    params: []const u8,
+    /// Return type for stub generation
+    returns: []const u8,
+
+    /// Convert to FunctionInfo for stub generation
+    pub fn toFunctionInfo(self: FunctionWithMetadata) FunctionInfo {
+        return .{
+            .name = self.name,
+            .params = self.params,
+            .returns = self.returns,
+            .doc = self.doc,
+        };
+    }
+};
+
+/// Extract FunctionInfo array from FunctionWithMetadata array for stub generation
+pub fn extractFunctionInfo(
+    comptime funcs: []const FunctionWithMetadata,
+) [funcs.len]FunctionInfo {
+    var result: [funcs.len]FunctionInfo = undefined;
+    for (funcs, 0..) |func, i| {
+        result[i] = func.toFunctionInfo();
+    }
+    return result;
 }
