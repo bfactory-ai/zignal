@@ -86,66 +86,6 @@ pub const ModuleInfo = struct {
     enums: []const EnumInfo = &.{},
 };
 
-/// Helper to create method info for common patterns
-pub fn createMethod(
-    name: []const u8,
-    params: []const u8,
-    returns: []const u8,
-) MethodInfo {
-    return .{
-        .name = name,
-        .params = params,
-        .returns = returns,
-    };
-}
-
-pub fn createClassMethod(
-    name: []const u8,
-    params: []const u8,
-    returns: []const u8,
-) MethodInfo {
-    return .{
-        .name = name,
-        .params = params,
-        .returns = returns,
-        .is_classmethod = true,
-    };
-}
-
-pub fn createStaticMethod(
-    name: []const u8,
-    params: []const u8,
-    returns: []const u8,
-) MethodInfo {
-    return .{
-        .name = name,
-        .params = params,
-        .returns = returns,
-        .is_staticmethod = true,
-    };
-}
-
-pub fn createProperty(
-    name: []const u8,
-    prop_type: []const u8,
-) PropertyInfo {
-    return .{
-        .name = name,
-        .type = prop_type,
-    };
-}
-
-pub fn createReadOnlyProperty(
-    name: []const u8,
-    prop_type: []const u8,
-) PropertyInfo {
-    return .{
-        .name = name,
-        .type = prop_type,
-        .readonly = true,
-    };
-}
-
 // ============================================================================
 // ENHANCED METHOD DEFINITION WITH METADATA
 // ============================================================================
