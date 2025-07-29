@@ -11,67 +11,8 @@ const c = @cImport({
     @cInclude("Python.h");
 });
 
-pub fn feature_distribution_match(self: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-    _ = self;
-
-    var src_obj: ?*c.PyObject = undefined;
-    var ref_obj: ?*c.PyObject = undefined;
-
-    const format = std.fmt.comptimePrint("OO", .{});
-    if (c.PyArg_ParseTuple(args, format.ptr, &src_obj, &ref_obj) == 0) {
-        return null;
-    }
-
-    // Check if both arguments are Image objects
-    if (c.PyObject_IsInstance(src_obj, @ptrCast(&image.ImageType)) != 1) {
-        c.PyErr_SetString(c.PyExc_TypeError, "First argument must be an Image object");
-        return null;
-    }
-
-    if (c.PyObject_IsInstance(ref_obj, @ptrCast(&image.ImageType)) != 1) {
-        c.PyErr_SetString(c.PyExc_TypeError, "Second argument must be an Image object");
-        return null;
-    }
-
-    // Cast to ImageObject
-    const src_img_obj = @as(*image.ImageObject, @ptrCast(src_obj.?));
-    const ref_img_obj = @as(*image.ImageObject, @ptrCast(ref_obj.?));
-
-    // Check if images are initialized
-    if (src_img_obj.image_ptr == null) {
-        c.PyErr_SetString(c.PyExc_ValueError, "Source image is not initialized");
-        return null;
-    }
-
-    if (ref_img_obj.image_ptr == null) {
-        c.PyErr_SetString(c.PyExc_ValueError, "Reference image is not initialized");
-        return null;
-    }
-
-    var arena = py_utils.createArenaAllocator();
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    // Call the FDM function
-    zignal.featureDistributionMatch(zignal.Rgba, allocator, src_img_obj.image_ptr.?.*, ref_img_obj.image_ptr.?.*) catch |err| {
-        switch (err) {
-            error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory during feature distribution matching"),
-        }
-        return null;
-    };
-
-    // Return None
-    const none = c.Py_None();
-    c.Py_INCREF(none);
-    return none;
-}
-
-// FDM function metadata with documentation
-pub const fdm_metadata = stub_metadata.FunctionWithMetadata{
-    .name = "feature_distribution_match",
-    .meth = @ptrCast(&feature_distribution_match),
-    .flags = c.METH_VARARGS,
-    .doc =
+// Documentation for feature_distribution_match function
+const feature_distribution_match_doc =
     \\feature_distribution_match(source, reference, /)
     \\--
     \\
@@ -131,7 +72,69 @@ pub const fdm_metadata = stub_metadata.FunctionWithMetadata{
     \\...     img = Image.load(filename)
     \\...     zignal.feature_distribution_match(img, reference)
     \\...     img.save(f"graded_{filename}")
-    ,
+;
+
+pub fn feature_distribution_match(self: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    _ = self;
+
+    var src_obj: ?*c.PyObject = undefined;
+    var ref_obj: ?*c.PyObject = undefined;
+
+    const format = std.fmt.comptimePrint("OO", .{});
+    if (c.PyArg_ParseTuple(args, format.ptr, &src_obj, &ref_obj) == 0) {
+        return null;
+    }
+
+    // Check if both arguments are Image objects
+    if (c.PyObject_IsInstance(src_obj, @ptrCast(&image.ImageType)) != 1) {
+        c.PyErr_SetString(c.PyExc_TypeError, "First argument must be an Image object");
+        return null;
+    }
+
+    if (c.PyObject_IsInstance(ref_obj, @ptrCast(&image.ImageType)) != 1) {
+        c.PyErr_SetString(c.PyExc_TypeError, "Second argument must be an Image object");
+        return null;
+    }
+
+    // Cast to ImageObject
+    const src_img_obj = @as(*image.ImageObject, @ptrCast(src_obj.?));
+    const ref_img_obj = @as(*image.ImageObject, @ptrCast(ref_obj.?));
+
+    // Check if images are initialized
+    if (src_img_obj.image_ptr == null) {
+        c.PyErr_SetString(c.PyExc_ValueError, "Source image is not initialized");
+        return null;
+    }
+
+    if (ref_img_obj.image_ptr == null) {
+        c.PyErr_SetString(c.PyExc_ValueError, "Reference image is not initialized");
+        return null;
+    }
+
+    var arena = py_utils.createArenaAllocator();
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Call the FDM function
+    zignal.featureDistributionMatch(zignal.Rgba, allocator, src_img_obj.image_ptr.?.*, ref_img_obj.image_ptr.?.*) catch |err| {
+        switch (err) {
+            error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory during feature distribution matching"),
+        }
+        return null;
+    };
+
+    // Return None
+    const none = c.Py_None();
+    c.Py_INCREF(none);
+    return none;
+}
+
+// FDM function metadata
+pub const fdm_metadata = stub_metadata.FunctionWithMetadata{
+    .name = "feature_distribution_match",
+    .meth = @ptrCast(&feature_distribution_match),
+    .flags = c.METH_VARARGS,
+    .doc = feature_distribution_match_doc,
     .params = "source: Image, reference: Image",
     .returns = "None",
 };

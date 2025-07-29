@@ -30,7 +30,7 @@ var zignal_module = c.PyModuleDef{
     .m_free = null,
 };
 
-// Module function metadata with co-located documentation
+// Module function metadata
 pub const module_functions_metadata = [_]stub_metadata.FunctionWithMetadata{
     fdm.fdm_metadata,
 };
