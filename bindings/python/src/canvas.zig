@@ -170,7 +170,7 @@ fn canvas_draw_line(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     const kwlist = [_][*c]const u8{ "p1", "p2", "color", "width", "mode", null };
     const format = std.fmt.comptimePrint("OOO|ll", .{});
 
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @constCast(@ptrCast(&kwlist)), &p1_obj, &p2_obj, &color_obj, &width, &mode) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(&kwlist), &p1_obj, &p2_obj, &color_obj, &width, &mode) == 0) {
         return null;
     }
 
@@ -247,7 +247,7 @@ const colors = "'Rgb', 'Rgba', 'Hsl', 'Hsv', 'Lab', 'Lch', 'Lms', 'Oklab', 'Oklc
 pub const canvas_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     .{
         .name = "fill",
-        .meth = @constCast(@ptrCast(&canvas_fill)),
+        .meth = @ptrCast(&canvas_fill),
         .flags = c.METH_VARARGS,
         .doc = "Fill the entire canvas with a color",
         .params = "self, color: Union[Tuple[int, int, int], Tuple[int, int, int, int], " ++ colors ++ "]",
@@ -255,7 +255,7 @@ pub const canvas_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     },
     .{
         .name = "draw_line",
-        .meth = @constCast(@ptrCast(&canvas_draw_line)),
+        .meth = @ptrCast(&canvas_draw_line),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = "Draw a line between two points",
         .params = "self, p1: Tuple[float, float], p2: Tuple[float, float], color: Union[Tuple[int, int, int], Tuple[int, int, int, int], " ++ colors ++ "], width: int = 1, mode: DrawMode = ...",
@@ -270,21 +270,21 @@ var canvas_methods = metadata_converter.toPyMethodDefArray(&canvas_methods_metad
 pub const canvas_properties_metadata = [_]stub_metadata.PropertyWithMetadata{
     .{
         .name = "rows",
-        .get = @constCast(@ptrCast(&canvas_get_rows)),
+        .get = @ptrCast(&canvas_get_rows),
         .set = null,
         .doc = "Number of rows in the canvas",
         .type = "int",
     },
     .{
         .name = "cols",
-        .get = @constCast(@ptrCast(&canvas_get_cols)),
+        .get = @ptrCast(&canvas_get_cols),
         .set = null,
         .doc = "Number of columns in the canvas",
         .type = "int",
     },
     .{
         .name = "image",
-        .get = @constCast(@ptrCast(&canvas_get_image)),
+        .get = @ptrCast(&canvas_get_image),
         .set = null,
         .doc = "Parent Image object",
         .type = "Image",

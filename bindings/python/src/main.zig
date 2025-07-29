@@ -34,7 +34,7 @@ var zignal_module = c.PyModuleDef{
 pub const module_functions_metadata = [_]stub_metadata.FunctionWithMetadata{
     .{
         .name = "feature_distribution_match",
-        .meth = @constCast(@ptrCast(&fdm.feature_distribution_match)),
+        .meth = @ptrCast(&fdm.feature_distribution_match),
         .flags = c.METH_VARARGS,
         .doc = "Apply Feature Distribution Matching (FDM) to transfer color/style from reference to source image.\n\nThis function modifies the source image in-place to match the color distribution\n(mean and covariance) of the reference image while preserving the structure of the source.\n\nParameters\n----------\nsource : Image\n    Source image to be modified (modified in-place)\nreference : Image\n    Reference image providing target color distribution\n\nReturns\n-------\nNone\n    This function modifies the source image in-place",
         .params = "source: Image, reference: Image",

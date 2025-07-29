@@ -1025,7 +1025,7 @@ fn image_canvas(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyO
 pub const image_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     .{
         .name = "load",
-        .meth = @constCast(@ptrCast(&image_load)),
+        .meth = @ptrCast(&image_load),
         .flags = c.METH_VARARGS | c.METH_CLASS,
         .doc = "Load an image from file (PNG/JPEG)",
         .params = "cls, path: str",
@@ -1033,7 +1033,7 @@ pub const image_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     },
     .{
         .name = "from_numpy",
-        .meth = @constCast(@ptrCast(&image_from_numpy)),
+        .meth = @ptrCast(&image_from_numpy),
         .flags = c.METH_VARARGS | c.METH_CLASS,
         .doc =
         \\Create Image from NumPy array with shape (rows, cols, 3) or (rows, cols, 4) and dtype uint8.
@@ -1053,7 +1053,7 @@ pub const image_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     },
     .{
         .name = "add_alpha",
-        .meth = @constCast(@ptrCast(&image_add_alpha)),
+        .meth = @ptrCast(&image_add_alpha),
         .flags = c.METH_VARARGS | c.METH_STATIC,
         .doc =
         \\Add alpha channel to a 3-channel RGB numpy array.
@@ -1072,7 +1072,7 @@ pub const image_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     },
     .{
         .name = "to_numpy",
-        .meth = @constCast(@ptrCast(&image_to_numpy)),
+        .meth = @ptrCast(&image_to_numpy),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc =
         \\Convert the image to a NumPy array.
@@ -1089,7 +1089,7 @@ pub const image_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     },
     .{
         .name = "save",
-        .meth = @constCast(@ptrCast(&image_save)),
+        .meth = @ptrCast(&image_save),
         .flags = c.METH_VARARGS,
         .doc = "Save the image to a PNG file",
         .params = "self, path: str",
@@ -1097,7 +1097,7 @@ pub const image_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     },
     .{
         .name = "resize",
-        .meth = @constCast(@ptrCast(&image_resize)),
+        .meth = @ptrCast(&image_resize),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc =
         \\resize(size, method=InterpolationMethod.BILINEAR, /)
@@ -1123,7 +1123,7 @@ pub const image_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     },
     .{
         .name = "letterbox",
-        .meth = @constCast(@ptrCast(&image_letterbox)),
+        .meth = @ptrCast(&image_letterbox),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc =
         \\letterbox(size, method=InterpolationMethod.BILINEAR, /)
@@ -1152,7 +1152,7 @@ pub const image_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     },
     .{
         .name = "__format__",
-        .meth = @constCast(@ptrCast(&image_format)),
+        .meth = @ptrCast(&image_format),
         .flags = c.METH_VARARGS,
         .doc =
         \\Format image for display. Supports format specifiers:
@@ -1177,7 +1177,7 @@ pub const image_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     },
     .{
         .name = "canvas",
-        .meth = @constCast(@ptrCast(&image_canvas)),
+        .meth = @ptrCast(&image_canvas),
         .flags = c.METH_NOARGS,
         .doc = "Create a Canvas object for drawing operations on this image",
         .params = "self",
@@ -1192,14 +1192,14 @@ var image_methods = metadata_converter.toPyMethodDefArray(&image_methods_metadat
 pub const image_properties_metadata = [_]stub_metadata.PropertyWithMetadata{
     .{
         .name = "rows",
-        .get = @constCast(@ptrCast(&image_get_rows)),
+        .get = @ptrCast(&image_get_rows),
         .set = null,
         .doc = "Number of rows (height) in the image",
         .type = "int",
     },
     .{
         .name = "cols",
-        .get = @constCast(@ptrCast(&image_get_cols)),
+        .get = @ptrCast(&image_get_cols),
         .set = null,
         .doc = "Number of columns (width) in the image",
         .type = "int",

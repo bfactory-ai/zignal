@@ -86,17 +86,13 @@ pub const ModuleInfo = struct {
     enums: []const EnumInfo = &.{},
 };
 
-// ============================================================================
-// ENHANCED METHOD DEFINITION WITH METADATA
-// ============================================================================
-
 /// Enhanced method definition that includes both PyMethodDef fields and metadata
 /// This struct is designed to work with actual Python C API types when imported
 pub const MethodWithMetadata = struct {
     /// Method name (required for both C and stub generation)
     name: []const u8,
-    /// C function pointer (will be *anyopaque in stub context)
-    meth: *anyopaque,
+    /// C function pointer (will be *const anyopaque in stub context)
+    meth: *const anyopaque,
     /// Method flags (METH_VARARGS, METH_CLASS, etc.)
     flags: c_int,
     /// Documentation string
@@ -138,8 +134,8 @@ pub fn extractMethodInfo(
 pub const PropertyWithMetadata = struct {
     /// Property name
     name: []const u8,
-    /// Getter function (*anyopaque in stub context)
-    get: *anyopaque,
+    /// Getter function (*const anyopaque in stub context)
+    get: *const anyopaque,
     /// Setter function (null for readonly)
     set: ?*anyopaque,
     /// Documentation string
@@ -173,8 +169,8 @@ pub fn extractPropertyInfo(
 pub const FunctionWithMetadata = struct {
     /// Function name
     name: []const u8,
-    /// C function pointer (*anyopaque in stub context)
-    meth: *anyopaque,
+    /// C function pointer (*const anyopaque in stub context)
+    meth: *const anyopaque,
     /// Method flags
     flags: c_int,
     /// Documentation string
