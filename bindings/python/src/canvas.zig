@@ -8,12 +8,8 @@ const Point2d = zignal.Point2d;
 const py_utils = @import("py_utils.zig");
 const allocator = py_utils.allocator;
 pub const registerType = py_utils.registerType;
+const c = py_utils.c;
 const stub_metadata = @import("stub_metadata.zig");
-
-const c = @cImport({
-    @cDefine("PY_SSIZE_T_CLEAN", {});
-    @cInclude("Python.h");
-});
 
 pub const CanvasObject = extern struct {
     ob_base: c.PyObject,

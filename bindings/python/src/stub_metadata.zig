@@ -4,10 +4,7 @@
 
 const std = @import("std");
 
-const c = @cImport({
-    @cDefine("PY_SSIZE_T_CLEAN", {});
-    @cInclude("Python.h");
-});
+const c = @import("py_utils.zig").c;
 
 // Python method flags constants (matching Python C API values)
 pub const METH_CLASS = 0x0010;
@@ -96,7 +93,7 @@ pub const ModuleInfo = struct {
 pub const MethodWithMetadata = struct {
     /// Method name (required for both C and stub generation)
     name: []const u8,
-    /// C function pointer (will be *const anyopaque in stub context)
+    /// C function pointer
     meth: *const anyopaque,
     /// Method flags (METH_VARARGS, METH_CLASS, etc.)
     flags: c_int,
@@ -139,7 +136,7 @@ pub fn extractMethodInfo(
 pub const PropertyWithMetadata = struct {
     /// Property name
     name: []const u8,
-    /// Getter function (*const anyopaque in stub context)
+    /// Getter function
     get: *const anyopaque,
     /// Setter function (null for readonly)
     set: ?*anyopaque,
@@ -174,7 +171,7 @@ pub fn extractPropertyInfo(
 pub const FunctionWithMetadata = struct {
     /// Function name
     name: []const u8,
-    /// C function pointer (*const anyopaque in stub context)
+    /// C function pointer
     meth: *const anyopaque,
     /// Method flags
     flags: c_int,

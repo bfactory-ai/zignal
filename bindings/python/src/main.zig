@@ -9,10 +9,7 @@ const interpolation = @import("interpolation.zig");
 const py_utils = @import("py_utils.zig");
 const stub_metadata = @import("stub_metadata.zig");
 
-const c = @cImport({
-    @cDefine("PY_SSIZE_T_CLEAN", {});
-    @cInclude("Python.h");
-});
+const c = py_utils.c;
 
 // ============================================================================
 // MODULE FUNCTIONS

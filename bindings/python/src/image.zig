@@ -4,15 +4,11 @@ const zignal = @import("zignal");
 const InterpolationMethod = zignal.InterpolationMethod;
 
 const canvas = @import("canvas.zig");
-const py_utils = @import("py_utls.zig");
+const py_utils = @import("py_utils.zig");
 const allocator = py_utils.allocator;
 pub const registerType = py_utils.registerType;
+const c = py_utils.c;
 const stub_metadata = @import("stub_metadata.zig");
-
-const c = @cImport({
-    @cDefine("PY_SSIZE_T_CLEAN", {});
-    @cInclude("Python.h");
-});
 
 // ============================================================================
 // IMAGE TYPE (uses RGBA internally for SIMD performance)
