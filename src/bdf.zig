@@ -126,6 +126,8 @@ pub const BdfFont = struct {
     },
     /// Number of glyphs
     glyph_count: u32,
+    /// Font ascent (distance from baseline to top of font)
+    font_ascent: i16,
     /// Font properties (optional)
     properties: ?std.StringHashMap([]const u8),
     /// Allocator used for this font
@@ -208,7 +210,6 @@ fn BdfParser(comptime ReaderType: type) type {
             const line = try self.readLine() orelse return BdfError.UnexpectedEndOfFile;
 
             if (!std.mem.startsWith(u8, line, keyword)) {
-                std.debug.print("BDF parse error: Expected '{s}' but got '{s}' at line {}\n", .{ keyword, line, self.line_number });
                 return BdfError.InvalidFormat;
             }
 
@@ -241,6 +242,7 @@ fn BdfParser(comptime ReaderType: type) type {
                 .y_resolution = 0,
                 .bounding_box = .{ .width = 0, .height = 0, .x_offset = 0, .y_offset = 0 },
                 .glyph_count = 0,
+                .font_ascent = 0,
                 .properties = null,
                 .allocator = self.allocator,
             };
@@ -279,11 +281,9 @@ fn BdfParser(comptime ReaderType: type) type {
 
             // Validate required fields
             if (font.name.len == 0) {
-                std.debug.print("BDF parse error: Missing FONT name\n", .{});
                 return BdfError.InvalidFormat;
             }
             if (font.glyph_count == 0) {
-                std.debug.print("BDF parse error: Missing or zero CHARS count\n", .{});
                 return BdfError.InvalidCharCount;
             }
 
@@ -301,9 +301,18 @@ fn BdfParser(comptime ReaderType: type) type {
 
                 // Parse property name and value
                 if (std.mem.indexOf(u8, line, " ")) |space_idx| {
-                    const key = try self.allocator.dupe(u8, line[0..space_idx]);
-                    const value = try self.allocator.dupe(u8, std.mem.trim(u8, line[space_idx + 1 ..], " \t\""));
-                    try font.properties.?.put(key, value);
+                    const key = line[0..space_idx];
+                    const value = std.mem.trim(u8, line[space_idx + 1 ..], " \t\"");
+
+                    // Handle specific properties we need
+                    if (std.mem.eql(u8, key, "FONT_ASCENT")) {
+                        font.font_ascent = try parseInt(value, i16);
+                    }
+
+                    // Store all properties in the map
+                    const key_copy = try self.allocator.dupe(u8, key);
+                    const value_copy = try self.allocator.dupe(u8, value);
+                    try font.properties.?.put(key_copy, value_copy);
                 }
             }
         }
@@ -316,7 +325,6 @@ fn BdfParser(comptime ReaderType: type) type {
                 if (std.mem.eql(u8, line, "ENDFONT")) {
                     return null;
                 }
-                // std.debug.print("BDF glyph parse error: Expected 'STARTCHAR' but got '{s}' at line {}\n", .{ line, self.line_number });
                 return BdfError.InvalidFormat;
             }
 
@@ -338,9 +346,28 @@ fn BdfParser(comptime ReaderType: type) type {
 
             // Parse glyph fields
             while (try self.readLine()) |glyph_line| {
-                // std.debug.print("Glyph line: '{s}'\n", .{glyph_line});
                 if (std.mem.startsWith(u8, glyph_line, "ENCODING ")) {
-                    glyph.encoding = try parseInt(glyph_line[9..], u32);
+                    const encoding_str = std.mem.trim(u8, glyph_line[9..], " \t");
+
+                    // Check for negative encoding values (like ENCODING -1)
+                    if (std.mem.startsWith(u8, encoding_str, "-")) {
+                        // Skip glyphs with negative encodings
+                        // These are typically .notdef or other special glyphs
+                        // Clean up allocated name
+                        self.allocator.free(glyph.name);
+                        // Skip to ENDCHAR
+                        while (try self.readLine()) |skip_line| {
+                            if (std.mem.eql(u8, skip_line, "ENDCHAR")) {
+                                break;
+                            }
+                        }
+                        // Clear current line so next parseGlyph will read fresh
+                        self.current_line = null;
+                        // Try parsing the next glyph
+                        return try self.parseGlyph();
+                    }
+
+                    glyph.encoding = try parseInt(encoding_str, u32);
                 } else if (std.mem.startsWith(u8, glyph_line, "SWIDTH ")) {
                     var parts = std.mem.tokenizeAny(u8, glyph_line[7..], " \t");
                     glyph.swidth.x = try parseInt(parts.next() orelse "0", i16);
@@ -362,7 +389,6 @@ fn BdfParser(comptime ReaderType: type) type {
                     }
 
                     // Debug print
-                    // std.debug.print("Glyph BBX: width={}, height={}\n", .{ glyph.bbx.width, glyph.bbx.height });
                 } else if (std.mem.startsWith(u8, glyph_line, "BITMAP")) {
                     try self.parseBitmap(&glyph);
                     has_bitmap = true;
@@ -395,20 +421,19 @@ fn BdfParser(comptime ReaderType: type) type {
             for (0..glyph.bbx.height) |row| {
                 const line = try self.readLine() orelse return BdfError.UnexpectedEndOfFile;
                 if (std.mem.eql(u8, line, "ENDCHAR")) {
-                    std.debug.print("BDF bitmap parse error: Found ENDCHAR after {} rows, expected {} rows\n", .{ row, glyph.bbx.height });
                     return BdfError.InvalidBitmapData;
                 }
 
                 // Parse hexadecimal bitmap data - handle both upper and lower case
                 const parsed_value = std.fmt.parseInt(u32, line, 16) catch {
-                    std.debug.print("BDF bitmap parse error: Invalid hex data '{s}' at row {}\n", .{ line, row });
                     return BdfError.InvalidBitmapData;
                 };
 
                 // BDF hex values need to be left-aligned to 32 bits
                 // For example, "42" (8-bit) should become 0x42000000, not 0x00000042
                 const hex_chars = line.len;
-                const shift_amount = (8 - hex_chars) * 4; // 4 bits per hex char
+                // Ensure we don't underflow when hex_chars > 8
+                const shift_amount = if (hex_chars < 8) (8 - hex_chars) * 4 else 0;
                 glyph.bitmap[row] = parsed_value << @intCast(shift_amount);
             }
         }
@@ -451,6 +476,11 @@ pub fn loadBdfFontWithOptions(allocator: std.mem.Allocator, reader: anytype, opt
     var parsed_count: usize = 0;
     parser.current_line = null; // Clear current line so parseGlyph reads next line
     while (try parser.parseGlyph()) |glyph| : (parsed_count += 1) {
+        // if (parsed_count == 65413) {
+        // }
+        // if (parsed_count >= 65000) {
+        // } else if (parsed_count % 1000 == 0) {
+        // }
         // Determine if we should keep this glyph
         var should_keep = false;
 
@@ -494,6 +524,7 @@ pub fn loadBdfFontWithOptions(allocator: std.mem.Allocator, reader: anytype, opt
 /// Convert BDF glyphs to a BitmapFont compatible format
 /// This creates a font that can be used with zignal's text rendering
 pub fn convertToBitmapFont(allocator: std.mem.Allocator, bdf_font: BdfFont, glyphs: []const BdfGlyph) !BitmapFont {
+
     // Check if all glyphs fit in ASCII range
     var all_ascii = true;
     var min_ascii: u8 = 255;
@@ -504,8 +535,11 @@ pub fn convertToBitmapFont(allocator: std.mem.Allocator, bdf_font: BdfFont, glyp
             all_ascii = false;
             break;
         }
-        min_ascii = @min(min_ascii, @as(u8, @intCast(glyph.encoding)));
-        max_ascii = @max(max_ascii, @as(u8, @intCast(glyph.encoding)));
+        // Only update min/max if we know it's in ASCII range
+        if (glyph.encoding <= 127) {
+            min_ascii = @min(min_ascii, @as(u8, @intCast(glyph.encoding)));
+            max_ascii = @max(max_ascii, @as(u8, @intCast(glyph.encoding)));
+        }
     }
 
     if (glyphs.len == 0) {
@@ -548,27 +582,36 @@ pub fn convertToBitmapFont(allocator: std.mem.Allocator, bdf_font: BdfFont, glyp
             errdefer map.deinit();
 
             // Create glyph data for each character in the range
-            for (min_ascii..max_ascii + 1) |code| {
-                // Find the glyph for this code
-                var found_glyph: ?BdfGlyph = null;
-                for (glyphs) |glyph| {
-                    if (glyph.encoding == code) {
-                        found_glyph = glyph;
-                        break;
+            // Only iterate if we have a valid range
+            if (min_ascii <= max_ascii) {
+                for (min_ascii..max_ascii + 1) |code| {
+                    // Find the glyph for this code
+                    var found_glyph: ?BdfGlyph = null;
+                    for (glyphs) |glyph| {
+                        if (glyph.encoding == code) {
+                            found_glyph = glyph;
+                            break;
+                        }
                     }
-                }
 
-                if (found_glyph) |glyph| {
-                    const idx = glyph_data_list.items.len;
-                    try map.put(@intCast(code), idx);
-                    try glyph_data_list.append(GlyphData{
-                        .width = @intCast(glyph.bbx.width),
-                        .height = @intCast(char_height), // Use font height, not glyph height
-                        .x_offset = glyph.bbx.x_offset,
-                        .y_offset = glyph.bbx.y_offset,
-                        .device_width = glyph.dwidth.x,
-                        .bitmap_offset = 0, // Not used for ASCII fonts
-                    });
+                    if (found_glyph) |glyph| {
+                        const idx = glyph_data_list.items.len;
+                        try map.put(@intCast(code), idx);
+
+                        // Convert BDF baseline-relative y_offset to top-relative
+                        // BDF: y_offset is from baseline to bottom of glyph bbox
+                        // We want: y_offset from top of line to top of glyph
+                        const adjusted_y_offset = bdf_font.font_ascent - (glyph.bbx.y_offset + @as(i16, @intCast(glyph.bbx.height)));
+
+                        try glyph_data_list.append(GlyphData{
+                            .width = @intCast(glyph.bbx.width),
+                            .height = @intCast(char_height), // Use font height, not glyph height
+                            .x_offset = glyph.bbx.x_offset,
+                            .y_offset = adjusted_y_offset,
+                            .device_width = glyph.dwidth.x,
+                            .bitmap_offset = 0, // Not used for ASCII fonts
+                        });
+                    }
                 }
             }
 
@@ -578,6 +621,17 @@ pub fn convertToBitmapFont(allocator: std.mem.Allocator, bdf_font: BdfFont, glyp
 
         // Convert each glyph
         for (glyphs) |glyph| {
+
+            // Skip glyphs outside our ASCII range
+            if (glyph.encoding < min_ascii or glyph.encoding > max_ascii) {
+                continue;
+            }
+
+            // Additional safety check: ensure encoding fits in usize for ASCII fonts
+            if (glyph.encoding > 255) {
+                continue;
+            }
+
             const char_idx = glyph.encoding - min_ascii;
             const data_offset = char_idx * char_height * bytes_per_row;
 
@@ -591,10 +645,15 @@ pub fn convertToBitmapFont(allocator: std.mem.Allocator, bdf_font: BdfFont, glyp
                         const start_bit = byte_idx * 8;
                         const end_bit = @min(start_bit + 8, glyph.bbx.width);
 
-                        for (start_bit..end_bit) |bit| {
-                            // BDF data is left-aligned to 32 bits, so we always shift from bit 31
-                            if ((bdf_row >> @intCast(31 - bit)) & 1 != 0) {
-                                our_byte |= @as(u8, 1) << @intCast(bit - start_bit);
+                        if (end_bit > start_bit) {
+                            for (start_bit..end_bit) |bit| {
+                                // BDF data is left-aligned to 32 bits, so we always shift from bit 31
+                                // Ensure we don't exceed 31 bits
+                                if (bit < 32) {
+                                    if ((bdf_row >> @intCast(31 - bit)) & 1 != 0) {
+                                        our_byte |= @as(u8, 1) << @intCast(bit - start_bit);
+                                    }
+                                }
                             }
                         }
 
@@ -628,12 +687,17 @@ pub fn convertToBitmapFont(allocator: std.mem.Allocator, bdf_font: BdfFont, glyp
             // Store glyph location in map
             try map.put(glyph.encoding, glyph_data_list.items.len);
 
+            // Convert BDF baseline-relative y_offset to top-relative
+            // BDF: y_offset is from baseline to bottom of glyph bbox
+            // We want: y_offset from top of line to top of glyph
+            const adjusted_y_offset = bdf_font.font_ascent - (glyph.bbx.y_offset + @as(i16, @intCast(glyph.bbx.height)));
+
             // Store glyph metadata
             try glyph_data_list.append(GlyphData{
                 .width = @intCast(glyph.bbx.width),
                 .height = @intCast(glyph.bbx.height),
                 .x_offset = glyph.bbx.x_offset,
-                .y_offset = glyph.bbx.y_offset,
+                .y_offset = adjusted_y_offset,
                 .device_width = glyph.dwidth.x,
                 .bitmap_offset = bitmap_offset,
             });
@@ -649,10 +713,15 @@ pub fn convertToBitmapFont(allocator: std.mem.Allocator, bdf_font: BdfFont, glyp
                         const start_bit = byte_idx * 8;
                         const end_bit = @min(start_bit + 8, glyph.bbx.width);
 
-                        for (start_bit..end_bit) |bit| {
-                            // BDF data is left-aligned to 32 bits, so we always shift from bit 31
-                            if ((bdf_row >> @intCast(31 - bit)) & 1 != 0) {
-                                our_byte |= @as(u8, 1) << @intCast(bit - start_bit);
+                        if (end_bit > start_bit) {
+                            for (start_bit..end_bit) |bit| {
+                                // BDF data is left-aligned to 32 bits, so we always shift from bit 31
+                                // Ensure we don't exceed 31 bits
+                                if (bit < 32) {
+                                    if ((bdf_row >> @intCast(31 - bit)) & 1 != 0) {
+                                        our_byte |= @as(u8, 1) << @intCast(bit - start_bit);
+                                    }
+                                }
                             }
                         }
 

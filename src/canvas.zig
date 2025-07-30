@@ -1231,10 +1231,7 @@ pub fn Canvas(comptime T: type) type {
                                         if (col >= glyph_info.width) break;
                                         if ((byte_data >> @intCast(bit)) & 1 != 0) {
                                             const px = @as(isize, @intFromFloat(x)) + @as(isize, @intCast(col)) + glyph_info.x_offset;
-                                            // BDF coordinates: y_offset is from baseline to bottom of glyph bbox
-                                            // Our coordinates: y increases downward, baseline is at y position
-                                            // So we need to subtract y_offset and height to get top of glyph
-                                            const py = @as(isize, @intFromFloat(y)) + @as(isize, @intCast(row)) - glyph_info.y_offset - @as(isize, @intCast(glyph_info.height));
+                                            const py = @as(isize, @intFromFloat(y)) + @as(isize, @intCast(row)) + glyph_info.y_offset;
                                             if (self.atOrNull(py, px)) |pixel| {
                                                 pixel.* = convertColor(T, color);
                                             }
@@ -1279,8 +1276,8 @@ pub fn Canvas(comptime T: type) type {
                                             if ((byte_data >> @intCast(bit)) & 1 != 0) {
                                                 // Draw a scaled pixel block
                                                 const base_x = x + (@as(f32, @floatFromInt(col)) + @as(f32, @floatFromInt(glyph_info.x_offset))) * scale;
-                                                // BDF y_offset is from baseline, with negative values going down
-                                                const base_y = y + (@as(f32, @floatFromInt(row)) - @as(f32, @floatFromInt(glyph_info.y_offset)) - @as(f32, @floatFromInt(glyph_info.height))) * scale;
+                                                // y_offset is now pre-computed from top of line
+                                                const base_y = y + (@as(f32, @floatFromInt(row)) + @as(f32, @floatFromInt(glyph_info.y_offset))) * scale;
 
                                                 // Calculate the integer bounds of the scaled pixel
                                                 const x_start = @as(isize, @intFromFloat(@floor(base_x)));
@@ -1332,8 +1329,8 @@ pub fn Canvas(comptime T: type) type {
                                     var dx: f32 = 0;
                                     while (dx < dest_width) : (dx += 1) {
                                         const dest_x = x + dx + @as(f32, @floatFromInt(glyph_info.x_offset)) * scale;
-                                        // BDF y_offset is from baseline, with negative values going down
-                                        const dest_y = y + dy + (@as(f32, @floatFromInt(0)) - @as(f32, @floatFromInt(glyph_info.y_offset)) - @as(f32, @floatFromInt(glyph_info.height))) * scale;
+                                        // y_offset is now pre-computed from top of line
+                                        const dest_y = y + dy + @as(f32, @floatFromInt(glyph_info.y_offset)) * scale;
 
                                         if (self.atOrNull(@intFromFloat(dest_y), @intFromFloat(dest_x))) |_| {
                                             // Calculate which part of the source we're sampling
