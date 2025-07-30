@@ -13,16 +13,6 @@ const std = @import("std");
 pub const BitmapFont = @import("font/BitmapFont.zig");
 pub const GlyphData = @import("font/GlyphData.zig");
 
-// Font loading options
-pub const LoadOptions = struct {
-    /// Load all characters in the font (default: false, loads only ASCII)
-    load_all: bool = false,
-    /// Specific Unicode ranges to load (null = use default behavior)
-    ranges: ?[]const unicode.Range = null,
-    /// Maximum characters to load (null = no limit)
-    max_chars: ?usize = null,
-};
-
 // Default font
 const default_8x8 = @import("font/default_8x8.zig");
 pub const default_font_8x8 = default_8x8.font;
