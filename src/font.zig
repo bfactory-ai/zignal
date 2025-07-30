@@ -21,8 +21,14 @@ pub const BitmapFont = struct {
     /// Last ASCII character code in the font
     last_char: u8,
     /// Raw bitmap data for all characters
-    /// Each character is stored as char_height bytes, one byte per row
+    /// For fonts wider than 8 pixels, multiple bytes are used per row
+    /// Data layout: [char_index][row][byte_in_row]
     data: []const u8,
+
+    /// Get number of bytes per row for this font
+    pub fn bytesPerRow(self: BitmapFont) usize {
+        return (@as(usize, self.char_width) + 7) / 8;
+    }
 
     /// Get the bitmap data for a specific character
     /// Returns null if the character is not in the font
@@ -31,8 +37,20 @@ pub const BitmapFont = struct {
             return null;
         }
         const index = @as(usize, char - self.first_char);
-        const offset = index * @as(usize, self.char_height);
-        return self.data[offset .. offset + @as(usize, self.char_height)];
+        const bytes_per_row = self.bytesPerRow();
+        const bytes_per_char = @as(usize, self.char_height) * bytes_per_row;
+        const offset = index * bytes_per_char;
+        return self.data[offset .. offset + bytes_per_char];
+    }
+
+    /// Get bitmap data for a specific row of a character
+    /// Returns null if the character is not in the font
+    pub fn getCharRow(self: BitmapFont, char: u8, row: usize) ?[]const u8 {
+        const char_data = self.getCharData(char) orelse return null;
+        if (row >= self.char_height) return null;
+        const bytes_per_row = self.bytesPerRow();
+        const row_offset = row * bytes_per_row;
+        return char_data[row_offset .. row_offset + bytes_per_row];
     }
 
     /// Calculate the bounding rectangle for rendering text

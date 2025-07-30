@@ -106,6 +106,19 @@ const font = @import("font.zig");
 pub const BitmapFont = font.BitmapFont;
 pub const default_font_8x8 = font.default_font_8x8;
 
+// BDF font support
+const bdf = @import("bdf.zig");
+pub const BdfFont = bdf.BdfFont;
+pub const BdfGlyph = bdf.BdfGlyph;
+pub const BdfError = bdf.BdfError;
+pub const GlyphData = bdf.GlyphData;
+pub const BdfLoadResult = bdf.BdfLoadResult;
+pub const BitmapFontResult = bdf.BitmapFontResult;
+pub const loadBdfFont = bdf.loadBdfFont;
+pub const loadBdfFontFromFile = bdf.loadBdfFontFromFile;
+pub const loadBitmapFontFromBdfFile = bdf.loadBitmapFontFromBdfFile;
+pub const convertToBitmapFont = bdf.convertToBitmapFont;
+
 // PCA (Principal Component Analysis) system
 const pca = @import("pca.zig");
 pub const PrincipalComponentAnalysis = pca.PrincipalComponentAnalysis; // Legacy alias

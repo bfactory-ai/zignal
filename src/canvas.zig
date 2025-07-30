@@ -1207,18 +1207,22 @@ pub fn Canvas(comptime T: type) type {
 
                     if (font.getCharData(char)) |char_data| {
                         // Draw the character bitmap
-                        for (char_data, 0..) |row_data, row| {
-                            var col: usize = 0;
-                            var bits = row_data;
-                            while (col < font.char_width) : (col += 1) {
-                                if (bits & 1 != 0) {
-                                    const px = @as(isize, @intFromFloat(x)) + @as(isize, @intCast(col));
-                                    const py = @as(isize, @intFromFloat(y)) + @as(isize, @intCast(row));
-                                    if (self.atOrNull(py, px)) |pixel| {
-                                        pixel.* = convertColor(T, color);
+                        const bytes_per_row = font.bytesPerRow();
+                        for (0..@intCast(font.char_height)) |row| {
+                            const row_start = row * bytes_per_row;
+                            for (0..bytes_per_row) |byte_idx| {
+                                const byte_data = char_data[row_start + byte_idx];
+                                for (0..8) |bit| {
+                                    const col = byte_idx * 8 + bit;
+                                    if (col >= font.char_width) break;
+                                    if ((byte_data >> @intCast(bit)) & 1 != 0) {
+                                        const px = @as(isize, @intFromFloat(x)) + @as(isize, @intCast(col));
+                                        const py = @as(isize, @intFromFloat(y)) + @as(isize, @intCast(row));
+                                        if (self.atOrNull(py, px)) |pixel| {
+                                            pixel.* = convertColor(T, color);
+                                        }
                                     }
                                 }
-                                bits >>= 1;
                             }
                         }
                     }
@@ -1242,33 +1246,37 @@ pub fn Canvas(comptime T: type) type {
 
                         if (font.getCharData(char)) |char_data| {
                             // Draw the character bitmap with scaling
-                            for (char_data, 0..) |row_data, row| {
-                                var col: usize = 0;
-                                var bits = row_data;
-                                while (col < font.char_width) : (col += 1) {
-                                    if (bits & 1 != 0) {
-                                        // Draw a scaled pixel block
-                                        const base_x = x + @as(f32, @floatFromInt(col)) * scale;
-                                        const base_y = y + @as(f32, @floatFromInt(row)) * scale;
+                            const bytes_per_row = font.bytesPerRow();
+                            for (0..@intCast(font.char_height)) |row| {
+                                const row_start = row * bytes_per_row;
+                                for (0..bytes_per_row) |byte_idx| {
+                                    const byte_data = char_data[row_start + byte_idx];
+                                    for (0..8) |bit| {
+                                        const col = byte_idx * 8 + bit;
+                                        if (col >= font.char_width) break;
+                                        if ((byte_data >> @intCast(bit)) & 1 != 0) {
+                                            // Draw a scaled pixel block
+                                            const base_x = x + @as(f32, @floatFromInt(col)) * scale;
+                                            const base_y = y + @as(f32, @floatFromInt(row)) * scale;
 
-                                        // Calculate the integer bounds of the scaled pixel
-                                        const x_start = @as(isize, @intFromFloat(@floor(base_x)));
-                                        const y_start = @as(isize, @intFromFloat(@floor(base_y)));
-                                        const x_end = @as(isize, @intFromFloat(@ceil(base_x + scale)));
-                                        const y_end = @as(isize, @intFromFloat(@ceil(base_y + scale)));
+                                            // Calculate the integer bounds of the scaled pixel
+                                            const x_start = @as(isize, @intFromFloat(@floor(base_x)));
+                                            const y_start = @as(isize, @intFromFloat(@floor(base_y)));
+                                            const x_end = @as(isize, @intFromFloat(@ceil(base_x + scale)));
+                                            const y_end = @as(isize, @intFromFloat(@ceil(base_y + scale)));
 
-                                        // Fill the pixel block
-                                        var py = y_start;
-                                        while (py < y_end) : (py += 1) {
-                                            var px = x_start;
-                                            while (px < x_end) : (px += 1) {
-                                                if (self.atOrNull(py, px)) |pixel| {
-                                                    pixel.* = convertColor(T, color);
+                                            // Fill the pixel block
+                                            var py = y_start;
+                                            while (py < y_end) : (py += 1) {
+                                                var px = x_start;
+                                                while (px < x_end) : (px += 1) {
+                                                    if (self.atOrNull(py, px)) |pixel| {
+                                                        pixel.* = convertColor(T, color);
+                                                    }
                                                 }
                                             }
                                         }
                                     }
-                                    bits >>= 1;
                                 }
                             }
                         }
@@ -1326,7 +1334,14 @@ pub fn Canvas(comptime T: type) type {
                                                 const col_idx = @as(usize, @intFromFloat(col_f));
 
                                                 // Check if this pixel is on in the font
-                                                const bit_on = (char_data[row_idx] >> @intCast(col_idx)) & 1;
+                                                const bytes_per_row = font.bytesPerRow();
+                                                const byte_idx = col_idx / 8;
+                                                const bit_idx = col_idx % 8;
+                                                const row_byte_offset = row_idx * bytes_per_row + byte_idx;
+                                                const bit_on = if (row_byte_offset < char_data.len)
+                                                    (char_data[row_byte_offset] >> @intCast(bit_idx)) & 1
+                                                else
+                                                    0;
                                                 if (bit_on != 0) {
                                                     // Calculate how much this pixel contributes
                                                     const px0 = col_f;
