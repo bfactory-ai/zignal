@@ -59,7 +59,7 @@ const BdfParseState = struct {
 };
 
 /// Load a BDF font from a file path with custom options
-pub fn loadFont(allocator: std.mem.Allocator, path: []const u8, options: LoadOptions) !BitmapFont {
+pub fn load(allocator: std.mem.Allocator, path: []const u8, options: LoadOptions) !BitmapFont {
     // Read entire file into memory
     const file_contents = try std.fs.cwd().readFileAlloc(allocator, path, 50 * 1024 * 1024); // 50MB max
     defer allocator.free(file_contents);
