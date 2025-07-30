@@ -1194,6 +1194,22 @@ pub fn Canvas(comptime T: type) type {
             comptime assert(FontType == BitmapFont);
             if (scale <= 0) return;
 
+            // Compute text bounding box and early exit if outside image
+            const text_bounds = font.getTextBounds(text, scale);
+            const text_rect = Rectangle(f32){
+                .l = position.x() + text_bounds.l,
+                .t = position.y() + text_bounds.t,
+                .r = position.x() + text_bounds.r,
+                .b = position.y() + text_bounds.b,
+            };
+            const image_rect: Rectangle(f32) = .{
+                .l = 0,
+                .t = 0,
+                .r = @floatFromInt(self.cols()),
+                .b = @floatFromInt(self.rows()),
+            };
+            const clip_rect = text_rect.intersect(image_rect) orelse return;
+
             var x = position.x();
             var y = position.y();
             const start_x = x;
@@ -1228,8 +1244,8 @@ pub fn Canvas(comptime T: type) type {
                                         const col = byte_idx * 8 + bit;
                                         if (col >= glyph_info.width) break;
                                         if ((byte_data >> @intCast(bit)) & 1 != 0) {
-                                            const px: f32 = @floatFromInt(@as(isize, @intFromFloat(x)) + @as(isize, @intCast(col)) + glyph_info.x_offset);
-                                            const py: f32 = @floatFromInt(@as(isize, @intFromFloat(y)) + @as(isize, @intCast(row)) + glyph_info.y_offset);
+                                            const px = x + @as(f32, @floatFromInt(col)) + @as(f32, @floatFromInt(glyph_info.x_offset));
+                                            const py = y + @as(f32, @floatFromInt(row)) + @as(f32, @floatFromInt(glyph_info.y_offset));
                                             self.setPixel(.init2d(px, py), color);
                                         }
                                     }
@@ -1276,16 +1292,20 @@ pub fn Canvas(comptime T: type) type {
                                                 const base_y = y + (@as(f32, @floatFromInt(row)) + @as(f32, @floatFromInt(glyph_info.y_offset))) * scale;
 
                                                 // Calculate the integer bounds of the scaled pixel
-                                                const x_start = @as(isize, @intFromFloat(@floor(base_x)));
-                                                const y_start = @as(isize, @intFromFloat(@floor(base_y)));
-                                                const x_end = @as(isize, @intFromFloat(@ceil(base_x + scale)));
-                                                const y_end = @as(isize, @intFromFloat(@ceil(base_y + scale)));
+                                                const x_start_f = @floor(base_x);
+                                                const y_start_f = @floor(base_y);
+                                                const x_end_f = @ceil(base_x + scale);
+                                                const y_end_f = @ceil(base_y + scale);
 
-                                                // Fill the pixel block
-                                                var py = y_start;
-                                                while (py < y_end) : (py += 1) {
-                                                    var px = x_start;
-                                                    while (px < x_end) : (px += 1) {
+                                                // Clip to the valid rectangle
+                                                const x_start = @as(usize, @intFromFloat(@max(x_start_f, clip_rect.l)));
+                                                const y_start = @as(usize, @intFromFloat(@max(y_start_f, clip_rect.t)));
+                                                const x_end = @as(usize, @intFromFloat(@min(x_end_f, clip_rect.r)));
+                                                const y_end = @as(usize, @intFromFloat(@min(y_end_f, clip_rect.b)));
+
+                                                // Fill the pixel block with for loops
+                                                for (y_start..y_end) |py| {
+                                                    for (x_start..x_end) |px| {
                                                         self.setPixel(.init2d(@floatFromInt(px), @floatFromInt(py)), color);
                                                     }
                                                 }
