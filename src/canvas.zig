@@ -1228,11 +1228,9 @@ pub fn Canvas(comptime T: type) type {
                                         const col = byte_idx * 8 + bit;
                                         if (col >= glyph_info.width) break;
                                         if ((byte_data >> @intCast(bit)) & 1 != 0) {
-                                            const px = @as(isize, @intFromFloat(x)) + @as(isize, @intCast(col)) + glyph_info.x_offset;
-                                            const py = @as(isize, @intFromFloat(y)) + @as(isize, @intCast(row)) + glyph_info.y_offset;
-                                            if (self.atOrNull(py, px)) |pixel| {
-                                                pixel.* = convertColor(T, color);
-                                            }
+                                            const px: f32 = @floatFromInt(@as(isize, @intFromFloat(x)) + @as(isize, @intCast(col)) + glyph_info.x_offset);
+                                            const py: f32 = @floatFromInt(@as(isize, @intFromFloat(y)) + @as(isize, @intCast(row)) + glyph_info.y_offset);
+                                            self.setPixel(.init2d(px, py), color);
                                         }
                                     }
                                 }
@@ -1288,9 +1286,7 @@ pub fn Canvas(comptime T: type) type {
                                                 while (py < y_end) : (py += 1) {
                                                     var px = x_start;
                                                     while (px < x_end) : (px += 1) {
-                                                        if (self.atOrNull(py, px)) |pixel| {
-                                                            pixel.* = convertColor(T, color);
-                                                        }
+                                                        self.setPixel(.init2d(@floatFromInt(px), @floatFromInt(py)), color);
                                                     }
                                                 }
                                             }
