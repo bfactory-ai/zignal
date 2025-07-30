@@ -385,10 +385,14 @@ fn convertToBitmapFont(
                     const dest_offset = char_idx * char_bitmap_size;
 
                     // Copy glyph bitmap to contiguous location
-                    for (0..glyph.bbox.height) |row| {
+                    // Handle case where glyph height might be less than font height
+                    const copy_height = @min(glyph.bbox.height, char_height);
+                    for (0..copy_height) |row| {
                         const src_offset = glyph.bitmap_offset + row * bytes_per_row;
                         const dst_offset = dest_offset + row * bytes_per_row;
-                        @memcpy(contiguous_data[dst_offset .. dst_offset + bytes_per_row], bitmap_data[src_offset .. src_offset + bytes_per_row]);
+                        const glyph_bytes_per_row = (glyph.bbox.width + 7) / 8;
+                        const copy_bytes = @min(glyph_bytes_per_row, bytes_per_row);
+                        @memcpy(contiguous_data[dst_offset .. dst_offset + copy_bytes], bitmap_data[src_offset .. src_offset + copy_bytes]);
                     }
                 }
             }

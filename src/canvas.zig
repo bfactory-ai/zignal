@@ -1210,17 +1210,15 @@ pub fn Canvas(comptime T: type) type {
 
                     if (font.getGlyphInfo(codepoint)) |glyph_info| {
                         if (font.getCharData(codepoint)) |char_data| {
-                            // For ASCII fonts, bitmap data is always stored with fixed char_width stride
-                            // regardless of whether they have glyph data for variable widths
-                            const is_ascii_font = (codepoint <= 255 and codepoint >= font.first_char and codepoint <= font.last_char);
-                            const bitmap_bytes_per_row = if (is_ascii_font)
+                            // For fonts without glyph_map, bitmap data is stored with fixed char_width stride
+                            const bitmap_bytes_per_row = if (font.glyph_map == null)
                                 font.bytesPerRow()
                             else
                                 (@as(usize, glyph_info.width) + 7) / 8;
 
                             // Draw the character bitmap
                             // Use glyph-specific height for proper rendering
-                            const render_height = if (is_ascii_font) font.char_height else glyph_info.height;
+                            const render_height = if (font.glyph_map == null) font.char_height else glyph_info.height;
                             for (0..render_height) |row| {
                                 const row_start = row * bitmap_bytes_per_row;
                                 for (0..bitmap_bytes_per_row) |byte_idx| {
