@@ -29,6 +29,84 @@ pub const BdfError = error{
 /// Maximum line length in BDF files
 const MAX_LINE_LENGTH = 1024;
 
+/// Options for loading BDF fonts
+pub const BdfLoadOptions = struct {
+    /// Load all characters in the font (default: false, loads only ASCII)
+    load_all: bool = false,
+    /// Specific Unicode ranges to load (null = use default behavior)
+    ranges: ?[]const UnicodeRange = null,
+    /// Maximum characters to load (0 = no limit)
+    max_chars: usize = 0,
+};
+
+/// A Unicode character range
+pub const UnicodeRange = struct {
+    start: u21,
+    end: u21,
+};
+
+/// Common Unicode ranges for convenience
+pub const unicode_ranges = struct {
+    /// Basic Latin (ASCII)
+    pub const ascii = UnicodeRange{ .start = 0x0000, .end = 0x007F };
+
+    /// Latin-1 Supplement
+    pub const latin1_supplement = UnicodeRange{ .start = 0x0080, .end = 0x00FF };
+
+    /// Full Latin-1 (ASCII + Latin-1 Supplement)
+    pub const latin1 = UnicodeRange{ .start = 0x0000, .end = 0x00FF };
+
+    /// Greek and Coptic
+    pub const greek = UnicodeRange{ .start = 0x0370, .end = 0x03FF };
+
+    /// Cyrillic
+    pub const cyrillic = UnicodeRange{ .start = 0x0400, .end = 0x04FF };
+
+    /// Arabic
+    pub const arabic = UnicodeRange{ .start = 0x0600, .end = 0x06FF };
+
+    /// Hebrew
+    pub const hebrew = UnicodeRange{ .start = 0x0590, .end = 0x05FF };
+
+    /// Hiragana
+    pub const hiragana = UnicodeRange{ .start = 0x3040, .end = 0x309F };
+
+    /// Katakana
+    pub const katakana = UnicodeRange{ .start = 0x30A0, .end = 0x30FF };
+
+    /// CJK Unified Ideographs (main block)
+    pub const cjk_unified = UnicodeRange{ .start = 0x4E00, .end = 0x9FFF };
+
+    /// Hangul Syllables (Korean)
+    pub const hangul = UnicodeRange{ .start = 0xAC00, .end = 0xD7AF };
+
+    /// Emoji & Pictographs
+    pub const emoji = UnicodeRange{ .start = 0x1F300, .end = 0x1F9FF };
+
+    /// Mathematical Operators
+    pub const math = UnicodeRange{ .start = 0x2200, .end = 0x22FF };
+
+    /// Box Drawing
+    pub const box_drawing = UnicodeRange{ .start = 0x2500, .end = 0x257F };
+
+    /// Block Elements
+    pub const block_elements = UnicodeRange{ .start = 0x2580, .end = 0x259F };
+
+    /// Common Western European languages (Latin-1 + Latin Extended-A)
+    pub const western_european = [_]UnicodeRange{
+        latin1,
+        UnicodeRange{ .start = 0x0100, .end = 0x017F }, // Latin Extended-A
+    };
+
+    /// Common East Asian languages
+    pub const east_asian = [_]UnicodeRange{
+        hiragana,
+        katakana,
+        cjk_unified,
+        hangul,
+    };
+};
+
 /// BDF font information parsed from file
 pub const BdfFont = struct {
     /// Font name
@@ -337,8 +415,13 @@ fn BdfParser(comptime ReaderType: type) type {
     };
 }
 
-/// Load a BDF font from a reader
+/// Load a BDF font from a reader with default options (ASCII only)
 pub fn loadBdfFont(allocator: std.mem.Allocator, reader: anytype) !BdfLoadResult {
+    return loadBdfFontWithOptions(allocator, reader, .{});
+}
+
+/// Load a BDF font from a reader with custom options
+pub fn loadBdfFontWithOptions(allocator: std.mem.Allocator, reader: anytype, options: BdfLoadOptions) !BdfLoadResult {
     const Parser = BdfParser(@TypeOf(reader));
     var parser = Parser{
         .allocator = allocator,
@@ -352,102 +435,157 @@ pub fn loadBdfFont(allocator: std.mem.Allocator, reader: anytype) !BdfLoadResult
     var font = try parser.parseHeader();
     errdefer font.deinit();
 
-    // Allocate glyph array - for ASCII only, allocate smaller array
-    const initial_size = @min(font.glyph_count, 128);
-    var glyphs = try allocator.alloc(BdfGlyph, initial_size);
-    errdefer allocator.free(glyphs);
+    // Determine initial allocation size based on options
+    const initial_size = if (options.load_all)
+        font.glyph_count
+    else if (options.max_chars > 0)
+        @min(font.glyph_count, options.max_chars)
+    else
+        @min(font.glyph_count, 128); // Default to ASCII size
+
+    var glyphs = std.ArrayList(BdfGlyph).init(allocator);
+    defer glyphs.deinit();
+    try glyphs.ensureTotalCapacity(initial_size);
 
     // Parse glyphs
-    var glyph_idx: usize = 0;
     var parsed_count: usize = 0;
     parser.current_line = null; // Clear current line so parseGlyph reads next line
     while (try parser.parseGlyph()) |glyph| : (parsed_count += 1) {
-        // For now, only store ASCII glyphs to keep memory reasonable
-        if (glyph.encoding <= 127) {
-            if (glyph_idx >= glyphs.len) {
-                return BdfError.InvalidCharCount;
+        // Determine if we should keep this glyph
+        var should_keep = false;
+
+        if (options.load_all) {
+            should_keep = true;
+        } else if (options.ranges) |ranges| {
+            // Check if glyph is in any specified range
+            for (ranges) |range| {
+                if (glyph.encoding >= range.start and glyph.encoding <= range.end) {
+                    should_keep = true;
+                    break;
+                }
             }
-            glyphs[glyph_idx] = glyph;
-            glyph_idx += 1;
         } else {
-            // Free non-ASCII glyphs immediately
+            // Default: only keep ASCII
+            should_keep = glyph.encoding <= 127;
+        }
+
+        if (should_keep) {
+            try glyphs.append(glyph);
+
+            // Check max_chars limit
+            if (options.max_chars > 0 and glyphs.items.len >= options.max_chars) {
+                break;
+            }
+        } else {
+            // Free unused glyphs immediately
             var temp_glyph = glyph;
             temp_glyph.deinit();
         }
 
-        // Bail out if we've parsed enough characters
+        // Bail out if we've parsed all characters
         if (parsed_count >= font.glyph_count) {
             break;
         }
     }
 
-    // Resize glyphs array to actual count
-    if (glyph_idx < glyphs.len) {
-        glyphs = allocator.realloc(glyphs, glyph_idx) catch glyphs[0..glyph_idx];
-    }
-
-    return .{ .font = font, .glyphs = glyphs };
+    return .{ .font = font, .glyphs = try glyphs.toOwnedSlice() };
 }
 
 /// Convert BDF glyphs to a BitmapFont compatible format
 /// This creates a font that can be used with zignal's text rendering
 pub fn convertToBitmapFont(allocator: std.mem.Allocator, bdf_font: BdfFont, glyphs: []const BdfGlyph) !BitmapFont {
-    // For now, we'll create a simple ASCII subset font
-    // TODO: Extend to support full Unicode range
-
-    // Find the range of ASCII characters we have
+    // Check if all glyphs fit in ASCII range
+    var all_ascii = true;
     var min_ascii: u8 = 255;
     var max_ascii: u8 = 0;
-    var ascii_count: usize = 0;
 
     for (glyphs) |glyph| {
-        if (glyph.encoding <= 127) {
-            min_ascii = @min(min_ascii, @as(u8, @intCast(glyph.encoding)));
-            max_ascii = @max(max_ascii, @as(u8, @intCast(glyph.encoding)));
-            ascii_count += 1;
+        if (glyph.encoding > 127) {
+            all_ascii = false;
+            break;
         }
+        min_ascii = @min(min_ascii, @as(u8, @intCast(glyph.encoding)));
+        max_ascii = @max(max_ascii, @as(u8, @intCast(glyph.encoding)));
     }
 
-    if (ascii_count == 0) {
+    if (glyphs.len == 0) {
         min_ascii = 32;
         max_ascii = 32;
     }
 
-    // Calculate bitmap data size
-    const char_count = @as(usize, max_ascii - min_ascii + 1);
     const char_height = @as(usize, @intCast(@abs(bdf_font.bounding_box.height)));
     const char_width = @as(usize, @intCast(@abs(bdf_font.bounding_box.width)));
-    // For fonts wider than 8 pixels, we need multiple bytes per row
     const bytes_per_row = (char_width + 7) / 8; // Round up to nearest byte
-    const data_size = char_count * char_height * bytes_per_row;
 
-    // Allocate bitmap data
-    var bitmap_data = try allocator.alloc(u8, data_size);
-    errdefer allocator.free(bitmap_data);
+    // Calculate bitmap data size and allocate
+    var bitmap_data: []u8 = undefined;
+    var glyph_map: ?std.AutoHashMap(u32, usize) = null;
+    var glyph_data_array: ?[]GlyphData = null;
 
-    // Clear bitmap data
-    @memset(bitmap_data, 0);
+    if (all_ascii and glyphs.len > 0) {
+        // For ASCII-only fonts, use contiguous array for efficiency
+        const char_count = @as(usize, max_ascii - min_ascii + 1);
+        const data_size = char_count * char_height * bytes_per_row;
+        bitmap_data = try allocator.alloc(u8, data_size);
+        errdefer allocator.free(bitmap_data);
+        @memset(bitmap_data, 0);
 
-    // Create glyph map and data arrays
-    var glyph_map = std.AutoHashMap(u32, usize).init(allocator);
-    errdefer glyph_map.deinit();
+        // Check if we need per-glyph data for variable widths
+        var need_glyph_data = false;
+        for (glyphs) |glyph| {
+            if (glyph.bbx.width != char_width) {
+                need_glyph_data = true;
+                break;
+            }
+        }
 
-    var glyph_data_list = std.ArrayList(GlyphData).init(allocator);
-    defer glyph_data_list.deinit();
+        // If glyphs have variable widths, create glyph data
+        if (need_glyph_data) {
+            var glyph_data_list = std.ArrayList(GlyphData).init(allocator);
+            defer glyph_data_list.deinit();
 
-    // Convert each glyph
-    for (glyphs) |glyph| {
-        if (glyph.encoding >= min_ascii and glyph.encoding <= max_ascii) {
+            var map = std.AutoHashMap(u32, usize).init(allocator);
+            errdefer map.deinit();
+
+            // Create glyph data for each character in the range
+            for (min_ascii..max_ascii + 1) |code| {
+                // Find the glyph for this code
+                var found_glyph: ?BdfGlyph = null;
+                for (glyphs) |glyph| {
+                    if (glyph.encoding == code) {
+                        found_glyph = glyph;
+                        break;
+                    }
+                }
+
+                if (found_glyph) |glyph| {
+                    const idx = glyph_data_list.items.len;
+                    try map.put(@intCast(code), idx);
+                    try glyph_data_list.append(GlyphData{
+                        .width = @intCast(glyph.bbx.width),
+                        .height = @intCast(char_height), // Use font height, not glyph height
+                        .x_offset = glyph.bbx.x_offset,
+                        .y_offset = glyph.bbx.y_offset,
+                        .device_width = glyph.dwidth.x,
+                        .bitmap_offset = 0, // Not used for ASCII fonts
+                    });
+                }
+            }
+
+            glyph_map = map;
+            glyph_data_array = try glyph_data_list.toOwnedSlice();
+        }
+
+        // Convert each glyph
+        for (glyphs) |glyph| {
             const char_idx = glyph.encoding - min_ascii;
             const data_offset = char_idx * char_height * bytes_per_row;
 
             // Convert BDF bitmap to our format
             for (0..@min(glyph.bbx.height, char_height)) |row| {
                 if (row < glyph.bitmap.len) {
-                    // BDF uses MSB first, we use LSB first
                     const bdf_row = glyph.bitmap[row];
 
-                    // Convert all bits, possibly spanning multiple bytes
                     for (0..bytes_per_row) |byte_idx| {
                         var our_byte: u8 = 0;
                         const start_bit = byte_idx * 8;
@@ -463,17 +601,73 @@ pub fn convertToBitmapFont(allocator: std.mem.Allocator, bdf_font: BdfFont, glyp
                     }
                 }
             }
+        }
+    } else {
+        // For Unicode fonts, use sparse storage with glyph map
+        // Calculate total bitmap size needed
+        var total_bitmap_size: usize = 0;
+        for (glyphs) |glyph| {
+            const glyph_size = @as(usize, @intCast(glyph.bbx.height)) * bytes_per_row;
+            total_bitmap_size += glyph_size;
+        }
 
-            // Store glyph data
-            try glyph_map.put(glyph.encoding, glyph_data_list.items.len);
+        bitmap_data = try allocator.alloc(u8, total_bitmap_size);
+        errdefer allocator.free(bitmap_data);
+
+        var map = std.AutoHashMap(u32, usize).init(allocator);
+        errdefer map.deinit();
+
+        var glyph_data_list = std.ArrayList(GlyphData).init(allocator);
+        defer glyph_data_list.deinit();
+
+        var bitmap_offset: usize = 0;
+
+        // Convert each glyph
+        for (glyphs) |glyph| {
+            // Store glyph location in map
+            try map.put(glyph.encoding, glyph_data_list.items.len);
+
+            // Store glyph metadata
             try glyph_data_list.append(GlyphData{
                 .width = @intCast(glyph.bbx.width),
                 .height = @intCast(glyph.bbx.height),
                 .x_offset = glyph.bbx.x_offset,
                 .y_offset = glyph.bbx.y_offset,
                 .device_width = glyph.dwidth.x,
+                .bitmap_offset = bitmap_offset,
             });
+
+            // Convert bitmap data
+            const glyph_bytes_per_row = (glyph.bbx.width + 7) / 8;
+            for (0..glyph.bbx.height) |row| {
+                if (row < glyph.bitmap.len) {
+                    const bdf_row = glyph.bitmap[row];
+
+                    for (0..glyph_bytes_per_row) |byte_idx| {
+                        var our_byte: u8 = 0;
+                        const start_bit = byte_idx * 8;
+                        const end_bit = @min(start_bit + 8, glyph.bbx.width);
+
+                        for (start_bit..end_bit) |bit| {
+                            if ((bdf_row >> @intCast(31 - bit)) & 1 != 0) {
+                                our_byte |= @as(u8, 1) << @intCast(bit - start_bit);
+                            }
+                        }
+
+                        bitmap_data[bitmap_offset + row * glyph_bytes_per_row + byte_idx] = our_byte;
+                    }
+                }
+            }
+
+            bitmap_offset += @as(usize, @intCast(glyph.bbx.height)) * glyph_bytes_per_row;
         }
+
+        glyph_map = map;
+        glyph_data_array = try glyph_data_list.toOwnedSlice();
+
+        // Set first/last char to 0 for Unicode fonts
+        min_ascii = 0;
+        max_ascii = 0;
     }
 
     return BitmapFont{
@@ -483,7 +677,7 @@ pub fn convertToBitmapFont(allocator: std.mem.Allocator, bdf_font: BdfFont, glyp
         .last_char = max_ascii,
         .data = bitmap_data,
         .glyph_map = glyph_map,
-        .glyph_data = try glyph_data_list.toOwnedSlice(),
+        .glyph_data = glyph_data_array,
     };
 }
 
@@ -583,21 +777,31 @@ test "BDF parser - parse simple font header" {
     try testing.expectEqual(@as(u32, 0xF8), result.glyphs[1].bitmap[4]);
 }
 
-/// Load a BDF font from a file path
+/// Load a BDF font from a file path with default options
 pub fn loadBdfFontFromFile(allocator: std.mem.Allocator, path: []const u8) !BdfLoadResult {
+    return loadBdfFontFromFileWithOptions(allocator, path, .{});
+}
+
+/// Load a BDF font from a file path with custom options
+pub fn loadBdfFontFromFileWithOptions(allocator: std.mem.Allocator, path: []const u8, options: BdfLoadOptions) !BdfLoadResult {
     // Read entire file into memory
     const file_contents = try std.fs.cwd().readFileAlloc(allocator, path, 50 * 1024 * 1024); // 50MB max
     defer allocator.free(file_contents);
 
     // Create a fixed buffer stream from the contents
     var stream = std.io.fixedBufferStream(file_contents);
-    return try loadBdfFont(allocator, stream.reader());
+    return try loadBdfFontWithOptions(allocator, stream.reader(), options);
 }
 
-/// Load a BDF font and convert it to BitmapFont format
+/// Load a BDF font and convert it to BitmapFont format with default options
 pub fn loadBitmapFontFromBdfFile(allocator: std.mem.Allocator, path: []const u8) !BitmapFont {
+    return loadBitmapFontFromBdfFileWithOptions(allocator, path, .{});
+}
+
+/// Load a BDF font and convert it to BitmapFont format with custom options
+pub fn loadBitmapFontFromBdfFileWithOptions(allocator: std.mem.Allocator, path: []const u8, options: BdfLoadOptions) !BitmapFont {
     // Load BDF font
-    const result = try loadBdfFontFromFile(allocator, path);
+    const result = try loadBdfFontFromFileWithOptions(allocator, path, options);
 
     // Save what we need before cleanup
     const converted = try convertToBitmapFont(allocator, result.font, result.glyphs);

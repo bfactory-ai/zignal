@@ -37,21 +37,37 @@ pub const BitmapFont = struct {
 
     /// Get the bitmap data for a specific character
     /// Returns null if the character is not in the font
-    pub fn getCharData(self: BitmapFont, char: u8) ?[]const u8 {
-        if (char < self.first_char or char > self.last_char) {
-            return null;
+    pub fn getCharData(self: BitmapFont, codepoint: u21) ?[]const u8 {
+        // For ASCII fonts, always use the standard fixed-size layout
+        if (codepoint <= 255 and codepoint >= self.first_char and codepoint <= self.last_char) {
+            const index = @as(usize, @as(u8, @intCast(codepoint)) - self.first_char);
+            const bytes_per_row = self.bytesPerRow();
+            const bytes_per_char = @as(usize, self.char_height) * bytes_per_row;
+            const offset = index * bytes_per_char;
+            return self.data[offset .. offset + bytes_per_char];
         }
-        const index = @as(usize, char - self.first_char);
-        const bytes_per_row = self.bytesPerRow();
-        const bytes_per_char = @as(usize, self.char_height) * bytes_per_row;
-        const offset = index * bytes_per_char;
-        return self.data[offset .. offset + bytes_per_char];
+
+        // For Unicode, check glyph map
+        if (self.glyph_map) |map| {
+            if (map.get(codepoint)) |idx| {
+                if (self.glyph_data) |data| {
+                    if (idx < data.len) {
+                        const glyph = data[idx];
+                        const glyph_bytes_per_row = (@as(usize, glyph.width) + 7) / 8;
+                        const glyph_size = @as(usize, glyph.height) * glyph_bytes_per_row;
+                        return self.data[glyph.bitmap_offset .. glyph.bitmap_offset + glyph_size];
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 
     /// Get bitmap data for a specific row of a character
     /// Returns null if the character is not in the font
-    pub fn getCharRow(self: BitmapFont, char: u8, row: usize) ?[]const u8 {
-        const char_data = self.getCharData(char) orelse return null;
+    pub fn getCharRow(self: BitmapFont, codepoint: u21, row: usize) ?[]const u8 {
+        const char_data = self.getCharData(codepoint) orelse return null;
         if (row >= self.char_height) return null;
         const bytes_per_row = self.bytesPerRow();
         const row_offset = row * bytes_per_row;
@@ -60,15 +76,20 @@ pub const BitmapFont = struct {
 
     /// Get the advance width for a character (how much to move the cursor)
     /// Returns per-character width if available, otherwise the default char_width
-    pub fn getCharAdvanceWidth(self: BitmapFont, char: u8) u16 {
+    pub fn getCharAdvanceWidth(self: BitmapFont, codepoint: u21) u16 {
+        // For ASCII fonts without glyph data, use char_width
+        if (self.glyph_data == null) {
+            return self.char_width;
+        }
+
         // Check for per-character width data
         if (self.glyph_map) |map| {
-            if (map.get(char)) |idx| {
+            if (map.get(codepoint)) |idx| {
                 if (self.glyph_data) |data| {
                     if (idx < data.len) {
-                        // Use the device_width if available, otherwise fall back to glyph width
+                        // Use the glyph width for tighter spacing
                         const glyph = data[idx];
-                        return if (glyph.device_width > 0) @intCast(glyph.device_width) else glyph.width;
+                        return glyph.width;
                     }
                 }
             }
@@ -159,9 +180,34 @@ pub const BitmapFont = struct {
         return .{ .l = min_x, .t = min_y, .r = max_x, .b = max_y };
     }
 
+    /// Get glyph information for a character
+    pub fn getGlyphInfo(self: BitmapFont, codepoint: u21) ?GlyphData {
+        if (self.glyph_map) |map| {
+            if (map.get(codepoint)) |idx| {
+                if (self.glyph_data) |data| {
+                    if (idx < data.len) {
+                        return data[idx];
+                    }
+                }
+            }
+        }
+        // For ASCII fonts without glyph data, return default
+        if (codepoint <= 255 and codepoint >= self.first_char and codepoint <= self.last_char) {
+            return GlyphData{
+                .width = self.char_width,
+                .height = self.char_height,
+                .x_offset = 0,
+                .y_offset = 0,
+                .device_width = @intCast(self.char_width),
+                .bitmap_offset = 0,
+            };
+        }
+        return null;
+    }
+
     /// Get the visible bounds of a character (excluding padding)
-    fn getCharTightBounds(self: BitmapFont, char: u8) struct { bounds: Rectangle(u8), has_pixels: bool } {
-        const char_data = self.getCharData(char) orelse return .{
+    fn getCharTightBounds(self: BitmapFont, codepoint: u21) struct { bounds: Rectangle(u8), has_pixels: bool } {
+        const char_data = self.getCharData(codepoint) orelse return .{
             .bounds = Rectangle(u8){ .l = 0, .t = 0, .r = 0, .b = 0 },
             .has_pixels = false,
         };
@@ -223,6 +269,8 @@ pub const GlyphData = struct {
     x_offset: i16,
     y_offset: i16,
     device_width: i16,
+    /// Offset into the bitmap data array where this glyph's bitmap starts
+    bitmap_offset: usize = 0,
 };
 
 /// Default 8x8 monospace bitmap font (public domain)
