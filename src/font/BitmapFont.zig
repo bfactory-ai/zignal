@@ -4,8 +4,11 @@
 //! Supports both fixed-width and variable-width fonts.
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const Rectangle = @import("../geometry.zig").Rectangle;
 const GlyphData = @import("GlyphData.zig");
+const FontFormat = @import("format.zig").FontFormat;
+const LoadOptions = @import("../font.zig").LoadOptions;
 
 const BitmapFont = @This();
 
@@ -25,6 +28,25 @@ data: []const u8,
 glyph_map: ?std.AutoHashMap(u32, usize) = null,
 /// Optional: Per-character glyph data (width, offsets, etc.)
 glyph_data: ?[]const GlyphData = null,
+
+/// Load a font from file with automatic format detection
+///
+/// Supports:
+/// - BDF (Bitmap Distribution Format)
+/// - PCF (Portable Compiled Format) - future
+///
+/// Example:
+/// ```zig
+/// const font = try BitmapFont.load(allocator, "unifont.bdf", .{});
+/// defer font.deinit(allocator);
+/// ```
+pub fn load(allocator: Allocator, file_path: []const u8, options: LoadOptions) !BitmapFont {
+    const format = try FontFormat.detectFromPath(allocator, file_path) orelse return error.UnsupportedFontFormat;
+    return switch (format) {
+        .bdf => @import("bdf.zig").load(allocator, file_path, options),
+        .pcf => error.NotImplemented, // TODO: Implement PCF loading
+    };
+}
 
 /// Get number of bytes per row for this font
 pub fn bytesPerRow(self: BitmapFont) usize {

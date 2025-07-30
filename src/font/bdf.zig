@@ -8,6 +8,7 @@ const testing = std.testing;
 const BitmapFont = @import("BitmapFont.zig");
 const GlyphData = @import("GlyphData.zig");
 const unicode = @import("unicode.zig");
+const LoadOptions = @import("../font.zig").LoadOptions;
 
 /// Errors that can occur during BDF parsing
 pub const BdfError = error{
@@ -16,16 +17,6 @@ pub const BdfError = error{
     MissingRequired,
     InvalidBitmapData,
     AllocationFailed,
-};
-
-/// Options for loading BDF fonts
-pub const LoadOptions = struct {
-    /// Load all characters in the font (default: false, loads only ASCII)
-    load_all: bool = false,
-    /// Specific Unicode ranges to load (null = use default behavior)
-    ranges: ?[]const unicode.Range = null,
-    /// Maximum characters to load (0 = no limit)
-    max_chars: usize = 0,
 };
 
 /// BDF font metadata
@@ -97,8 +88,10 @@ pub fn load(allocator: std.mem.Allocator, path: []const u8, options: LoadOptions
         if (try parseGlyph(&lines, &state, options)) {
             parsed_glyphs += 1;
 
-            if (options.max_chars > 0 and state.glyphs.items.len >= options.max_chars) {
-                break;
+            if (options.max_chars) |max_chars| {
+                if (state.glyphs.items.len >= max_chars) {
+                    break;
+                }
             }
         }
 
