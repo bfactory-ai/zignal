@@ -104,6 +104,7 @@ pub const featureDistributionMatch = @import("fdm.zig").featureDistributionMatch
 // Font system
 const font = @import("font.zig");
 pub const BitmapFont = font.BitmapFont;
+pub const ExtendedBitmapFont = font.ExtendedBitmapFont;
 pub const default_font_8x8 = font.default_font_8x8;
 
 // BDF font support

@@ -491,14 +491,8 @@ pub fn convertToBitmapFont(allocator: std.mem.Allocator, bdf_font: BdfFont, glyp
     };
 }
 
-/// Extended glyph data for variable-width fonts
-pub const GlyphData = struct {
-    width: u8,
-    height: u8,
-    x_offset: i16,
-    y_offset: i16,
-    device_width: i16,
-};
+/// Import GlyphData from font module for consistency
+pub const GlyphData = @import("font.zig").GlyphData;
 
 /// Result of loading a BDF font
 pub const BdfLoadResult = struct {
@@ -511,6 +505,15 @@ pub const BitmapFontResult = struct {
     font: BitmapFont,
     glyph_map: std.AutoHashMap(u32, usize),
     glyph_data: []const GlyphData,
+
+    /// Convert to ExtendedBitmapFont (transfers ownership)
+    pub fn toExtended(self: BitmapFontResult) @import("font.zig").ExtendedBitmapFont {
+        return .{
+            .font = self.font,
+            .glyph_map = self.glyph_map,
+            .glyph_data = self.glyph_data,
+        };
+    }
 };
 
 test "BDF parser - parse simple font header" {

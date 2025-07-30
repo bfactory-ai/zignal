@@ -53,6 +53,16 @@ pub const BitmapFont = struct {
         return char_data[row_offset .. row_offset + bytes_per_row];
     }
 
+    /// Get the advance width for a character (how much to move the cursor)
+    /// This returns the font's char_width by default, but can be overridden
+    /// by extended font data for variable-width fonts
+    pub fn getCharAdvanceWidth(self: BitmapFont, char: u8) u16 {
+        _ = char;
+        // Default implementation returns fixed width
+        // Extended fonts (like from BDF) should provide per-character widths
+        return self.char_width;
+    }
+
     /// Calculate the bounding rectangle for rendering text
     /// Returns bounds where l,t are inclusive and r,b are exclusive
     /// For example, an 8x8 character has pixels at positions 0-7, so bounds are (0,0) to (8,8)
@@ -179,6 +189,53 @@ pub const BitmapFont = struct {
             .has_pixels = true,
         };
     }
+};
+
+/// Extended bitmap font that includes per-character metrics
+pub const ExtendedBitmapFont = struct {
+    /// Base font data
+    font: BitmapFont,
+    /// Map from character code to glyph data index
+    glyph_map: ?std.AutoHashMap(u32, usize) = null,
+    /// Per-character glyph data (width, offsets, etc.)
+    glyph_data: ?[]const GlyphData = null,
+
+    /// Get the advance width for a character
+    pub fn getCharAdvanceWidth(self: ExtendedBitmapFont, char: u8) u16 {
+        if (self.glyph_map) |map| {
+            if (map.get(char)) |idx| {
+                if (self.glyph_data) |data| {
+                    if (idx < data.len) {
+                        // Use the device_width if available, otherwise fall back to glyph width
+                        const glyph = data[idx];
+                        return if (glyph.device_width > 0) @intCast(glyph.device_width) else glyph.width;
+                    }
+                }
+            }
+        }
+        // Fall back to fixed width
+        return self.font.char_width;
+    }
+
+    /// Free resources (if owned)
+    pub fn deinit(self: *ExtendedBitmapFont, allocator: std.mem.Allocator) void {
+        if (self.glyph_map) |*map| {
+            map.deinit();
+        }
+        if (self.glyph_data) |data| {
+            allocator.free(data);
+        }
+        allocator.free(self.font.data);
+    }
+};
+
+/// Glyph data for variable-width fonts
+pub const GlyphData = struct {
+    width: u8,
+    height: u8,
+    x_offset: i16,
+    y_offset: i16,
+    device_width: i16,
 };
 
 /// Default 8x8 monospace bitmap font (public domain)
