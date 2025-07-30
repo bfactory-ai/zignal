@@ -111,13 +111,8 @@ const BdfParseState = struct {
     all_ascii: bool = true,
 };
 
-/// Load a BDF font from a file path with default options (ASCII only)
-pub fn loadBdfFont(allocator: std.mem.Allocator, path: []const u8) !BitmapFont {
-    return loadBdfFontWithOptions(allocator, path, .{});
-}
-
 /// Load a BDF font from a file path with custom options
-pub fn loadBdfFontWithOptions(allocator: std.mem.Allocator, path: []const u8, options: BdfLoadOptions) !BitmapFont {
+pub fn loadBdfFont(allocator: std.mem.Allocator, path: []const u8, options: BdfLoadOptions) !BitmapFont {
     // Read entire file into memory
     const file_contents = try std.fs.cwd().readFileAlloc(allocator, path, 50 * 1024 * 1024); // 50MB max
     defer allocator.free(file_contents);
@@ -504,16 +499,6 @@ fn convertToBitmapFont(
             .glyph_data = glyph_data_list,
         };
     }
-}
-
-/// Convenience function: Load a BDF font and convert to BitmapFont format
-pub fn loadBitmapFontFromBdfFile(allocator: std.mem.Allocator, path: []const u8) !BitmapFont {
-    return loadBdfFontWithOptions(allocator, path, .{});
-}
-
-/// Convenience function: Load a BDF font with options
-pub fn loadBitmapFontFromBdfFileWithOptions(allocator: std.mem.Allocator, path: []const u8, options: BdfLoadOptions) !BitmapFont {
-    return loadBdfFontWithOptions(allocator, path, options);
 }
 
 test "BDF to BitmapFont conversion" {

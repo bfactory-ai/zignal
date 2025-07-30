@@ -107,22 +107,7 @@ pub const BitmapFont = font.BitmapFont;
 pub const default_font_8x8 = font.default_font_8x8;
 
 // BDF font support
-const bdf = @import("bdf.zig");
-pub const BdfFont = bdf.BdfFont;
-pub const BdfGlyph = bdf.BdfGlyph;
-pub const BdfError = bdf.BdfError;
-pub const GlyphData = bdf.GlyphData;
-pub const BdfLoadResult = bdf.BdfLoadResult;
-pub const BdfLoadOptions = bdf.BdfLoadOptions;
-pub const UnicodeRange = bdf.UnicodeRange;
-pub const unicode_ranges = bdf.unicode_ranges;
-pub const loadBdfFont = bdf.loadBdfFont;
-pub const loadBdfFontWithOptions = bdf.loadBdfFontWithOptions;
-pub const loadBdfFontFromFile = bdf.loadBdfFontFromFile;
-pub const loadBdfFontFromFileWithOptions = bdf.loadBdfFontFromFileWithOptions;
-pub const loadBitmapFontFromBdfFile = bdf.loadBitmapFontFromBdfFile;
-pub const loadBitmapFontFromBdfFileWithOptions = bdf.loadBitmapFontFromBdfFileWithOptions;
-pub const convertToBitmapFont = bdf.convertToBitmapFont;
+pub const bdf = @import("bdf.zig");
 
 // PCA (Principal Component Analysis) system
 const pca = @import("pca.zig");
