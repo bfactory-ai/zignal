@@ -43,18 +43,36 @@ pub const ranges = struct {
     pub const box_drawing = Range{ .start = 0x2500, .end = 0x257F };
     /// Block Elements
     pub const block_elements = Range{ .start = 0x2580, .end = 0x259F };
-
+    /// CJK Symbols and Punctuation
+    pub const cjk_punctuation = Range{ .start = 0x3000, .end = 0x303F };
     /// Common Western European languages (Latin-1 + Latin Extended-A)
     pub const western_european = [_]Range{
         latin1,
         Range{ .start = 0x0100, .end = 0x017F }, // Latin Extended-A
     };
-
     /// Common East Asian languages
     pub const east_asian = [_]Range{
         hiragana,
         katakana,
         cjk_unified,
         hangul,
+    };
+    /// Chinese (both simplified and traditional)
+    pub const chinese = [_]Range{
+        cjk_unified,
+        cjk_punctuation,
+    };
+    /// Japanese writing systems (hiragana, katakana, kanji)
+    pub const japanese = [_]Range{
+        hiragana,
+        katakana,
+        cjk_unified,
+        cjk_punctuation,
+    };
+
+    /// Korean (Hangul + punctuation)
+    pub const korean = [_]Range{
+        hangul,
+        cjk_punctuation,
     };
 };
