@@ -13,6 +13,14 @@ const std = @import("std");
 pub const BitmapFont = @import("font/BitmapFont.zig");
 pub const GlyphData = @import("font/GlyphData.zig");
 
+/// Font loading filter
+pub const LoadFilter = union(enum) {
+    /// Load all characters in the font
+    all,
+    /// Load only specified Unicode ranges
+    ranges: []const unicode.Range,
+};
+
 // Default font
 const default_8x8 = @import("font/default_8x8.zig");
 pub const default_font_8x8 = default_8x8.font;

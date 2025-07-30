@@ -8,6 +8,7 @@ const testing = std.testing;
 const BitmapFont = @import("BitmapFont.zig");
 const GlyphData = @import("GlyphData.zig");
 const unicode = @import("unicode.zig");
+const LoadFilter = @import("../font.zig").LoadFilter;
 
 /// Errors that can occur during BDF parsing
 pub const BdfError = error{
@@ -52,8 +53,8 @@ const BdfParseState = struct {
 /// Parameters:
 /// - allocator: Memory allocator
 /// - path: Path to BDF file
-/// - ranges: Unicode ranges to load (null = load entire font)
-pub fn load(allocator: std.mem.Allocator, path: []const u8, ranges: ?[]const unicode.Range) !BitmapFont {
+/// - filter: Filter for which characters to load
+pub fn load(allocator: std.mem.Allocator, path: []const u8, filter: LoadFilter) !BitmapFont {
     // Read entire file into memory
     const file_contents = try std.fs.cwd().readFileAlloc(allocator, path, 50 * 1024 * 1024); // 50MB max
     defer allocator.free(file_contents);
@@ -88,7 +89,7 @@ pub fn load(allocator: std.mem.Allocator, path: []const u8, ranges: ?[]const uni
         }
 
         // Parse glyph
-        if (try parseGlyph(&lines, &state, ranges)) {
+        if (try parseGlyph(&lines, &state, filter)) {
             parsed_glyphs += 1;
         }
 
@@ -156,7 +157,7 @@ fn parseHeader(lines: *std.mem.TokenIterator(u8, .any)) !BdfFont {
 }
 
 /// Parse a single glyph and its bitmap data
-fn parseGlyph(lines: *std.mem.TokenIterator(u8, .any), state: *BdfParseState, ranges: ?[]const unicode.Range) !bool {
+fn parseGlyph(lines: *std.mem.TokenIterator(u8, .any), state: *BdfParseState, filter: LoadFilter) !bool {
     var glyph = BdfGlyph{
         .encoding = undefined,
         .bbox = .{
@@ -211,7 +212,7 @@ fn parseGlyph(lines: *std.mem.TokenIterator(u8, .any), state: *BdfParseState, ra
             }
 
             // Check if we should include this glyph
-            if (!shouldIncludeGlyph(glyph.encoding, ranges)) {
+            if (!shouldIncludeGlyph(glyph.encoding, filter)) {
                 // Skip bitmap data
                 while (lines.next()) |skip_line| {
                     if (std.mem.eql(u8, std.mem.trim(u8, skip_line, " \t"), "ENDCHAR")) {
@@ -283,19 +284,20 @@ fn parseGlyph(lines: *std.mem.TokenIterator(u8, .any), state: *BdfParseState, ra
     return false;
 }
 
-/// Check if a glyph should be included based on ranges
-fn shouldIncludeGlyph(encoding: u32, ranges: ?[]const unicode.Range) bool {
-    // If no ranges specified, load everything
-    const range_list = ranges orelse return true;
-
-    // Check if encoding matches any range
-    for (range_list) |range| {
-        if (encoding >= range.start and encoding <= range.end) {
-            return true;
-        }
+/// Check if a glyph should be included based on filter
+fn shouldIncludeGlyph(encoding: u32, filter: LoadFilter) bool {
+    switch (filter) {
+        .all => return true,
+        .ranges => |ranges| {
+            // Check if encoding matches any range
+            for (ranges) |range| {
+                if (encoding >= range.start and encoding <= range.end) {
+                    return true;
+                }
+            }
+            return false;
+        },
     }
-
-    return false;
 }
 
 /// Convert parsed glyphs to BitmapFont format
@@ -479,7 +481,7 @@ test "BDF to BitmapFont conversion" {
     while (lines.next()) |line| {
         const trimmed = std.mem.trim(u8, line, " \t");
         if (std.mem.startsWith(u8, trimmed, "STARTCHAR")) {
-            _ = try parseGlyph(&lines, &state, null);
+            _ = try parseGlyph(&lines, &state, .all);
         }
     }
 

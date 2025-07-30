@@ -8,7 +8,7 @@ const Allocator = std.mem.Allocator;
 const Rectangle = @import("../geometry.zig").Rectangle;
 const GlyphData = @import("GlyphData.zig");
 const FontFormat = @import("format.zig").FontFormat;
-const unicode = @import("unicode.zig");
+const LoadFilter = @import("../font.zig").LoadFilter;
 
 const BitmapFont = @This();
 
@@ -38,20 +38,21 @@ glyph_data: ?[]const GlyphData = null,
 /// Parameters:
 /// - allocator: Memory allocator
 /// - file_path: Path to font file
-/// - ranges: Unicode ranges to load (null = load entire font)
+/// - filter: Filter for which characters to load
 ///
 /// Example:
 /// ```zig
-/// const font = try BitmapFont.load(allocator, "unifont.bdf", null);
+/// // Load entire font:
+/// const font = try BitmapFont.load(allocator, "unifont.bdf", .all);
 /// defer font.deinit(allocator);
 ///
-/// // Or load specific ranges:
-/// const font = try BitmapFont.load(allocator, "font.bdf", &unicode.ranges.japanese);
+/// // Load specific ranges:
+/// const font = try BitmapFont.load(allocator, "font.bdf", .{ .ranges = &unicode.ranges.japanese });
 /// ```
-pub fn load(allocator: Allocator, file_path: []const u8, ranges: ?[]const unicode.Range) !BitmapFont {
+pub fn load(allocator: Allocator, file_path: []const u8, filter: LoadFilter) !BitmapFont {
     const format = try FontFormat.detectFromPath(allocator, file_path) orelse return error.UnsupportedFontFormat;
     return switch (format) {
-        .bdf => @import("bdf.zig").load(allocator, file_path, ranges),
+        .bdf => @import("bdf.zig").load(allocator, file_path, filter),
         .pcf => error.NotImplemented, // TODO: Implement PCF loading
     };
 }
