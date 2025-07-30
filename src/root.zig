@@ -104,7 +104,6 @@ pub const featureDistributionMatch = @import("fdm.zig").featureDistributionMatch
 // Font system
 const font = @import("font.zig");
 pub const BitmapFont = font.BitmapFont;
-pub const ExtendedBitmapFont = font.ExtendedBitmapFont;
 pub const default_font_8x8 = font.default_font_8x8;
 
 // BDF font support
@@ -114,7 +113,6 @@ pub const BdfGlyph = bdf.BdfGlyph;
 pub const BdfError = bdf.BdfError;
 pub const GlyphData = bdf.GlyphData;
 pub const BdfLoadResult = bdf.BdfLoadResult;
-pub const BitmapFontResult = bdf.BitmapFontResult;
 pub const loadBdfFont = bdf.loadBdfFont;
 pub const loadBdfFontFromFile = bdf.loadBdfFontFromFile;
 pub const loadBitmapFontFromBdfFile = bdf.loadBitmapFontFromBdfFile;

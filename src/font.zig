@@ -11,8 +11,9 @@ const isColor = @import("color.zig").isColor;
 const Rectangle = @import("geometry.zig").Rectangle;
 
 /// A bitmap font containing character data and metrics
+/// Supports both fixed-width and variable-width fonts
 pub const BitmapFont = struct {
-    /// Width of each character in pixels
+    /// Width of each character in pixels (default/maximum width)
     char_width: u8,
     /// Height of each character in pixels
     char_height: u8,
@@ -24,6 +25,10 @@ pub const BitmapFont = struct {
     /// For fonts wider than 8 pixels, multiple bytes are used per row
     /// Data layout: [char_index][row][byte_in_row]
     data: []const u8,
+    /// Optional: Map from character code to glyph data index (for variable-width fonts)
+    glyph_map: ?std.AutoHashMap(u32, usize) = null,
+    /// Optional: Per-character glyph data (width, offsets, etc.)
+    glyph_data: ?[]const GlyphData = null,
 
     /// Get number of bytes per row for this font
     pub fn bytesPerRow(self: BitmapFont) usize {
@@ -54,12 +59,21 @@ pub const BitmapFont = struct {
     }
 
     /// Get the advance width for a character (how much to move the cursor)
-    /// This returns the font's char_width by default, but can be overridden
-    /// by extended font data for variable-width fonts
+    /// Returns per-character width if available, otherwise the default char_width
     pub fn getCharAdvanceWidth(self: BitmapFont, char: u8) u16 {
-        _ = char;
-        // Default implementation returns fixed width
-        // Extended fonts (like from BDF) should provide per-character widths
+        // Check for per-character width data
+        if (self.glyph_map) |map| {
+            if (map.get(char)) |idx| {
+                if (self.glyph_data) |data| {
+                    if (idx < data.len) {
+                        // Use the device_width if available, otherwise fall back to glyph width
+                        const glyph = data[idx];
+                        return if (glyph.device_width > 0) @intCast(glyph.device_width) else glyph.width;
+                    }
+                }
+            }
+        }
+        // Fall back to fixed width
         return self.char_width;
     }
 
@@ -72,7 +86,6 @@ pub const BitmapFont = struct {
         var current_line_width: f32 = 0;
         var lines: f32 = 1;
 
-        const char_width_scaled = @as(f32, @floatFromInt(self.char_width)) * scale;
         const char_height_scaled = @as(f32, @floatFromInt(self.char_height)) * scale;
 
         for (text) |char| {
@@ -81,7 +94,8 @@ pub const BitmapFont = struct {
                 current_line_width = 0;
                 lines += 1;
             } else {
-                current_line_width += char_width_scaled;
+                const char_advance = self.getCharAdvanceWidth(char);
+                current_line_width += @as(f32, @floatFromInt(char_advance)) * scale;
             }
         }
         width = @max(width, current_line_width);
@@ -109,7 +123,6 @@ pub const BitmapFont = struct {
 
         var x: f32 = 0;
         var y: f32 = 0;
-        const char_width_scaled = @as(f32, @floatFromInt(self.char_width)) * scale;
         const char_height_scaled = @as(f32, @floatFromInt(self.char_height)) * scale;
 
         for (text) |char| {
@@ -135,7 +148,8 @@ pub const BitmapFont = struct {
                 max_y = @max(max_y, bottom);
             }
 
-            x += char_width_scaled;
+            const char_advance = self.getCharAdvanceWidth(char);
+            x += @as(f32, @floatFromInt(char_advance)) * scale;
         }
 
         if (!has_any_pixels) {
@@ -189,43 +203,16 @@ pub const BitmapFont = struct {
             .has_pixels = true,
         };
     }
-};
-
-/// Extended bitmap font that includes per-character metrics
-pub const ExtendedBitmapFont = struct {
-    /// Base font data
-    font: BitmapFont,
-    /// Map from character code to glyph data index
-    glyph_map: ?std.AutoHashMap(u32, usize) = null,
-    /// Per-character glyph data (width, offsets, etc.)
-    glyph_data: ?[]const GlyphData = null,
-
-    /// Get the advance width for a character
-    pub fn getCharAdvanceWidth(self: ExtendedBitmapFont, char: u8) u16 {
-        if (self.glyph_map) |map| {
-            if (map.get(char)) |idx| {
-                if (self.glyph_data) |data| {
-                    if (idx < data.len) {
-                        // Use the device_width if available, otherwise fall back to glyph width
-                        const glyph = data[idx];
-                        return if (glyph.device_width > 0) @intCast(glyph.device_width) else glyph.width;
-                    }
-                }
-            }
-        }
-        // Fall back to fixed width
-        return self.font.char_width;
-    }
 
     /// Free resources (if owned)
-    pub fn deinit(self: *ExtendedBitmapFont, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *BitmapFont, allocator: std.mem.Allocator) void {
         if (self.glyph_map) |*map| {
             map.deinit();
         }
         if (self.glyph_data) |data| {
             allocator.free(data);
         }
-        allocator.free(self.font.data);
+        allocator.free(self.data);
     }
 };
 

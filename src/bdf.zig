@@ -391,7 +391,7 @@ pub fn loadBdfFont(allocator: std.mem.Allocator, reader: anytype) !BdfLoadResult
 
 /// Convert BDF glyphs to a BitmapFont compatible format
 /// This creates a font that can be used with zignal's text rendering
-pub fn convertToBitmapFont(allocator: std.mem.Allocator, bdf_font: BdfFont, glyphs: []const BdfGlyph) !BitmapFontResult {
+pub fn convertToBitmapFont(allocator: std.mem.Allocator, bdf_font: BdfFont, glyphs: []const BdfGlyph) !BitmapFont {
     // For now, we'll create a simple ASCII subset font
     // TODO: Extend to support full Unicode range
 
@@ -476,16 +476,12 @@ pub fn convertToBitmapFont(allocator: std.mem.Allocator, bdf_font: BdfFont, glyp
         }
     }
 
-    const font = BitmapFont{
+    return BitmapFont{
         .char_width = @intCast(char_width),
         .char_height = @intCast(char_height),
         .first_char = min_ascii,
         .last_char = max_ascii,
         .data = bitmap_data,
-    };
-
-    return .{
-        .font = font,
         .glyph_map = glyph_map,
         .glyph_data = try glyph_data_list.toOwnedSlice(),
     };
@@ -498,22 +494,6 @@ pub const GlyphData = @import("font.zig").GlyphData;
 pub const BdfLoadResult = struct {
     font: BdfFont,
     glyphs: []BdfGlyph,
-};
-
-/// Result of converting BDF to BitmapFont
-pub const BitmapFontResult = struct {
-    font: BitmapFont,
-    glyph_map: std.AutoHashMap(u32, usize),
-    glyph_data: []const GlyphData,
-
-    /// Convert to ExtendedBitmapFont (transfers ownership)
-    pub fn toExtended(self: BitmapFontResult) @import("font.zig").ExtendedBitmapFont {
-        return .{
-            .font = self.font,
-            .glyph_map = self.glyph_map,
-            .glyph_data = self.glyph_data,
-        };
-    }
 };
 
 test "BDF parser - parse simple font header" {
@@ -615,7 +595,7 @@ pub fn loadBdfFontFromFile(allocator: std.mem.Allocator, path: []const u8) !BdfL
 }
 
 /// Load a BDF font and convert it to BitmapFont format
-pub fn loadBitmapFontFromBdfFile(allocator: std.mem.Allocator, path: []const u8) !BitmapFontResult {
+pub fn loadBitmapFontFromBdfFile(allocator: std.mem.Allocator, path: []const u8) !BitmapFont {
     // Load BDF font
     const result = try loadBdfFontFromFile(allocator, path);
 
@@ -670,20 +650,16 @@ test "BDF to BitmapFont conversion" {
     }
 
     // Convert to BitmapFont
-    const converted = try convertToBitmapFont(testing.allocator, result.font, result.glyphs);
-    defer {
-        testing.allocator.free(converted.font.data);
-        converted.glyph_map.deinit();
-        testing.allocator.free(converted.glyph_data);
-    }
+    var converted = try convertToBitmapFont(testing.allocator, result.font, result.glyphs);
+    defer converted.deinit(testing.allocator);
 
     // Test converted font
-    try testing.expectEqual(@as(u8, 8), converted.font.char_height);
-    try testing.expectEqual(@as(u8, 65), converted.font.first_char);
-    try testing.expectEqual(@as(u8, 65), converted.font.last_char);
+    try testing.expectEqual(@as(u8, 8), converted.char_height);
+    try testing.expectEqual(@as(u8, 65), converted.first_char);
+    try testing.expectEqual(@as(u8, 65), converted.last_char);
 
     // Test that 'A' was converted correctly
-    const char_data = converted.font.getCharData('A');
+    const char_data = converted.getCharData('A');
     try testing.expect(char_data != null);
     try testing.expectEqual(@as(usize, 8), char_data.?.len);
 

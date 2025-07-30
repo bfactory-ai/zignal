@@ -1190,13 +1190,9 @@ pub fn Canvas(comptime T: type) type {
             comptime assert(isColor(@TypeOf(color)));
             const font_module = @import("font.zig");
             const BitmapFont = font_module.BitmapFont;
-            const ExtendedBitmapFont = font_module.ExtendedBitmapFont;
             const FontType = @TypeOf(font);
-            comptime assert(FontType == BitmapFont or FontType == ExtendedBitmapFont);
+            comptime assert(FontType == BitmapFont);
             if (scale <= 0) return;
-
-            // Get the actual font object (for ExtendedBitmapFont, it's in .font field)
-            const base_font = if (FontType == ExtendedBitmapFont) font.font else font;
 
             var x = position.x();
             var y = position.y();
@@ -1207,20 +1203,20 @@ pub fn Canvas(comptime T: type) type {
                 for (text) |char| {
                     if (char == '\n') {
                         x = start_x;
-                        y += @floatFromInt(base_font.char_height);
+                        y += @floatFromInt(font.char_height);
                         continue;
                     }
 
-                    if (base_font.getCharData(char)) |char_data| {
+                    if (font.getCharData(char)) |char_data| {
                         // Draw the character bitmap
-                        const bytes_per_row = base_font.bytesPerRow();
-                        for (0..@intCast(base_font.char_height)) |row| {
+                        const bytes_per_row = font.bytesPerRow();
+                        for (0..@intCast(font.char_height)) |row| {
                             const row_start = row * bytes_per_row;
                             for (0..bytes_per_row) |byte_idx| {
                                 const byte_data = char_data[row_start + byte_idx];
                                 for (0..8) |bit| {
                                     const col = byte_idx * 8 + bit;
-                                    if (col >= base_font.char_width) break;
+                                    if (col >= font.char_width) break;
                                     if ((byte_data >> @intCast(bit)) & 1 != 0) {
                                         const px = @as(isize, @intFromFloat(x)) + @as(isize, @intCast(col));
                                         const py = @as(isize, @intFromFloat(y)) + @as(isize, @intCast(row));
@@ -1233,17 +1229,14 @@ pub fn Canvas(comptime T: type) type {
                         }
                     }
                     // Use character-specific advance width if available
-                    const advance = if (FontType == ExtendedBitmapFont)
-                        font.getCharAdvanceWidth(char)
-                    else
-                        base_font.char_width;
+                    const advance = font.getCharAdvanceWidth(char);
                     x += @floatFromInt(advance);
                 }
                 return;
             }
 
             // For fast mode or exact integer scales, use nearest-neighbor scaling
-            const char_height_scaled = @as(f32, @floatFromInt(base_font.char_height)) * scale;
+            const char_height_scaled = @as(f32, @floatFromInt(font.char_height)) * scale;
 
             switch (mode) {
                 .fast => {
@@ -1254,16 +1247,16 @@ pub fn Canvas(comptime T: type) type {
                             continue;
                         }
 
-                        if (base_font.getCharData(char)) |char_data| {
+                        if (font.getCharData(char)) |char_data| {
                             // Draw the character bitmap with scaling
-                            const bytes_per_row = base_font.bytesPerRow();
-                            for (0..@intCast(base_font.char_height)) |row| {
+                            const bytes_per_row = font.bytesPerRow();
+                            for (0..@intCast(font.char_height)) |row| {
                                 const row_start = row * bytes_per_row;
                                 for (0..bytes_per_row) |byte_idx| {
                                     const byte_data = char_data[row_start + byte_idx];
                                     for (0..8) |bit| {
                                         const col = byte_idx * 8 + bit;
-                                        if (col >= base_font.char_width) break;
+                                        if (col >= font.char_width) break;
                                         if ((byte_data >> @intCast(bit)) & 1 != 0) {
                                             // Draw a scaled pixel block
                                             const base_x = x + @as(f32, @floatFromInt(col)) * scale;
@@ -1291,10 +1284,7 @@ pub fn Canvas(comptime T: type) type {
                             }
                         }
                         // Use character-specific advance width if available
-                        const advance = if (FontType == ExtendedBitmapFont)
-                            font.getCharAdvanceWidth(char)
-                        else
-                            base_font.char_width;
+                        const advance = font.getCharAdvanceWidth(char);
                         x += @as(f32, @floatFromInt(advance)) * scale;
                     }
                 },
@@ -1306,15 +1296,12 @@ pub fn Canvas(comptime T: type) type {
                             continue;
                         }
 
-                        if (base_font.getCharData(char)) |char_data| {
+                        if (font.getCharData(char)) |char_data| {
                             // Work in f32 throughout to minimize casts
-                            const font_width_f = @as(f32, @floatFromInt(base_font.char_width));
-                            const font_height_f = @as(f32, @floatFromInt(base_font.char_height));
+                            const font_width_f = @as(f32, @floatFromInt(font.char_width));
+                            const font_height_f = @as(f32, @floatFromInt(font.char_height));
                             // Get character-specific advance width for accurate rendering
-                            const char_advance = if (FontType == ExtendedBitmapFont)
-                                font.getCharAdvanceWidth(char)
-                            else
-                                base_font.char_width;
+                            const char_advance = font.getCharAdvanceWidth(char);
                             const char_width_scaled = @as(f32, @floatFromInt(char_advance)) * scale;
                             const dest_width = @ceil(char_width_scaled);
                             const dest_height = @ceil(char_height_scaled);
@@ -1355,7 +1342,7 @@ pub fn Canvas(comptime T: type) type {
                                                 const col_idx = @as(usize, @intFromFloat(col_f));
 
                                                 // Check if this pixel is on in the font
-                                                const bytes_per_row = base_font.bytesPerRow();
+                                                const bytes_per_row = font.bytesPerRow();
                                                 const byte_idx = col_idx / 8;
                                                 const bit_idx = col_idx % 8;
                                                 const row_byte_offset = row_idx * bytes_per_row + byte_idx;
@@ -1400,10 +1387,7 @@ pub fn Canvas(comptime T: type) type {
                             }
                         }
                         // Use character-specific advance width if available
-                        const advance = if (FontType == ExtendedBitmapFont)
-                            font.getCharAdvanceWidth(char)
-                        else
-                            base_font.char_width;
+                        const advance = font.getCharAdvanceWidth(char);
                         x += @as(f32, @floatFromInt(advance)) * scale;
                     }
                 },
