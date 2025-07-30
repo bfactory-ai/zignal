@@ -5,8 +5,9 @@
 
 const std = @import("std");
 const testing = std.testing;
-const BitmapFont = @import("font.zig").BitmapFont;
-const GlyphData = @import("font.zig").GlyphData;
+const BitmapFont = @import("BitmapFont.zig");
+const GlyphData = @import("GlyphData.zig");
+const unicode = @import("unicode.zig");
 
 /// Errors that can occur during BDF parsing
 pub const BdfError = error{
@@ -18,67 +19,13 @@ pub const BdfError = error{
 };
 
 /// Options for loading BDF fonts
-pub const BdfLoadOptions = struct {
+pub const LoadOptions = struct {
     /// Load all characters in the font (default: false, loads only ASCII)
     load_all: bool = false,
     /// Specific Unicode ranges to load (null = use default behavior)
-    ranges: ?[]const UnicodeRange = null,
+    ranges: ?[]const unicode.Range = null,
     /// Maximum characters to load (0 = no limit)
     max_chars: usize = 0,
-};
-
-/// A Unicode character range
-pub const UnicodeRange = struct {
-    start: u21,
-    end: u21,
-};
-
-/// Common Unicode ranges for convenience
-pub const unicode_ranges = struct {
-    /// Basic Latin (ASCII)
-    pub const ascii = UnicodeRange{ .start = 0x0000, .end = 0x007F };
-    /// Latin-1 Supplement
-    pub const latin1_supplement = UnicodeRange{ .start = 0x0080, .end = 0x00FF };
-    /// Full Latin-1 (ASCII + Latin-1 Supplement)
-    pub const latin1 = UnicodeRange{ .start = 0x0000, .end = 0x00FF };
-    /// Greek and Coptic
-    pub const greek = UnicodeRange{ .start = 0x0370, .end = 0x03FF };
-    /// Cyrillic
-    pub const cyrillic = UnicodeRange{ .start = 0x0400, .end = 0x04FF };
-    /// Arabic
-    pub const arabic = UnicodeRange{ .start = 0x0600, .end = 0x06FF };
-    /// Hebrew
-    pub const hebrew = UnicodeRange{ .start = 0x0590, .end = 0x05FF };
-    /// Hiragana
-    pub const hiragana = UnicodeRange{ .start = 0x3040, .end = 0x309F };
-    /// Katakana
-    pub const katakana = UnicodeRange{ .start = 0x30A0, .end = 0x30FF };
-    /// CJK Unified Ideographs (main block)
-    pub const cjk_unified = UnicodeRange{ .start = 0x4E00, .end = 0x9FFF };
-    /// Hangul Syllables (Korean)
-    pub const hangul = UnicodeRange{ .start = 0xAC00, .end = 0xD7AF };
-    /// Emoji & Pictographs
-    pub const emoji = UnicodeRange{ .start = 0x1F300, .end = 0x1F9FF };
-    /// Mathematical Operators
-    pub const math = UnicodeRange{ .start = 0x2200, .end = 0x22FF };
-    /// Box Drawing
-    pub const box_drawing = UnicodeRange{ .start = 0x2500, .end = 0x257F };
-    /// Block Elements
-    pub const block_elements = UnicodeRange{ .start = 0x2580, .end = 0x259F };
-
-    /// Common Western European languages (Latin-1 + Latin Extended-A)
-    pub const western_european = [_]UnicodeRange{
-        latin1,
-        UnicodeRange{ .start = 0x0100, .end = 0x017F }, // Latin Extended-A
-    };
-
-    /// Common East Asian languages
-    pub const east_asian = [_]UnicodeRange{
-        hiragana,
-        katakana,
-        cjk_unified,
-        hangul,
-    };
 };
 
 /// BDF font metadata
@@ -112,7 +59,7 @@ const BdfParseState = struct {
 };
 
 /// Load a BDF font from a file path with custom options
-pub fn loadBdfFont(allocator: std.mem.Allocator, path: []const u8, options: BdfLoadOptions) !BitmapFont {
+pub fn loadFont(allocator: std.mem.Allocator, path: []const u8, options: LoadOptions) !BitmapFont {
     // Read entire file into memory
     const file_contents = try std.fs.cwd().readFileAlloc(allocator, path, 50 * 1024 * 1024); // 50MB max
     defer allocator.free(file_contents);
@@ -219,7 +166,7 @@ fn parseHeader(lines: *std.mem.TokenIterator(u8, .any)) !BdfFont {
 }
 
 /// Parse a single glyph and its bitmap data
-fn parseGlyph(lines: *std.mem.TokenIterator(u8, .any), state: *BdfParseState, options: BdfLoadOptions) !bool {
+fn parseGlyph(lines: *std.mem.TokenIterator(u8, .any), state: *BdfParseState, options: LoadOptions) !bool {
     var glyph = BdfGlyph{
         .encoding = undefined,
         .bbox = .{
@@ -347,7 +294,7 @@ fn parseGlyph(lines: *std.mem.TokenIterator(u8, .any), state: *BdfParseState, op
 }
 
 /// Check if a glyph should be included based on options
-fn shouldIncludeGlyph(encoding: u32, options: BdfLoadOptions) bool {
+fn shouldIncludeGlyph(encoding: u32, options: LoadOptions) bool {
     if (options.load_all) {
         return true;
     }

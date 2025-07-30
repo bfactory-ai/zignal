@@ -102,12 +102,9 @@ pub const SvdResult = @import("svd.zig").SvdResult;
 pub const featureDistributionMatch = @import("fdm.zig").featureDistributionMatch;
 
 // Font system
-const font = @import("font.zig");
+pub const font = @import("font.zig");
 pub const BitmapFont = font.BitmapFont;
 pub const default_font_8x8 = font.default_font_8x8;
-
-// BDF font support
-pub const bdf = @import("bdf.zig");
 
 // PCA (Principal Component Analysis) system
 const pca = @import("pca.zig");
