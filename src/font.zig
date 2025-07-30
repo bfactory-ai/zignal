@@ -87,9 +87,10 @@ pub const BitmapFont = struct {
             if (map.get(codepoint)) |idx| {
                 if (self.glyph_data) |data| {
                     if (idx < data.len) {
-                        // Use the glyph width for tighter spacing
+                        // Use the device width for proper character advance
                         const glyph = data[idx];
-                        return glyph.width;
+                        // Device width can be negative in theory, but we clamp to 0
+                        return if (glyph.device_width > 0) @intCast(glyph.device_width) else 0;
                     }
                 }
             }

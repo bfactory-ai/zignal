@@ -592,6 +592,7 @@ pub fn convertToBitmapFont(allocator: std.mem.Allocator, bdf_font: BdfFont, glyp
                         const end_bit = @min(start_bit + 8, glyph.bbx.width);
 
                         for (start_bit..end_bit) |bit| {
+                            // BDF data is left-aligned to 32 bits, so we always shift from bit 31
                             if ((bdf_row >> @intCast(31 - bit)) & 1 != 0) {
                                 our_byte |= @as(u8, 1) << @intCast(bit - start_bit);
                             }
@@ -649,6 +650,7 @@ pub fn convertToBitmapFont(allocator: std.mem.Allocator, bdf_font: BdfFont, glyp
                         const end_bit = @min(start_bit + 8, glyph.bbx.width);
 
                         for (start_bit..end_bit) |bit| {
+                            // BDF data is left-aligned to 32 bits, so we always shift from bit 31
                             if ((bdf_row >> @intCast(31 - bit)) & 1 != 0) {
                                 our_byte |= @as(u8, 1) << @intCast(bit - start_bit);
                             }
