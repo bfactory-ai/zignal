@@ -63,27 +63,3 @@ pub export fn fdm(
         @panic("FDM match failed");
     };
 }
-
-// pub fn main() !void {
-//     var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
-//     defer _ = debug_allocator.deinit();
-//     const gpa = debug_allocator.allocator();
-//     var args = std.process.args();
-//     _ = args.next(); // Skip program name
-//     const src_path = args.next() orelse @panic("provide src image");
-//     const ref_path = args.next() orelse @panic("provide ref image");
-//     var src_img = try loadPng(Rgba, gpa, src_path);
-//     defer src_img.deinit(gpa);
-//     var ref_img = try loadPng(Rgba, gpa, ref_path);
-//     defer ref_img.deinit(gpa);
-//     var timer = try std.time.Timer.start();
-//     const t0 = timer.read();
-//     var fdm = FeatureDistributionMatching(Rgba).init(gpa);
-//     defer fdm.deinit();
-//     try fdm.match(src_img, ref_img);
-//     const t1 = timer.read();
-//     std.debug.print("src size: {d}x{d}\n", .{ src_img.cols, src_img.rows });
-//     std.debug.print("ref size: {d}x{d}\n", .{ ref_img.cols, ref_img.rows });
-//     std.debug.print("FDM: {d:.3} ms\n", .{@as(f32, @floatFromInt(t1 - t0)) / std.time.ns_per_ms});
-//     try savePng(Rgba, gpa, src_img, "fdm.png");
-// }
