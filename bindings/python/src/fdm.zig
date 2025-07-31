@@ -200,9 +200,10 @@ const match_doc =
     \\match(source, target)
     \\--
     \\
-    \\Set both source and target images at once.
+    \\Set both source and target images and apply the transformation.
     \\
-    \\This is a convenience method equivalent to calling set_source() and set_target().
+    \\This is a convenience method that combines set_source(), set_target(), and update()
+    \\into a single call. The source image is modified in-place.
     \\
     \\Parameters
     \\----------
@@ -220,8 +221,8 @@ const match_doc =
     \\>>> fdm = FeatureDistributionMatching()
     \\>>> source = Image.load("portrait.png")
     \\>>> target = Image.load("sunset.png")
-    \\>>> fdm.match(source, target)
-    \\>>> fdm.update()  # Apply the transformation
+    \\>>> fdm.match(source, target)  # source is now modified
+    \\>>> source.save("portrait_sunset.png")
 ;
 
 fn fdm_match(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
@@ -266,10 +267,12 @@ fn fdm_match(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObje
         return null;
     }
 
-    // Call match
+    // Call match (which now includes update)
     self.fdm_ptr.?.match(source_img_obj.image_ptr.?.*, target_img_obj.image_ptr.?.*) catch |err| {
         switch (err) {
             error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory during match"),
+            error.NoTargetSet => c.PyErr_SetString(c.PyExc_RuntimeError, "No target image set"),
+            error.NoSourceSet => c.PyErr_SetString(c.PyExc_RuntimeError, "No source image set"),
         }
         return null;
     };
@@ -392,8 +395,7 @@ const fdm_class_doc =
     \\>>> fdm = FeatureDistributionMatching()
     \\>>> source = Image.load("portrait.png")
     \\>>> target = Image.load("sunset.png")
-    \\>>> fdm.match(source, target)
-    \\>>> fdm.update()  # source now has sunset colors
+    \\>>> fdm.match(source, target)  # source is modified in-place
     \\>>> source.save("portrait_sunset.png")
     \\
     \\>>> # Batch processing with same style

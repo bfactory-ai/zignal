@@ -172,10 +172,12 @@ pub fn FeatureDistributionMatching(comptime T: type) type {
             self.has_source = true;
         }
 
-        /// Set both source and target images at once.
+        /// Set both source and target images at once and apply the transformation.
+        /// This is a convenience method that calls setTarget, setSource, and update.
         pub fn match(self: *Self, source_image: Image(T), target_image: Image(T)) !void {
             try self.setTarget(target_image);
             try self.setSource(source_image);
+            try self.update();
         }
 
         /// Apply the feature distribution matching transformation.
@@ -354,8 +356,7 @@ pub fn FeatureDistributionMatching(comptime T: type) type {
 /// // Single image transformation
 /// var fdm = FeatureDistributionMatching(Rgb).init(allocator);
 /// defer fdm.deinit();
-/// try fdm.match(source_img, target_img);
-/// try fdm.update(); // Modifies source_img in-place
+/// try fdm.match(source_img, target_img); // Modifies source_img in-place
 ///
 /// // Batch processing with same target style
 /// var fdm = FeatureDistributionMatching(Rgb).init(allocator);
