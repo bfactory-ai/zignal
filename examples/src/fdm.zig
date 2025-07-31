@@ -62,11 +62,6 @@ pub export fn fdm(
         std.log.err("FDM match failed: {}", .{err});
         @panic("FDM match failed");
     };
-
-    matcher.update() catch |err| {
-        std.log.err("FDM update failed: {}", .{err});
-        @panic("FDM update failed");
-    };
 }
 
 // pub fn main() !void {
@@ -86,7 +81,6 @@ pub export fn fdm(
 //     var fdm = FeatureDistributionMatching(Rgba).init(gpa);
 //     defer fdm.deinit();
 //     try fdm.match(src_img, ref_img);
-//     try fdm.update();
 //     const t1 = timer.read();
 //     std.debug.print("src size: {d}x{d}\n", .{ src_img.cols, src_img.rows });
 //     std.debug.print("ref size: {d}x{d}\n", .{ ref_img.cols, ref_img.rows });
