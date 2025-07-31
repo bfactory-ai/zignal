@@ -4,7 +4,7 @@ const assert = std.debug.assert;
 /// A unified point type supporting arbitrary dimensions with SIMD acceleration.
 /// Common dimensions 2D, 3D, 4D have convenient x(), y(), z(), w() accessors.
 /// Higher dimensions use at(index) for access.
-pub fn Point(comptime T: type, comptime dim: usize) type {
+pub fn Point(comptime dim: usize, comptime T: type) type {
     assert(@typeInfo(T) == .float);
     comptime assert(dim >= 1);
 
@@ -129,17 +129,17 @@ pub fn Point(comptime T: type, comptime dim: usize) type {
 
         // Dimension conversion/projection methods
         /// Project to lower dimension by taking first N components
-        pub fn project(self: Self, comptime new_dim: usize) Point(T, new_dim) {
+        pub fn project(self: Self, comptime new_dim: usize) Point(new_dim, T) {
             comptime assert(new_dim <= dim);
             var result: [new_dim]T = undefined;
             inline for (0..new_dim) |i| {
                 result[i] = self.vec[i];
             }
-            return Point(T, new_dim).fromArray(result);
+            return Point(new_dim, T).fromArray(result);
         }
 
         /// Extend to higher dimension by padding with fill_value
-        pub fn extend(self: Self, comptime new_dim: usize, fill_value: T) Point(T, new_dim) {
+        pub fn extend(self: Self, comptime new_dim: usize, fill_value: T) Point(new_dim, T) {
             comptime assert(new_dim >= dim);
             var result: [new_dim]T = undefined;
             inline for (0..dim) |i| {
@@ -148,23 +148,23 @@ pub fn Point(comptime T: type, comptime dim: usize) type {
             inline for (dim..new_dim) |i| {
                 result[i] = fill_value;
             }
-            return Point(T, new_dim).fromArray(result);
+            return Point(new_dim, T).fromArray(result);
         }
 
         // Convenient aliases for common projections
         /// Project to 2D by taking first 2 components
-        pub fn to2d(self: Self) Point(T, 2) {
+        pub fn to2d(self: Self) Point(2, T) {
             return self.project(2);
         }
 
         /// Project to 3D by taking first 3 components
-        pub fn to3d(self: Self) Point(T, 3) {
+        pub fn to3d(self: Self) Point(3, T) {
             comptime assert(dim >= 3);
             return self.project(3);
         }
 
         /// Convert 2D point to 3D by adding Z coordinate
-        pub fn extendTo3d(self: Self, z_val: T) Point(T, 3) {
+        pub fn extendTo3d(self: Self, z_val: T) Point(3, T) {
             comptime assert(dim == 2);
             return self.extend(3, z_val);
         }
@@ -203,17 +203,17 @@ pub fn Point(comptime T: type, comptime dim: usize) type {
 
         // Type conversion
         /// Convert to point with different scalar type
-        pub fn as(self: Self, comptime U: type) Point(U, dim) {
+        pub fn as(self: Self, comptime U: type) Point(dim, U) {
             var result: @Vector(dim, U) = undefined;
             inline for (0..dim) |i| {
                 result[i] = @floatCast(self.vec[i]);
             }
-            return Point(U, dim){ .vec = result };
+            return Point(dim, U){ .vec = result };
         }
 
         // Homogeneous coordinate conversion for 3D points
         /// Convert 3D homogeneous point to 2D by dividing by Z
-        pub fn to2dHomogeneous(self: Self) Point(T, 2) {
+        pub fn to2dHomogeneous(self: Self) Point(2, T) {
             comptime assert(dim == 3);
             if (self.z() == 0) {
                 return self.to2d();
@@ -224,32 +224,11 @@ pub fn Point(comptime T: type, comptime dim: usize) type {
     };
 }
 
-// Common type aliases for convenience
-/// 1D point type alias
-pub fn Point1d(comptime T: type) type {
-    return Point(T, 1);
-}
-
-/// 2D point type alias
-pub fn Point2d(comptime T: type) type {
-    return Point(T, 2);
-}
-
-/// 3D point type alias
-pub fn Point3d(comptime T: type) type {
-    return Point(T, 3);
-}
-
-/// 4D point type alias
-pub fn Point4d(comptime T: type) type {
-    return Point(T, 4);
-}
-
 // Tests
 test "Point creation and accessors" {
-    const Point2 = Point(f64, 2);
-    const Point3 = Point(f64, 3);
-    const Point5 = Point(f64, 5);
+    const Point2 = Point(2, f64);
+    const Point3 = Point(3, f64);
+    const Point5 = Point(5, f64);
 
     // Test 2D point
     const p2 = Point2.point(.{ 1.0, 2.0 });
@@ -272,7 +251,7 @@ test "Point creation and accessors" {
 }
 
 test "Point arithmetic operations" {
-    const Point2 = Point(f64, 2);
+    const Point2 = Point(2, f64);
 
     const p1 = Point2.point(.{ 1.0, 2.0 });
     const p2 = Point2.point(.{ 3.0, 4.0 });
@@ -302,7 +281,7 @@ test "Point arithmetic operations" {
 }
 
 test "Point dimension conversion" {
-    const Point2 = Point(f64, 2);
+    const Point2 = Point(2, f64);
 
     const p2 = Point2.point(.{ 1.0, 2.0 });
     const p3 = p2.extendTo3d(3.0);
@@ -317,7 +296,7 @@ test "Point dimension conversion" {
 }
 
 test "Point creation with tuple" {
-    const p = Point(f64, 3).point(.{ 1.0, 2.0, 3.0 });
+    const p = Point(3, f64).point(.{ 1.0, 2.0, 3.0 });
     try std.testing.expectEqual(@as(usize, 3), @TypeOf(p).dimension);
     try std.testing.expectEqual(@as(f64, 1.0), p.x());
     try std.testing.expectEqual(@as(f64, 2.0), p.y());
@@ -325,7 +304,7 @@ test "Point creation with tuple" {
 }
 
 test "3D cross product" {
-    const Point3 = Point(f64, 3);
+    const Point3 = Point(3, f64);
 
     const i = Point3.point(.{ 1.0, 0.0, 0.0 });
     const j = Point3.point(.{ 0.0, 1.0, 0.0 });
