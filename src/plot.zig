@@ -13,7 +13,7 @@ const Image = @import("image.zig").Image;
 const Canvas = @import("canvas.zig").Canvas;
 const DrawMode = @import("canvas.zig").DrawMode;
 const Rgb = @import("color.zig").Rgb;
-const Point2d = @import("geometry/Point.zig").Point2d;
+const Point = @import("geometry/Point.zig").Point;
 const Rectangle = @import("geometry.zig").Rectangle;
 const BitmapFont = @import("font.zig").BitmapFont;
 const default_font_8x8 = @import("font.zig").default_font_8x8;
@@ -274,10 +274,10 @@ pub const Plot = struct {
     }
 
     /// Convert data coordinates to pixel coordinates
-    fn dataToPixel(self: Plot, x: f32, y: f32) Point2d(f32) {
+    fn dataToPixel(self: Plot, x: f32, y: f32) Point(2, f32) {
         const px = self.x_axis.dataToPixel(x);
         const py = self.y_axis.dataToPixel(y);
-        return .init2d(px, py);
+        return .point(.{ px, py });
     }
 
     /// Draw the background
@@ -299,7 +299,7 @@ pub const Plot = struct {
         for (x_ticks) |tick_val| {
             const px = self.dataToPixel(tick_val, 0).x();
             if (px >= self.plot_area.l and px <= self.plot_area.r) {
-                self.canvas.drawLine(.init2d(px, self.plot_area.t), .init2d(px, self.plot_area.b), self.grid_color, 1, .fast);
+                self.canvas.drawLine(.point(.{ px, self.plot_area.t }), .point(.{ px, self.plot_area.b }), self.grid_color, 1, .fast);
             }
         }
 
@@ -307,7 +307,7 @@ pub const Plot = struct {
         for (y_ticks) |tick_val| {
             const py = self.dataToPixel(0, tick_val).y();
             if (py >= self.plot_area.t and py <= self.plot_area.b) {
-                self.canvas.drawLine(.init2d(self.plot_area.l, py), .init2d(self.plot_area.r, py), self.grid_color, 1, .fast);
+                self.canvas.drawLine(.point(.{ self.plot_area.l, py }), .point(.{ self.plot_area.r, py }), self.grid_color, 1, .fast);
             }
         }
     }
@@ -315,10 +315,10 @@ pub const Plot = struct {
     /// Draw the axes
     fn drawAxes(self: Plot) void {
         // X-axis
-        self.canvas.drawLine(.init2d(self.plot_area.l, self.plot_area.b), .init2d(self.plot_area.r, self.plot_area.b), self.axis_color, 2, .fast);
+        self.canvas.drawLine(.point(.{ self.plot_area.l, self.plot_area.b }), .point(.{ self.plot_area.r, self.plot_area.b }), self.axis_color, 2, .fast);
 
         // Y-axis
-        self.canvas.drawLine(.init2d(self.plot_area.l, self.plot_area.t), .init2d(self.plot_area.l, self.plot_area.b), self.axis_color, 2, .fast);
+        self.canvas.drawLine(.point(.{ self.plot_area.l, self.plot_area.t }), .point(.{ self.plot_area.l, self.plot_area.b }), self.axis_color, 2, .fast);
     }
 
     /// Draw tick marks and labels
@@ -337,12 +337,12 @@ pub const Plot = struct {
             const px = self.dataToPixel(tick_val, 0).x();
             if (px >= self.plot_area.l and px <= self.plot_area.r) {
                 // Draw tick mark
-                self.canvas.drawLine(.init2d(px, self.plot_area.b), .init2d(px, self.plot_area.b + tick_size), self.axis_color, 1, .fast);
+                self.canvas.drawLine(.point(.{ px, self.plot_area.b }), .point(.{ px, self.plot_area.b + tick_size }), self.axis_color, 1, .fast);
 
                 // Draw label
                 const label = Axis.formatTickValue(tick_val, &buffer);
                 const text_width = @as(f32, @floatFromInt(label.len * 8));
-                self.canvas.drawText(label, .init2d(px - text_width / 2, self.plot_area.b + tick_size + 5), self.font, self.axis_color, 1, .fast);
+                self.canvas.drawText(label, .point(.{ px - text_width / 2, self.plot_area.b + tick_size + 5 }), self.font, self.axis_color, 1, .fast);
             }
         }
 
@@ -351,12 +351,12 @@ pub const Plot = struct {
             const py = self.dataToPixel(0, tick_val).y();
             if (py >= self.plot_area.t and py <= self.plot_area.b) {
                 // Draw tick mark
-                self.canvas.drawLine(.init2d(self.plot_area.l - tick_size, py), .init2d(self.plot_area.l, py), self.axis_color, 1, .fast);
+                self.canvas.drawLine(.point(.{ self.plot_area.l - tick_size, py }), .point(.{ self.plot_area.l, py }), self.axis_color, 1, .fast);
 
                 // Draw label
                 const label = Axis.formatTickValue(tick_val, &buffer);
                 const text_width = @as(f32, @floatFromInt(label.len * 8));
-                self.canvas.drawText(label, .init2d(self.plot_area.l - tick_size - text_width - 5, py - 4), self.font, self.axis_color, 1, .fast);
+                self.canvas.drawText(label, .point(.{ self.plot_area.l - tick_size - text_width - 5, py - 4 }), self.font, self.axis_color, 1, .fast);
             }
         }
     }
@@ -368,7 +368,7 @@ pub const Plot = struct {
             const x = (self.plot_area.l + self.plot_area.r) / 2 -
                 @as(f32, @floatFromInt(title.len * 8)) * self.font_scale / 2;
             const y = self.margins.top / 2 - 4 * self.font_scale;
-            self.canvas.drawText(title, .init2d(x, y), self.font, self.axis_color, self.font_scale, .fast);
+            self.canvas.drawText(title, .point(.{ x, y }), self.font, self.axis_color, self.font_scale, .fast);
         }
 
         // X-axis label
@@ -376,7 +376,7 @@ pub const Plot = struct {
             const x = (self.plot_area.l + self.plot_area.r) / 2 -
                 @as(f32, @floatFromInt(label.len * 8)) * self.font_scale / 2;
             const y = self.plot_area.b + self.margins.bottom / 2;
-            self.canvas.drawText(label, .init2d(x, y), self.font, self.axis_color, self.font_scale, .fast);
+            self.canvas.drawText(label, .point(.{ x, y }), self.font, self.axis_color, self.font_scale, .fast);
         }
 
         // Y-axis label (rotated 90 degrees counter-clockwise)
@@ -393,7 +393,7 @@ pub const Plot = struct {
             temp_canvas.fill(self.background_color);
 
             // Draw text horizontally on temp image
-            temp_canvas.drawText(label, .init2d(2, 2), self.font, self.axis_color, self.font_scale, .fast);
+            temp_canvas.drawText(label, .point(.{ 2, 2 }), self.font, self.axis_color, self.font_scale, .fast);
 
             // Rotate 90 degrees counter-clockwise
             var rotated_image: Image(Rgb) = .empty;
@@ -462,10 +462,10 @@ pub const Plot = struct {
                     // Equilateral triangle pointing up
                     const h = size * 0.866; // height = size * sqrt(3)/2
                     const half_base = size / 2;
-                    const points = [_]Point2d(f32){
-                        .init2d(p.x(), p.y() - h * 0.67), // top
-                        .init2d(p.x() - half_base, p.y() + h * 0.33), // bottom left
-                        .init2d(p.x() + half_base, p.y() + h * 0.33), // bottom right
+                    const points = [_]Point(2, f32){
+                        .point(.{ p.x(), p.y() - h * 0.67 }), // top
+                        .point(.{ p.x() - half_base, p.y() + h * 0.33 }), // bottom left
+                        .point(.{ p.x() + half_base, p.y() + h * 0.33 }), // bottom right
                     };
                     self.canvas.fillPolygon(&points, series.style.color, .soft) catch {};
                 },
@@ -473,24 +473,24 @@ pub const Plot = struct {
                     // × shape
                     const half = size / 2;
                     const line_width = @max(1, @as(usize, @intFromFloat(size / 4)));
-                    self.canvas.drawLine(.init2d(p.x() - half, p.y() - half), .init2d(p.x() + half, p.y() + half), series.style.color, line_width, .soft);
-                    self.canvas.drawLine(.init2d(p.x() + half, p.y() - half), .init2d(p.x() - half, p.y() + half), series.style.color, line_width, .soft);
+                    self.canvas.drawLine(.point(.{ p.x() - half, p.y() - half }), .point(.{ p.x() + half, p.y() + half }), series.style.color, line_width, .soft);
+                    self.canvas.drawLine(.point(.{ p.x() + half, p.y() - half }), .point(.{ p.x() - half, p.y() + half }), series.style.color, line_width, .soft);
                 },
                 .plus => {
                     // + shape
                     const half = size / 2;
                     const line_width = @max(1, @as(usize, @intFromFloat(size / 4)));
-                    self.canvas.drawLine(.init2d(p.x() - half, p.y()), .init2d(p.x() + half, p.y()), series.style.color, line_width, .soft);
-                    self.canvas.drawLine(.init2d(p.x(), p.y() - half), .init2d(p.x(), p.y() + half), series.style.color, line_width, .soft);
+                    self.canvas.drawLine(.point(.{ p.x() - half, p.y() }), .point(.{ p.x() + half, p.y() }), series.style.color, line_width, .soft);
+                    self.canvas.drawLine(.point(.{ p.x(), p.y() - half }), .point(.{ p.x(), p.y() + half }), series.style.color, line_width, .soft);
                 },
                 .diamond => {
                     // Diamond shape
                     const half = size / 2;
-                    const points = [_]Point2d(f32){
-                        .init2d(p.x(), p.y() - half), // top
-                        .init2d(p.x() + half, p.y()), // right
-                        .init2d(p.x(), p.y() + half), // bottom
-                        .init2d(p.x() - half, p.y()), // left
+                    const points = [_]Point(2, f32){
+                        .point(.{ p.x(), p.y() - half }), // top
+                        .point(.{ p.x() + half, p.y() }), // right
+                        .point(.{ p.x(), p.y() + half }), // bottom
+                        .point(.{ p.x() - half, p.y() }), // left
                     };
                     self.canvas.fillPolygon(&points, series.style.color, .soft) catch {};
                 },
@@ -558,14 +558,14 @@ pub const Plot = struct {
             // Draw sample based on series type
             switch (series.type) {
                 .line => {
-                    self.canvas.drawLine(.init2d(sample_x, sample_y), .init2d(sample_x + sample_width, sample_y), series.style.color, series.style.line_width, .soft);
+                    self.canvas.drawLine(.point(.{ sample_x, sample_y }), .point(.{ sample_x + sample_width, sample_y }), series.style.color, series.style.line_width, .soft);
                 },
                 .scatter => {
                     const marker_x = sample_x + sample_width / 2;
                     // Draw a single marker
                     switch (series.style.marker_type) {
                         .circle => {
-                            self.canvas.fillCircle(.init2d(marker_x, sample_y), series.style.marker_size, series.style.color, .soft);
+                            self.canvas.fillCircle(.point(.{ marker_x, sample_y }), series.style.marker_size, series.style.color, .soft);
                         },
                         .square => {
                             const half = series.style.marker_size / 2;
@@ -580,32 +580,32 @@ pub const Plot = struct {
                             const size = series.style.marker_size;
                             const h = size * 0.866;
                             const half_base = size / 2;
-                            const points = [_]Point2d(f32){
-                                .init2d(marker_x, sample_y - h * 0.67),
-                                .init2d(marker_x - half_base, sample_y + h * 0.33),
-                                .init2d(marker_x + half_base, sample_y + h * 0.33),
+                            const points = [_]Point(2, f32){
+                                .point(.{ marker_x, sample_y - h * 0.67 }),
+                                .point(.{ marker_x - half_base, sample_y + h * 0.33 }),
+                                .point(.{ marker_x + half_base, sample_y + h * 0.33 }),
                             };
                             self.canvas.fillPolygon(&points, series.style.color, .soft) catch {};
                         },
                         .cross => {
                             const half = series.style.marker_size / 2;
                             const line_width = @max(1, @as(usize, @intFromFloat(series.style.marker_size / 4)));
-                            self.canvas.drawLine(.init2d(marker_x - half, sample_y - half), .init2d(marker_x + half, sample_y + half), series.style.color, line_width, .soft);
-                            self.canvas.drawLine(.init2d(marker_x + half, sample_y - half), .init2d(marker_x - half, sample_y + half), series.style.color, line_width, .soft);
+                            self.canvas.drawLine(.point(.{ marker_x - half, sample_y - half }), .point(.{ marker_x + half, sample_y + half }), series.style.color, line_width, .soft);
+                            self.canvas.drawLine(.point(.{ marker_x + half, sample_y - half }), .point(.{ marker_x - half, sample_y + half }), series.style.color, line_width, .soft);
                         },
                         .plus => {
                             const half = series.style.marker_size / 2;
                             const line_width = @max(1, @as(usize, @intFromFloat(series.style.marker_size / 4)));
-                            self.canvas.drawLine(.init2d(marker_x - half, sample_y), .init2d(marker_x + half, sample_y), series.style.color, line_width, .soft);
-                            self.canvas.drawLine(.init2d(marker_x, sample_y - half), .init2d(marker_x, sample_y + half), series.style.color, line_width, .soft);
+                            self.canvas.drawLine(.point(.{ marker_x - half, sample_y }), .point(.{ marker_x + half, sample_y }), series.style.color, line_width, .soft);
+                            self.canvas.drawLine(.point(.{ marker_x, sample_y - half }), .point(.{ marker_x, sample_y + half }), series.style.color, line_width, .soft);
                         },
                         .diamond => {
                             const half = series.style.marker_size / 2;
-                            const points = [_]Point2d(f32){
-                                .init2d(marker_x, sample_y - half),
-                                .init2d(marker_x + half, sample_y),
-                                .init2d(marker_x, sample_y + half),
-                                .init2d(marker_x - half, sample_y),
+                            const points = [_]Point(2, f32){
+                                .point(.{ marker_x, sample_y - half }),
+                                .point(.{ marker_x + half, sample_y }),
+                                .point(.{ marker_x, sample_y + half }),
+                                .point(.{ marker_x - half, sample_y }),
                             };
                             self.canvas.fillPolygon(&points, series.style.color, .soft) catch {};
                         },
@@ -617,7 +617,7 @@ pub const Plot = struct {
             // Draw label text
             const text_x = sample_x + sample_width + text_offset;
             const text_y = sample_y - 4; // Center text vertically
-            self.canvas.drawText(label, .init2d(text_x, text_y), self.font, self.axis_color, 1, .fast);
+            self.canvas.drawText(label, .point(.{ text_x, text_y }), self.font, self.axis_color, 1, .fast);
 
             y_offset += item_height;
         }
