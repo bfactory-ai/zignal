@@ -42,7 +42,7 @@ pub fn FeatureDistributionMatching(comptime T: type) type {
 
         /// Initialize an empty FDM instance
         pub fn init(allocator: std.mem.Allocator) Self {
-            return Self{
+            return .{
                 .allocator = allocator,
                 .target_mean = [_]f64{0} ** 3,
                 .target_cov_u = Matrix(f64){
