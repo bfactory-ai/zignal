@@ -1183,6 +1183,26 @@ pub fn Canvas(comptime T: type) type {
             };
         }
 
+        /// Helper function to get a bit value from glyph bitmap data.
+        /// Returns 1 if the bit is set, 0 otherwise.
+        inline fn getGlyphBit(char_data: []const u8, row: usize, col: usize, bytes_per_row: usize) u1 {
+            const byte_idx = col / 8;
+            const bit_idx = col % 8;
+            const row_byte_offset = row * bytes_per_row + byte_idx;
+            if (row_byte_offset >= char_data.len) return 0;
+            return @intCast((char_data[row_byte_offset] >> @intCast(bit_idx)) & 1);
+        }
+
+        /// Helper function to calculate bytes per row for a glyph.
+        /// Handles both fixed-width and variable-width fonts.
+        inline fn calculateGlyphBytesPerRow(glyph_info: anytype, font: anytype) usize {
+            // Variable-width fonts use glyph-specific width, fixed-width fonts use font-wide stride
+            return if (font.glyph_map != null)
+                (@as(usize, glyph_info.width) + 7) / 8
+            else
+                font.bytesPerRow();
+        }
+
         /// Draws text at the specified position using a bitmap font.
         /// The position specifies the top-left corner of the text.
         /// Supports newlines for multi-line text.
@@ -1226,28 +1246,16 @@ pub fn Canvas(comptime T: type) type {
 
                     if (font.getGlyphInfo(codepoint)) |glyph_info| {
                         if (font.getCharData(codepoint)) |char_data| {
-                            // For fonts without glyph_map, bitmap data is stored with fixed char_width stride
-                            const bitmap_bytes_per_row = if (font.glyph_map == null)
-                                font.bytesPerRow()
-                            else
-                                (@as(usize, glyph_info.width) + 7) / 8;
+                            const bitmap_bytes_per_row = calculateGlyphBytesPerRow(glyph_info, font);
+                            const render_height = if (font.glyph_map == null) font.char_height else glyph_info.height;
 
                             // Draw the character bitmap
-                            // Use glyph-specific height for proper rendering
-                            const render_height = if (font.glyph_map == null) font.char_height else glyph_info.height;
                             for (0..render_height) |row| {
-                                const row_start = row * bitmap_bytes_per_row;
-                                for (0..bitmap_bytes_per_row) |byte_idx| {
-                                    if (row_start + byte_idx >= char_data.len) break;
-                                    const byte_data = char_data[row_start + byte_idx];
-                                    for (0..8) |bit| {
-                                        const col = byte_idx * 8 + bit;
-                                        if (col >= glyph_info.width) break;
-                                        if ((byte_data >> @intCast(bit)) & 1 != 0) {
-                                            const px = x + @as(f32, @floatFromInt(col)) + @as(f32, @floatFromInt(glyph_info.x_offset));
-                                            const py = y + @as(f32, @floatFromInt(row)) + @as(f32, @floatFromInt(glyph_info.y_offset));
-                                            self.setPixel(.init2d(px, py), color);
-                                        }
+                                for (0..glyph_info.width) |col| {
+                                    if (getGlyphBit(char_data, row, col, bitmap_bytes_per_row) != 0) {
+                                        const px = x + @as(f32, @floatFromInt(col)) + @as(f32, @floatFromInt(glyph_info.x_offset));
+                                        const py = y + @as(f32, @floatFromInt(row)) + @as(f32, @floatFromInt(glyph_info.y_offset));
+                                        self.setPixel(.init2d(px, py), color);
                                     }
                                 }
                             }
@@ -1260,82 +1268,59 @@ pub fn Canvas(comptime T: type) type {
                 return;
             }
 
-            // For fast mode or exact integer scales, use nearest-neighbor scaling
+            // Scaled rendering
             const char_height_scaled = @as(f32, @floatFromInt(font.char_height)) * scale;
+            const rgba_color = if (mode == .soft) convertColor(Rgba, color) else undefined;
 
-            switch (mode) {
-                .fast => {
-                    var utf8_iter = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
-                    while (utf8_iter.nextCodepoint()) |codepoint| {
-                        if (codepoint == '\n') {
-                            x = start_x;
-                            y += char_height_scaled;
-                            continue;
-                        }
+            var utf8_iter = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
+            while (utf8_iter.nextCodepoint()) |codepoint| {
+                if (codepoint == '\n') {
+                    x = start_x;
+                    y += char_height_scaled;
+                    continue;
+                }
 
-                        if (font.getGlyphInfo(codepoint)) |glyph_info| {
-                            if (font.getCharData(codepoint)) |char_data| {
-                                // Draw the character bitmap with scaling
-                                const glyph_bytes_per_row = (@as(usize, glyph_info.width) + 7) / 8;
+                if (font.getGlyphInfo(codepoint)) |glyph_info| {
+                    if (font.getCharData(codepoint)) |char_data| {
+                        const glyph_bytes_per_row = calculateGlyphBytesPerRow(glyph_info, font);
+
+                        switch (mode) {
+                            .fast => {
+                                // Fast mode: nearest-neighbor scaling
                                 for (0..glyph_info.height) |row| {
-                                    const row_start = row * glyph_bytes_per_row;
-                                    for (0..glyph_bytes_per_row) |byte_idx| {
-                                        if (row_start + byte_idx >= char_data.len) break;
-                                        const byte_data = char_data[row_start + byte_idx];
-                                        for (0..8) |bit| {
-                                            const col = byte_idx * 8 + bit;
-                                            if (col >= glyph_info.width) break;
-                                            if ((byte_data >> @intCast(bit)) & 1 != 0) {
-                                                // Draw a scaled pixel block
-                                                const base_x = x + (@as(f32, @floatFromInt(col)) + @as(f32, @floatFromInt(glyph_info.x_offset))) * scale;
-                                                // y_offset is now pre-computed from top of line
-                                                const base_y = y + (@as(f32, @floatFromInt(row)) + @as(f32, @floatFromInt(glyph_info.y_offset))) * scale;
+                                    for (0..glyph_info.width) |col| {
+                                        if (getGlyphBit(char_data, row, col, glyph_bytes_per_row) != 0) {
+                                            // Draw a scaled pixel block
+                                            const base_x = x + (@as(f32, @floatFromInt(col)) + @as(f32, @floatFromInt(glyph_info.x_offset))) * scale;
+                                            const base_y = y + (@as(f32, @floatFromInt(row)) + @as(f32, @floatFromInt(glyph_info.y_offset))) * scale;
 
-                                                // Calculate the integer bounds of the scaled pixel
-                                                const x_start_f = @floor(base_x);
-                                                const y_start_f = @floor(base_y);
-                                                const x_end_f = @ceil(base_x + scale);
-                                                const y_end_f = @ceil(base_y + scale);
+                                            // Calculate the integer bounds of the scaled pixel
+                                            const x_start_f = @floor(base_x);
+                                            const y_start_f = @floor(base_y);
+                                            const x_end_f = @ceil(base_x + scale);
+                                            const y_end_f = @ceil(base_y + scale);
 
-                                                // Clip to the valid rectangle
-                                                const x_start = @as(usize, @intFromFloat(@max(x_start_f, clip_rect.l)));
-                                                const y_start = @as(usize, @intFromFloat(@max(y_start_f, clip_rect.t)));
-                                                const x_end = @as(usize, @intFromFloat(@min(x_end_f, clip_rect.r)));
-                                                const y_end = @as(usize, @intFromFloat(@min(y_end_f, clip_rect.b)));
+                                            // Clip to the valid rectangle
+                                            const x_start = @as(usize, @intFromFloat(@max(x_start_f, clip_rect.l)));
+                                            const y_start = @as(usize, @intFromFloat(@max(y_start_f, clip_rect.t)));
+                                            const x_end = @as(usize, @intFromFloat(@min(x_end_f, clip_rect.r)));
+                                            const y_end = @as(usize, @intFromFloat(@min(y_end_f, clip_rect.b)));
 
-                                                // Fill the pixel block with for loops
-                                                for (y_start..y_end) |py| {
-                                                    for (x_start..x_end) |px| {
-                                                        self.setPixel(.init2d(@floatFromInt(px), @floatFromInt(py)), color);
-                                                    }
+                                            // Fill the pixel block
+                                            for (y_start..y_end) |py| {
+                                                for (x_start..x_end) |px| {
+                                                    self.setPixel(.init2d(@floatFromInt(px), @floatFromInt(py)), color);
                                                 }
                                             }
                                         }
                                     }
                                 }
-                            }
-                        }
-                        // Use character-specific advance width if available
-                        const advance = font.getCharAdvanceWidth(codepoint);
-                        x += @as(f32, @floatFromInt(advance)) * scale;
-                    }
-                },
-                .soft => {
-                    var utf8_iter = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
-                    while (utf8_iter.nextCodepoint()) |codepoint| {
-                        if (codepoint == '\n') {
-                            x = start_x;
-                            y += char_height_scaled;
-                            continue;
-                        }
-
-                        if (font.getGlyphInfo(codepoint)) |glyph_info| {
-                            if (font.getCharData(codepoint)) |char_data| {
-                                // Work in f32 throughout to minimize casts
+                            },
+                            .soft => {
+                                // Soft mode: antialiased scaling with box filtering
                                 const glyph_width_f = @as(f32, @floatFromInt(glyph_info.width));
                                 const glyph_height_f = @as(f32, @floatFromInt(glyph_info.height));
-                                const char_width_scaled = @as(f32, @floatFromInt(glyph_info.width)) * scale;
-                                const dest_width = @ceil(char_width_scaled);
+                                const dest_width = @ceil(@as(f32, @floatFromInt(glyph_info.width)) * scale);
                                 const dest_height = @ceil(@as(f32, @floatFromInt(glyph_info.height)) * scale);
 
                                 var dy: f32 = 0;
@@ -1343,7 +1328,6 @@ pub fn Canvas(comptime T: type) type {
                                     var dx: f32 = 0;
                                     while (dx < dest_width) : (dx += 1) {
                                         const dest_x = x + dx + @as(f32, @floatFromInt(glyph_info.x_offset)) * scale;
-                                        // y_offset is now pre-computed from top of line
                                         const dest_y = y + dy + @as(f32, @floatFromInt(glyph_info.y_offset)) * scale;
 
                                         if (self.atOrNull(@intFromFloat(dest_y), @intFromFloat(dest_x))) |_| {
@@ -1352,7 +1336,7 @@ pub fn Canvas(comptime T: type) type {
                                             const src_y = dy / scale;
 
                                             // Box filter: sample a box around the source position
-                                            const sample_radius = 0.5 / scale; // Half pixel in source space
+                                            const sample_radius = 0.5 / scale;
                                             const x0 = src_x - sample_radius;
                                             const x1 = src_x + sample_radius;
                                             const y0 = src_y - sample_radius;
@@ -1360,7 +1344,7 @@ pub fn Canvas(comptime T: type) type {
 
                                             var total_coverage: f32 = 0;
 
-                                            // Sample the font bitmap - clamp to valid range
+                                            // Sample the font bitmap
                                             const row_start_f = @max(0, @floor(y0));
                                             const row_end_f = @min(glyph_height_f - 1, @ceil(y1));
                                             const col_start_f = @max(0, @floor(x0));
@@ -1370,20 +1354,10 @@ pub fn Canvas(comptime T: type) type {
                                             while (row_f <= row_end_f) : (row_f += 1) {
                                                 var col_f = col_start_f;
                                                 while (col_f <= col_end_f) : (col_f += 1) {
-                                                    // Convert to indices only when needed
                                                     const row_idx = @as(usize, @intFromFloat(row_f));
                                                     const col_idx = @as(usize, @intFromFloat(col_f));
 
-                                                    // Check if this pixel is on in the font
-                                                    const glyph_bytes_per_row = (@as(usize, glyph_info.width) + 7) / 8;
-                                                    const byte_idx = col_idx / 8;
-                                                    const bit_idx = col_idx % 8;
-                                                    const row_byte_offset = row_idx * glyph_bytes_per_row + byte_idx;
-                                                    const bit_on = if (row_byte_offset < char_data.len)
-                                                        (char_data[row_byte_offset] >> @intCast(bit_idx)) & 1
-                                                    else
-                                                        0;
-                                                    if (bit_on != 0) {
+                                                    if (getGlyphBit(char_data, row_idx, col_idx, glyph_bytes_per_row) != 0) {
                                                         // Calculate how much this pixel contributes
                                                         const px0 = col_f;
                                                         const px1 = col_f + 1;
@@ -1402,29 +1376,18 @@ pub fn Canvas(comptime T: type) type {
                                             const normalized_coverage = total_coverage / box_area;
 
                                             if (normalized_coverage > 0) {
-                                                const src_color = convertColor(Rgba, color);
-                                                const src_alpha_f = @as(f32, @floatFromInt(src_color.a));
-                                                const alpha = @as(u8, @intFromFloat(@min(255, normalized_coverage * src_alpha_f)));
-
-                                                const blended_color = Rgba{
-                                                    .r = src_color.r,
-                                                    .g = src_color.g,
-                                                    .b = src_color.b,
-                                                    .a = alpha,
-                                                };
-
-                                                self.setPixel(.init2d(dest_x, dest_y), blended_color);
+                                                self.setPixel(.init2d(dest_x, dest_y), rgba_color.fade(normalized_coverage));
                                             }
                                         }
                                     }
                                 }
-                            }
+                            },
                         }
-                        // Use character-specific advance width if available
-                        const advance = font.getCharAdvanceWidth(codepoint);
-                        x += @as(f32, @floatFromInt(advance)) * scale;
                     }
-                },
+                }
+                // Use character-specific advance width if available
+                const advance = font.getCharAdvanceWidth(codepoint);
+                x += @as(f32, @floatFromInt(advance)) * scale;
             }
         }
     };
