@@ -111,10 +111,22 @@ pub fn feature_distribution_match(self: ?*c.PyObject, args: ?*c.PyObject) callco
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // Call the FDM function
-    zignal.featureDistributionMatch(zignal.Rgba, allocator, src_img_obj.image_ptr.?.*, ref_img_obj.image_ptr.?.*) catch |err| {
+    // Create FDM instance and apply matching
+    var fdm = zignal.FeatureDistributionMatching(zignal.Rgba).init(allocator);
+    defer fdm.deinit();
+
+    fdm.match(src_img_obj.image_ptr.?.*, ref_img_obj.image_ptr.?.*) catch |err| {
         switch (err) {
             error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory during feature distribution matching"),
+        }
+        return null;
+    };
+
+    fdm.update() catch |err| {
+        switch (err) {
+            error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory during feature distribution matching"),
+            error.NoTargetSet => c.PyErr_SetString(c.PyExc_RuntimeError, "No target set for feature distribution matching"),
+            error.NoSourceSet => c.PyErr_SetString(c.PyExc_RuntimeError, "No source set for feature distribution matching"),
         }
         return null;
     };
