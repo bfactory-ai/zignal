@@ -103,11 +103,11 @@ pub const Plot = struct {
     show_legend: bool = false,
 
     /// Initialize a new plot with given dimensions
-    pub fn init(allocator: Allocator, width: usize, height: usize) !Plot {
-        var image = try Image(Rgb).initAlloc(allocator, height, width);
+    pub fn init(allocator: Allocator, width: usize, height: usize, font: ?BitmapFont) !Plot {
+        var image: Image(Rgb) = try .initAlloc(allocator, height, width);
         errdefer image.deinit(allocator);
 
-        const canvas = Canvas(Rgb).init(allocator, image);
+        const canvas: Canvas(Rgb) = .init(allocator, image);
 
         const plot_area = Rectangle(f32){
             .l = @as(f32, @floatFromInt(width)) * 0.1,
@@ -128,6 +128,7 @@ pub const Plot = struct {
                 break :blk axis;
             },
             .series = std.ArrayList(Series).init(allocator),
+            .font = font orelse default_font_8x8,
         };
     }
 
@@ -231,7 +232,7 @@ pub const Plot = struct {
         var left_margin = self.margins.left;
         if (self.y_label != null) {
             // Add extra space for Y-axis label (text height * scale + padding)
-            left_margin += 20 * self.font_scale;
+            left_margin += @as(f32, @floatFromInt(self.font.char_height)) * self.font_scale + 12;
         }
 
         self.plot_area = .{
@@ -341,7 +342,7 @@ pub const Plot = struct {
 
                 // Draw label
                 const label = Axis.formatTickValue(tick_val, &buffer);
-                const text_width = @as(f32, @floatFromInt(label.len * 8));
+                const text_width = @as(f32, @floatFromInt(label.len * self.font.char_width));
                 self.canvas.drawText(label, .point(.{ px - text_width / 2, self.plot_area.b + tick_size + 5 }), self.font, self.axis_color, 1, .fast);
             }
         }
@@ -355,7 +356,7 @@ pub const Plot = struct {
 
                 // Draw label
                 const label = Axis.formatTickValue(tick_val, &buffer);
-                const text_width = @as(f32, @floatFromInt(label.len * 8));
+                const text_width = @as(f32, @floatFromInt(label.len * self.font.char_width));
                 self.canvas.drawText(label, .point(.{ self.plot_area.l - tick_size - text_width - 5, py - 4 }), self.font, self.axis_color, 1, .fast);
             }
         }
@@ -366,7 +367,7 @@ pub const Plot = struct {
         // Title
         if (self.title) |title| {
             const x = (self.plot_area.l + self.plot_area.r) / 2 -
-                @as(f32, @floatFromInt(title.len * 8)) * self.font_scale / 2;
+                @as(f32, @floatFromInt(title.len * self.font.char_width)) * self.font_scale / 2;
             const y = self.margins.top / 2 - 4 * self.font_scale;
             self.canvas.drawText(title, .point(.{ x, y }), self.font, self.axis_color, self.font_scale, .fast);
         }
@@ -374,7 +375,7 @@ pub const Plot = struct {
         // X-axis label
         if (self.x_label) |label| {
             const x = (self.plot_area.l + self.plot_area.r) / 2 -
-                @as(f32, @floatFromInt(label.len * 8)) * self.font_scale / 2;
+                @as(f32, @floatFromInt(label.len * self.font.char_width)) * self.font_scale / 2;
             const y = self.plot_area.b + self.margins.bottom / 2;
             self.canvas.drawText(label, .point(.{ x, y }), self.font, self.axis_color, self.font_scale, .fast);
         }
@@ -382,8 +383,8 @@ pub const Plot = struct {
         // Y-axis label (rotated 90 degrees counter-clockwise)
         if (self.y_label) |label| {
             // Create a temporary image for the text
-            const text_width = @as(usize, @intFromFloat(@as(f32, @floatFromInt(label.len * 8)) * self.font_scale));
-            const text_height = @as(usize, @intFromFloat(8 * self.font_scale));
+            const text_width = @as(usize, @intFromFloat(@as(f32, @floatFromInt(label.len * self.font.char_width)) * self.font_scale));
+            const text_height = @as(usize, @intFromFloat(@as(f32, @floatFromInt(self.font.char_height)) * self.font_scale));
 
             var temp_image = try Image(Rgb).initAlloc(self.allocator, text_height + 4, text_width + 4);
             defer temp_image.deinit(self.allocator);
@@ -402,7 +403,7 @@ pub const Plot = struct {
 
             // Calculate position for rotated text (centered vertically on Y-axis)
             // Position between left edge and plot area
-            const x = (self.plot_area.l - 20 * self.font_scale) / 2 - @as(f32, @floatFromInt(rotated_image.cols)) / 2;
+            const x = (self.plot_area.l - @as(f32, @floatFromInt(self.font.char_height)) * self.font_scale - 12) / 2 - @as(f32, @floatFromInt(rotated_image.cols)) / 2;
             const y = (self.plot_area.t + self.plot_area.b) / 2 - @as(f32, @floatFromInt(rotated_image.rows)) / 2;
 
             // Copy rotated text to main image
@@ -519,7 +520,7 @@ pub const Plot = struct {
         var max_label_width: f32 = 0;
         for (self.series.items) |series| {
             if (series.label) |label| {
-                const label_width = @as(f32, @floatFromInt(label.len * 8));
+                const label_width = @as(f32, @floatFromInt(label.len * self.font.char_width));
                 max_label_width = @max(max_label_width, label_width);
             }
         }
@@ -658,7 +659,7 @@ pub const Plot = struct {
 test "Plot initialization" {
     const allocator = testing.allocator;
 
-    var plot = try Plot.init(allocator, 800, 600);
+    var plot = try Plot.init(allocator, 800, 600, null);
     defer plot.deinit();
 
     try testing.expectEqual(@as(usize, 800), plot.image.cols);
@@ -668,7 +669,7 @@ test "Plot initialization" {
 test "Plot with line series" {
     const allocator = testing.allocator;
 
-    var plot = try Plot.init(allocator, 400, 300);
+    var plot = try Plot.init(allocator, 400, 300, null);
     defer plot.deinit();
 
     const x_data = [_]f32{ 0, 1, 2, 3, 4 };
