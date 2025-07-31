@@ -470,7 +470,7 @@ pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) typ
         /// Converts a column matrix into a Point2d.
         pub fn toPoint2d(self: Self) Point2d(T) {
             comptime assert(rows >= 2 and cols == 1);
-            return Point2d(T).init2d(self.items[0][0], self.items[1][0]);
+            return .point(.{ self.items[0][0], self.items[1][0] });
         }
 
         /// Computes the trace (sum of diagonal elements) of a square matrix.

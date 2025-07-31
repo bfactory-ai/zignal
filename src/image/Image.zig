@@ -154,10 +154,10 @@ pub fn Image(comptime T: type) type {
         /// try image.rotate(allocator, image.getCenter(), angle, &rotated);
         /// ```
         pub fn getCenter(self: Self) Point2d(f32) {
-            return Point2d(f32).init2d(
+            return .point(.{
                 @as(f32, @floatFromInt(self.cols)) / 2.0,
                 @as(f32, @floatFromInt(self.rows)) / 2.0,
-            );
+            });
         }
 
         /// Returns an image view with boundaries defined by `rect` within the image boundaries.

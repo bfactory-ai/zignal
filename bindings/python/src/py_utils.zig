@@ -462,7 +462,7 @@ pub fn parsePointTuple(point_obj: ?*c.PyObject) !Point2d(f32) {
         return error.InvalidPoint;
     }
 
-    return Point2d(f32).init2d(@floatCast(x), @floatCast(y));
+    return .point(.{ @as(f32, @floatCast(x)), @as(f32, @floatCast(y)) });
 }
 
 /// Method descriptor for automatic generation

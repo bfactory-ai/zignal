@@ -247,14 +247,14 @@ pub fn ProjectiveTransform(comptime T: type) type {
 test "affine3" {
     const T = f64;
     const from_points: []const Point2d(T) = &.{
-        Point2d(T).init2d(0, 0),
-        Point2d(T).init2d(0, 1),
-        Point2d(T).init2d(1, 1),
+        .point(.{ 0, 0 }),
+        .point(.{ 0, 1 }),
+        .point(.{ 1, 1 }),
     };
     const to_points: []const Point2d(T) = &.{
-        Point2d(T).init2d(0, 1),
-        Point2d(T).init2d(1, 1),
-        Point2d(T).init2d(1, 0),
+        .point(.{ 0, 1 }),
+        .point(.{ 1, 1 }),
+        .point(.{ 1, 0 }),
     };
     const tf = try AffineTransform(f64).init(std.testing.allocator, from_points[0..3], to_points[0..3]);
     const matrix: SMatrix(T, 2, 2) = .init(.{ .{ 0, 1 }, .{ -1, 0 } });
@@ -273,16 +273,16 @@ test "projection4" {
     const T = f64;
     const tol = 1e-5;
     const from_points: []const Point2d(T) = &.{
-        Point2d(T).init2d(199.67754364, 200.17905235),
-        Point2d(T).init2d(167.90229797, 175.55920601),
-        Point2d(T).init2d(270.33649445, 207.96521187),
-        Point2d(T).init2d(267.53637314, 188.24442387),
+        .point(.{ 199.67754364, 200.17905235 }),
+        .point(.{ 167.90229797, 175.55920601 }),
+        .point(.{ 270.33649445, 207.96521187 }),
+        .point(.{ 267.53637314, 188.24442387 }),
     };
     const to_points: []const Point2d(T) = &.{
-        Point2d(T).init2d(440.68012238, 275.45248032),
-        Point2d(T).init2d(429.62512970, 262.64307976),
-        Point2d(T).init2d(484.23328400, 279.44332123),
-        Point2d(T).init2d(488.08315277, 272.79547691),
+        .point(.{ 440.68012238, 275.45248032 }),
+        .point(.{ 429.62512970, 262.64307976 }),
+        .point(.{ 484.23328400, 279.44332123 }),
+        .point(.{ 488.08315277, 272.79547691 }),
     };
     const transform: ProjectiveTransform(T) = .init(from_points, to_points);
     const matrix: SMatrix(T, 3, 3) = .init(.{
@@ -317,25 +317,25 @@ test "projection4" {
 test "projection8" {
     const T = f64;
     const from_points: []const Point2d(T) = &.{
-        Point2d(T).init2d(319.48406982, 240.21486282),
-        Point2d(T).init2d(268.64367676, 210.67104721),
-        Point2d(T).init2d(432.53839111, 249.55825424),
-        Point2d(T).init2d(428.05819702, 225.89330864),
-        Point2d(T).init2d(687.00787354, 240.97020721),
-        Point2d(T).init2d(738.32287598, 208.32876205),
-        Point2d(T).init2d(574.62890625, 250.60971451),
-        Point2d(T).init2d(579.63378906, 225.37580109),
+        .point(.{ 319.48406982, 240.21486282 }),
+        .point(.{ 268.64367676, 210.67104721 }),
+        .point(.{ 432.53839111, 249.55825424 }),
+        .point(.{ 428.05819702, 225.89330864 }),
+        .point(.{ 687.00787354, 240.97020721 }),
+        .point(.{ 738.32287598, 208.32876205 }),
+        .point(.{ 574.62890625, 250.60971451 }),
+        .point(.{ 579.63378906, 225.37580109 }),
     };
 
     const to_points: []const Point2d(T) = &.{
-        Point2d(T).init2d(330.48120117, 408.22596359),
-        Point2d(T).init2d(317.55538940, 393.26282501),
-        Point2d(T).init2d(356.74267578, 411.06428146),
-        Point2d(T).init2d(349.94784546, 400.26379395),
-        Point2d(T).init2d(438.15582275, 411.75442886),
-        Point2d(T).init2d(452.01367188, 398.08815765),
-        Point2d(T).init2d(398.66107178, 413.83139420),
-        Point2d(T).init2d(395.29974365, 401.73685455),
+        .point(.{ 330.48120117, 408.22596359 }),
+        .point(.{ 317.55538940, 393.26282501 }),
+        .point(.{ 356.74267578, 411.06428146 }),
+        .point(.{ 349.94784546, 400.26379395 }),
+        .point(.{ 438.15582275, 411.75442886 }),
+        .point(.{ 452.01367188, 398.08815765 }),
+        .point(.{ 398.66107178, 413.83139420 }),
+        .point(.{ 395.29974365, 401.73685455 }),
     };
     const transform: ProjectiveTransform(T) = .init(from_points, to_points);
     const matrix: SMatrix(T, 3, 3) = .init(.{
