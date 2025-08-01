@@ -50,6 +50,10 @@ jobs:
         uv pip install --upgrade setuptools wheel build pytest
         # Install numpy for more comprehensive testing (optional)
         uv pip install numpy || echo "NumPy installation failed, tests will be skipped"
+        # Install delocate on macOS for fixing wheel dependencies
+        if [[ "${{ runner.os }}" == "macOS" ]]; then
+          uv pip install delocate
+        fi
 
     - name: Build wheel (Unix)
       if: runner.os != 'Windows'
@@ -131,6 +135,10 @@ jobs:
         uv pip install --upgrade setuptools wheel build pytest
         # Install numpy for more comprehensive testing (optional)
         uv pip install numpy || echo "NumPy installation failed, tests will be skipped"
+        # Install delocate on macOS for fixing wheel dependencies
+        if [[ "${{ runner.os }}" == "macOS" ]]; then
+          uv pip install delocate
+        fi
 
     - name: Build sdist
       run: |

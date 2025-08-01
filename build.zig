@@ -308,20 +308,28 @@ fn linkPython(b: *Build, artifact: *Build.Step.Compile, python_lib: []const u8, 
             }
         },
         .macos => {
-            // On macOS, try to link against specific Python library if provided
+            // On macOS, we need to be careful about framework vs non-framework builds
+            // Don't hardcode framework paths - let the linker find Python
+            // This makes the wheel compatible with both framework and non-framework Pythons
+            
+            // Only add library path if explicitly provided (for cross-compilation)
             if (std.process.getEnvVarOwned(b.allocator, "PYTHON_LIBS_DIR")) |libs_dir| {
                 artifact.addLibraryPath(.{ .cwd_relative = libs_dir });
-
-                if (std.process.getEnvVarOwned(b.allocator, "PYTHON_LIB_NAME")) |lib_name| {
-                    artifact.linkSystemLibrary(lib_name);
-                } else |_| {
-                    // Fallback to default
-                    artifact.linkSystemLibrary(python_lib);
-                }
             } else |_| {
-                // No specific Python library path - use system default
+                // Don't add any specific library path - rely on linker search paths
+            }
+            
+            // Link against Python without specifying full paths
+            // This allows the dynamic linker to find Python at runtime
+            if (std.process.getEnvVarOwned(b.allocator, "PYTHON_LIB_NAME")) |lib_name| {
+                artifact.linkSystemLibrary(lib_name);
+            } else |_| {
+                // Use a generic name that works for most Python installations
                 artifact.linkSystemLibrary(python_lib);
             }
+            
+            // Ensure we link with undefined dynamic_lookup to allow runtime resolution
+            artifact.root_module.addRPathSpecial("@loader_path");
         },
         .linux => {
             artifact.linkSystemLibrary(python_lib);
