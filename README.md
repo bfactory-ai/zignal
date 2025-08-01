@@ -132,3 +132,6 @@ In fact, the first version of the virtual makeup try on was written in C++ with 
 However, we decided to give Zig a go, even if that meant rewriting everything. As a result, we have no dependencies now.
 
 Finally, [B factory, Inc](https://www.bfactory.ai/), which is my employer and graciously agreed to release this library to the public.
+
+<br></br>
+[![Star History Chart](https://api.star-history.com/svg?repos=bfactory-ai/zignal&type=Date)](https://www.star-history.com/#bfactory-ai/zignal&Date)
