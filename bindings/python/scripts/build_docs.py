@@ -2,7 +2,7 @@
 """
 Generate API documentation for zignal Python bindings using pdoc.
 
-This script generates static HTML documentation that can be hosted on GitHub Pages.
+This script generates a single static HTML file with search functionality.
 
 Usage:
     cd bindings/python
@@ -10,8 +10,10 @@ Usage:
 """
 
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -27,8 +29,8 @@ def main():
 
     # Check if pdoc is installed
     try:
-        import pdoc
-    except ImportError:
+        subprocess.run(["pdoc", "--version"], capture_output=True, check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
         print("Error: pdoc is not installed.")
         print("Install it with: cd bindings/python && uv pip install -e '.[docs]'")
         print("Or run with: cd bindings/python && uv run --extra docs python build_docs.py")
@@ -36,30 +38,24 @@ def main():
 
     # Build the Python bindings first
     print("Building Python bindings...")
-    result = subprocess.run(["zig", "build", "python-bindings"], capture_output=True)
+    result = subprocess.run(["zig", "build", "python-bindings"], capture_output=True, text=True)
     if result.returncode != 0:
         print("Error building Python bindings:")
-        print(result.stderr.decode())
+        print(result.stderr)
         sys.exit(1)
 
     # Install the package in development mode
     print("Installing zignal package in development mode...")
-    # Check if we're in a uv environment
-    if os.environ.get("UV_PROJECT_ROOT") or Path(bindings_dir / ".venv").exists():
-        # Use uv pip for installation
-        result = subprocess.run(
-            ["uv", "pip", "install", "-e", str(bindings_dir)], capture_output=True
-        )
+    install_cmd = []
+    if os.environ.get("UV_PROJECT_ROOT") or (bindings_dir / ".venv").exists():
+        install_cmd = ["uv", "pip", "install", "-e", str(bindings_dir)]
     else:
-        # Fall back to regular pip
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-e", str(bindings_dir)],
-            capture_output=True,
-        )
+        install_cmd = [sys.executable, "-m", "pip", "install", "-e", str(bindings_dir)]
 
+    result = subprocess.run(install_cmd, capture_output=True, text=True)
     if result.returncode != 0:
         print("Error installing package:")
-        print(result.stderr.decode())
+        print(result.stderr)
         sys.exit(1)
 
     # Import to verify it works
@@ -72,140 +68,79 @@ def main():
         print("Make sure the Python bindings are built correctly.")
         sys.exit(1)
 
-    # Create docs directory if it doesn't exist
+    # Clean and create docs directory
     docs_dir = bindings_dir / "docs"
+    print(f"Preparing documentation directory: {docs_dir}")
+    if docs_dir.exists():
+        shutil.rmtree(docs_dir)
     docs_dir.mkdir(parents=True, exist_ok=True)
 
-    # Import pdoc modules
-    import pdoc.doc
-    import pdoc.render
-    import pdoc.doc_pyi
-
-    # Configure pdoc with critical settings for stub files
-    print("Configuring pdoc...")
-    pdoc.render.configure(
-        show_source=False,  # CRITICAL: Must be False for stub files to work
-        template_directory=None,
-        search=True,
-        favicon=None,
-        logo=None,
-        logo_link=None,
-        edit_url_map=None,
-        mermaid=False,
-        math=False,
-    )
-
-    # Generate documentation using API
-    print(f"Generating documentation in {docs_dir}...")
-
-    # Import zignal modules to ensure they're loaded
-    import zignal
-    import zignal._zignal
-
-    # Create documentation objects for both modules
-    print("Creating documentation objects...")
-    modules = {
-        "zignal": pdoc.doc.Module(zignal),
-        "zignal._zignal": pdoc.doc.Module(zignal._zignal),
-    }
-
-    # Include type information from stub files for both modules
-    print("Loading type information from stub files...")
-
-    import pdoc.doc_pyi
-
-    # Create a temporary stub package structure that pdoc expects
-    # pdoc looks for "package-stubs" directory structure per PEP-561
-    import tempfile
-    import shutil
-
+    print("Configuring stubs and dummy module for pdoc...")
     with tempfile.TemporaryDirectory() as temp_dir:
-        # Create zignal-stubs directory structure
-        stub_pkg_dir = Path(temp_dir) / "zignal-stubs"
+        temp_path = Path(temp_dir)
+
+        # Create a dummy module to force pdoc into "site generation" mode,
+        # which is required for the search index to be created.
+        dummy_module_path = temp_path / "dummy_module.py"
+        dummy_module_path.write_text(
+            "'''This is a dummy module to ensure pdoc generates a search index.'''"
+        )
+
+        # Create the PEP-561 stub package for zignal
+        stub_pkg_dir = temp_path / "zignal-stubs"
         stub_pkg_dir.mkdir()
-
-        # Create py.typed marker
         (stub_pkg_dir / "py.typed").touch()
+        pyi_source_path = bindings_dir / "zignal" / "_zignal.pyi"
+        shutil.copy2(pyi_source_path, stub_pkg_dir / "__init__.pyi")
 
-        # Since Image.__module__ = "zignal", pdoc will look for types in zignal/__init__.pyi
-        # But our __init__.pyi only has re-exports. We need to put the actual definitions there.
-        # So let's use the _zignal.pyi content for the main __init__.pyi
-        shutil.copy2(
-            "/home/adria/Projects/zignal/bindings/python/zignal/_zignal.pyi",
-            stub_pkg_dir / "__init__.pyi",  # Use _zignal.pyi content for zignal module
-        )
-        shutil.copy2(
-            "/home/adria/Projects/zignal/bindings/python/zignal/_zignal.pyi",
-            stub_pkg_dir / "_zignal.pyi",
-        )
+        # Set PYTHONPATH to include the directory containing stubs and the dummy module
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(temp_path) + os.pathsep + env.get("PYTHONPATH", "")
 
-        # Add temp directory to sys.path temporarily
-        import sys
+        # Generate documentation for zignal and the dummy module
+        print("Generating documentation with pdoc...")
+        cmd = [
+            "pdoc",
+            "zignal",
+            "dummy_module",
+            "--output-directory",
+            str(docs_dir),
+            "--no-show-source",
+        ]
+        result = subprocess.run(cmd, env=env, capture_output=True, text=True)
 
-        sys.path.insert(0, temp_dir)
+        if result.returncode != 0:
+            print("Error running pdoc:")
+            print(result.stdout)
+            print(result.stderr)
+            sys.exit(1)
 
-        try:
-            for module_name, module_doc in modules.items():
-                print(f"  Processing {module_name}...")
+    # Verify output and clean up
+    print("Verifying generated files and cleaning up...")
+    generated_html = docs_dir / "zignal.html"
+    generated_search = docs_dir / "search.js"
+    dummy_html = docs_dir / "dummy_module.html"
 
-                # Now pdoc should find the stub files
-                # pdoc will find the stub files from the -stubs package
+    if dummy_html.exists():
+        dummy_html.unlink()
 
-                # Apply typeinfo
-                pdoc.doc_pyi.include_typeinfo_from_stub_files(module_doc)
+    if not generated_html.exists():
+        print("\nError: pdoc did not generate the expected HTML file.")
+        sys.exit(1)
 
-        finally:
-            # Remove temp directory from sys.path
-            sys.path.remove(temp_dir)
+    if not generated_search.exists() or generated_search.stat().st_size == 0:
+        print("\nError: pdoc did not generate a valid search index file.")
+        sys.exit(1)
 
-        # Debug: Check if type annotations were loaded
-        if module_name == "zignal" and "Image" in module_doc.members:
-            image_class = module_doc.members["Image"]
-            if "load" in image_class.members:
-                load_method = image_class.members["load"]
-                if load_method.signature:
-                    print(f"    ✓ Found signature for Image.load: {load_method.signature}")
-                    # Check parameters in detail
-                    for param_name, param in load_method.signature.parameters.items():
-                        print(
-                            f"      Parameter '{param_name}': annotation={param.annotation}, kind={param.kind}"
-                        )
-                    # Check return annotation
-                    print(f"      Return annotation: {load_method.signature.return_annotation}")
-                else:
-                    print(f"    ✗ No signature found for Image.load")
-
-    # Create all_modules dict for cross-references
-    all_modules = {}
-    for name, doc in modules.items():
-        all_modules[name] = doc
-
-    # Generate HTML for each module
-    for module_name, module_doc in modules.items():
-        print(f"Generating HTML for {module_name}...")
-        html = pdoc.render.html_module(module_doc, all_modules)
-
-        # Save HTML file
-        output_file = docs_dir / f"{module_name.replace('.', '/')}.html"
-        output_file.parent.mkdir(parents=True, exist_ok=True)
-        output_file.write_text(html)
-
-    # Generate search index
-    print("Generating search index...")
-    search_js = pdoc.render.search_index(all_modules)
-    search_file = docs_dir / "search.js"
-    search_file.write_text(search_js)
+    # Rename zignal.html to index.html
+    target_file = docs_dir / "index.html"
+    generated_html.rename(target_file)
 
     print("\nDocumentation generated successfully!")
-    print("Search functionality has been enabled!")
-
-    # Check what files were generated
-    html_files = list(docs_dir.glob("**/*.html"))
-    if html_files:
-        print(f"\nGenerated files:")
-        for f in html_files:
-            print(f"  - {f.relative_to(docs_dir)}")
-
+    print("Search functionality has been restored.")
+    print(f"\nGenerated files:")
+    print(f"  - {target_file.relative_to(docs_dir)}")
+    print(f"  - {generated_search.relative_to(docs_dir)}")
     print(f"\nDocumentation is available in {docs_dir}")
 
 
