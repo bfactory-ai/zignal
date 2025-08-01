@@ -308,28 +308,30 @@ fn linkPython(b: *Build, artifact: *Build.Step.Compile, python_lib: []const u8, 
             }
         },
         .macos => {
-            // On macOS, we need to be careful about framework vs non-framework builds
-            // Don't hardcode framework paths - let the linker find Python
-            // This makes the wheel compatible with both framework and non-framework Pythons
-            
-            // Only add library path if explicitly provided (for cross-compilation)
+            // On macOS, we need to handle Python linking carefully
+            // During build, we need the library path, but for distribution
+            // we'll use delocate to make the wheel portable
+
+            // Add library path if provided (needed during build)
             if (std.process.getEnvVarOwned(b.allocator, "PYTHON_LIBS_DIR")) |libs_dir| {
                 artifact.addLibraryPath(.{ .cwd_relative = libs_dir });
             } else |_| {
-                // Don't add any specific library path - rely on linker search paths
+                // No specific library path provided
             }
-            
-            // Link against Python without specifying full paths
-            // This allows the dynamic linker to find Python at runtime
+
+            // Link against Python library
             if (std.process.getEnvVarOwned(b.allocator, "PYTHON_LIB_NAME")) |lib_name| {
                 artifact.linkSystemLibrary(lib_name);
             } else |_| {
-                // Use a generic name that works for most Python installations
                 artifact.linkSystemLibrary(python_lib);
             }
-            
-            // Ensure we link with undefined dynamic_lookup to allow runtime resolution
+
+            // Add rpath for runtime library resolution
             artifact.root_module.addRPathSpecial("@loader_path");
+
+            // For Python extensions on macOS, we often use -undefined dynamic_lookup
+            // but Zig doesn't have a direct API for this, so we'll rely on
+            // delocate to fix the library dependencies after building
         },
         .linux => {
             artifact.linkSystemLibrary(python_lib);

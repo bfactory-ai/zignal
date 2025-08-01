@@ -191,23 +191,32 @@ def create_wheel(zig_target: str, platform_tag: str, extension: str, bindings_di
     if platform.system() == "Darwin" and "macos" in platform_tag:
         try:
             # Try to import delocate
-            subprocess.run([python_exe, "-m", "delocate", "--version"],
-                         capture_output=True, check=True)
+            subprocess.run(
+                [python_exe, "-m", "delocate", "--version"], capture_output=True, check=True
+            )
 
             print("Running delocate to fix macOS library dependencies...")
             # Fix the wheel to make it portable across different Python installations
-            subprocess.run([
-                python_exe, "-m", "delocate.cmd.delocate_wheel",
-                "-w", str(dist_dir),  # Output directory
-                "-v",  # Verbose
-                str(latest_wheel)
-            ], check=True)
+            subprocess.run(
+                [
+                    python_exe,
+                    "-m",
+                    "delocate.cmd.delocate_wheel",
+                    "-w",
+                    str(dist_dir),  # Output directory
+                    "-v",  # Verbose
+                    str(latest_wheel),
+                ],
+                check=True,
+            )
 
             # The fixed wheel replaces the original
             print(f"Successfully delocated wheel: {latest_wheel}")
 
         except (subprocess.CalledProcessError, FileNotFoundError):
-            print("Warning: delocate not available. Wheel may not be portable across macOS Python installations.")
+            print(
+                "Warning: delocate not available. Wheel may not be portable across macOS Python installations."
+            )
             print("Install with: pip install delocate")
 
     return latest_wheel

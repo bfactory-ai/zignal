@@ -77,16 +77,31 @@ class ZigBuildExt(build_ext):
                 )
 
         elif sys.platform == "darwin":
-            # On macOS, don't specify library paths to make wheels more portable
-            # The build system will link against Python generically, allowing
-            # the dynamic linker to find the correct Python at runtime
-            # This makes wheels work with both framework and non-framework Python installations
+            # On macOS, we need to provide library path during build
+            # but delocate will fix it afterward for portability
             version_info = sys.version_info
             python_lib_name = f"python{version_info.major}.{version_info.minor}"
 
-            # Only set library name, not path, for better portability
+            # Get the Python library directory
+            # First try to get it from sysconfig
+            lib_dir = sysconfig.get_config_var("LIBDIR")
+            if not lib_dir or not Path(lib_dir).exists():
+                # Try to find it relative to the Python executable
+                python_exe = sys.executable
+                python_dir = Path(python_exe).parent.parent
+                lib_dir = python_dir / "lib"
+                if not lib_dir.exists():
+                    # Try without lib subdirectory (some installations)
+                    lib_dir = python_dir
+
+            if lib_dir and Path(lib_dir).exists():
+                env["PYTHON_LIBS_DIR"] = str(lib_dir)
+                print(f"Setting PYTHON_LIBS_DIR={lib_dir}")
+            else:
+                print("Warning: Could not find Python library directory on macOS")
+
             env["PYTHON_LIB_NAME"] = python_lib_name
-            print(f"Setting PYTHON_LIB_NAME={python_lib_name} (no specific path for portability)")
+            print(f"Setting PYTHON_LIB_NAME={python_lib_name}")
 
         # Build the Zig library with optimizations
         cmd = ["zig", "build", "python-bindings", f"-Doptimize={ext.zig_optimize}"]
