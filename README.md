@@ -35,6 +35,8 @@ module.addImport("zignal", zignal.module("zignal"));
 pip install zignal-processing
 ```
 
+<img src="./assets/python_print.gif" width=600>
+
 ## Motivation
 
 This library is used by [Ameli](https://ameli.co.kr/) for their makeup virtual try on.
