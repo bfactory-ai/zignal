@@ -35,7 +35,6 @@ pub const PcfError = error{
 
 /// PCF format constants
 const PCF_FILE_VERSION = 0x70636601; // "\x01fcp" in little-endian
-const PCF_FORMAT_MASK = 0xffffff00;
 
 /// Maximum reasonable values for sanity checks
 const MAX_TABLE_COUNT = 1024;
@@ -97,16 +96,18 @@ const GlyphPadding = enum(u2) {
     }
 };
 
-/// PCF format mask constants
-const PCF_GLYPH_PAD_MASK = (3 << 0); // Bits 0-1: glyph padding
-const PCF_BYTE_ORDER_MASK = (1 << 3); // Bit 3: byte order
-const PCF_BIT_ORDER_MASK = (1 << 2); // Bit 2: bit order
-const PCF_SCAN_UNIT_MASK = (3 << 4); // Bits 4-5: scan unit
-
 /// Get byte order from format field
 fn getByteOrder(format: u32) std.builtin.Endian {
     const flags = FormatFlags.decode(format);
     return if (flags.byte_order_msb) .big else .little;
+}
+
+/// Calculate glyph dimensions from metric
+fn getGlyphDimensions(metric: Metric) struct { width: u16, height: u16 } {
+    return .{
+        .width = @intCast(@abs(metric.right_sided_bearing - metric.left_sided_bearing)),
+        .height = @intCast(@abs(metric.ascent + metric.descent)),
+    };
 }
 
 /// Table of contents entry for PCF files
@@ -284,22 +285,21 @@ pub fn load(allocator: std.mem.Allocator, path: []const u8, filter: LoadFilter) 
 
     // Parse properties table if present (optional)
     var properties_info: ?PropertiesInfo = null;
-    // Note: properties are allocated with arena allocator, so no need to free
 
     if (properties_table) |props_table| {
-        properties_info = parseProperties(arena_allocator, file_contents, props_table) catch null;
+        properties_info = parseProperties(arena_allocator, file_contents, props_table) catch |err| blk: {
+            // Properties are optional, so we continue even if parsing fails
+            std.log.debug("Failed to parse properties table: {}", .{err});
+            break :blk null;
+        };
 
         // Log some useful properties if found
         if (properties_info) |info| {
-            if (findProperty(info.properties, "FAMILY_NAME")) |prop| {
-                if (prop.value == .string) {
-                    std.log.info("PCF: Font family: {s}", .{prop.value.string});
-                }
+            if (getStringProperty(info.properties, "FAMILY_NAME")) |family| {
+                std.log.info("PCF: Font family: {s}", .{family});
             }
-            if (findProperty(info.properties, "WEIGHT_NAME")) |prop| {
-                if (prop.value == .string) {
-                    std.log.info("PCF: Font weight: {s}", .{prop.value.string});
-                }
+            if (getStringProperty(info.properties, "WEIGHT_NAME")) |weight| {
+                std.log.info("PCF: Font weight: {s}", .{weight});
             }
         }
     }
@@ -312,11 +312,11 @@ pub fn load(allocator: std.mem.Allocator, path: []const u8, filter: LoadFilter) 
 
     if (accel_table) |accel| {
         const accel_data = try parseAccelerator(file_contents, accel);
-        font_ascent = @as(i16, @intCast(@min(accel_data.font_ascent, std.math.maxInt(i16))));
-        font_descent = @as(i16, @intCast(@min(accel_data.font_descent, std.math.maxInt(i16))));
-        max_width = @as(u16, @intCast(@min(@max(accel_data.max_bounds.character_width, 0), std.math.maxInt(u16))));
+        font_ascent = std.math.cast(i16, accel_data.font_ascent) orelse std.math.maxInt(i16);
+        font_descent = std.math.cast(i16, accel_data.font_descent) orelse std.math.maxInt(i16);
+        max_width = std.math.cast(u16, @max(accel_data.max_bounds.character_width, 0)) orelse std.math.maxInt(u16);
         const total_height = @max(0, accel_data.font_ascent) + @max(0, accel_data.font_descent);
-        max_height = @as(u16, @intCast(@min(total_height, std.math.maxInt(u16))));
+        max_height = std.math.cast(u16, total_height) orelse std.math.maxInt(u16);
     } else {
         // Default values if no accelerator table
         font_ascent = 14;
@@ -444,12 +444,12 @@ fn parseProperties(allocator: std.mem.Allocator, data: []const u8, table: TableE
     errdefer allocator.free(result.properties);
 
     // Temporary storage for property info before string resolution
-    const PropInfo = struct {
+    const PropertyInfo = struct {
         name_offset: u32,
         is_string: bool,
         value: i32,
     };
-    const prop_infos = try allocator.alloc(PropInfo, prop_count);
+    const prop_infos = try allocator.alloc(PropertyInfo, prop_count);
     defer allocator.free(prop_infos);
 
     // Read property info
@@ -522,6 +522,15 @@ fn findProperty(properties: []const Property, name: []const u8) ?Property {
         }
     }
     return null;
+}
+
+/// Get string value from properties by name
+fn getStringProperty(properties: []const Property, name: []const u8) ?[]const u8 {
+    const prop = findProperty(properties, name) orelse return null;
+    return switch (prop.value) {
+        .string => |s| s,
+        else => null,
+    };
 }
 
 /// Read metric from stream (handles both compressed and uncompressed formats)
@@ -828,11 +837,9 @@ fn convertToBitmapFont(
     // Pre-calculate total bitmap size needed
     var total_bitmap_size: usize = 0;
     for (glyph_list.items) |glyph_info| {
-        const metric = glyph_info.metric;
-        const glyph_width = @as(u16, @intCast(@abs(metric.right_sided_bearing - metric.left_sided_bearing)));
-        const glyph_height = @as(u16, @intCast(@abs(metric.ascent + metric.descent)));
-        const bytes_per_row = (glyph_width + 7) / 8;
-        total_bitmap_size += bytes_per_row * glyph_height;
+        const dims = getGlyphDimensions(glyph_info.metric);
+        const bytes_per_row = (dims.width + 7) / 8;
+        total_bitmap_size += bytes_per_row * dims.height;
     }
 
     // Pre-allocate converted bitmap buffer
@@ -849,8 +856,7 @@ fn convertToBitmapFont(
 
     for (glyph_list.items, 0..) |glyph_info, list_index| {
         const metric = glyph_info.metric;
-        const glyph_width = @as(u16, @intCast(@abs(metric.right_sided_bearing - metric.left_sided_bearing)));
-        const glyph_height = @as(u16, @intCast(@abs(metric.ascent + metric.descent)));
+        const dims = getGlyphDimensions(metric);
 
         // Store converted bitmap offset
         const converted_offset = converted_bitmaps.items.len;
@@ -858,14 +864,14 @@ fn convertToBitmapFont(
         // Convert bitmap data for this glyph
         const bitmap_offset = bitmap_info.offsets[glyph_info.glyph_index];
         const format_flags = FormatFlags.decode(bitmap_info.format);
-        const pad_bits = @as(u2, @truncate(bitmap_info.format & PCF_GLYPH_PAD_MASK));
+        const pad_bits = @as(u2, @truncate(bitmap_info.format & 0x3));
         const glyph_pad = @as(GlyphPadding, @enumFromInt(pad_bits));
 
         try convertGlyphBitmap(
             bitmap_info.bitmap_data,
             bitmap_offset,
-            glyph_width,
-            glyph_height,
+            dims.width,
+            dims.height,
             format_flags,
             glyph_pad,
             &converted_bitmaps,
@@ -878,8 +884,8 @@ fn convertToBitmapFont(
         const adjusted_y_offset = font_ascent - metric.ascent;
 
         glyph_data_list[list_index] = GlyphData{
-            .width = @intCast(glyph_width),
-            .height = @intCast(glyph_height),
+            .width = @intCast(dims.width),
+            .height = @intCast(dims.height),
             .x_offset = metric.left_sided_bearing,
             .y_offset = adjusted_y_offset,
             .device_width = metric.character_width,
