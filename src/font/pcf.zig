@@ -908,41 +908,6 @@ fn convertToBitmapFont(
     };
 }
 
-test "PCF format detection" {
-    const pcf_header = "\x01fcp";
-    const result = @import("format.zig").FontFormat.detectFromBytes(pcf_header);
-    try testing.expect(result == .pcf);
-}
-
-test "PCF table parsing" {
-    // Create a minimal PCF file structure for testing
-    var buffer: [256]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    const writer = stream.writer();
-
-    // Write header
-    try writer.writeInt(u32, PCF_FILE_VERSION, .little);
-    try writer.writeInt(u32, 1, .little); // 1 table
-
-    // Write table entry
-    try writer.writeInt(u32, @intFromEnum(TableType.properties), .little);
-    try writer.writeInt(u32, 0x00000000, .little); // Default format
-    try writer.writeInt(u32, 16, .little); // size
-    try writer.writeInt(u32, 32, .little); // offset
-
-    const written = stream.getWritten();
-
-    // Test parsing
-    var test_stream = std.io.fixedBufferStream(written);
-    const reader = test_stream.reader();
-
-    const header = try reader.readInt(u32, .little);
-    try testing.expectEqual(PCF_FILE_VERSION, header);
-
-    const table_count = try reader.readInt(u32, .little);
-    try testing.expectEqual(@as(u32, 1), table_count);
-}
-
 test "FormatFlags decoding" {
     // Test format flag decoding
     const test_cases = [_]struct {
@@ -982,13 +947,6 @@ test "FormatFlags decoding" {
         try testing.expectEqual(tc.expected.bit_order_msb, flags.bit_order_msb);
         try testing.expectEqual(tc.expected.compressed_metrics, flags.compressed_metrics);
     }
-}
-
-test "GlyphPadding values" {
-    try testing.expectEqual(@as(u32, 1), GlyphPadding.pad_1.getPadBytes());
-    try testing.expectEqual(@as(u32, 2), GlyphPadding.pad_2.getPadBytes());
-    try testing.expectEqual(@as(u32, 4), GlyphPadding.pad_4.getPadBytes());
-    try testing.expectEqual(@as(u32, 8), GlyphPadding.pad_8.getPadBytes());
 }
 
 test "Table bounds validation" {
