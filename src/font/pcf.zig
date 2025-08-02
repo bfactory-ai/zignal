@@ -158,6 +158,21 @@ const EncodingEntry = struct {
     glyph_indices: []u16, // 2D array of glyph indices (0xFFFF = undefined)
 };
 
+/// PCF property entry
+const Property = struct {
+    name: []const u8,
+    value: union(enum) {
+        string: []const u8,
+        integer: i32,
+    },
+};
+
+/// PCF properties table result
+const PropertiesInfo = struct {
+    properties: []Property,
+    string_pool: []u8, // Owns the string data
+};
+
 /// Load a PCF font from a file path
 /// Parameters:
 /// - allocator: Memory allocator
@@ -171,13 +186,11 @@ fn decompressGzip(allocator: std.mem.Allocator, gzip_data: []const u8) ![]u8 {
 
     // Check gzip magic number
     if (gzip_data[0] != 0x1f or gzip_data[1] != 0x8b) {
-        std.log.err("PCF: Invalid gzip magic number", .{});
         return PcfError.InvalidCompression;
     }
 
     // Check compression method (must be deflate)
     if (gzip_data[2] != 8) {
-        std.log.err("PCF: Unsupported gzip compression method: {}", .{gzip_data[2]});
         return PcfError.InvalidCompression;
     }
 
@@ -216,10 +229,7 @@ pub fn load(allocator: std.mem.Allocator, path: []const u8, filter: LoadFilter) 
     const is_compressed = std.mem.endsWith(u8, path, ".gz");
 
     // Read file into memory
-    const raw_file_contents = std.fs.cwd().readFileAlloc(allocator, path, MAX_FILE_SIZE) catch |err| {
-        std.log.err("PCF: Failed to read file {s}: {}", .{ path, err });
-        return err;
-    };
+    const raw_file_contents = try std.fs.cwd().readFileAlloc(allocator, path, MAX_FILE_SIZE);
     defer allocator.free(raw_file_contents);
 
     // Decompress if needed
@@ -247,14 +257,12 @@ pub fn load(allocator: std.mem.Allocator, path: []const u8, filter: LoadFilter) 
     // Read and verify header
     const header = try reader.readInt(u32, .little);
     if (header != PCF_FILE_VERSION) {
-        std.log.err("PCF: Invalid file header: 0x{x:0>8} (expected 0x{x:0>8})", .{ header, PCF_FILE_VERSION });
         return PcfError.InvalidFormat;
     }
 
     // Read table count
     const table_count = try reader.readInt(u32, .little);
     if (table_count == 0 or table_count > MAX_TABLE_COUNT) {
-        std.log.err("PCF: Invalid table count: {} (max {})", .{ table_count, MAX_TABLE_COUNT });
         return PcfError.InvalidFormat;
     }
 
@@ -268,19 +276,33 @@ pub fn load(allocator: std.mem.Allocator, path: []const u8, filter: LoadFilter) 
     }
 
     // Find required tables
-    const metrics_table = findTable(tables, .metrics) orelse {
-        std.log.err("PCF: Missing required metrics table", .{});
-        return PcfError.MissingRequired;
-    };
-    const bitmaps_table = findTable(tables, .bitmaps) orelse {
-        std.log.err("PCF: Missing required bitmaps table", .{});
-        return PcfError.MissingRequired;
-    };
-    const encodings_table = findTable(tables, .bdf_encodings) orelse {
-        std.log.err("PCF: Missing required encodings table", .{});
-        return PcfError.MissingRequired;
-    };
+    const metrics_table = findTable(tables, .metrics) orelse return PcfError.MissingRequired;
+    const bitmaps_table = findTable(tables, .bitmaps) orelse return PcfError.MissingRequired;
+    const encodings_table = findTable(tables, .bdf_encodings) orelse return PcfError.MissingRequired;
     const accel_table = findTable(tables, .accelerators) orelse findTable(tables, .bdf_accelerators);
+    const properties_table = findTable(tables, .properties);
+
+    // Parse properties table if present (optional)
+    var properties_info: ?PropertiesInfo = null;
+    // Note: properties are allocated with arena allocator, so no need to free
+
+    if (properties_table) |props_table| {
+        properties_info = parseProperties(arena_allocator, file_contents, props_table) catch null;
+
+        // Log some useful properties if found
+        if (properties_info) |info| {
+            if (findProperty(info.properties, "FAMILY_NAME")) |prop| {
+                if (prop.value == .string) {
+                    std.log.info("PCF: Font family: {s}", .{prop.value.string});
+                }
+            }
+            if (findProperty(info.properties, "WEIGHT_NAME")) |prop| {
+                if (prop.value == .string) {
+                    std.log.info("PCF: Font weight: {s}", .{prop.value.string});
+                }
+            }
+        }
+    }
 
     // Parse accelerator table for font metrics
     var font_ascent: i16 = 0;
@@ -399,6 +421,109 @@ fn parseAccelerator(data: []const u8, table: TableEntry) !Accelerator {
     return accel;
 }
 
+/// Parse properties table
+fn parseProperties(allocator: std.mem.Allocator, data: []const u8, table: TableEntry) !PropertiesInfo {
+    try validateTableBounds(data, table);
+
+    var stream = std.io.fixedBufferStream(data[table.offset .. table.offset + table.size]);
+    const reader = stream.reader();
+
+    // Read format field and determine byte order
+    const format = try reader.readInt(u32, .little);
+    const byte_order = getByteOrder(format);
+
+    // Read number of properties
+    const prop_count = try reader.readInt(u32, byte_order);
+    if (prop_count > 1000) { // Sanity check
+        return PcfError.InvalidTableEntry;
+    }
+
+    // Allocate properties array
+    var result: PropertiesInfo = undefined;
+    result.properties = try allocator.alloc(Property, prop_count);
+    errdefer allocator.free(result.properties);
+
+    // Temporary storage for property info before string resolution
+    const PropInfo = struct {
+        name_offset: u32,
+        is_string: bool,
+        value: i32,
+    };
+    const prop_infos = try allocator.alloc(PropInfo, prop_count);
+    defer allocator.free(prop_infos);
+
+    // Read property info
+    for (prop_infos) |*prop| {
+        prop.name_offset = try reader.readInt(u32, byte_order);
+        const is_string_byte = try reader.readByte();
+        prop.is_string = is_string_byte != 0;
+        prop.value = try reader.readInt(i32, byte_order);
+    }
+
+    // Skip padding to align to 4 bytes if needed
+    if ((prop_count & 3) != 0) {
+        const padding = 4 - (prop_count & 3);
+        try reader.skipBytes(padding, .{});
+    }
+
+    // Read string pool size
+    const string_size = try reader.readInt(u32, byte_order);
+    const remaining = try reader.context.getEndPos() - try reader.context.getPos();
+    if (string_size > remaining) {
+        return PcfError.InvalidTableEntry;
+    }
+
+    // Read string pool
+    result.string_pool = try allocator.alloc(u8, string_size);
+    const bytes_read = try reader.read(result.string_pool);
+    if (bytes_read != string_size) {
+        return PcfError.InvalidTableEntry;
+    }
+
+    // Resolve property names and string values
+    for (prop_infos, 0..) |prop_info, i| {
+        // Get property name from string pool
+        if (prop_info.name_offset >= string_size) {
+            return PcfError.InvalidTableEntry;
+        }
+
+        const name_start = prop_info.name_offset;
+        var name_end = name_start;
+        while (name_end < string_size and result.string_pool[name_end] != 0) : (name_end += 1) {}
+
+        result.properties[i].name = result.string_pool[name_start..name_end];
+
+        if (prop_info.is_string) {
+            // Value is an offset into string pool
+            const value_offset = @as(u32, @bitCast(prop_info.value));
+            if (value_offset >= string_size) {
+                return PcfError.InvalidTableEntry;
+            }
+
+            const value_start = value_offset;
+            var value_end = value_start;
+            while (value_end < string_size and result.string_pool[value_end] != 0) : (value_end += 1) {}
+
+            result.properties[i].value = .{ .string = result.string_pool[value_start..value_end] };
+        } else {
+            // Value is an integer
+            result.properties[i].value = .{ .integer = prop_info.value };
+        }
+    }
+
+    return result;
+}
+
+/// Find a property by name
+fn findProperty(properties: []const Property, name: []const u8) ?Property {
+    for (properties) |prop| {
+        if (std.mem.eql(u8, prop.name, name)) {
+            return prop;
+        }
+    }
+    return null;
+}
+
 /// Read metric from stream (handles both compressed and uncompressed formats)
 fn readMetric(reader: anytype, byte_order: std.builtin.Endian, compressed: bool) !Metric {
     if (compressed) {
@@ -456,7 +581,6 @@ fn parseEncodings(allocator: std.mem.Allocator, data: []const u8, table: TableEn
     const encodings_count = cols * rows;
 
     if (encodings_count > MAX_GLYPH_COUNT) {
-        std.log.err("PCF: Encoding count {} exceeds maximum {}", .{ encodings_count, MAX_GLYPH_COUNT });
         return PcfError.InvalidEncodingRange;
     }
 
@@ -495,7 +619,6 @@ fn parseMetrics(allocator: std.mem.Allocator, data: []const u8, table: TableEntr
         // Read compressed metrics count
         const metrics_count = try reader.readInt(u16, byte_order);
         if (metrics_count > MAX_GLYPH_COUNT) {
-            std.log.err("PCF: Compressed metrics count {} exceeds maximum {}", .{ metrics_count, MAX_GLYPH_COUNT });
             return PcfError.InvalidGlyphCount;
         }
         result.glyph_count = metrics_count;
@@ -510,7 +633,6 @@ fn parseMetrics(allocator: std.mem.Allocator, data: []const u8, table: TableEntr
         // Read uncompressed metrics count
         const metrics_count = try reader.readInt(u32, byte_order);
         if (metrics_count > MAX_GLYPH_COUNT) {
-            std.log.err("PCF: Uncompressed metrics count {} exceeds maximum {}", .{ metrics_count, MAX_GLYPH_COUNT });
             return PcfError.InvalidGlyphCount;
         }
         result.glyph_count = @min(metrics_count, max_glyphs);
@@ -530,8 +652,16 @@ fn parseMetrics(allocator: std.mem.Allocator, data: []const u8, table: TableEntr
 const BitmapInfo = struct {
     bitmap_data: []u8,
     offsets: []u32,
-    bitmap_sizes: []u32,
+    bitmap_sizes: BitmapSizes,
     format: u32,
+};
+
+/// PCF bitmap sizes structure
+const BitmapSizes = struct {
+    image_width: u32, // Width of the bitmap image in pixels
+    image_height: u32, // Height of the bitmap image in pixels
+    image_size: u32, // Total size of bitmap data in bytes
+    bitmap_count: u32, // Number of bitmaps (same as glyph count)
 };
 
 /// Parse bitmaps table
@@ -548,7 +678,6 @@ fn parseBitmaps(allocator: std.mem.Allocator, data: []const u8, table: TableEntr
     // Read glyph count
     const glyph_count = try reader.readInt(u32, byte_order);
     if (glyph_count > MAX_GLYPH_COUNT) {
-        std.log.err("PCF: Bitmap glyph count {} exceeds maximum {}", .{ glyph_count, MAX_GLYPH_COUNT });
         return PcfError.InvalidGlyphCount;
     }
 
@@ -562,23 +691,30 @@ fn parseBitmaps(allocator: std.mem.Allocator, data: []const u8, table: TableEntr
         offset.* = try reader.readInt(u32, byte_order);
     }
 
-    // Skip bitmap sizes array (4 u32 values)
-    _ = try reader.readInt(u32, byte_order);
-    _ = try reader.readInt(u32, byte_order);
-    _ = try reader.readInt(u32, byte_order);
-    _ = try reader.readInt(u32, byte_order);
+    // Read bitmap sizes array
+    result.bitmap_sizes = BitmapSizes{
+        .image_width = try reader.readInt(u32, byte_order),
+        .image_height = try reader.readInt(u32, byte_order),
+        .image_size = try reader.readInt(u32, byte_order),
+        .bitmap_count = try reader.readInt(u32, byte_order),
+    };
 
-    // For now, just read remaining data in the table
+    // Note: bitmap_count might not always match glyph_count exactly in some PCF files
+    // Some fonts may have padding or extra bitmap slots
+
+    // Calculate remaining data size and validate against image_size
     const remaining = try reader.context.getEndPos() - try reader.context.getPos();
     const total_size = remaining;
 
-    result.bitmap_sizes = try allocator.alloc(u32, 1);
-    result.bitmap_sizes[0] = @intCast(total_size);
+    // Some PCF files may have padding, so allow total_size >= image_size
+    if (total_size < result.bitmap_sizes.image_size) {
+        return PcfError.InvalidBitmapData;
+    }
 
-    // Read bitmap data
-    result.bitmap_data = try allocator.alloc(u8, total_size);
+    // Read bitmap data - use the actual image size, not total remaining
+    result.bitmap_data = try allocator.alloc(u8, result.bitmap_sizes.image_size);
     const bytes_read = try reader.read(result.bitmap_data);
-    if (bytes_read != total_size) {
+    if (bytes_read != result.bitmap_sizes.image_size) {
         return PcfError.InvalidBitmapData;
     }
 
@@ -934,4 +1070,53 @@ test "Gzip decompression" {
         return err;
     };
     defer allocator.free(result);
+}
+
+test "Properties parsing" {
+    const allocator = testing.allocator;
+
+    // Create a minimal properties table with just one integer property for simplicity
+    var buffer: [256]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    const writer = stream.writer();
+
+    // Write format (little endian, no special flags)
+    try writer.writeInt(u32, 0x00000000, .little);
+
+    // Write number of properties (1)
+    try writer.writeInt(u32, 1, .little);
+
+    // Property 1: PIXEL_SIZE (integer)
+    try writer.writeInt(u32, 0, .little); // name offset
+    try writer.writeByte(0); // is_string = false
+    try writer.writeInt(i32, 16, .little); // value = 16
+
+    // Padding (1 property -> need 3 bytes padding to align to 4)
+    try writer.writeByte(0);
+    try writer.writeByte(0);
+    try writer.writeByte(0);
+
+    // String pool size
+    try writer.writeInt(u32, 11, .little);
+
+    // String pool
+    try writer.writeAll("PIXEL_SIZE\x00");
+
+    const table = TableEntry{
+        .type = @intFromEnum(TableType.properties),
+        .format = 0,
+        .size = @intCast(stream.getWritten().len),
+        .offset = 0,
+    };
+
+    const props = try parseProperties(allocator, stream.getWritten(), table);
+    defer allocator.free(props.properties);
+    defer allocator.free(props.string_pool);
+
+    try testing.expectEqual(@as(usize, 1), props.properties.len);
+
+    // Check property
+    try testing.expectEqualStrings("PIXEL_SIZE", props.properties[0].name);
+    try testing.expect(props.properties[0].value == .integer);
+    try testing.expectEqual(@as(i32, 16), props.properties[0].value.integer);
 }
