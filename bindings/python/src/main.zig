@@ -38,20 +38,6 @@ pub export fn PyInit__zignal() ?*c.PyObject {
     const m = c.PyModule_Create(&zignal_module);
     if (m == null) return null;
 
-    // Register Rectangle type
-    py_utils.registerType(@ptrCast(m), "Rectangle", @ptrCast(&rectangle.RectangleType)) catch |err| {
-        std.log.err("Failed to register Rectangle: {}", .{err});
-        c.Py_DECREF(m);
-        return null;
-    };
-
-    // Register BitmapFont type
-    py_utils.registerType(@ptrCast(m), "BitmapFont", @ptrCast(&bitmap_font.BitmapFontType)) catch |err| {
-        std.log.err("Failed to register BitmapFont: {}", .{err});
-        c.Py_DECREF(m);
-        return null;
-    };
-
     // Register Image type
     py_utils.registerType(@ptrCast(m), "Image", @ptrCast(&image.ImageType)) catch |err| {
         std.log.err("Failed to register Image: {}", .{err});
@@ -76,6 +62,20 @@ pub export fn PyInit__zignal() ?*c.PyObject {
     // Register DrawMode enum
     canvas.registerDrawMode(@ptrCast(m)) catch |err| {
         std.log.err("Failed to register DrawMode: {}", .{err});
+        c.Py_DECREF(m);
+        return null;
+    };
+
+    // Register Rectangle type
+    py_utils.registerType(@ptrCast(m), "Rectangle", @ptrCast(&rectangle.RectangleType)) catch |err| {
+        std.log.err("Failed to register Rectangle: {}", .{err});
+        c.Py_DECREF(m);
+        return null;
+    };
+
+    // Register BitmapFont type
+    py_utils.registerType(@ptrCast(m), "BitmapFont", @ptrCast(&bitmap_font.BitmapFontType)) catch |err| {
+        std.log.err("Failed to register BitmapFont: {}", .{err});
         c.Py_DECREF(m);
         return null;
     };
