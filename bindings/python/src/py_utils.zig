@@ -28,14 +28,11 @@ pub fn registerType(module: [*c]c.PyObject, comptime name: []const u8, type_obj:
     }
 }
 
-/// Get Python boolean singletons
+/// Get Python boolean singletons using the stable Python C API
 pub fn getPyBool(value: bool) [*c]c.PyObject {
-    const py_true = @extern(*c.PyObject, .{ .name = "_Py_TrueStruct", .linkage = .weak });
-    const py_false = @extern(*c.PyObject, .{ .name = "_Py_FalseStruct", .linkage = .weak });
-
-    const result = if (value) py_true else py_false;
-    c.Py_INCREF(result);
-    return @ptrCast(result);
+    // Use PyBool_FromLong which handles reference counting automatically
+    // and is part of the stable Python C API, working cross-platform
+    return c.PyBool_FromLong(if (value) 1 else 0);
 }
 
 /// Convert a Zig value to Python object
