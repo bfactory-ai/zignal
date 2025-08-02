@@ -86,9 +86,6 @@ const rectangle_init_center_doc =
     \\- `width` (float): Rectangle width
     \\- `height` (float): Rectangle height
     \\
-    \\## Returns
-    \\Rectangle: A new Rectangle centered at (x, y) with given dimensions
-    \\
     \\## Examples
     \\```python
     \\# Create a 100x50 rectangle centered at (50, 50)
@@ -138,9 +135,6 @@ const rectangle_is_empty_doc =
     \\
     \\A rectangle is considered empty if its left >= right or top >= bottom.
     \\
-    \\## Returns
-    \\bool: True if the rectangle is empty, False otherwise
-    \\
     \\## Examples
     \\```python
     \\rect1 = Rectangle(0, 0, 100, 100)
@@ -162,9 +156,6 @@ fn rectangle_is_empty(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?
 
 const rectangle_area_doc =
     \\Calculate the area of the rectangle.
-    \\
-    \\## Returns
-    \\float: The area (width * height)
     \\
     \\## Examples
     \\```python
@@ -190,9 +181,6 @@ const rectangle_contains_doc =
     \\## Parameters
     \\- `x` (float): X coordinate to check
     \\- `y` (float): Y coordinate to check
-    \\
-    \\## Returns
-    \\bool: True if the point is inside the rectangle, False otherwise
     \\
     \\## Examples
     \\```python
@@ -228,9 +216,6 @@ const rectangle_grow_doc =
     \\## Parameters
     \\- `amount` (float): Amount to expand each border by
     \\
-    \\## Returns
-    \\Rectangle: A new rectangle with borders expanded by amount
-    \\
     \\## Examples
     \\```python
     \\rect = Rectangle(50, 50, 100, 100)
@@ -265,9 +250,6 @@ const rectangle_shrink_doc =
     \\## Parameters
     \\- `amount` (float): Amount to shrink each border by
     \\
-    \\## Returns
-    \\Rectangle: A new rectangle with borders shrunk by amount
-    \\
     \\## Examples
     \\```python
     \\rect = Rectangle(40, 40, 110, 110)
@@ -301,9 +283,6 @@ const rectangle_intersect_doc =
     \\
     \\## Parameters
     \\- `other` (Rectangle): The other rectangle to intersect with
-    \\
-    \\## Returns
-    \\Rectangle or None: The intersection rectangle, or None if they don't overlap
     \\
     \\## Examples
     \\```python

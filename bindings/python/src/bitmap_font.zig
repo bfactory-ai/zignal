@@ -52,9 +52,6 @@ const bitmap_font_load_doc =
     \\## Parameters
     \\- `path` (str): Path to the font file
     \\
-    \\## Returns
-    \\BitmapFont: The loaded font object
-    \\
     \\## Examples
     \\```python
     \\font = BitmapFont.load("unifont.bdf")
@@ -121,9 +118,6 @@ const bitmap_font_get_default_font_doc =
     \\Get the built-in default 8x8 bitmap font.
     \\
     \\This font covers ASCII characters from 0x20 (space) to 0x7E (tilde).
-    \\
-    \\## Returns
-    \\BitmapFont: The default font object
     \\
     \\## Examples
     \\```python
