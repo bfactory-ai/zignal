@@ -7,6 +7,7 @@ const fdm = @import("fdm.zig");
 const image = @import("image.zig");
 const interpolation = @import("interpolation.zig");
 const py_utils = @import("py_utils.zig");
+const rectangle = @import("rectangle.zig");
 const stub_metadata = @import("stub_metadata.zig");
 
 const c = py_utils.c;
@@ -35,6 +36,13 @@ var zignal_methods = stub_metadata.functionsToPyMethodDefArray(&module_functions
 pub export fn PyInit__zignal() ?*c.PyObject {
     const m = c.PyModule_Create(&zignal_module);
     if (m == null) return null;
+
+    // Register Rectangle type
+    py_utils.registerType(@ptrCast(m), "Rectangle", @ptrCast(&rectangle.RectangleType)) catch |err| {
+        std.log.err("Failed to register Rectangle: {}", .{err});
+        c.Py_DECREF(m);
+        return null;
+    };
 
     // Register Image type
     py_utils.registerType(@ptrCast(m), "Image", @ptrCast(&image.ImageType)) catch |err| {
