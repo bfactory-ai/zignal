@@ -5,14 +5,13 @@
 
 const std = @import("std");
 const testing = std.testing;
+
+const max_file_size = @import("../font.zig").max_file_size;
+const LoadFilter = @import("../font.zig").LoadFilter;
+const compression = @import("../font.zig").compression;
 const BitmapFont = @import("BitmapFont.zig");
 const GlyphData = @import("GlyphData.zig");
 const unicode = @import("unicode.zig");
-const LoadFilter = @import("../font.zig").LoadFilter;
-const deflate = @import("../deflate.zig");
-
-/// Maximum file size for BDF fonts
-const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
 /// Errors that can occur during BDF parsing
 pub const BdfError = error{
@@ -54,52 +53,6 @@ const BdfParseState = struct {
     all_ascii: bool = true,
 };
 
-/// Decompress gzip data
-fn decompressGzip(allocator: std.mem.Allocator, gzip_data: []const u8) ![]u8 {
-    if (gzip_data.len < 18) { // Minimum gzip file size
-        return BdfError.InvalidCompression;
-    }
-
-    // Check gzip magic number
-    if (gzip_data[0] != 0x1f or gzip_data[1] != 0x8b) {
-        return BdfError.InvalidCompression;
-    }
-
-    // Check compression method (must be deflate)
-    if (gzip_data[2] != 8) {
-        return BdfError.InvalidCompression;
-    }
-
-    // Parse header flags
-    const flags = gzip_data[3];
-    var offset: usize = 10; // Fixed header size
-
-    // Skip optional fields based on flags
-    if (flags & 0x04 != 0) { // FEXTRA
-        const extra_len = @as(u16, gzip_data[offset]) | (@as(u16, gzip_data[offset + 1]) << 8);
-        offset += 2 + extra_len;
-    }
-    if (flags & 0x08 != 0) { // FNAME
-        while (offset < gzip_data.len and gzip_data[offset] != 0) : (offset += 1) {}
-        offset += 1;
-    }
-    if (flags & 0x10 != 0) { // FCOMMENT
-        while (offset < gzip_data.len and gzip_data[offset] != 0) : (offset += 1) {}
-        offset += 1;
-    }
-    if (flags & 0x02 != 0) { // FHCRC
-        offset += 2;
-    }
-
-    // Decompress the deflate stream (excluding 8-byte trailer)
-    if (offset + 8 > gzip_data.len) {
-        return BdfError.InvalidCompression;
-    }
-
-    const compressed_data = gzip_data[offset .. gzip_data.len - 8];
-    return deflate.inflate(allocator, compressed_data);
-}
-
 /// Load a BDF font from a file path
 /// Parameters:
 /// - allocator: Memory allocator
@@ -110,7 +63,7 @@ pub fn load(allocator: std.mem.Allocator, path: []const u8, filter: LoadFilter) 
     const is_compressed = std.mem.endsWith(u8, path, ".gz");
 
     // Read entire file into memory
-    const raw_file_contents = try std.fs.cwd().readFileAlloc(allocator, path, MAX_FILE_SIZE);
+    const raw_file_contents = try std.fs.cwd().readFileAlloc(allocator, path, max_file_size);
     defer allocator.free(raw_file_contents);
 
     // Decompress if needed
@@ -119,7 +72,10 @@ pub fn load(allocator: std.mem.Allocator, path: []const u8, filter: LoadFilter) 
     defer if (decompressed_data) |data| allocator.free(data);
 
     if (is_compressed) {
-        decompressed_data = try decompressGzip(allocator, raw_file_contents);
+        decompressed_data = compression.decompressGzip(allocator, raw_file_contents) catch |err| switch (err) {
+            compression.CompressionError.InvalidCompression => return BdfError.InvalidCompression,
+            else => return err,
+        };
         file_contents = decompressed_data.?;
         std.log.info("BDF: Decompressed {s} from {} bytes to {} bytes", .{ path, raw_file_contents.len, file_contents.len });
     } else {
