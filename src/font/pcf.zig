@@ -26,32 +26,67 @@ pub const PcfError = error{
 const PCF_FILE_VERSION = 0x70636601; // "\x01fcp" in little-endian
 const PCF_FORMAT_MASK = 0xffffff00;
 
-/// PCF table types
-const PCF_PROPERTIES = (1 << 0);
-const PCF_ACCELERATORS = (1 << 1);
-const PCF_METRICS = (1 << 2);
-const PCF_BITMAPS = (1 << 3);
-const PCF_INK_METRICS = (1 << 4);
-const PCF_BDF_ENCODINGS = (1 << 5);
-const PCF_SWIDTHS = (1 << 6);
-const PCF_GLYPH_NAMES = (1 << 7);
-const PCF_BDF_ACCELERATORS = (1 << 8);
+/// PCF table types as enum for better type safety
+const TableType = enum(u32) {
+    properties = (1 << 0),
+    accelerators = (1 << 1),
+    metrics = (1 << 2),
+    bitmaps = (1 << 3),
+    ink_metrics = (1 << 4),
+    bdf_encodings = (1 << 5),
+    swidths = (1 << 6),
+    glyph_names = (1 << 7),
+    bdf_accelerators = (1 << 8),
+};
 
-/// PCF format flags
-const PCF_DEFAULT_FORMAT = 0x00000000;
-const PCF_INKBOUNDS = 0x00000200;
-const PCF_ACCEL_W_INKBOUNDS = 0x00000100;
-const PCF_COMPRESSED_METRICS = 0x00000100;
+/// PCF format flags structure for better type safety
+const FormatFlags = struct {
+    // Helper to decode format flags from u32
+    pub fn decode(format: u32) FormatFlags {
+        return FormatFlags{
+            .glyph_pad = @as(u2, @truncate(format & 0x3)),
+            .byte_order_msb = (format & (1 << 3)) != 0,
+            .bit_order_msb = (format & (1 << 2)) != 0,
+            .scan_unit = @as(u2, @truncate((format >> 4) & 0x3)),
+            .compressed_metrics = (format & 0x100) != 0,
+            .ink_bounds = (format & 0x200) != 0,
+            .accel_w_inkbounds = (format & 0x100) != 0,
+        };
+    }
 
-/// PCF byte order flags
-const PCF_BIT_MASK = (1 << 2); // bit 2 for bit order within bytes
-const PCF_BYTE_MASK = (1 << 3); // bit 3 for byte order (MSB/LSB)
-const PCF_GLYPH_PAD_MASK = (3 << 0);
-const PCF_SCAN_UNIT_MASK = (3 << 0);
+    glyph_pad: u2,
+    byte_order_msb: bool,
+    bit_order_msb: bool,
+    scan_unit: u2,
+    compressed_metrics: bool,
+    ink_bounds: bool,
+    accel_w_inkbounds: bool,
+};
+
+/// PCF glyph padding values
+const GlyphPadding = enum(u2) {
+    pad_1 = 0,
+    pad_2 = 1,
+    pad_4 = 2,
+    pad_8 = 3,
+
+    pub fn getPadBytes(self: GlyphPadding) u32 {
+        return switch (self) {
+            .pad_1 => 1,
+            .pad_2 => 2,
+            .pad_4 => 4,
+            .pad_8 => 8,
+        };
+    }
+};
+
+/// PCF format mask constants
+const PCF_GLYPH_PAD_MASK = (3 << 0); // Still needed for extracting glyph pad bits
 
 /// Get byte order from format field
 fn getByteOrder(format: u32) std.builtin.Endian {
-    return if ((format & PCF_BYTE_MASK) != 0) .big else .little;
+    const flags = FormatFlags.decode(format);
+    return if (flags.byte_order_msb) .big else .little;
 }
 
 /// Table of contents entry
@@ -158,10 +193,10 @@ pub fn load(allocator: std.mem.Allocator, path: []const u8, filter: LoadFilter) 
     }
 
     // Find required tables
-    const metrics_table = findTable(tables, PCF_METRICS) orelse return PcfError.MissingRequired;
-    const bitmaps_table = findTable(tables, PCF_BITMAPS) orelse return PcfError.MissingRequired;
-    const encodings_table = findTable(tables, PCF_BDF_ENCODINGS) orelse return PcfError.MissingRequired;
-    const accel_table = findTable(tables, PCF_ACCELERATORS) orelse findTable(tables, PCF_BDF_ACCELERATORS);
+    const metrics_table = findTable(tables, .metrics) orelse return PcfError.MissingRequired;
+    const bitmaps_table = findTable(tables, .bitmaps) orelse return PcfError.MissingRequired;
+    const encodings_table = findTable(tables, .bdf_encodings) orelse return PcfError.MissingRequired;
+    const accel_table = findTable(tables, .accelerators) orelse findTable(tables, .bdf_accelerators);
 
     // Parse accelerator table for font metrics
     var font_ascent: i16 = 0;
@@ -198,9 +233,10 @@ pub fn load(allocator: std.mem.Allocator, path: []const u8, filter: LoadFilter) 
 }
 
 /// Find a table in the table of contents
-fn findTable(tables: []const TableEntry, table_type: u32) ?TableEntry {
+fn findTable(tables: []const TableEntry, table_type: TableType) ?TableEntry {
+    const type_value = @intFromEnum(table_type);
     for (tables) |table| {
-        if (table.type == table_type) {
+        if (table.type == type_value) {
             return table;
         }
     }
@@ -256,7 +292,8 @@ fn parseAccelerator(data: []const u8, table: TableEntry) !Accelerator {
     accel.max_bounds = try readUncompressedMetric(reader, byte_order);
 
     // Read ink bounds if present
-    if ((table.format & PCF_ACCEL_W_INKBOUNDS) != 0) {
+    const accel_flags = FormatFlags.decode(table.format);
+    if (accel_flags.accel_w_inkbounds) {
         accel.ink_min_bounds = try readUncompressedMetric(reader, byte_order);
         accel.ink_max_bounds = try readUncompressedMetric(reader, byte_order);
     } else {
@@ -334,7 +371,8 @@ fn parseMetrics(allocator: std.mem.Allocator, data: []const u8, table: TableEntr
     const format = try reader.readInt(u32, .little);
     const byte_order = getByteOrder(format);
 
-    const compressed = (format & PCF_COMPRESSED_METRICS) != 0;
+    const flags = FormatFlags.decode(format);
+    const compressed = flags.compressed_metrics;
 
     var result: MetricsInfo = undefined;
 
@@ -533,13 +571,9 @@ fn convertToBitmapFont(
 
         // Convert PCF bitmap to our format
         const pcf_bytes_per_row = (glyph_width + 7) / 8;
-        const pcf_pad: u32 = switch (bitmap_info.format & PCF_GLYPH_PAD_MASK) {
-            0 => 1, // PCF_GLYPH_PAD_1
-            1 => 2, // PCF_GLYPH_PAD_2
-            2 => 4, // PCF_GLYPH_PAD_4
-            3 => 8, // PCF_GLYPH_PAD_8
-            else => unreachable,
-        };
+        const pad_bits = @as(u2, @truncate(bitmap_info.format & PCF_GLYPH_PAD_MASK));
+        const glyph_pad = @as(GlyphPadding, @enumFromInt(pad_bits));
+        const pcf_pad = glyph_pad.getPadBytes();
         const pcf_row_bytes = ((pcf_bytes_per_row + pcf_pad - 1) / pcf_pad) * pcf_pad;
 
         // Convert each row
@@ -551,7 +585,8 @@ fn convertToBitmapFont(
                 if (src_offset + byte_idx < bitmap_info.bitmap_data.len) {
                     const byte = bitmap_info.bitmap_data[src_offset + byte_idx];
                     // PCF uses MSB first, convert if needed
-                    const converted_byte = if ((bitmap_info.format & PCF_BIT_MASK) != 0)
+                    const bitmap_flags = FormatFlags.decode(bitmap_info.format);
+                    const converted_byte = if (bitmap_flags.bit_order_msb)
                         @bitReverse(byte)
                     else
                         byte;
@@ -609,8 +644,8 @@ test "PCF table parsing" {
     try writer.writeInt(u32, 1, .little); // 1 table
 
     // Write table entry
-    try writer.writeInt(u32, PCF_PROPERTIES, .little);
-    try writer.writeInt(u32, PCF_DEFAULT_FORMAT, .little);
+    try writer.writeInt(u32, @intFromEnum(TableType.properties), .little);
+    try writer.writeInt(u32, 0x00000000, .little); // Default format
     try writer.writeInt(u32, 16, .little); // size
     try writer.writeInt(u32, 32, .little); // offset
 
