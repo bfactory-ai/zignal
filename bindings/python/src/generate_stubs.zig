@@ -257,12 +257,13 @@ fn generateStubFile(allocator: std.mem.Allocator) ![]u8 {
     }
 
     // Generate Rectangle class from metadata
+    const rectangle_methods = stub_metadata.extractMethodInfo(&rectangle_module.rectangle_methods_metadata);
     const rectangle_properties = stub_metadata.extractPropertyInfo(&rectangle_module.rectangle_properties_metadata);
     const rectangle_doc = std.mem.span(rectangle_module.RectangleType.tp_doc);
     try generateClassFromMetadata(&stub, .{
         .name = "Rectangle",
         .doc = rectangle_doc,
-        .methods = &[_]stub_metadata.MethodInfo{},
+        .methods = &rectangle_methods,
         .properties = &rectangle_properties,
         .bases = &.{},
     });
