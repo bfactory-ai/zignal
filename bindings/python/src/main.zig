@@ -1,6 +1,7 @@
 const std = @import("std");
 const build_options = @import("build_options");
 
+const bitmap_font = @import("bitmap_font.zig");
 const canvas = @import("canvas.zig");
 const color = @import("color.zig");
 const fdm = @import("fdm.zig");
@@ -40,6 +41,13 @@ pub export fn PyInit__zignal() ?*c.PyObject {
     // Register Rectangle type
     py_utils.registerType(@ptrCast(m), "Rectangle", @ptrCast(&rectangle.RectangleType)) catch |err| {
         std.log.err("Failed to register Rectangle: {}", .{err});
+        c.Py_DECREF(m);
+        return null;
+    };
+
+    // Register BitmapFont type
+    py_utils.registerType(@ptrCast(m), "BitmapFont", @ptrCast(&bitmap_font.BitmapFontType)) catch |err| {
+        std.log.err("Failed to register BitmapFont: {}", .{err});
         c.Py_DECREF(m);
         return null;
     };

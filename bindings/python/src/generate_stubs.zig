@@ -268,6 +268,18 @@ fn generateStubFile(allocator: std.mem.Allocator) ![]u8 {
         .bases = &.{},
     });
 
+    // Generate BitmapFont class
+    try stub.write("\nclass BitmapFont:\n");
+    try stub.write("    \"\"\"Bitmap font for text rendering\"\"\"\n");
+    try stub.write("    @classmethod\n");
+    try stub.write("    def load(cls, path: str) -> BitmapFont:\n");
+    try stub.write("        \"\"\"Load a bitmap font from file.\"\"\"\n");
+    try stub.write("        ...\n");
+    try stub.write("    @classmethod\n");
+    try stub.write("    def get_default_font(cls) -> BitmapFont:\n");
+    try stub.write("        \"\"\"Get the built-in default 8x8 bitmap font.\"\"\"\n");
+    try stub.write("        ...\n");
+
     // Generate InterpolationMethod enum
     try generateEnumFromMetadata(&stub, .{
         .name = "InterpolationMethod",
@@ -360,6 +372,7 @@ fn generateInitStub(allocator: std.mem.Allocator) ![]u8 {
 
     // Add Image and classes
     try stub.write("    Rectangle as Rectangle,\n");
+    try stub.write("    BitmapFont as BitmapFont,\n");
     try stub.write("    Image as Image,\n");
     try stub.write("    Canvas as Canvas,\n");
     try stub.write("    InterpolationMethod as InterpolationMethod,\n");

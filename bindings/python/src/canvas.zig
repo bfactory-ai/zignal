@@ -981,7 +981,7 @@ const canvas_draw_text_doc =
     \\## Parameters
     \\- `text` (str): Text to draw
     \\- `position` (tuple[float, float]): Position coordinates (x, y)
-    \\- `font`: Font object to use for rendering
+    \\- `font` (BitmapFont): Font object to use for rendering
     \\- `color` (int, tuple or color object): Text color. Can be:
     \\  - Integer: grayscale value 0-255 (0=black, 255=white)
     \\  - RGB tuple: `(r, g, b)` with values 0-255
@@ -990,25 +990,75 @@ const canvas_draw_text_doc =
     \\- `scale` (float, optional): Text scale factor (default: 1.0)
     \\- `mode` (`DrawMode`, optional): Drawing mode: `DrawMode.FAST` or `DrawMode.SOFT` (default: `DrawMode.FAST`)
     \\
-    \\## Notes
-    \\Font support is not yet implemented. This method will raise NotImplementedError.
-    \\
     \\## Examples
     \\```python
     \\img = Image.load("photo.png")
     \\canvas = img.canvas()
-    \\# This will raise NotImplementedError
-    \\# canvas.draw_text("Hello", (50, 50), font, (255, 255, 255))
+    \\# Use default font
+    \\font = BitmapFont.get_default_font()
+    \\canvas.draw_text("Hello World!", (50, 50), font, (255, 255, 255))
+    \\# Draw scaled text
+    \\canvas.draw_text("Big Text", (50, 100), font, (255, 0, 0), scale=2.0)
+    \\# Load custom font
+    \\custom_font = BitmapFont.load("myfont.bdf")
+    \\canvas.draw_text("Custom Font", (50, 150), custom_font, (0, 255, 0))
     \\```
 ;
 
 fn canvas_draw_text(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-    _ = self_obj;
-    _ = args;
-    _ = kwds;
+    const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
-    c.PyErr_SetString(c.PyExc_NotImplementedError, "Font support is not yet implemented. Text drawing will be available in a future release.");
-    return null;
+    // Check if canvas is initialized
+    if (self.canvas_ptr == null) {
+        c.PyErr_SetString(c.PyExc_ValueError, "Canvas not initialized");
+        return null;
+    }
+
+    // Parse arguments
+    var text_obj: ?*c.PyObject = undefined;
+    var position_obj: ?*c.PyObject = undefined;
+    var font_obj: ?*c.PyObject = undefined;
+    var color_obj: ?*c.PyObject = undefined;
+    var scale: f64 = 1.0;
+    var mode: c_long = 0; // DrawMode.FAST
+
+    const kwlist = [_][*c]const u8{ "text", "position", "font", "color", "scale", "mode", null };
+    const format = std.fmt.comptimePrint("OOOO|dl:draw_text", .{});
+    if (c.PyArg_ParseTupleAndKeywords(args, @constCast(kwds), format.ptr, @ptrCast(&kwlist), &text_obj, &position_obj, &font_obj, &color_obj, &scale, &mode) == 0) {
+        return null;
+    }
+
+    // Convert text to string
+    const text_cstr = c.PyUnicode_AsUTF8(text_obj) orelse {
+        c.PyErr_SetString(c.PyExc_TypeError, "text must be a string");
+        return null;
+    };
+    const text = std.mem.span(text_cstr);
+
+    // Parse position
+    const position = py_utils.parsePointTuple(position_obj) catch return null;
+
+    // Check if font is a BitmapFont
+    const bitmap_font_module = @import("bitmap_font.zig");
+    if (c.PyObject_IsInstance(font_obj, @ptrCast(&bitmap_font_module.BitmapFontType)) <= 0) {
+        c.PyErr_SetString(c.PyExc_TypeError, "font must be a BitmapFont instance");
+        return null;
+    }
+    const font_wrapper = @as(*bitmap_font_module.BitmapFontObject, @ptrCast(font_obj.?));
+
+    // Parse color
+    const color = py_utils.parseColorToRgba(@ptrCast(color_obj)) catch return null;
+    const draw_mode: DrawMode = if (mode == 0) .fast else .soft;
+
+    // Draw the text
+    if (font_wrapper.font) |font| {
+        self.canvas_ptr.?.drawText(text, position, font.*, color, @as(f32, @floatCast(scale)), draw_mode);
+    } else {
+        c.PyErr_SetString(c.PyExc_ValueError, "BitmapFont not initialized");
+        return null;
+    }
+
+    return py_utils.returnNone();
 }
 
 fn canvas_get_rows(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
@@ -1152,7 +1202,7 @@ pub const canvas_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&canvas_draw_text),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = canvas_draw_text_doc,
-        .params = "self, text: str, position: Tuple[float, float], font: Any, color: Union[int, Tuple[int, int, int], Tuple[int, int, int, int], " ++ colors ++ "], scale: float = 1.0, mode: DrawMode = ...",
+        .params = "self, text: str, position: Tuple[float, float], font: BitmapFont, color: Union[int, Tuple[int, int, int], Tuple[int, int, int, int], " ++ colors ++ "], scale: float = 1.0, mode: DrawMode = ...",
         .returns = "None",
     },
 };

@@ -290,16 +290,22 @@ class TestBezierAndSpline:
 
 
 class TestDrawText:
-    """Test text drawing placeholder"""
+    """Test text drawing with BitmapFont"""
 
-    def test_not_implemented(self):
-        """Test draw_text raises NotImplementedError"""
-        img = zignal.Image.from_numpy(np.zeros((50, 50, 4), dtype=np.uint8))
+    def test_draw_text_basic(self):
+        """Test basic text drawing"""
+        img = zignal.Image.from_numpy(np.zeros((100, 200, 4), dtype=np.uint8))
         canvas = img.canvas()
+        font = zignal.BitmapFont.get_default_font()
 
-        # Should raise NotImplementedError
-        with pytest.raises(NotImplementedError):
-            canvas.draw_text("Hello", (10, 10), None, (255, 255, 255))
+        # Draw simple text
+        canvas.draw_text("Hello World", (10, 10), font, (255, 255, 255))
+
+        # Draw with scale
+        canvas.draw_text("Big", (10, 30), font, (255, 0, 0), scale=2.0)
+
+        # Draw with antialiasing
+        canvas.draw_text("Smooth", (10, 60), font, (0, 255, 0), mode=zignal.DrawMode.SOFT)
 
 
 if __name__ == "__main__":
