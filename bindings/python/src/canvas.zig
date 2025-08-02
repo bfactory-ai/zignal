@@ -1024,7 +1024,8 @@ fn canvas_draw_text(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
 
     const kwlist = [_][*c]const u8{ "text", "position", "font", "color", "scale", "mode", null };
     const format = std.fmt.comptimePrint("OOOO|dl:draw_text", .{});
-    if (c.PyArg_ParseTupleAndKeywords(args, @constCast(kwds), format.ptr, @ptrCast(&kwlist), &text_obj, &position_obj, &font_obj, &color_obj, &scale, &mode) == 0) {
+    // TODO: remove @constCast once we only use Python >= 3.13
+    if (c.PyArg_ParseTupleAndKeywords(args, @constCast(kwds), format.ptr, @constCast(@ptrCast(&kwlist)), &text_obj, &position_obj, &font_obj, &color_obj, &scale, &mode) == 0) {
         return null;
     }
 
