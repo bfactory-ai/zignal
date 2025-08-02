@@ -63,19 +63,25 @@ const bitmap_font_load_doc =
 ;
 
 fn bitmap_font_load(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-    var path_obj: ?*c.PyObject = undefined;
+    var file_path: [*c]const u8 = undefined;
 
-    const format = std.fmt.comptimePrint("O", .{});
-    if (c.PyArg_ParseTuple(args, format.ptr, &path_obj) == 0) {
+    if (c.PyArg_ParseTuple(args, "s", &file_path) == 0) {
         return null;
     }
 
-    // Convert Python string to Zig string
-    const path_cstr = c.PyUnicode_AsUTF8(path_obj) orelse {
-        c.PyErr_SetString(c.PyExc_TypeError, "path must be a string");
-        return null;
+    // Convert C string to Zig slice
+    const path_slice = std.mem.span(file_path);
+
+    // Check if file exists first to provide better error message
+    std.fs.cwd().access(path_slice, .{}) catch |err| {
+        switch (err) {
+            error.FileNotFound => {
+                c.PyErr_SetString(c.PyExc_FileNotFoundError, "Font file not found");
+                return null;
+            },
+            else => {}, // Continue with load attempt
+        }
     };
-    const path = std.mem.span(path_cstr);
 
     // Create new BitmapFont instance
     const instance = c.PyObject_CallObject(@ptrCast(type_obj), null) orelse return null;
@@ -87,27 +93,26 @@ fn bitmap_font_load(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c
         c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate font");
         return null;
     };
+    // Important: set the font pointer initially to prevent issues
+    self.font = font_ptr;
 
     // Load font from file (loading all characters)
-    font_ptr.* = BitmapFont.load(allocator, path, .all) catch |err| {
+    font_ptr.* = BitmapFont.load(allocator, path_slice, .all) catch |err| {
+        // Clean up on error
         allocator.destroy(font_ptr);
+        self.font = null; // Clear the pointer
         c.Py_DECREF(instance);
 
         // Set appropriate Python exception based on error
         switch (err) {
             error.FileNotFound => c.PyErr_SetString(c.PyExc_FileNotFoundError, "Font file not found"),
             error.UnsupportedFontFormat => c.PyErr_SetString(c.PyExc_ValueError, "Unsupported font format"),
-            error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory loading font"),
-            else => {
-                var buf: [256]u8 = undefined;
-                const msg = std.fmt.bufPrintZ(&buf, "Failed to load font: {s}", .{@errorName(err)}) catch "Failed to load font";
-                c.PyErr_SetString(c.PyExc_RuntimeError, msg);
-            },
+            error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory"),
+            else => c.PyErr_SetString(c.PyExc_IOError, "Failed to load font"),
         }
         return null;
     };
 
-    self.font = font_ptr;
     return instance;
 }
 

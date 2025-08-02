@@ -12,8 +12,8 @@ def test_bitmap_font_default():
 
 def test_bitmap_font_load_not_found():
     """Test loading non-existent font file."""
-    # Skip this test for now - there's a segfault in error handling
-    pytest.skip("Error handling for file not found causes segfault")
+    with pytest.raises(FileNotFoundError, match="Font file not found"):
+        zignal.BitmapFont.load("nonexistent.bdf")
 
 
 def test_draw_text_with_default_font():
