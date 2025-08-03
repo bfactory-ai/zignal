@@ -110,7 +110,7 @@ pub const LoadedFile = struct {
 /// Load a file and automatically decompress if it's gzip compressed
 pub fn loadFile(allocator: std.mem.Allocator, path: []const u8, max_size: usize) !LoadedFile {
     // Check if file is gzip compressed
-    const is_compressed = std.mem.endsWith(u8, path, ".gz");
+    const is_compressed = std.ascii.endsWithIgnoreCase(path, ".gz");
 
     // Read entire file into memory
     const raw_file_contents = try std.fs.cwd().readFileAlloc(allocator, path, max_size);
