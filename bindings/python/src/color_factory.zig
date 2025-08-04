@@ -82,6 +82,15 @@ pub fn createColorBinding(
         pub const PyObjectType = ObjectType;
         pub const ZigType = ZigColorType;
 
+        /// Create a Python object from a Zig color value
+        pub fn createPyObject(zig_color: ZigType, type_obj: *c.PyTypeObject) ?*c.PyObject {
+            const obj = c.PyType_GenericNew(@ptrCast(type_obj), null, null);
+            if (obj == null) return null;
+            const py_obj = @as(*PyObjectType, @ptrCast(obj));
+            zigColorToObject(zig_color, py_obj);
+            return obj;
+        }
+
         /// Generate property getters and setters
         pub fn generateGetSet() [fields.len + 1]c.PyGetSetDef {
             var getset: [fields.len + 1]c.PyGetSetDef = undefined;
@@ -327,7 +336,7 @@ pub fn createColorBinding(
         }
 
         /// Convert Zig color to Python object fields
-        fn zigColorToObject(zig_color: ZigColorType, obj: *ObjectType) void {
+        pub fn zigColorToObject(zig_color: ZigColorType, obj: *ObjectType) void {
             if (comptime is_packed) {
                 // For packed structs, convert to byte array using @bitCast
                 const bytes: [fields.len]u8 = @bitCast(zig_color);
