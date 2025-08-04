@@ -38,14 +38,82 @@ fn image_new(type_obj: ?*c.PyTypeObject, args: ?*c.PyObject, kwds: ?*c.PyObject)
     return @as(?*c.PyObject, @ptrCast(self));
 }
 
-fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) c_int {
-    _ = self_obj;
-    _ = args;
-    _ = kwds;
+const image_init_doc =
+    \\Create a new Image with the specified dimensions and optional fill color.
+    \\
+    \\## Parameters
+    \\- `rows` (int): Number of rows (height) of the image
+    \\- `cols` (int): Number of columns (width) of the image
+    \\- `color` (tuple, optional): Fill color as RGB tuple (r, g, b) or RGBA tuple (r, g, b, a).
+    \\  Defaults to transparent (0, 0, 0, 0).
+    \\
+    \\## Examples
+    \\```python
+    \\# Create a 100x200 transparent image
+    \\img = Image(100, 200)
+    \\
+    \\# Create a 100x200 red image
+    \\img = Image(100, 200, (255, 0, 0))
+    \\
+    \\# Create a 100x200 semi-transparent blue image
+    \\img = Image(100, 200, (0, 0, 255, 128))
+    \\```
+;
 
-    // For now, don't allow direct instantiation
-    c.PyErr_SetString(c.PyExc_TypeError, "Image cannot be instantiated directly. Use Image.load() instead.");
-    return -1;
+fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) c_int {
+    _ = kwds; // Not used in current implementation
+    const self = @as(*ImageObject, @ptrCast(self_obj.?));
+
+    // Check if the image is already initialized (might be from load or from_numpy)
+    if (self.image_ptr != null) {
+        // Already initialized, just return success
+        return 0;
+    }
+
+    // Parse arguments: rows, cols, optional color
+    var rows: c_int = 0;
+    var cols: c_int = 0;
+    var color_obj: ?*c.PyObject = null;
+
+    const format = std.fmt.comptimePrint("ii|O", .{});
+    if (c.PyArg_ParseTuple(args, format.ptr, &rows, &cols, &color_obj) == 0) {
+        return -1;
+    }
+
+    // Validate dimensions - validateRange now properly handles negative values when converting to usize
+    const validated_rows = py_utils.validateRange(usize, rows, 1, std.math.maxInt(usize), "Rows") catch return -1;
+    const validated_cols = py_utils.validateRange(usize, cols, 1, std.math.maxInt(usize), "Cols") catch return -1;
+
+    // Parse color if provided, otherwise use transparent
+    var fill_color = Rgba{ .r = 0, .g = 0, .b = 0, .a = 0 }; // Default transparent
+    if (color_obj != null and color_obj != c.Py_None()) {
+        fill_color = py_utils.parseColorToRgba(color_obj) catch {
+            // Error already set by parseColorToRgba
+            return -1;
+        };
+    }
+
+    // Create image
+    var image = Image(Rgba).initAlloc(allocator, validated_rows, validated_cols) catch {
+        c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image data");
+        return -1;
+    };
+
+    // Fill with specified color
+    @memset(image.data, fill_color);
+
+    // Store the image
+    const image_ptr = allocator.create(Image(Rgba)) catch {
+        image.deinit(allocator);
+        c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
+        return -1;
+    };
+
+    image_ptr.* = image;
+    self.image_ptr = image_ptr;
+    self.numpy_ref = null;
+
+    return 0;
 }
 
 fn image_dealloc(self_obj: ?*c.PyObject) callconv(.c) void {

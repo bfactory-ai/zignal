@@ -309,7 +309,8 @@ fn generateStubFile(allocator: std.mem.Allocator) ![]u8 {
         .bases = &.{},
     });
 
-    // Add special methods for Image class (pixel access)
+    // Add special methods for Image class
+    try stub.write("    def __init__(self, rows: int, cols: int, color: Union[Tuple[int, int, int], Tuple[int, int, int, int], Rgb, Rgba, Hsl, Hsv, Lab, Lch, Lms, Oklab, Oklch, Xyb, Xyz, Ycbcr, None] = None) -> None: ...\n");
     try stub.write("    def __len__(self) -> int: ...\n");
     try stub.write("    def __getitem__(self, key: Tuple[int, int]) -> Rgba: ...\n");
     try stub.write("    def __setitem__(self, key: Tuple[int, int], value: Union[int, Tuple[int, int, int], Tuple[int, int, int, int], Rgb, Rgba, Hsl, Hsv, Lab, Lch, Lms, Oklab, Oklch, Xyb, Xyz, Ycbcr]) -> None: ...\n");
