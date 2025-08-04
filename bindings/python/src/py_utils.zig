@@ -560,7 +560,7 @@ pub fn returnNone() ?*c.PyObject {
 /// Generic range validation that works with both integers and floats
 pub fn validateRange(comptime T: type, value: anytype, min: T, max: T, name: []const u8) !T {
     const ValueType = @TypeOf(value);
-    
+
     // Special handling for signed to unsigned conversion
     const info = @typeInfo(T);
     if (info == .int and info.int.signedness == .unsigned) {
@@ -568,7 +568,7 @@ pub fn validateRange(comptime T: type, value: anytype, min: T, max: T, name: []c
         if (ValueType == c_long or ValueType == c_int) {
             if (value < 0) {
                 var buffer: [256]u8 = undefined;
-                const msg = if (min == 0) 
+                const msg = if (min == 0)
                     std.fmt.bufPrintZ(&buffer, "{s} must be non-negative", .{name}) catch "Value out of range"
                 else if (min == 1)
                     std.fmt.bufPrintZ(&buffer, "{s} must be positive", .{name}) catch "Value out of range"
@@ -579,7 +579,7 @@ pub fn validateRange(comptime T: type, value: anytype, min: T, max: T, name: []c
             }
         }
     }
-    
+
     const converted = switch (ValueType) {
         c_long, c_int => blk: {
             if (info == .float) {
