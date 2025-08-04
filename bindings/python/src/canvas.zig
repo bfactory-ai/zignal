@@ -3,6 +3,8 @@ const std = @import("std");
 const zignal = @import("zignal");
 pub const Canvas = zignal.Canvas;
 const DrawMode = zignal.DrawMode;
+const Rgba = zignal.Rgba;
+const BitmapFont = zignal.BitmapFont;
 
 const py_utils = @import("py_utils.zig");
 const allocator = py_utils.allocator;
@@ -63,7 +65,7 @@ fn canvas_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
     self.image_ref = image_obj;
 
     // Create and store the Canvas struct
-    const canvas_ptr = allocator.create(Canvas(zignal.Rgba)) catch {
+    const canvas_ptr = allocator.create(Canvas(Rgba)) catch {
         c.Py_DECREF(image_obj.?);
         c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate Canvas");
         return -1;
@@ -71,7 +73,7 @@ fn canvas_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
 
     // Initialize the Canvas
     if (image.image_ptr) |img_ptr| {
-        canvas_ptr.* = Canvas(zignal.Rgba).init(allocator, img_ptr.*);
+        canvas_ptr.* = Canvas(Rgba).init(allocator, img_ptr.*);
     } else {
         allocator.destroy(canvas_ptr);
         c.Py_DECREF(image_obj.?);
@@ -113,23 +115,23 @@ fn canvas_repr(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
 
 // Common parsing structure for draw methods
 const DrawArgs = struct {
-    canvas: *Canvas(zignal.Rgba),
-    color: zignal.Rgba,
+    canvas: *Canvas(Rgba),
+    color: Rgba,
     width: u32,
     mode: DrawMode,
 };
 
 // Common parsing structure for fill methods
 const FillArgs = struct {
-    canvas: *Canvas(zignal.Rgba),
-    color: zignal.Rgba,
+    canvas: *Canvas(Rgba),
+    color: Rgba,
     mode: DrawMode,
 };
 
 // Helper to parse common draw arguments
 fn parseDrawArgs(self: *CanvasObject, color_obj: ?*c.PyObject, width: c_long, mode: c_long) !DrawArgs {
     return DrawArgs{
-        .canvas = try py_utils.validateNonNull(*Canvas(zignal.Rgba), self.canvas_ptr, "Canvas"),
+        .canvas = try py_utils.validateNonNull(*Canvas(Rgba), self.canvas_ptr, "Canvas"),
         .color = try py_utils.parseColorToRgba(@ptrCast(color_obj)),
         .width = try py_utils.validateNonNegative(u32, width, "Width"),
         .mode = if (try py_utils.validateRange(u32, mode, 0, 1, "Mode") == 0) .fast else .soft,
@@ -139,7 +141,7 @@ fn parseDrawArgs(self: *CanvasObject, color_obj: ?*c.PyObject, width: c_long, mo
 // Helper to parse common fill arguments
 fn parseFillArgs(self: *CanvasObject, color_obj: ?*c.PyObject, mode: c_long) !FillArgs {
     return FillArgs{
-        .canvas = try py_utils.validateNonNull(*Canvas(zignal.Rgba), self.canvas_ptr, "Canvas"),
+        .canvas = try py_utils.validateNonNull(*Canvas(Rgba), self.canvas_ptr, "Canvas"),
         .color = try py_utils.parseColorToRgba(@ptrCast(color_obj)),
         .mode = if (try py_utils.validateRange(u32, mode, 0, 1, "Mode") == 0) .fast else .soft,
     };
@@ -169,7 +171,7 @@ const canvas_fill_doc =
 fn canvas_fill(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
-    const canvas = py_utils.validateNonNull(*Canvas(zignal.Rgba), self.canvas_ptr, "Canvas") catch return null;
+    const canvas = py_utils.validateNonNull(*Canvas(Rgba), self.canvas_ptr, "Canvas") catch return null;
 
     // Parse color argument
     var color_obj: ?*c.PyObject = undefined;
@@ -620,7 +622,7 @@ fn canvas_fill_spline_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
 fn canvas_draw_text(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
-    const canvas = py_utils.validateNonNull(*Canvas(zignal.Rgba), self.canvas_ptr, "Canvas") catch return null;
+    const canvas = py_utils.validateNonNull(*Canvas(Rgba), self.canvas_ptr, "Canvas") catch return null;
 
     // Parse arguments
     var text_obj: ?*c.PyObject = undefined;
@@ -661,12 +663,8 @@ fn canvas_draw_text(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     const draw_mode = if (mode_val == 0) DrawMode.fast else DrawMode.soft;
 
     // Draw the text
-    if (font_wrapper.font) |font| {
-        canvas.drawText(text, position, font.*, color, @as(f32, @floatCast(scale)), draw_mode);
-    } else {
-        c.PyErr_SetString(c.PyExc_ValueError, "BitmapFont not initialized");
-        return null;
-    }
+    const font = py_utils.validateNonNull(*BitmapFont, font_wrapper.font, "BitmapFont") catch return null;
+    canvas.drawText(text, position, font.*, color, @as(f32, @floatCast(scale)), draw_mode);
 
     return py_utils.returnNone();
 }
