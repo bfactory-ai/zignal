@@ -111,49 +111,6 @@ fn canvas_repr(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     }
 }
 
-// Common validation helpers
-const ValidationHelpers = struct {
-    fn getCanvas(self: *CanvasObject) !*Canvas(zignal.Rgba) {
-        if (self.canvas_ptr == null) {
-            c.PyErr_SetString(c.PyExc_ValueError, "Canvas not initialized");
-            return error.NotInitialized;
-        }
-        return self.canvas_ptr.?;
-    }
-
-    fn validateWidth(width: c_long) !u32 {
-        if (width < 0) {
-            c.PyErr_SetString(c.PyExc_ValueError, "Width must be non-negative");
-            return error.InvalidWidth;
-        }
-        return @intCast(width);
-    }
-
-    fn validateMode(mode: c_long) !DrawMode {
-        if (mode != 0 and mode != 1) {
-            c.PyErr_SetString(c.PyExc_ValueError, "Mode must be DrawMode.FAST (0) or DrawMode.SOFT (1)");
-            return error.InvalidMode;
-        }
-        return if (mode == 0) .fast else .soft;
-    }
-
-    fn validateRadius(radius: f64) !f32 {
-        if (radius < 0) {
-            c.PyErr_SetString(c.PyExc_ValueError, "Radius must be non-negative");
-            return error.InvalidRadius;
-        }
-        return @floatCast(radius);
-    }
-
-    fn validateTension(tension: f64) !f32 {
-        if (tension < 0.0 or tension > 1.0) {
-            c.PyErr_SetString(c.PyExc_ValueError, "Tension must be between 0.0 and 1.0");
-            return error.InvalidTension;
-        }
-        return @floatCast(tension);
-    }
-};
-
 // Common parsing structure for draw methods
 const DrawArgs = struct {
     canvas: *Canvas(zignal.Rgba),
@@ -172,19 +129,19 @@ const FillArgs = struct {
 // Helper to parse common draw arguments
 fn parseDrawArgs(self: *CanvasObject, color_obj: ?*c.PyObject, width: c_long, mode: c_long) !DrawArgs {
     return DrawArgs{
-        .canvas = try ValidationHelpers.getCanvas(self),
+        .canvas = try py_utils.validateNonNull(*Canvas(zignal.Rgba), self.canvas_ptr, "Canvas"),
         .color = try py_utils.parseColorToRgba(@ptrCast(color_obj)),
-        .width = try ValidationHelpers.validateWidth(width),
-        .mode = try ValidationHelpers.validateMode(mode),
+        .width = try py_utils.validateNonNegative(u32, width, "Width"),
+        .mode = if (try py_utils.validateRange(u32, mode, 0, 1, "Mode") == 0) .fast else .soft,
     };
 }
 
 // Helper to parse common fill arguments
 fn parseFillArgs(self: *CanvasObject, color_obj: ?*c.PyObject, mode: c_long) !FillArgs {
     return FillArgs{
-        .canvas = try ValidationHelpers.getCanvas(self),
+        .canvas = try py_utils.validateNonNull(*Canvas(zignal.Rgba), self.canvas_ptr, "Canvas"),
         .color = try py_utils.parseColorToRgba(@ptrCast(color_obj)),
-        .mode = try ValidationHelpers.validateMode(mode),
+        .mode = if (try py_utils.validateRange(u32, mode, 0, 1, "Mode") == 0) .fast else .soft,
     };
 }
 
@@ -212,7 +169,7 @@ const canvas_fill_doc =
 fn canvas_fill(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
-    const canvas = ValidationHelpers.getCanvas(self) catch return null;
+    const canvas = py_utils.validateNonNull(*Canvas(zignal.Rgba), self.canvas_ptr, "Canvas") catch return null;
 
     // Parse color argument
     var color_obj: ?*c.PyObject = undefined;
@@ -313,7 +270,7 @@ fn makeDrawMethodWithWidth(
                 common.canvas.drawPolygon(points, common.color, common.width, common.mode);
             } else if (comptime std.mem.eql(u8, name, "draw_circle")) {
                 const center = py_utils.parsePointTuple(@ptrCast(param_objs[0])) catch return null;
-                const radius = ValidationHelpers.validateRadius(@as(*f64, @ptrCast(@alignCast(parse_args[1]))).*) catch return null;
+                const radius = py_utils.validateNonNegative(f32, @as(*f64, @ptrCast(@alignCast(parse_args[1]))).*, "Radius") catch return null;
                 common.canvas.drawCircle(center, radius, common.color, common.width, common.mode);
             }
 
@@ -403,7 +360,7 @@ fn makeFillMethod(
                 }
             } else if (comptime std.mem.eql(u8, name, "fill_circle")) {
                 const center = py_utils.parsePointTuple(@ptrCast(param_objs[0])) catch return null;
-                const radius = ValidationHelpers.validateRadius(@as(*f64, @ptrCast(@alignCast(parse_args[1]))).*) catch return null;
+                const radius = py_utils.validateNonNegative(f32, @as(*f64, @ptrCast(@alignCast(parse_args[1]))).*, "Radius") catch return null;
                 common.canvas.fillCircle(center, radius, common.color, common.mode);
             }
 
@@ -618,7 +575,7 @@ fn canvas_draw_spline_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
     }
 
     const common = parseDrawArgs(self, color_obj, width, mode) catch return null;
-    const tension_val = ValidationHelpers.validateTension(tension) catch return null;
+    const tension_val = py_utils.validateRange(f32, tension, 0.0, 1.0, "Tension") catch return null;
 
     // Parse points
     const points = py_utils.parsePointList(@ptrCast(points_obj)) catch return null;
@@ -646,7 +603,7 @@ fn canvas_fill_spline_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
     }
 
     const common = parseFillArgs(self, color_obj, mode) catch return null;
-    const tension_val = ValidationHelpers.validateTension(tension) catch return null;
+    const tension_val = py_utils.validateRange(f32, tension, 0.0, 1.0, "Tension") catch return null;
 
     // Parse points
     const points = py_utils.parsePointList(@ptrCast(points_obj)) catch return null;
@@ -663,7 +620,7 @@ fn canvas_fill_spline_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
 fn canvas_draw_text(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
-    const canvas = ValidationHelpers.getCanvas(self) catch return null;
+    const canvas = py_utils.validateNonNull(*Canvas(zignal.Rgba), self.canvas_ptr, "Canvas") catch return null;
 
     // Parse arguments
     var text_obj: ?*c.PyObject = undefined;
@@ -700,7 +657,8 @@ fn canvas_draw_text(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
 
     // Parse color
     const color = py_utils.parseColorToRgba(@ptrCast(color_obj)) catch return null;
-    const draw_mode = ValidationHelpers.validateMode(mode) catch return null;
+    const mode_val = py_utils.validateRange(u32, mode, 0, 1, "Mode") catch return null;
+    const draw_mode = if (mode_val == 0) DrawMode.fast else DrawMode.soft;
 
     // Draw the text
     if (font_wrapper.font) |font| {
