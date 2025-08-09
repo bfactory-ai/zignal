@@ -226,7 +226,11 @@ fn image_load(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObj
         switch (err) {
             error.UnsupportedImageFormat => c.PyErr_SetString(c.PyExc_ValueError, "Unsupported image format"),
             error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory"),
-            else => c.PyErr_SetString(c.PyExc_IOError, "Failed to load image"),
+            else => {
+                var buffer: [256]u8 = undefined;
+                const msg = std.fmt.bufPrintZ(&buffer, "Failed to load image: '{s}'", .{path_slice}) catch "Failed to load image";
+                c.PyErr_SetString(c.PyExc_IOError, msg.ptr);
+            },
         }
         return null;
     };
@@ -599,7 +603,11 @@ fn image_save(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObj
                 const msg = std.fmt.bufPrintZ(&buffer, "Directory not found: '{s}'", .{path_slice}) catch "Directory not found";
                 c.PyErr_SetString(c.PyExc_FileNotFoundError, msg.ptr);
             },
-            else => c.PyErr_SetString(c.PyExc_IOError, "Failed to save image"),
+            else => {
+                var buffer: [256]u8 = undefined;
+                const msg = std.fmt.bufPrintZ(&buffer, "Failed to save image: '{s}'", .{path_slice}) catch "Failed to save image";
+                c.PyErr_SetString(c.PyExc_IOError, msg.ptr);
+            },
         }
         return null;
     };

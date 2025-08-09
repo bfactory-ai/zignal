@@ -106,7 +106,11 @@ fn bitmap_font_load(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c
         switch (err) {
             error.UnsupportedFontFormat => c.PyErr_SetString(c.PyExc_ValueError, "Unsupported font format"),
             error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory"),
-            else => c.PyErr_SetString(c.PyExc_IOError, "Failed to load font"),
+            else => {
+                var buffer: [256]u8 = undefined;
+                const msg = std.fmt.bufPrintZ(&buffer, "Failed to load font: '{s}'", .{path_slice}) catch "Failed to load font";
+                c.PyErr_SetString(c.PyExc_IOError, msg.ptr);
+            }
         }
         return null;
     };
