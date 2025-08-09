@@ -212,7 +212,9 @@ fn image_load(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObj
     std.fs.cwd().access(path_slice, .{}) catch |err| {
         switch (err) {
             error.FileNotFound => {
-                c.PyErr_SetString(c.PyExc_FileNotFoundError, "Image file not found");
+                var buffer: [256]u8 = undefined;
+                const msg = std.fmt.bufPrintZ(&buffer, "File not found: '{s}'", .{path_slice}) catch "File not found";
+                c.PyErr_SetString(c.PyExc_FileNotFoundError, msg.ptr);
                 return null;
             },
             else => {}, // Continue with load attempt
@@ -222,10 +224,13 @@ fn image_load(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObj
     // Load the image as RGBA for SIMD optimization benefits
     const image = Image(Rgba).load(allocator, path_slice) catch |err| {
         switch (err) {
-            error.FileNotFound => c.PyErr_SetString(c.PyExc_FileNotFoundError, "Image file not found"),
             error.UnsupportedImageFormat => c.PyErr_SetString(c.PyExc_ValueError, "Unsupported image format"),
             error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory"),
-            else => c.PyErr_SetString(c.PyExc_IOError, "Failed to load image"),
+            else => {
+                var buffer: [256]u8 = undefined;
+                const msg = std.fmt.bufPrintZ(&buffer, "Failed to load image: '{s}'", .{path_slice}) catch "Failed to load image";
+                c.PyErr_SetString(c.PyExc_IOError, msg.ptr);
+            },
         }
         return null;
     };
@@ -588,9 +593,21 @@ fn image_save(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObj
     image_ptr.save(allocator, path_slice) catch |err| {
         switch (err) {
             error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory"),
-            error.AccessDenied => c.PyErr_SetString(c.PyExc_PermissionError, "Permission denied"),
-            error.FileNotFound => c.PyErr_SetString(c.PyExc_FileNotFoundError, "Directory not found"),
-            else => c.PyErr_SetString(c.PyExc_IOError, "Failed to save image"),
+            error.AccessDenied => {
+                var buffer: [256]u8 = undefined;
+                const msg = std.fmt.bufPrintZ(&buffer, "Permission denied: '{s}'", .{path_slice}) catch "Permission denied";
+                c.PyErr_SetString(c.PyExc_PermissionError, msg.ptr);
+            },
+            error.FileNotFound => {
+                var buffer: [256]u8 = undefined;
+                const msg = std.fmt.bufPrintZ(&buffer, "Directory not found: '{s}'", .{path_slice}) catch "Directory not found";
+                c.PyErr_SetString(c.PyExc_FileNotFoundError, msg.ptr);
+            },
+            else => {
+                var buffer: [256]u8 = undefined;
+                const msg = std.fmt.bufPrintZ(&buffer, "Failed to save image: '{s}'", .{path_slice}) catch "Failed to save image";
+                c.PyErr_SetString(c.PyExc_IOError, msg.ptr);
+            },
         }
         return null;
     };
