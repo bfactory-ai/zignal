@@ -73,7 +73,9 @@ fn bitmap_font_load(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c
     std.fs.cwd().access(path_slice, .{}) catch |err| {
         switch (err) {
             error.FileNotFound => {
-                c.PyErr_SetString(c.PyExc_FileNotFoundError, "Font file not found");
+                var buffer: [256]u8 = undefined;
+                const msg = std.fmt.bufPrintZ(&buffer, "File not found: '{s}'", .{path_slice}) catch "File not found";
+                c.PyErr_SetString(c.PyExc_FileNotFoundError, msg.ptr);
                 return null;
             },
             else => {}, // Continue with load attempt
@@ -102,7 +104,6 @@ fn bitmap_font_load(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c
 
         // Set appropriate Python exception based on error
         switch (err) {
-            error.FileNotFound => c.PyErr_SetString(c.PyExc_FileNotFoundError, "Font file not found"),
             error.UnsupportedFontFormat => c.PyErr_SetString(c.PyExc_ValueError, "Unsupported font format"),
             error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory"),
             else => c.PyErr_SetString(c.PyExc_IOError, "Failed to load font"),
