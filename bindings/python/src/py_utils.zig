@@ -533,34 +533,48 @@ pub fn freePointList(points: []Point(2, f32)) void {
 pub fn setErrorWithPath(err: anyerror, path: []const u8) void {
     // Map Zig errors to appropriate Python exception types
     const exc_type = switch (err) {
-        // File not found errors
         error.FileNotFound => c.PyExc_FileNotFoundError,
 
-        // Permission and access errors
-        error.AccessDenied, error.PermissionDenied, error.SharingViolation => c.PyExc_PermissionError,
+        error.AccessDenied,
+        error.PermissionDenied,
+        error.SharingViolation,
+        => c.PyExc_PermissionError,
 
-        // Path and directory errors
         error.IsDir => c.PyExc_IsADirectoryError,
         error.NotDir => c.PyExc_NotADirectoryError,
         error.PathAlreadyExists => c.PyExc_FileExistsError,
 
-        // Value errors for invalid paths/formats
-        error.BadPathName, error.InvalidUtf8, error.InvalidWtf8, error.UnsupportedImageFormat, error.UnsupportedFontFormat => c.PyExc_ValueError,
+        error.BadPathName,
+        error.InvalidUtf8,
+        error.InvalidWtf8,
+        error.UnsupportedImageFormat,
+        error.UnsupportedFontFormat,
+        => c.PyExc_ValueError,
 
-        // Memory errors
         error.OutOfMemory => c.PyExc_MemoryError,
 
-        // Blocking I/O errors
         error.WouldBlock, error.LockViolation => c.PyExc_BlockingIOError,
 
-        // Broken pipe errors
         error.BrokenPipe => c.PyExc_BrokenPipeError,
 
-        // Connection errors
         error.ConnectionResetByPeer => c.PyExc_ConnectionResetError,
 
-        // General OS errors
-        error.NameTooLong, error.NoSpaceLeft, error.DiskQuota, error.SystemResources, error.ProcessFdQuotaExceeded, error.SystemFdQuotaExceeded, error.FileTooBig, error.FileBusy, error.DeviceBusy, error.NetworkNotFound, error.NoDevice, error.InputOutput, error.SymLinkLoop, error.AntivirusInterference, error.Unexpected => c.PyExc_OSError,
+        error.NameTooLong,
+        error.NoSpaceLeft,
+        error.DiskQuota,
+        error.SystemResources,
+        error.ProcessFdQuotaExceeded,
+        error.SystemFdQuotaExceeded,
+        error.FileTooBig,
+        error.FileBusy,
+        error.DeviceBusy,
+        error.NetworkNotFound,
+        error.NoDevice,
+        error.InputOutput,
+        error.SymLinkLoop,
+        error.AntivirusInterference,
+        error.Unexpected,
+        => c.PyExc_OSError,
 
         // Default to IOError for any other file I/O errors
         else => c.PyExc_IOError,
@@ -570,59 +584,6 @@ pub fn setErrorWithPath(err: anyerror, path: []const u8) void {
     var buffer: [128 + std.fs.max_path_bytes]u8 = undefined;
     const msg = std.fmt.bufPrintZ(&buffer, "{s}: '{s}'", .{ @errorName(err), path }) catch @errorName(err);
     c.PyErr_SetString(exc_type, msg.ptr);
-}
-
-/// Maximum extra bytes needed for error message formatting
-/// Accounts for: "File name too long: '" (21) + "'" (1) + null terminator (1)
-pub const error_message_overhead = 23;
-
-/// Format an error message with a file path, intelligently truncating if needed
-/// to fit within the provided buffer. Shows the tail of the path if truncation
-/// is necessary (more useful than showing the beginning).
-pub fn formatErrorMessage(
-    buffer: []u8,
-    comptime prefix: []const u8,
-    path: []const u8,
-) [:0]const u8 {
-    const suffix = "'";
-    const ellipsis = "...";
-
-    // Calculate available space for the path
-    const overhead = prefix.len + suffix.len + 1; // +1 for null terminator
-    const available_space = if (buffer.len > overhead) buffer.len - overhead else 0;
-
-    if (path.len <= available_space) {
-        // Path fits - use the full path
-        return std.fmt.bufPrintZ(buffer, "{s}{s}'", .{ prefix, path }) catch {
-            // This should rarely happen with max_path_bytes buffer
-            // Fall back to showing just the end of the path
-            const tail_len = @min(path.len, 100);
-            const tail = path[path.len - tail_len ..];
-            return std.fmt.bufPrintZ(buffer, "{s}...{s}'", .{ prefix, tail }) catch {
-                // Last resort - should never happen with max_path_bytes buffer
-                return std.fmt.bufPrintZ(buffer, "{s}<error>'", .{prefix}) catch "Error";
-            };
-        };
-    } else {
-        // Path too long - show tail with ellipsis
-        // This would only happen if path > max_path_bytes (shouldn't be possible for valid paths)
-        const ellipsis_overhead = prefix.len + ellipsis.len + suffix.len + 1;
-        const space_for_tail = if (buffer.len > ellipsis_overhead)
-            buffer.len - ellipsis_overhead
-        else
-            50; // Fallback size
-
-        const tail_start = if (path.len > space_for_tail) path.len - space_for_tail else 0;
-        return std.fmt.bufPrintZ(buffer, "{s}{s}{s}'", .{ prefix, ellipsis, path[tail_start..] }) catch {
-            // Try with shorter tail
-            const short_tail_len = @min(path.len, 100);
-            const short_tail = path[path.len - short_tail_len ..];
-            return std.fmt.bufPrintZ(buffer, "{s}...{s}'", .{ prefix, short_tail }) catch {
-                // This really shouldn't happen with max_path_bytes buffer
-                return std.fmt.bufPrintZ(buffer, "{s}<path too long>'", .{prefix}) catch "Error";
-            };
-        };
-    }
 }
 
 /// Helper to return Python None
