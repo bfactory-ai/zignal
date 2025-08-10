@@ -69,19 +69,6 @@ fn bitmap_font_load(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c
     // Convert C string to Zig slice
     const path_slice = std.mem.span(file_path);
 
-    // Check if file exists first to provide better error message
-    std.fs.cwd().access(path_slice, .{}) catch |err| {
-        switch (err) {
-            error.FileNotFound => {
-                var buffer: [256]u8 = undefined;
-                const msg = std.fmt.bufPrintZ(&buffer, "File not found: '{s}'", .{path_slice}) catch "File not found";
-                c.PyErr_SetString(c.PyExc_FileNotFoundError, msg.ptr);
-                return null;
-            },
-            else => {}, // Continue with load attempt
-        }
-    };
-
     // Create new BitmapFont instance
     const instance = c.PyObject_CallObject(@ptrCast(type_obj), null) orelse return null;
     const self = @as(*BitmapFontObject, @ptrCast(instance));
@@ -103,15 +90,7 @@ fn bitmap_font_load(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c
         c.Py_DECREF(instance);
 
         // Set appropriate Python exception based on error
-        switch (err) {
-            error.UnsupportedFontFormat => c.PyErr_SetString(c.PyExc_ValueError, "Unsupported font format"),
-            error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory"),
-            else => {
-                var buffer: [256]u8 = undefined;
-                const msg = std.fmt.bufPrintZ(&buffer, "Failed to load font: '{s}'", .{path_slice}) catch "Failed to load font";
-                c.PyErr_SetString(c.PyExc_IOError, msg.ptr);
-            }
-        }
+        py_utils.setErrorWithPath(err, path_slice);
         return null;
     };
 
