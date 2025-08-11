@@ -1322,6 +1322,365 @@ pub fn Image(comptime T: type) type {
             }
         }
 
+        /// Border handling modes for convolution operations.
+        pub const BorderMode = enum {
+            zero, // Pad with zeros (default)
+            replicate, // Replicate edge pixels
+            mirror, // Mirror at edges
+            wrap, // Wrap around (circular)
+        };
+
+        /// Applies a 2D convolution with the given kernel to the image.
+        ///
+        /// Parameters:
+        /// - `allocator`: The allocator to use if `out` needs to be (re)initialized.
+        /// - `kernel`: A 2D array representing the convolution kernel.
+        /// - `out`: An out-parameter pointer to an `Image(T)` that will be filled with the convolved image.
+        /// - `border_mode`: How to handle pixels at the image borders.
+        pub fn convolve(self: Self, allocator: Allocator, kernel: anytype, out: *Self, border_mode: BorderMode) !void {
+            const kernel_info = @typeInfo(@TypeOf(kernel));
+            if (kernel_info != .array) @compileError("Kernel must be a 2D array");
+            const outer_array = kernel_info.array;
+            if (@typeInfo(outer_array.child) != .array) @compileError("Kernel must be a 2D array");
+
+            const kernel_height = outer_array.len;
+            const kernel_width = @typeInfo(outer_array.child).array.len;
+
+            if (!self.hasSameShape(out.*)) {
+                out.* = try .initAlloc(allocator, self.rows, self.cols);
+            }
+
+            // Check for special optimized cases
+            if (kernel_height == 3 and kernel_width == 3) {
+                return self.convolve3x3(kernel, out.*, border_mode);
+            }
+
+            // General convolution
+            const half_h = kernel_height / 2;
+            const half_w = kernel_width / 2;
+
+            switch (@typeInfo(T)) {
+                .int, .float => {
+                    // Scalar types - single channel convolution
+                    for (0..self.rows) |r| {
+                        for (0..self.cols) |c| {
+                            var accumulator: f32 = 0;
+
+                            for (0..kernel_height) |kr| {
+                                for (0..kernel_width) |kc| {
+                                    const src_r = @as(isize, @intCast(r)) + @as(isize, @intCast(kr)) - @as(isize, @intCast(half_h));
+                                    const src_c = @as(isize, @intCast(c)) + @as(isize, @intCast(kc)) - @as(isize, @intCast(half_w));
+
+                                    const pixel_val = self.getPixelWithBorder(src_r, src_c, border_mode);
+                                    const kernel_val = kernel[kr][kc];
+                                    accumulator += as(f32, pixel_val) * as(f32, kernel_val);
+                                }
+                            }
+
+                            out.at(r, c).* = switch (@typeInfo(T)) {
+                                .int => @intFromFloat(@max(std.math.minInt(T), @min(std.math.maxInt(T), @round(accumulator)))),
+                                .float => as(T, accumulator),
+                                else => unreachable,
+                            };
+                        }
+                    }
+                },
+                .@"struct" => {
+                    // Struct types (RGB, RGBA, etc.) - channel-wise convolution
+                    for (0..self.rows) |r| {
+                        for (0..self.cols) |c| {
+                            var result_pixel: T = undefined;
+
+                            inline for (std.meta.fields(T)) |field| {
+                                var accumulator: f32 = 0;
+
+                                for (0..kernel_height) |kr| {
+                                    for (0..kernel_width) |kc| {
+                                        const src_r = @as(isize, @intCast(r)) + @as(isize, @intCast(kr)) - @as(isize, @intCast(half_h));
+                                        const src_c = @as(isize, @intCast(c)) + @as(isize, @intCast(kc)) - @as(isize, @intCast(half_w));
+
+                                        const pixel_val = self.getPixelWithBorder(src_r, src_c, border_mode);
+                                        const channel_val = @field(pixel_val, field.name);
+                                        const kernel_val = kernel[kr][kc];
+                                        accumulator += as(f32, channel_val) * as(f32, kernel_val);
+                                    }
+                                }
+
+                                @field(result_pixel, field.name) = switch (@typeInfo(field.type)) {
+                                    .int => @intFromFloat(@max(std.math.minInt(field.type), @min(std.math.maxInt(field.type), @round(accumulator)))),
+                                    .float => as(field.type, accumulator),
+                                    else => @compileError("Unsupported field type in struct"),
+                                };
+                            }
+
+                            out.at(r, c).* = result_pixel;
+                        }
+                    }
+                },
+                else => @compileError("Convolution not supported for type " ++ @typeName(T)),
+            }
+        }
+
+        /// Optimized convolution for 3x3 kernels using SIMD where possible.
+        fn convolve3x3(self: Self, kernel: anytype, out: Self, border_mode: BorderMode) void {
+            const kr = [9]f32{
+                as(f32, kernel[0][0]), as(f32, kernel[0][1]), as(f32, kernel[0][2]),
+                as(f32, kernel[1][0]), as(f32, kernel[1][1]), as(f32, kernel[1][2]),
+                as(f32, kernel[2][0]), as(f32, kernel[2][1]), as(f32, kernel[2][2]),
+            };
+
+            switch (@typeInfo(T)) {
+                .int, .float => {
+                    // Scalar types - single channel
+                    for (0..self.rows) |r| {
+                        for (0..self.cols) |c| {
+                            const ir = @as(isize, @intCast(r));
+                            const ic = @as(isize, @intCast(c));
+
+                            // Gather 3x3 neighborhood
+                            const p00 = self.getPixelWithBorder(ir - 1, ic - 1, border_mode);
+                            const p01 = self.getPixelWithBorder(ir - 1, ic, border_mode);
+                            const p02 = self.getPixelWithBorder(ir - 1, ic + 1, border_mode);
+                            const p10 = self.getPixelWithBorder(ir, ic - 1, border_mode);
+                            const p11 = self.getPixelWithBorder(ir, ic, border_mode);
+                            const p12 = self.getPixelWithBorder(ir, ic + 1, border_mode);
+                            const p20 = self.getPixelWithBorder(ir + 1, ic - 1, border_mode);
+                            const p21 = self.getPixelWithBorder(ir + 1, ic, border_mode);
+                            const p22 = self.getPixelWithBorder(ir + 1, ic + 1, border_mode);
+
+                            const result =
+                                as(f32, p00) * kr[0] + as(f32, p01) * kr[1] + as(f32, p02) * kr[2] +
+                                as(f32, p10) * kr[3] + as(f32, p11) * kr[4] + as(f32, p12) * kr[5] +
+                                as(f32, p20) * kr[6] + as(f32, p21) * kr[7] + as(f32, p22) * kr[8];
+
+                            out.at(r, c).* = switch (@typeInfo(T)) {
+                                .int => @intFromFloat(@max(std.math.minInt(T), @min(std.math.maxInt(T), @round(result)))),
+                                .float => as(T, result),
+                                else => unreachable,
+                            };
+                        }
+                    }
+                },
+                .@"struct" => {
+                    // Struct types - channel-wise convolution
+                    for (0..self.rows) |r| {
+                        for (0..self.cols) |c| {
+                            const ir = @as(isize, @intCast(r));
+                            const ic = @as(isize, @intCast(c));
+
+                            // Gather 3x3 neighborhood
+                            const p00 = self.getPixelWithBorder(ir - 1, ic - 1, border_mode);
+                            const p01 = self.getPixelWithBorder(ir - 1, ic, border_mode);
+                            const p02 = self.getPixelWithBorder(ir - 1, ic + 1, border_mode);
+                            const p10 = self.getPixelWithBorder(ir, ic - 1, border_mode);
+                            const p11 = self.getPixelWithBorder(ir, ic, border_mode);
+                            const p12 = self.getPixelWithBorder(ir, ic + 1, border_mode);
+                            const p20 = self.getPixelWithBorder(ir + 1, ic - 1, border_mode);
+                            const p21 = self.getPixelWithBorder(ir + 1, ic, border_mode);
+                            const p22 = self.getPixelWithBorder(ir + 1, ic + 1, border_mode);
+
+                            var result_pixel: T = undefined;
+
+                            // Process each channel independently
+                            inline for (std.meta.fields(T)) |field| {
+                                const result =
+                                    as(f32, @field(p00, field.name)) * kr[0] + as(f32, @field(p01, field.name)) * kr[1] + as(f32, @field(p02, field.name)) * kr[2] +
+                                    as(f32, @field(p10, field.name)) * kr[3] + as(f32, @field(p11, field.name)) * kr[4] + as(f32, @field(p12, field.name)) * kr[5] +
+                                    as(f32, @field(p20, field.name)) * kr[6] + as(f32, @field(p21, field.name)) * kr[7] + as(f32, @field(p22, field.name)) * kr[8];
+
+                                @field(result_pixel, field.name) = switch (@typeInfo(field.type)) {
+                                    .int => @intFromFloat(@max(std.math.minInt(field.type), @min(std.math.maxInt(field.type), @round(result)))),
+                                    .float => as(field.type, result),
+                                    else => @compileError("Unsupported field type"),
+                                };
+                            }
+
+                            out.at(r, c).* = result_pixel;
+                        }
+                    }
+                },
+                else => unreachable,
+            }
+        }
+
+        /// Get pixel value with border handling.
+        fn getPixelWithBorder(self: Self, row: isize, col: isize, border_mode: BorderMode) T {
+            const irows = @as(isize, @intCast(self.rows));
+            const icols = @as(isize, @intCast(self.cols));
+
+            switch (border_mode) {
+                .zero => {
+                    if (row < 0 or col < 0 or row >= irows or col >= icols) {
+                        return std.mem.zeroes(T);
+                    }
+                    return self.at(@intCast(row), @intCast(col)).*;
+                },
+                .replicate => {
+                    const r = @max(0, @min(row, irows - 1));
+                    const c = @max(0, @min(col, icols - 1));
+                    return self.at(@intCast(r), @intCast(c)).*;
+                },
+                .mirror => {
+                    var r = row;
+                    var c = col;
+                    if (r < 0) r = -r - 1;
+                    if (r >= irows) r = 2 * irows - r - 1;
+                    if (c < 0) c = -c - 1;
+                    if (c >= icols) c = 2 * icols - c - 1;
+                    // Clamp in case of extreme values
+                    r = @max(0, @min(r, irows - 1));
+                    c = @max(0, @min(c, icols - 1));
+                    return self.at(@intCast(r), @intCast(c)).*;
+                },
+                .wrap => {
+                    const r = @mod(row, irows);
+                    const c = @mod(col, icols);
+                    return self.at(@intCast(r), @intCast(c)).*;
+                },
+            }
+        }
+
+        /// Performs separable convolution using two 1D kernels (horizontal and vertical).
+        /// This is much more efficient for separable filters like Gaussian blur.
+        ///
+        /// Parameters:
+        /// - `allocator`: The allocator to use for temporary buffers.
+        /// - `kernel_x`: Horizontal (column) kernel.
+        /// - `kernel_y`: Vertical (row) kernel.
+        /// - `out`: Output image.
+        /// - `border_mode`: How to handle image borders.
+        pub fn convolveSeparable(self: Self, allocator: Allocator, kernel_x: []const f32, kernel_y: []const f32, out: *Self, border_mode: BorderMode) !void {
+            if (!self.hasSameShape(out.*)) {
+                out.* = try .initAlloc(allocator, self.rows, self.cols);
+            }
+
+            // Allocate temporary buffer for intermediate result
+            var temp = try Self.initAlloc(allocator, self.rows, self.cols);
+            defer temp.deinit(allocator);
+
+            const half_x = kernel_x.len / 2;
+            const half_y = kernel_y.len / 2;
+
+            // Horizontal pass
+            switch (@typeInfo(T)) {
+                .int, .float => {
+                    for (0..self.rows) |r| {
+                        for (0..self.cols) |c| {
+                            var sum: f32 = 0;
+                            for (kernel_x, 0..) |k, i| {
+                                const src_c = @as(isize, @intCast(c)) + @as(isize, @intCast(i)) - @as(isize, @intCast(half_x));
+                                const pixel = self.getPixelWithBorder(@intCast(r), src_c, border_mode);
+                                sum += as(f32, pixel) * k;
+                            }
+                            temp.at(r, c).* = switch (@typeInfo(T)) {
+                                .int => @intFromFloat(@max(std.math.minInt(T), @min(std.math.maxInt(T), @round(sum)))),
+                                .float => as(T, sum),
+                                else => unreachable,
+                            };
+                        }
+                    }
+                },
+                .@"struct" => {
+                    for (0..self.rows) |r| {
+                        for (0..self.cols) |c| {
+                            var result_pixel: T = undefined;
+                            inline for (std.meta.fields(T)) |field| {
+                                var sum: f32 = 0;
+                                for (kernel_x, 0..) |k, i| {
+                                    const src_c = @as(isize, @intCast(c)) + @as(isize, @intCast(i)) - @as(isize, @intCast(half_x));
+                                    const pixel = self.getPixelWithBorder(@intCast(r), src_c, border_mode);
+                                    sum += as(f32, @field(pixel, field.name)) * k;
+                                }
+                                @field(result_pixel, field.name) = switch (@typeInfo(field.type)) {
+                                    .int => @intFromFloat(@max(std.math.minInt(field.type), @min(std.math.maxInt(field.type), @round(sum)))),
+                                    .float => as(field.type, sum),
+                                    else => @compileError("Unsupported field type"),
+                                };
+                            }
+                            temp.at(r, c).* = result_pixel;
+                        }
+                    }
+                },
+                else => @compileError("Separable convolution not supported for type " ++ @typeName(T)),
+            }
+
+            // Vertical pass
+            switch (@typeInfo(T)) {
+                .int, .float => {
+                    for (0..self.rows) |r| {
+                        for (0..self.cols) |c| {
+                            var sum: f32 = 0;
+                            for (kernel_y, 0..) |k, i| {
+                                const src_r = @as(isize, @intCast(r)) + @as(isize, @intCast(i)) - @as(isize, @intCast(half_y));
+                                const pixel = temp.getPixelWithBorder(src_r, @intCast(c), border_mode);
+                                sum += as(f32, pixel) * k;
+                            }
+                            out.at(r, c).* = switch (@typeInfo(T)) {
+                                .int => @intFromFloat(@max(std.math.minInt(T), @min(std.math.maxInt(T), @round(sum)))),
+                                .float => as(T, sum),
+                                else => unreachable,
+                            };
+                        }
+                    }
+                },
+                .@"struct" => {
+                    for (0..self.rows) |r| {
+                        for (0..self.cols) |c| {
+                            var result_pixel: T = undefined;
+                            inline for (std.meta.fields(T)) |field| {
+                                var sum: f32 = 0;
+                                for (kernel_y, 0..) |k, i| {
+                                    const src_r = @as(isize, @intCast(r)) + @as(isize, @intCast(i)) - @as(isize, @intCast(half_y));
+                                    const pixel = temp.getPixelWithBorder(src_r, @intCast(c), border_mode);
+                                    sum += as(f32, @field(pixel, field.name)) * k;
+                                }
+                                @field(result_pixel, field.name) = switch (@typeInfo(field.type)) {
+                                    .int => @intFromFloat(@max(std.math.minInt(field.type), @min(std.math.maxInt(field.type), @round(sum)))),
+                                    .float => as(field.type, sum),
+                                    else => @compileError("Unsupported field type"),
+                                };
+                            }
+                            out.at(r, c).* = result_pixel;
+                        }
+                    }
+                },
+                else => unreachable,
+            }
+        }
+
+        /// Applies Gaussian blur to the image using separable convolution.
+        ///
+        /// Parameters:
+        /// - `allocator`: The allocator to use for temporary buffers.
+        /// - `sigma`: Standard deviation of the Gaussian kernel.
+        /// - `out`: Output blurred image.
+        pub fn blurGaussian(self: Self, allocator: Allocator, sigma: f32, out: *Self) !void {
+            if (sigma <= 0) return error.InvalidSigma;
+
+            // Calculate kernel size (3 sigma on each side)
+            const radius = @as(usize, @intFromFloat(@ceil(3.0 * sigma)));
+            const kernel_size = 2 * radius + 1;
+
+            // Generate 1D Gaussian kernel
+            var kernel = try allocator.alloc(f32, kernel_size);
+            defer allocator.free(kernel);
+
+            var sum: f32 = 0;
+            for (0..kernel_size) |i| {
+                const x = @as(f32, @floatFromInt(i)) - @as(f32, @floatFromInt(radius));
+                kernel[i] = @exp(-(x * x) / (2.0 * sigma * sigma));
+                sum += kernel[i];
+            }
+
+            // Normalize kernel
+            for (kernel) |*k| {
+                k.* /= sum;
+            }
+
+            // Apply separable convolution
+            try self.convolveSeparable(allocator, kernel, kernel, out, .mirror);
+        }
+
         /// Applies the Sobel filter to `self` to perform edge detection.
         /// The output is a grayscale image representing the magnitude of gradients at each pixel.
         ///
@@ -1332,34 +1691,50 @@ pub fn Image(comptime T: type) type {
             if (!self.hasSameShape(out.*)) {
                 out.* = try .initAlloc(allocator, self.rows, self.cols);
             }
-            const vert_filter = [3][3]i32{
-                .{ -1, -2, -1 },
-                .{ 0, 0, 0 },
-                .{ 1, 2, 1 },
-            };
-            const horz_filter = [3][3]i32{
+
+            // Sobel kernels for edge detection
+            const sobel_x = [3][3]f32{
                 .{ -1, 0, 1 },
                 .{ -2, 0, 2 },
                 .{ -1, 0, 1 },
             };
+            const sobel_y = [3][3]f32{
+                .{ -1, -2, -1 },
+                .{ 0, 0, 0 },
+                .{ 1, 2, 1 },
+            };
+
+            // Convert input to grayscale float if needed
+            var gray_float: Image(f32) = undefined;
+            const needs_conversion = !isScalar(T) or @typeInfo(T) != .float;
+            if (needs_conversion) {
+                gray_float = try .initAlloc(allocator, self.rows, self.cols);
+                for (0..self.rows) |r| {
+                    for (0..self.cols) |c| {
+                        gray_float.at(r, c).* = as(f32, convertColor(u8, self.at(r, c).*));
+                    }
+                }
+            } else {
+                gray_float = self;
+            }
+            defer if (needs_conversion) gray_float.deinit(allocator);
+
+            // Apply Sobel X and Y filters
+            var grad_x = Image(f32).empty;
+            var grad_y = Image(f32).empty;
+            defer grad_x.deinit(allocator);
+            defer grad_y.deinit(allocator);
+
+            try gray_float.convolve(allocator, sobel_x, &grad_x, .zero);
+            try gray_float.convolve(allocator, sobel_y, &grad_y, .zero);
+
+            // Compute gradient magnitude
             for (0..self.rows) |r| {
                 for (0..self.cols) |c| {
-                    const ir: isize = @intCast(r);
-                    const ic: isize = @intCast(c);
-                    var horz_temp: i32 = 0;
-                    var vert_temp: i32 = 0;
-                    for (0..vert_filter.len) |m| {
-                        const py: isize = ir - 1 + @as(isize, @intCast(m));
-                        for (0..vert_filter[0].len) |n| {
-                            const px: isize = ic - 1 + @as(isize, @intCast(n));
-                            if (self.atOrNull(py, px)) |val| {
-                                const p: i32 = @intCast(convertColor(u8, val.*));
-                                horz_temp += p * horz_filter[m][n];
-                                vert_temp += p * vert_filter[m][n];
-                            }
-                        }
-                    }
-                    out.at(r, c).* = @intFromFloat(@max(0, @min(255, @sqrt(@as(f32, @floatFromInt(horz_temp * horz_temp + vert_temp * vert_temp))))));
+                    const gx = grad_x.at(r, c).*;
+                    const gy = grad_y.at(r, c).*;
+                    const magnitude = @sqrt(gx * gx + gy * gy);
+                    out.at(r, c).* = @intFromFloat(@max(0, @min(255, magnitude)));
                 }
             }
         }
