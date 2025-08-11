@@ -1366,14 +1366,30 @@ pub fn Image(comptime T: type) type {
                         for (0..self.cols) |c| {
                             var accumulator: f32 = 0;
 
-                            for (0..kernel_height) |kr| {
-                                for (0..kernel_width) |kc| {
-                                    const src_r = @as(isize, @intCast(r)) + @as(isize, @intCast(kr)) - @as(isize, @intCast(half_h));
-                                    const src_c = @as(isize, @intCast(c)) + @as(isize, @intCast(kc)) - @as(isize, @intCast(half_w));
-
-                                    const pixel_val = self.getPixelWithBorder(src_r, src_c, border_mode);
-                                    const kernel_val = kernel[kr][kc];
-                                    accumulator += as(f32, pixel_val) * as(f32, kernel_val);
+                            const in_interior = (r >= half_h and r + half_h < self.rows and c >= half_w and c + half_w < self.cols);
+                            if (in_interior) {
+                                // Fast path: no border handling needed
+                                const r0: usize = r - half_h;
+                                const c0: usize = c - half_w;
+                                for (0..kernel_height) |kr| {
+                                    const rr = r0 + kr;
+                                    for (0..kernel_width) |kc| {
+                                        const cc = c0 + kc;
+                                        const pixel_val = self.at(rr, cc).*;
+                                        const kernel_val = kernel[kr][kc];
+                                        accumulator += as(f32, pixel_val) * as(f32, kernel_val);
+                                    }
+                                }
+                            } else {
+                                // Border path: fetch with border handling
+                                for (0..kernel_height) |kr| {
+                                    for (0..kernel_width) |kc| {
+                                        const src_r = @as(isize, @intCast(r)) + @as(isize, @intCast(kr)) - @as(isize, @intCast(half_h));
+                                        const src_c = @as(isize, @intCast(c)) + @as(isize, @intCast(kc)) - @as(isize, @intCast(half_w));
+                                        const pixel_val = self.getPixelWithBorder(src_r, src_c, border_mode);
+                                        const kernel_val = kernel[kr][kc];
+                                        accumulator += as(f32, pixel_val) * as(f32, kernel_val);
+                                    }
                                 }
                             }
 
@@ -1393,16 +1409,30 @@ pub fn Image(comptime T: type) type {
 
                             inline for (std.meta.fields(T)) |field| {
                                 var accumulator: f32 = 0;
-
-                                for (0..kernel_height) |kr| {
-                                    for (0..kernel_width) |kc| {
-                                        const src_r = @as(isize, @intCast(r)) + @as(isize, @intCast(kr)) - @as(isize, @intCast(half_h));
-                                        const src_c = @as(isize, @intCast(c)) + @as(isize, @intCast(kc)) - @as(isize, @intCast(half_w));
-
-                                        const pixel_val = self.getPixelWithBorder(src_r, src_c, border_mode);
-                                        const channel_val = @field(pixel_val, field.name);
-                                        const kernel_val = kernel[kr][kc];
-                                        accumulator += as(f32, channel_val) * as(f32, kernel_val);
+                                const in_interior = (r >= half_h and r + half_h < self.rows and c >= half_w and c + half_w < self.cols);
+                                if (in_interior) {
+                                    const r0: usize = r - half_h;
+                                    const c0: usize = c - half_w;
+                                    for (0..kernel_height) |kr| {
+                                        const rr = r0 + kr;
+                                        for (0..kernel_width) |kc| {
+                                            const cc = c0 + kc;
+                                            const pixel_val = self.at(rr, cc).*;
+                                            const channel_val = @field(pixel_val, field.name);
+                                            const kernel_val = kernel[kr][kc];
+                                            accumulator += as(f32, channel_val) * as(f32, kernel_val);
+                                        }
+                                    }
+                                } else {
+                                    for (0..kernel_height) |kr| {
+                                        for (0..kernel_width) |kc| {
+                                            const src_r = @as(isize, @intCast(r)) + @as(isize, @intCast(kr)) - @as(isize, @intCast(half_h));
+                                            const src_c = @as(isize, @intCast(c)) + @as(isize, @intCast(kc)) - @as(isize, @intCast(half_w));
+                                            const pixel_val = self.getPixelWithBorder(src_r, src_c, border_mode);
+                                            const channel_val = @field(pixel_val, field.name);
+                                            const kernel_val = kernel[kr][kc];
+                                            accumulator += as(f32, channel_val) * as(f32, kernel_val);
+                                        }
                                     }
                                 }
 
@@ -1434,24 +1464,41 @@ pub fn Image(comptime T: type) type {
                     // Scalar types - single channel
                     for (0..self.rows) |r| {
                         for (0..self.cols) |c| {
-                            const ir = @as(isize, @intCast(r));
-                            const ic = @as(isize, @intCast(c));
+                            var result: f32 = 0;
+                            if (r > 0 and r + 1 < self.rows and c > 0 and c + 1 < self.cols) {
+                                // Fast interior path
+                                const p00 = self.at(r - 1, c - 1).*;
+                                const p01 = self.at(r - 1, c + 0).*;
+                                const p02 = self.at(r - 1, c + 1).*;
+                                const p10 = self.at(r + 0, c - 1).*;
+                                const p11 = self.at(r + 0, c + 0).*;
+                                const p12 = self.at(r + 0, c + 1).*;
+                                const p20 = self.at(r + 1, c - 1).*;
+                                const p21 = self.at(r + 1, c + 0).*;
+                                const p22 = self.at(r + 1, c + 1).*;
 
-                            // Gather 3x3 neighborhood
-                            const p00 = self.getPixelWithBorder(ir - 1, ic - 1, border_mode);
-                            const p01 = self.getPixelWithBorder(ir - 1, ic, border_mode);
-                            const p02 = self.getPixelWithBorder(ir - 1, ic + 1, border_mode);
-                            const p10 = self.getPixelWithBorder(ir, ic - 1, border_mode);
-                            const p11 = self.getPixelWithBorder(ir, ic, border_mode);
-                            const p12 = self.getPixelWithBorder(ir, ic + 1, border_mode);
-                            const p20 = self.getPixelWithBorder(ir + 1, ic - 1, border_mode);
-                            const p21 = self.getPixelWithBorder(ir + 1, ic, border_mode);
-                            const p22 = self.getPixelWithBorder(ir + 1, ic + 1, border_mode);
+                                result =
+                                    as(f32, p00) * kr[0] + as(f32, p01) * kr[1] + as(f32, p02) * kr[2] +
+                                    as(f32, p10) * kr[3] + as(f32, p11) * kr[4] + as(f32, p12) * kr[5] +
+                                    as(f32, p20) * kr[6] + as(f32, p21) * kr[7] + as(f32, p22) * kr[8];
+                            } else {
+                                const ir = @as(isize, @intCast(r));
+                                const ic = @as(isize, @intCast(c));
+                                const p00 = self.getPixelWithBorder(ir - 1, ic - 1, border_mode);
+                                const p01 = self.getPixelWithBorder(ir - 1, ic, border_mode);
+                                const p02 = self.getPixelWithBorder(ir - 1, ic + 1, border_mode);
+                                const p10 = self.getPixelWithBorder(ir, ic - 1, border_mode);
+                                const p11 = self.getPixelWithBorder(ir, ic, border_mode);
+                                const p12 = self.getPixelWithBorder(ir, ic + 1, border_mode);
+                                const p20 = self.getPixelWithBorder(ir + 1, ic - 1, border_mode);
+                                const p21 = self.getPixelWithBorder(ir + 1, ic, border_mode);
+                                const p22 = self.getPixelWithBorder(ir + 1, ic + 1, border_mode);
 
-                            const result =
-                                as(f32, p00) * kr[0] + as(f32, p01) * kr[1] + as(f32, p02) * kr[2] +
-                                as(f32, p10) * kr[3] + as(f32, p11) * kr[4] + as(f32, p12) * kr[5] +
-                                as(f32, p20) * kr[6] + as(f32, p21) * kr[7] + as(f32, p22) * kr[8];
+                                result =
+                                    as(f32, p00) * kr[0] + as(f32, p01) * kr[1] + as(f32, p02) * kr[2] +
+                                    as(f32, p10) * kr[3] + as(f32, p11) * kr[4] + as(f32, p12) * kr[5] +
+                                    as(f32, p20) * kr[6] + as(f32, p21) * kr[7] + as(f32, p22) * kr[8];
+                            }
 
                             out.at(r, c).* = switch (@typeInfo(T)) {
                                 .int => @intFromFloat(@max(std.math.minInt(T), @min(std.math.maxInt(T), @round(result)))),
@@ -1465,34 +1512,53 @@ pub fn Image(comptime T: type) type {
                     // Struct types - channel-wise convolution
                     for (0..self.rows) |r| {
                         for (0..self.cols) |c| {
-                            const ir = @as(isize, @intCast(r));
-                            const ic = @as(isize, @intCast(c));
-
-                            // Gather 3x3 neighborhood
-                            const p00 = self.getPixelWithBorder(ir - 1, ic - 1, border_mode);
-                            const p01 = self.getPixelWithBorder(ir - 1, ic, border_mode);
-                            const p02 = self.getPixelWithBorder(ir - 1, ic + 1, border_mode);
-                            const p10 = self.getPixelWithBorder(ir, ic - 1, border_mode);
-                            const p11 = self.getPixelWithBorder(ir, ic, border_mode);
-                            const p12 = self.getPixelWithBorder(ir, ic + 1, border_mode);
-                            const p20 = self.getPixelWithBorder(ir + 1, ic - 1, border_mode);
-                            const p21 = self.getPixelWithBorder(ir + 1, ic, border_mode);
-                            const p22 = self.getPixelWithBorder(ir + 1, ic + 1, border_mode);
-
                             var result_pixel: T = undefined;
+                            if (r > 0 and r + 1 < self.rows and c > 0 and c + 1 < self.cols) {
+                                const p00 = self.at(r - 1, c - 1).*;
+                                const p01 = self.at(r - 1, c + 0).*;
+                                const p02 = self.at(r - 1, c + 1).*;
+                                const p10 = self.at(r + 0, c - 1).*;
+                                const p11 = self.at(r + 0, c + 0).*;
+                                const p12 = self.at(r + 0, c + 1).*;
+                                const p20 = self.at(r + 1, c - 1).*;
+                                const p21 = self.at(r + 1, c + 0).*;
+                                const p22 = self.at(r + 1, c + 1).*;
 
-                            // Process each channel independently
-                            inline for (std.meta.fields(T)) |field| {
-                                const result =
-                                    as(f32, @field(p00, field.name)) * kr[0] + as(f32, @field(p01, field.name)) * kr[1] + as(f32, @field(p02, field.name)) * kr[2] +
-                                    as(f32, @field(p10, field.name)) * kr[3] + as(f32, @field(p11, field.name)) * kr[4] + as(f32, @field(p12, field.name)) * kr[5] +
-                                    as(f32, @field(p20, field.name)) * kr[6] + as(f32, @field(p21, field.name)) * kr[7] + as(f32, @field(p22, field.name)) * kr[8];
+                                inline for (std.meta.fields(T)) |field| {
+                                    const result =
+                                        as(f32, @field(p00, field.name)) * kr[0] + as(f32, @field(p01, field.name)) * kr[1] + as(f32, @field(p02, field.name)) * kr[2] +
+                                        as(f32, @field(p10, field.name)) * kr[3] + as(f32, @field(p11, field.name)) * kr[4] + as(f32, @field(p12, field.name)) * kr[5] +
+                                        as(f32, @field(p20, field.name)) * kr[6] + as(f32, @field(p21, field.name)) * kr[7] + as(f32, @field(p22, field.name)) * kr[8];
+                                    @field(result_pixel, field.name) = switch (@typeInfo(field.type)) {
+                                        .int => @intFromFloat(@max(std.math.minInt(field.type), @min(std.math.maxInt(field.type), @round(result)))),
+                                        .float => as(field.type, result),
+                                        else => @compileError("Unsupported field type"),
+                                    };
+                                }
+                            } else {
+                                const ir = @as(isize, @intCast(r));
+                                const ic = @as(isize, @intCast(c));
+                                const p00 = self.getPixelWithBorder(ir - 1, ic - 1, border_mode);
+                                const p01 = self.getPixelWithBorder(ir - 1, ic, border_mode);
+                                const p02 = self.getPixelWithBorder(ir - 1, ic + 1, border_mode);
+                                const p10 = self.getPixelWithBorder(ir, ic - 1, border_mode);
+                                const p11 = self.getPixelWithBorder(ir, ic, border_mode);
+                                const p12 = self.getPixelWithBorder(ir, ic + 1, border_mode);
+                                const p20 = self.getPixelWithBorder(ir + 1, ic - 1, border_mode);
+                                const p21 = self.getPixelWithBorder(ir + 1, ic, border_mode);
+                                const p22 = self.getPixelWithBorder(ir + 1, ic + 1, border_mode);
 
-                                @field(result_pixel, field.name) = switch (@typeInfo(field.type)) {
-                                    .int => @intFromFloat(@max(std.math.minInt(field.type), @min(std.math.maxInt(field.type), @round(result)))),
-                                    .float => as(field.type, result),
-                                    else => @compileError("Unsupported field type"),
-                                };
+                                inline for (std.meta.fields(T)) |field| {
+                                    const result =
+                                        as(f32, @field(p00, field.name)) * kr[0] + as(f32, @field(p01, field.name)) * kr[1] + as(f32, @field(p02, field.name)) * kr[2] +
+                                        as(f32, @field(p10, field.name)) * kr[3] + as(f32, @field(p11, field.name)) * kr[4] + as(f32, @field(p12, field.name)) * kr[5] +
+                                        as(f32, @field(p20, field.name)) * kr[6] + as(f32, @field(p21, field.name)) * kr[7] + as(f32, @field(p22, field.name)) * kr[8];
+                                    @field(result_pixel, field.name) = switch (@typeInfo(field.type)) {
+                                        .int => @intFromFloat(@max(std.math.minInt(field.type), @min(std.math.maxInt(field.type), @round(result)))),
+                                        .float => as(field.type, result),
+                                        else => @compileError("Unsupported field type"),
+                                    };
+                                }
                             }
 
                             out.at(r, c).* = result_pixel;
@@ -1521,15 +1587,12 @@ pub fn Image(comptime T: type) type {
                     return self.at(@intCast(r), @intCast(c)).*;
                 },
                 .mirror => {
-                    var r = row;
-                    var c = col;
-                    if (r < 0) r = -r - 1;
-                    if (r >= irows) r = 2 * irows - r - 1;
-                    if (c < 0) c = -c - 1;
-                    if (c >= icols) c = 2 * icols - c - 1;
-                    // Clamp in case of extreme values
-                    r = @max(0, @min(r, irows - 1));
-                    c = @max(0, @min(c, icols - 1));
+                    // Reflect indices across borders with period 2*N
+                    if (irows == 0 or icols == 0) return std.mem.zeroes(T);
+                    var r = @mod(row, 2 * irows);
+                    var c = @mod(col, 2 * icols);
+                    if (r >= irows) r = 2 * irows - 1 - r;
+                    if (c >= icols) c = 2 * icols - 1 - c;
                     return self.at(@intCast(r), @intCast(c)).*;
                 },
                 .wrap => {
@@ -1567,10 +1630,19 @@ pub fn Image(comptime T: type) type {
                     for (0..self.rows) |r| {
                         for (0..self.cols) |c| {
                             var sum: f32 = 0;
-                            for (kernel_x, 0..) |k, i| {
-                                const src_c = @as(isize, @intCast(c)) + @as(isize, @intCast(i)) - @as(isize, @intCast(half_x));
-                                const pixel = self.getPixelWithBorder(@intCast(r), src_c, border_mode);
-                                sum += as(f32, pixel) * k;
+                            if (c >= half_x and c + half_x < self.cols) {
+                                const c0: usize = c - half_x;
+                                for (kernel_x, 0..) |k, i| {
+                                    const cc = c0 + i;
+                                    const pixel = self.at(r, cc).*;
+                                    sum += as(f32, pixel) * k;
+                                }
+                            } else {
+                                for (kernel_x, 0..) |k, i| {
+                                    const src_c = @as(isize, @intCast(c)) + @as(isize, @intCast(i)) - @as(isize, @intCast(half_x));
+                                    const pixel = self.getPixelWithBorder(@intCast(r), src_c, border_mode);
+                                    sum += as(f32, pixel) * k;
+                                }
                             }
                             temp.at(r, c).* = switch (@typeInfo(T)) {
                                 .int => @intFromFloat(@max(std.math.minInt(T), @min(std.math.maxInt(T), @round(sum)))),
@@ -1586,10 +1658,19 @@ pub fn Image(comptime T: type) type {
                             var result_pixel: T = undefined;
                             inline for (std.meta.fields(T)) |field| {
                                 var sum: f32 = 0;
-                                for (kernel_x, 0..) |k, i| {
-                                    const src_c = @as(isize, @intCast(c)) + @as(isize, @intCast(i)) - @as(isize, @intCast(half_x));
-                                    const pixel = self.getPixelWithBorder(@intCast(r), src_c, border_mode);
-                                    sum += as(f32, @field(pixel, field.name)) * k;
+                                if (c >= half_x and c + half_x < self.cols) {
+                                    const c0: usize = c - half_x;
+                                    for (kernel_x, 0..) |k, i| {
+                                        const cc = c0 + i;
+                                        const pixel = self.at(r, cc).*;
+                                        sum += as(f32, @field(pixel, field.name)) * k;
+                                    }
+                                } else {
+                                    for (kernel_x, 0..) |k, i| {
+                                        const src_c = @as(isize, @intCast(c)) + @as(isize, @intCast(i)) - @as(isize, @intCast(half_x));
+                                        const pixel = self.getPixelWithBorder(@intCast(r), src_c, border_mode);
+                                        sum += as(f32, @field(pixel, field.name)) * k;
+                                    }
                                 }
                                 @field(result_pixel, field.name) = switch (@typeInfo(field.type)) {
                                     .int => @intFromFloat(@max(std.math.minInt(field.type), @min(std.math.maxInt(field.type), @round(sum)))),
@@ -1610,10 +1691,19 @@ pub fn Image(comptime T: type) type {
                     for (0..self.rows) |r| {
                         for (0..self.cols) |c| {
                             var sum: f32 = 0;
-                            for (kernel_y, 0..) |k, i| {
-                                const src_r = @as(isize, @intCast(r)) + @as(isize, @intCast(i)) - @as(isize, @intCast(half_y));
-                                const pixel = temp.getPixelWithBorder(src_r, @intCast(c), border_mode);
-                                sum += as(f32, pixel) * k;
+                            if (r >= half_y and r + half_y < self.rows) {
+                                const r0: usize = r - half_y;
+                                for (kernel_y, 0..) |k, i| {
+                                    const rr = r0 + i;
+                                    const pixel = temp.at(rr, c).*;
+                                    sum += as(f32, pixel) * k;
+                                }
+                            } else {
+                                for (kernel_y, 0..) |k, i| {
+                                    const src_r = @as(isize, @intCast(r)) + @as(isize, @intCast(i)) - @as(isize, @intCast(half_y));
+                                    const pixel = temp.getPixelWithBorder(src_r, @intCast(c), border_mode);
+                                    sum += as(f32, pixel) * k;
+                                }
                             }
                             out.at(r, c).* = switch (@typeInfo(T)) {
                                 .int => @intFromFloat(@max(std.math.minInt(T), @min(std.math.maxInt(T), @round(sum)))),
@@ -1629,10 +1719,19 @@ pub fn Image(comptime T: type) type {
                             var result_pixel: T = undefined;
                             inline for (std.meta.fields(T)) |field| {
                                 var sum: f32 = 0;
-                                for (kernel_y, 0..) |k, i| {
-                                    const src_r = @as(isize, @intCast(r)) + @as(isize, @intCast(i)) - @as(isize, @intCast(half_y));
-                                    const pixel = temp.getPixelWithBorder(src_r, @intCast(c), border_mode);
-                                    sum += as(f32, @field(pixel, field.name)) * k;
+                                if (r >= half_y and r + half_y < self.rows) {
+                                    const r0: usize = r - half_y;
+                                    for (kernel_y, 0..) |k, i| {
+                                        const rr = r0 + i;
+                                        const pixel = temp.at(rr, c).*;
+                                        sum += as(f32, @field(pixel, field.name)) * k;
+                                    }
+                                } else {
+                                    for (kernel_y, 0..) |k, i| {
+                                        const src_r = @as(isize, @intCast(r)) + @as(isize, @intCast(i)) - @as(isize, @intCast(half_y));
+                                        const pixel = temp.getPixelWithBorder(src_r, @intCast(c), border_mode);
+                                        sum += as(f32, @field(pixel, field.name)) * k;
+                                    }
                                 }
                                 @field(result_pixel, field.name) = switch (@typeInfo(field.type)) {
                                     .int => @intFromFloat(@max(std.math.minInt(field.type), @min(std.math.maxInt(field.type), @round(sum)))),
