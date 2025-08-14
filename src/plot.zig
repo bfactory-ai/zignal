@@ -16,7 +16,7 @@ const Rgb = @import("color.zig").Rgb;
 const Point = @import("geometry/Point.zig").Point;
 const Rectangle = @import("geometry.zig").Rectangle;
 const BitmapFont = @import("font.zig").BitmapFont;
-const default_font_8x8 = @import("font.zig").default_font_8x8;
+const font8x8 = @import("font.zig").font8x8.basic;
 
 // Import axis module
 const axis_mod = @import("plot/axis.zig");
@@ -91,7 +91,7 @@ pub const Plot = struct {
     title: ?[]const u8 = null,
     x_label: ?[]const u8 = null,
     y_label: ?[]const u8 = null,
-    font: BitmapFont = default_font_8x8,
+    font: BitmapFont = font8x8,
     font_scale: f32 = 1.5,
 
     // Data series
@@ -103,11 +103,11 @@ pub const Plot = struct {
     show_legend: bool = false,
 
     /// Initialize a new plot with given dimensions
-    pub fn init(allocator: Allocator, width: usize, height: usize, font: ?BitmapFont) !Plot {
-        var image: Image(Rgb) = try .initAlloc(allocator, height, width);
-        errdefer image.deinit(allocator);
+    pub fn init(gpa: Allocator, width: usize, height: usize, font: ?BitmapFont) !Plot {
+        var image: Image(Rgb) = try .initAlloc(gpa, height, width);
+        errdefer image.deinit(gpa);
 
-        const canvas: Canvas(Rgb) = .init(allocator, image);
+        const canvas: Canvas(Rgb) = .init(gpa, image);
 
         const plot_area = Rectangle(f32){
             .l = @as(f32, @floatFromInt(width)) * 0.1,
@@ -117,7 +117,7 @@ pub const Plot = struct {
         };
 
         return .{
-            .allocator = allocator,
+            .allocator = gpa,
             .image = image,
             .canvas = canvas,
             .plot_area = plot_area,
@@ -127,14 +127,14 @@ pub const Plot = struct {
                 axis.inverted = true; // Y-axis is inverted in screen coordinates
                 break :blk axis;
             },
-            .series = std.ArrayList(Series).init(allocator),
-            .font = font orelse default_font_8x8,
+            .series = .empty,
+            .font = font orelse font8x8,
         };
     }
 
     /// Deinitialize the plot
     pub fn deinit(self: *Plot) void {
-        self.series.deinit();
+        self.series.deinit(self.allocator);
         self.image.deinit(self.allocator);
     }
 
@@ -178,7 +178,7 @@ pub const Plot = struct {
     /// Add a line plot
     pub fn addLine(self: *Plot, x_data: []const f32, y_data: []const f32, style: SeriesStyle) !void {
         assert(x_data.len == y_data.len);
-        try self.series.append(.{
+        try self.series.append(self.allocator, .{
             .type = .line,
             .x_data = x_data,
             .y_data = y_data,
@@ -190,7 +190,7 @@ pub const Plot = struct {
     /// Add a line plot with label
     pub fn addLineWithLabel(self: *Plot, x_data: []const f32, y_data: []const f32, label: []const u8, style: SeriesStyle) !void {
         assert(x_data.len == y_data.len);
-        try self.series.append(.{
+        try self.series.append(self.allocator, .{
             .type = .line,
             .x_data = x_data,
             .y_data = y_data,
@@ -202,7 +202,7 @@ pub const Plot = struct {
     /// Add a scatter plot
     pub fn addScatter(self: *Plot, x_data: []const f32, y_data: []const f32, style: SeriesStyle) !void {
         assert(x_data.len == y_data.len);
-        try self.series.append(.{
+        try self.series.append(self.allocator, .{
             .type = .scatter,
             .x_data = x_data,
             .y_data = y_data,
@@ -214,7 +214,7 @@ pub const Plot = struct {
     /// Add a scatter plot with label
     pub fn addScatterWithLabel(self: *Plot, x_data: []const f32, y_data: []const f32, label: []const u8, style: SeriesStyle) !void {
         assert(x_data.len == y_data.len);
-        try self.series.append(.{
+        try self.series.append(self.allocator, .{
             .type = .scatter,
             .x_data = x_data,
             .y_data = y_data,
@@ -343,7 +343,7 @@ pub const Plot = struct {
                 // Draw label
                 const label = Axis.formatTickValue(tick_val, &buffer);
                 const text_width = @as(f32, @floatFromInt(label.len * self.font.char_width));
-                self.canvas.drawText(label, .point(.{ px - text_width / 2, self.plot_area.b + tick_size + 5 }), self.font, self.axis_color, 1, .fast);
+                self.canvas.drawText(label, .point(.{ px - text_width / 2, self.plot_area.b + tick_size + 5 }), self.axis_color, self.font, 1, .fast);
             }
         }
 
@@ -357,7 +357,7 @@ pub const Plot = struct {
                 // Draw label
                 const label = Axis.formatTickValue(tick_val, &buffer);
                 const text_width = @as(f32, @floatFromInt(label.len * self.font.char_width));
-                self.canvas.drawText(label, .point(.{ self.plot_area.l - tick_size - text_width - 5, py - 4 }), self.font, self.axis_color, 1, .fast);
+                self.canvas.drawText(label, .point(.{ self.plot_area.l - tick_size - text_width - 5, py - 4 }), self.axis_color, self.font, 1, .fast);
             }
         }
     }
@@ -369,7 +369,7 @@ pub const Plot = struct {
             const x = (self.plot_area.l + self.plot_area.r) / 2 -
                 @as(f32, @floatFromInt(title.len * self.font.char_width)) * self.font_scale / 2;
             const y = self.margins.top / 2 - 4 * self.font_scale;
-            self.canvas.drawText(title, .point(.{ x, y }), self.font, self.axis_color, self.font_scale, .fast);
+            self.canvas.drawText(title, .point(.{ x, y }), self.axis_color, self.font, self.font_scale, .fast);
         }
 
         // X-axis label
@@ -377,7 +377,7 @@ pub const Plot = struct {
             const x = (self.plot_area.l + self.plot_area.r) / 2 -
                 @as(f32, @floatFromInt(label.len * self.font.char_width)) * self.font_scale / 2;
             const y = self.plot_area.b + self.margins.bottom / 2;
-            self.canvas.drawText(label, .point(.{ x, y }), self.font, self.axis_color, self.font_scale, .fast);
+            self.canvas.drawText(label, .point(.{ x, y }), self.axis_color, self.font, self.font_scale, .fast);
         }
 
         // Y-axis label (rotated 90 degrees counter-clockwise)
@@ -394,11 +394,11 @@ pub const Plot = struct {
             temp_canvas.fill(self.background_color);
 
             // Draw text horizontally on temp image
-            temp_canvas.drawText(label, .point(.{ 2, 2 }), self.font, self.axis_color, self.font_scale, .fast);
+            temp_canvas.drawText(label, .point(.{ 2, 2 }), self.axis_color, self.font, self.font_scale, .fast);
 
             // Rotate 90 degrees counter-clockwise
             var rotated_image: Image(Rgb) = .empty;
-            try temp_image.rotate(self.allocator, -std.math.pi / 2.0, &rotated_image);
+            try temp_image.rotate(self.allocator, std.math.pi / 2.0, .nearest_neighbor, &rotated_image);
             defer rotated_image.deinit(self.allocator);
 
             // Calculate position for rotated text (centered vertically on Y-axis)
@@ -618,7 +618,7 @@ pub const Plot = struct {
             // Draw label text
             const text_x = sample_x + sample_width + text_offset;
             const text_y = sample_y - 4; // Center text vertically
-            self.canvas.drawText(label, .point(.{ text_x, text_y }), self.font, self.axis_color, 1, .fast);
+            self.canvas.drawText(label, .point(.{ text_x, text_y }), self.axis_color, self.font, 1, .fast);
 
             y_offset += item_height;
         }
