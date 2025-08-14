@@ -82,11 +82,11 @@ fn drawBezierCubic(canvas: Canvas(Rgba)) void {
 }
 
 fn drawBezierQuadratic(canvas: Canvas(Rgba)) void {
-    const color = Rgba{ .r = 192, .g = 96, .b = 0, .a = 255 };
-    const p0 = Point(2, f32).point(.{ 20, 70 });
+    const color = Rgba{ .r = 255, .g = 128, .b = 192, .a = 255 };
+    const p0 = Point(2, f32).point(.{ 20, 80 });
     const p1 = Point(2, f32).point(.{ 50, 20 });
-    const p2 = Point(2, f32).point(.{ 80, 70 });
-    canvas.drawQuadraticBezier(p0, p1, p2, color, 3, .fast);
+    const p2 = Point(2, f32).point(.{ 80, 80 });
+    canvas.drawQuadraticBezier(p0, p1, p2, color, 3, .soft);
 }
 
 fn drawPolygonComplex(canvas: Canvas(Rgba)) void {
@@ -166,7 +166,7 @@ const md5_checksums = [_]DrawTestCase{
     .{ .name = "drawRectangleOutline", .md5sum = "e8a00365f1d9ba67220af043363c3f0d", .draw_fn = drawRectangleOutline },
     .{ .name = "drawTriangleFilled", .md5sum = "e17bdf311200fe1deb625377d413a064", .draw_fn = drawTriangleFilled },
     .{ .name = "drawBezierCubic", .md5sum = "92d080a680418a3fc14c6c8beff14e01", .draw_fn = drawBezierCubic },
-    .{ .name = "drawBezierQuadratic", .md5sum = "84eebba2c9a21a8fbfd167ee7621cfc6", .draw_fn = drawBezierQuadratic },
+    .{ .name = "drawBezierQuadratic", .md5sum = "c3286e308aaaef5b302129cf67b713c6", .draw_fn = drawBezierQuadratic },
     .{ .name = "drawPolygonComplex", .md5sum = "da9b83426d2118ce99948eabebff91fb", .draw_fn = drawPolygonComplex },
     .{ .name = "drawSplinePolygon", .md5sum = "6bae24f211c7fdd391cb5159dd4e8fd0", .draw_fn = drawSplinePolygon },
     .{ .name = "drawArcQuarter", .md5sum = "028912b02048fa169c8cb808ff669184", .draw_fn = drawArcQuarter },
