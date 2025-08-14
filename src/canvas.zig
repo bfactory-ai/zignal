@@ -15,6 +15,7 @@ const Image = @import("image.zig").Image;
 const isColor = @import("color.zig").isColor;
 const Rectangle = @import("geometry.zig").Rectangle;
 const Rgba = @import("color.zig").Rgba;
+const Rgb = @import("color.zig").Rgb;
 
 /// Rendering quality mode for drawing operations
 pub const DrawMode = enum {
@@ -118,6 +119,28 @@ pub fn Canvas(comptime T: type) type {
         /// It does not compare pixel data or types.
         pub inline fn hasSameShape(self: Self, other: anytype) bool {
             return self.image.hasSameShape(other.image);
+        }
+
+        /// Normalizes an angle to the [0, 2π] range.
+        inline fn normalizeAngle(angle: f32) f32 {
+            var normalized = @mod(angle, 2 * std.math.pi);
+            if (normalized < 0) normalized += 2 * std.math.pi;
+            return normalized;
+        }
+
+        /// Checks if an angle is within an arc's range.
+        /// Handles wrapping around 2π correctly.
+        inline fn isAngleInArc(angle: f32, start: f32, end: f32) bool {
+            const norm_angle = normalizeAngle(angle);
+            const norm_start = normalizeAngle(start);
+            const norm_end = normalizeAngle(end);
+
+            if (norm_start <= norm_end) {
+                return norm_angle >= norm_start and norm_angle <= norm_end;
+            } else {
+                // Arc wraps around 0
+                return norm_angle >= norm_start or norm_angle <= norm_end;
+            }
         }
 
         /// Creates a view (sub-canvas) of this canvas within the specified rectangle.
@@ -627,6 +650,59 @@ pub fn Canvas(comptime T: type) type {
             }
         }
 
+        /// Draws an arc (portion of a circle outline) with the specified parameters.
+        ///
+        /// **Parameters:**
+        /// - `center`: The center point of the arc
+        /// - `radius`: The radius of the arc (must be positive)
+        /// - `start_angle`: Starting angle in radians (0 = positive X-axis)
+        /// - `end_angle`: Ending angle in radians
+        /// - `color`: The color to draw with (any color type)
+        /// - `width`: Line thickness in pixels (0 = no drawing)
+        /// - `mode`: DrawMode.fast for aliased or DrawMode.soft for anti-aliased
+        ///
+        /// **Angle Convention:**
+        /// - Angles are measured from the positive X-axis
+        /// - Positive angles rotate counter-clockwise
+        /// - Angles can be negative or > 2π (automatically normalized)
+        ///
+        /// **Performance:**
+        /// - Full circles (angle diff ≥ 2π) use optimized circle drawing
+        /// - Fast mode: O(r) for thin lines, O(r²) for thick lines
+        /// - Soft mode: Uses polygon tessellation, O(arc_length)
+        ///
+        /// **Example:**
+        /// ```zig
+        /// // Draw a red quarter arc from 0 to π/2 (90 degrees)
+        /// try canvas.drawArc(center, 50, 0, std.math.pi / 2.0, Rgb.red, 2, .soft);
+        /// ```
+        pub fn drawArc(self: Self, center: Point(2, f32), radius: f32, start_angle: f32, end_angle: f32, color: anytype, width: usize, mode: DrawMode) !void {
+            comptime assert(isColor(@TypeOf(color)));
+            if (radius <= 0 or width == 0) return;
+
+            // Validate angles are finite numbers
+            if (!std.math.isFinite(start_angle) or !std.math.isFinite(end_angle)) {
+                return;
+            }
+
+            // Check if this is a full circle (optimize for this case)
+            const angle_diff = @abs(end_angle - start_angle);
+            if (angle_diff >= 2 * std.math.pi) {
+                // Full circle - use optimized circle drawing
+                switch (mode) {
+                    .fast => self.drawCircleFast(center, radius, width, color),
+                    .soft => self.drawCircleSoft(center, radius, width, color),
+                }
+                return;
+            }
+
+            // Partial arc
+            switch (mode) {
+                .fast => self.drawArcFast(center, radius, start_angle, end_angle, width, color),
+                .soft => try self.drawArcSoft(center, radius, start_angle, end_angle, width, color),
+            }
+        }
+
         /// Internal function for drawing solid (aliased) circle outlines.
         fn drawCircleFast(self: Self, center: Point(2, f32), radius: f32, width: usize, color: anytype) void {
             if (width == 1) {
@@ -735,6 +811,146 @@ pub fn Canvas(comptime T: type) type {
                         }
                     }
                 }
+            }
+        }
+
+        /// Internal function for drawing solid (aliased) arc outlines.
+        fn drawArcFast(self: Self, center: Point(2, f32), radius: f32, start_angle: f32, end_angle: f32, width: usize, color: anytype) void {
+            if (width == 1) {
+                // Use modified Bresenham for 1-pixel width arcs
+                const cx = @round(center.x());
+                const cy = @round(center.y());
+                const r = @round(radius);
+                var x: f32 = r;
+                var y: f32 = 0;
+                var err: f32 = 0;
+
+                while (x >= y) {
+                    // Calculate points in all 8 octants
+                    const points = [_]struct { px: f32, py: f32 }{
+                        .{ .px = cx + x, .py = cy + y },
+                        .{ .px = cx - x, .py = cy + y },
+                        .{ .px = cx + x, .py = cy - y },
+                        .{ .px = cx - x, .py = cy - y },
+                        .{ .px = cx + y, .py = cy + x },
+                        .{ .px = cx - y, .py = cy + x },
+                        .{ .px = cx + y, .py = cy - x },
+                        .{ .px = cx - y, .py = cy - x },
+                    };
+
+                    for (points) |pt| {
+                        // Check if this point is within the arc's angle range
+                        const angle = std.math.atan2(pt.py - cy, pt.px - cx);
+                        if (isAngleInArc(angle, start_angle, end_angle)) {
+                            self.setPixel(.point(.{ pt.px, pt.py }), color);
+                        }
+                    }
+
+                    if (err <= 0) {
+                        y += 1;
+                        err += 2 * y + 1;
+                    }
+                    if (err > 0) {
+                        x -= 1;
+                        err -= 2 * x + 1;
+                    }
+                }
+            } else {
+                // Use ring filling for thick arc outlines
+                const frows: f32 = @floatFromInt(self.image.rows);
+                const fcols: f32 = @floatFromInt(self.image.cols);
+                const line_width: f32 = @floatFromInt(width);
+                const inner_radius = radius - line_width / 2.0;
+                const outer_radius = radius + line_width / 2.0;
+
+                // Calculate bounding box
+                const left: usize = @intFromFloat(@round(@max(0, center.x() - outer_radius - 1)));
+                const top: usize = @intFromFloat(@round(@max(0, center.y() - outer_radius - 1)));
+                const right: usize = @intFromFloat(@round(@min(fcols, center.x() + outer_radius + 1)));
+                const bottom: usize = @intFromFloat(@round(@min(frows, center.y() + outer_radius + 1)));
+
+                for (top..bottom) |r| {
+                    const y = @as(f32, @floatFromInt(r)) - center.y();
+                    for (left..right) |c| {
+                        const x = @as(f32, @floatFromInt(c)) - center.x();
+                        const dist = @sqrt(x * x + y * y);
+
+                        // Check if in ring and within arc angle
+                        if (dist >= inner_radius and dist <= outer_radius) {
+                            const angle = std.math.atan2(y, x);
+                            if (isAngleInArc(angle, start_angle, end_angle)) {
+                                self.setPixel(.point(.{ @as(f32, @floatFromInt(c)), @as(f32, @floatFromInt(r)) }), color);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /// Internal function for drawing smooth (anti-aliased) arc outlines.
+        fn drawArcSoft(self: Self, center: Point(2, f32), radius: f32, start_angle: f32, end_angle: f32, width: usize, color: anytype) !void {
+            // Generate polygon approximation of the arc
+            const angle_span = end_angle - start_angle;
+            const arc_length = @abs(angle_span) * radius;
+
+            // Determine number of segments based on arc length
+            const segments = @max(@as(usize, 8), @as(usize, @intFromFloat(@ceil(arc_length / 5.0))));
+            const angle_step = angle_span / @as(f32, @floatFromInt(segments));
+
+            // Stack allocation for reasonable arc sizes
+            var stack_points: [256]Point(2, f32) = undefined;
+            var points: []Point(2, f32) = undefined;
+
+            const total_points = if (width > 1) (segments + 1) * 2 else segments + 1;
+
+            if (total_points <= stack_points.len) {
+                points = stack_points[0..total_points];
+            } else {
+                // For very large arcs, use heap allocation
+                points = try self.allocator.alloc(Point(2, f32), total_points);
+            }
+            defer if (total_points > stack_points.len) self.allocator.free(points);
+
+            if (width == 1) {
+                // Generate points along the arc
+                for (0..segments + 1) |i| {
+                    const angle = start_angle + @as(f32, @floatFromInt(i)) * angle_step;
+                    points[i] = .point(.{
+                        center.x() + radius * @cos(angle),
+                        center.y() + radius * @sin(angle),
+                    });
+                }
+
+                // Draw as polyline
+                for (0..segments) |i| {
+                    self.drawLine(points[i], points[i + 1], color, 1, .soft);
+                }
+            } else {
+                // Generate inner and outer arc points for thick line
+                const line_width: f32 = @floatFromInt(width);
+                const inner_radius = radius - line_width / 2.0;
+                const outer_radius = radius + line_width / 2.0;
+
+                // Generate outer arc (forward)
+                for (0..segments + 1) |i| {
+                    const angle = start_angle + @as(f32, @floatFromInt(i)) * angle_step;
+                    points[i] = .point(.{
+                        center.x() + outer_radius * @cos(angle),
+                        center.y() + outer_radius * @sin(angle),
+                    });
+                }
+
+                // Generate inner arc (backward)
+                for (0..segments + 1) |i| {
+                    const angle = end_angle - @as(f32, @floatFromInt(i)) * angle_step;
+                    points[segments + 1 + i] = .point(.{
+                        center.x() + inner_radius * @cos(angle),
+                        center.y() + inner_radius * @sin(angle),
+                    });
+                }
+
+                // Draw as filled polygon
+                try self.fillPolygon(points, color, .soft);
             }
         }
 
@@ -867,6 +1083,58 @@ pub fn Canvas(comptime T: type) type {
             }
         }
 
+        /// Fills an arc (pie slice) on the given image.
+        ///
+        /// **Parameters:**
+        /// - `center`: The center point of the arc
+        /// - `radius`: The radius of the arc (must be positive)
+        /// - `start_angle`: Starting angle in radians (0 = positive X-axis)
+        /// - `end_angle`: Ending angle in radians
+        /// - `color`: The fill color (any color type)
+        /// - `mode`: DrawMode.fast for aliased or DrawMode.soft for anti-aliased edges
+        ///
+        /// **Angle Convention:**
+        /// - Angles are measured from the positive X-axis
+        /// - Positive angles rotate counter-clockwise
+        /// - The filled region includes the center point (pie slice)
+        ///
+        /// **Performance:**
+        /// - Full circles (angle diff ≥ 2π) use optimized circle filling
+        /// - Fast mode: O(r²) with optimized scanline filling
+        /// - Soft mode: Uses polygon tessellation for smooth edges
+        ///
+        /// **Example:**
+        /// ```zig
+        /// // Fill a green pie slice from π/4 to 3π/4 (45° to 135°)
+        /// try canvas.fillArc(center, 60, std.math.pi / 4.0, 3.0 * std.math.pi / 4.0, Rgb.green, .soft);
+        /// ```
+        pub fn fillArc(self: Self, center: Point(2, f32), radius: f32, start_angle: f32, end_angle: f32, color: anytype, mode: DrawMode) !void {
+            comptime assert(isColor(@TypeOf(color)));
+            if (radius <= 0) return;
+
+            // Validate angles are finite numbers
+            if (!std.math.isFinite(start_angle) or !std.math.isFinite(end_angle)) {
+                return;
+            }
+
+            // Check if this is a full circle (optimize for this case)
+            const angle_diff = @abs(end_angle - start_angle);
+            if (angle_diff >= 2 * std.math.pi) {
+                // Full circle - use optimized circle filling
+                switch (mode) {
+                    .fast => self.fillCircleFast(center, radius, color),
+                    .soft => self.fillCircleSoft(center, radius, color),
+                }
+                return;
+            }
+
+            // Partial arc
+            switch (mode) {
+                .fast => self.fillArcFast(center, radius, start_angle, end_angle, color),
+                .soft => try self.fillArcSoft(center, radius, start_angle, end_angle, color),
+            }
+        }
+
         /// Internal function for filling smooth (anti-aliased) circles.
         fn fillCircleSoft(self: Self, center: Point(2, f32), radius: f32, color: anytype) void {
             const frows: f32 = @floatFromInt(self.image.rows);
@@ -916,6 +1184,100 @@ pub fn Canvas(comptime T: type) type {
                     self.setHorizontalSpan(x1, x2, y, solid_color);
                 }
             }
+        }
+
+        /// Internal function for filling solid (non-anti-aliased) arcs.
+        /// Optimized version that calculates intersection points directly.
+        fn fillArcFast(self: Self, center: Point(2, f32), radius: f32, start_angle: f32, end_angle: f32, color: anytype) void {
+            const solid_color = convertColor(T, color);
+            const frows: f32 = @floatFromInt(self.image.rows);
+            const top = @max(0, center.y() - radius);
+            const bottom = @min(frows - 1, center.y() + radius);
+
+            var y = top;
+            while (y <= bottom) : (y += 1) {
+                const dy = y - center.y();
+                const dx_max = @sqrt(@max(0, radius * radius - dy * dy));
+
+                if (dx_max > 0) {
+                    // Calculate the left and right boundaries of the circle at this y
+                    const circle_left = center.x() - dx_max;
+                    const circle_right = center.x() + dx_max;
+
+                    // For pie slices, we need to also consider the lines from center to arc endpoints
+                    // Calculate where the arc boundary lines intersect this scanline
+                    var x_left = circle_right; // Start with invalid range
+                    var x_right = circle_left;
+
+                    // Check multiple points along the scanline to find the arc boundaries
+                    // This is more robust than trying to solve the intersection analytically
+                    const num_checks = @as(usize, @intFromFloat(@max(10, dx_max * 2)));
+                    var found_arc = false;
+
+                    var i: usize = 0;
+                    while (i <= num_checks) : (i += 1) {
+                        const x = circle_left + (circle_right - circle_left) * @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(num_checks));
+                        const dx = x - center.x();
+
+                        // Check if this point is within the radius
+                        if (dx * dx + dy * dy <= radius * radius) {
+                            const angle = std.math.atan2(dy, dx);
+                            if (isAngleInArc(angle, start_angle, end_angle)) {
+                                if (!found_arc) {
+                                    x_left = x;
+                                    found_arc = true;
+                                }
+                                x_right = x;
+                            }
+                        }
+                    }
+
+                    // Fill the span if we found valid arc points
+                    if (found_arc) {
+                        self.setHorizontalSpan(x_left, x_right, y, solid_color);
+                    }
+                }
+            }
+        }
+
+        /// Internal function for filling smooth (anti-aliased) arcs.
+        fn fillArcSoft(self: Self, center: Point(2, f32), radius: f32, start_angle: f32, end_angle: f32, color: anytype) !void {
+            // Generate polygon approximation of the filled arc (pie slice)
+            const angle_span = end_angle - start_angle;
+            const arc_length = @abs(angle_span) * radius;
+
+            // Determine number of segments based on arc length
+            const segments = @max(@as(usize, 8), @as(usize, @intFromFloat(@ceil(arc_length / 5.0))));
+            const angle_step = angle_span / @as(f32, @floatFromInt(segments));
+
+            // Stack allocation for reasonable arc sizes (segments + center point)
+            var stack_points: [258]Point(2, f32) = undefined;
+            var points: []Point(2, f32) = undefined;
+
+            const total_points = segments + 2; // Arc points + center
+
+            if (total_points <= stack_points.len) {
+                points = stack_points[0..total_points];
+            } else {
+                // For very large arcs, use heap allocation
+                points = try self.allocator.alloc(Point(2, f32), total_points);
+            }
+            defer if (total_points > stack_points.len) self.allocator.free(points);
+
+            // First point is the center
+            points[0] = center;
+
+            // Generate points along the arc
+            for (0..segments + 1) |i| {
+                const angle = start_angle + @as(f32, @floatFromInt(i)) * angle_step;
+                points[i + 1] = .point(.{
+                    center.x() + radius * @cos(angle),
+                    center.y() + radius * @sin(angle),
+                });
+            }
+
+            // Fill as polygon
+            try self.fillPolygon(points, color, .soft);
         }
 
         /// Draws a quadratic Bézier curve with specified width and fill mode.
@@ -1973,4 +2335,275 @@ test "bezier curve smoothness" {
         if (pixel.r == 0) black_pixel_count += 1;
     }
     try expect(black_pixel_count > 50); // Should have a reasonable number of pixels
+}
+
+test "arc drawing - basic angles" {
+    const allocator = testing.allocator;
+    const width = 200;
+    const height = 200;
+    var img = try Image(Rgb).initAlloc(allocator, width, height);
+    defer img.deinit(allocator);
+
+    const canvas = Canvas(Rgb).init(allocator, img);
+    const center: Point(2, f32) = .point(.{ 100, 100 });
+    const radius: f32 = 50;
+
+    // Clear to white
+    img.fill(Rgb.white);
+
+    // Test quarter arc (0 to π/2)
+    try canvas.drawArc(center, radius, 0, std.math.pi / 2.0, Rgb.black, 2, .fast);
+
+    // Verify some pixels are drawn
+    var black_count: usize = 0;
+    for (img.data) |pixel| {
+        if (pixel.r == 0 and pixel.g == 0 and pixel.b == 0) {
+            black_count += 1;
+        }
+    }
+    try expect(black_count > 0);
+
+    // Test that the arc is in the correct quadrant (right and below center)
+    // Sample a point that should be on the arc at 45 degrees
+    const angle_45 = std.math.pi / 4.0;
+    const expected_x = center.x() + radius * @cos(angle_45);
+    const expected_y = center.y() + radius * @sin(angle_45);
+
+    // Check a small area around the expected point
+    var found_pixel = false;
+    const check_radius: usize = 3;
+    var dy: usize = 0;
+    while (dy < check_radius * 2) : (dy += 1) {
+        var dx: usize = 0;
+        while (dx < check_radius * 2) : (dx += 1) {
+            const x = @as(usize, @intFromFloat(@round(expected_x))) + dx - check_radius;
+            const y = @as(usize, @intFromFloat(@round(expected_y))) + dy - check_radius;
+            if (x < width and y < height) {
+                const pixel = img.at(y, x);
+                if (pixel.r == 0 and pixel.g == 0 and pixel.b == 0) {
+                    found_pixel = true;
+                    break;
+                }
+            }
+        }
+        if (found_pixel) break;
+    }
+    try expect(found_pixel);
+}
+
+test "arc drawing - full circle optimization" {
+    const allocator = testing.allocator;
+    const width = 200;
+    const height = 200;
+    var img = try Image(Rgb).initAlloc(allocator, width, height);
+    defer img.deinit(allocator);
+
+    const canvas = Canvas(Rgb).init(allocator, img);
+    const center: Point(2, f32) = .point(.{ 100, 100 });
+    const radius: f32 = 40;
+
+    // Clear to white
+    img.fill(Rgb.white);
+
+    // Draw a full circle using arc (should trigger optimization)
+    try canvas.drawArc(center, radius, 0, 2 * std.math.pi, Rgb.black, 1, .fast);
+
+    // Count black pixels
+    var black_count: usize = 0;
+    for (img.data) |pixel| {
+        if (pixel.r == 0 and pixel.g == 0 and pixel.b == 0) {
+            black_count += 1;
+        }
+    }
+
+    // Should have approximately 2πr pixels for a circle outline
+    const expected = @as(usize, @intFromFloat(2 * std.math.pi * radius));
+    try expect(black_count > expected * 3 / 4); // Allow some tolerance
+    try expect(black_count < expected * 5 / 4);
+}
+
+test "arc drawing - angle wrapping" {
+    const allocator = testing.allocator;
+    const width = 200;
+    const height = 200;
+    var img1 = try Image(Rgb).initAlloc(allocator, width, height);
+    defer img1.deinit(allocator);
+    var img2 = try Image(Rgb).initAlloc(allocator, width, height);
+    defer img2.deinit(allocator);
+
+    const canvas1 = Canvas(Rgb).init(allocator, img1);
+    const canvas2 = Canvas(Rgb).init(allocator, img2);
+    const center: Point(2, f32) = .point(.{ 100, 100 });
+    const radius: f32 = 50;
+
+    // Clear both images
+    img1.fill(Rgb.white);
+    img2.fill(Rgb.white);
+
+    // Draw arc from 3π/2 to π/2 (wraps around 0)
+    try canvas1.drawArc(center, radius, 3.0 * std.math.pi / 2.0, std.math.pi / 2.0, Rgb.black, 2, .fast);
+
+    // Draw equivalent arc from -π/2 to π/2
+    try canvas2.drawArc(center, radius, -std.math.pi / 2.0, std.math.pi / 2.0, Rgb.black, 2, .fast);
+
+    // Both should produce the same result (approximately)
+    var matching_pixels: usize = 0;
+    var total_black1: usize = 0;
+    var total_black2: usize = 0;
+
+    for (img1.data, img2.data) |p1, p2| {
+        const is_black1 = (p1.r == 0 and p1.g == 0 and p1.b == 0);
+        const is_black2 = (p2.r == 0 and p2.g == 0 and p2.b == 0);
+        if (is_black1) total_black1 += 1;
+        if (is_black2) total_black2 += 1;
+        if (is_black1 and is_black2) matching_pixels += 1;
+    }
+
+    // Should have similar number of black pixels
+    const diff = if (total_black1 > total_black2) total_black1 - total_black2 else total_black2 - total_black1;
+    try expect(diff < @max(total_black1, total_black2) / 10); // Less than 10% difference
+}
+
+test "fillArc - pie slices" {
+    const allocator = testing.allocator;
+    const width = 200;
+    const height = 200;
+    var img = try Image(Rgb).initAlloc(allocator, width, height);
+    defer img.deinit(allocator);
+
+    const canvas = Canvas(Rgb).init(allocator, img);
+    const center: Point(2, f32) = .point(.{ 100, 100 });
+    const radius: f32 = 50;
+
+    // Clear to white
+    img.fill(Rgb.white);
+
+    // Fill a quarter pie slice (0 to π/2)
+    try canvas.fillArc(center, radius, 0, std.math.pi / 2.0, Rgb.black, .fast);
+
+    // Count black pixels
+    var black_count: usize = 0;
+    for (img.data) |pixel| {
+        if (pixel.r == 0 and pixel.g == 0 and pixel.b == 0) {
+            black_count += 1;
+        }
+    }
+
+    // Quarter circle area should be approximately πr²/4
+    const expected_area = @as(usize, @intFromFloat(std.math.pi * radius * radius / 4));
+    try expect(black_count > expected_area * 3 / 4); // Allow tolerance
+    try expect(black_count < expected_area * 5 / 4);
+
+    // Verify the filled area is in the correct quadrant
+    // Points in the first quadrant (x > center.x, y > center.y) should be filled
+    const sample_x = @as(usize, @intFromFloat(center.x() + radius / 2));
+    const sample_y = @as(usize, @intFromFloat(center.y() + radius / 2));
+    const sample_pixel = img.at(sample_y, sample_x);
+    try expect(sample_pixel.r == 0 and sample_pixel.g == 0 and sample_pixel.b == 0);
+
+    // Points in the opposite quadrant should not be filled
+    const opposite_x = @as(usize, @intFromFloat(center.x() - radius / 2));
+    const opposite_y = @as(usize, @intFromFloat(center.y() - radius / 2));
+    const opposite_pixel = img.at(opposite_y, opposite_x);
+    try expect(opposite_pixel.r == 255 and opposite_pixel.g == 255 and opposite_pixel.b == 255);
+}
+
+test "arc drawing - soft vs fast mode" {
+    const allocator = testing.allocator;
+    const width = 200;
+    const height = 200;
+    var img_fast = try Image(Rgba).initAlloc(allocator, width, height);
+    defer img_fast.deinit(allocator);
+    var img_soft = try Image(Rgba).initAlloc(allocator, width, height);
+    defer img_soft.deinit(allocator);
+
+    const canvas_fast = Canvas(Rgba).init(allocator, img_fast);
+    const canvas_soft = Canvas(Rgba).init(allocator, img_soft);
+    const center: Point(2, f32) = .point(.{ 100, 100 });
+    const radius: f32 = 60;
+    const color = Rgba{ .r = 0, .g = 0, .b = 0, .a = 255 };
+
+    // Clear both images
+    for (img_fast.data) |*p| p.* = Rgba.white;
+    for (img_soft.data) |*p| p.* = Rgba.white;
+
+    // Draw same arc with different modes
+    try canvas_fast.drawArc(center, radius, std.math.pi / 6.0, 5.0 * std.math.pi / 6.0, color, 3, .fast);
+    try canvas_soft.drawArc(center, radius, std.math.pi / 6.0, 5.0 * std.math.pi / 6.0, color, 3, .soft);
+
+    // Count pixels with partial transparency (antialiasing)
+    var soft_partial_count: usize = 0;
+    var fast_partial_count: usize = 0;
+
+    for (img_soft.data) |pixel| {
+        if (pixel.r < 255 and pixel.r > 0) {
+            soft_partial_count += 1;
+        }
+    }
+
+    for (img_fast.data) |pixel| {
+        if (pixel.r < 255 and pixel.r > 0) {
+            fast_partial_count += 1;
+        }
+    }
+
+    // Soft mode should have antialiased edges (partial transparency)
+    try expect(soft_partial_count > 0);
+    // Fast mode should have no or very few partially transparent pixels
+    try expect(fast_partial_count < soft_partial_count / 2);
+}
+
+test "arc drawing - zero and negative radius" {
+    const allocator = testing.allocator;
+    const width = 100;
+    const height = 100;
+    var img = try Image(Rgb).initAlloc(allocator, width, height);
+    defer img.deinit(allocator);
+
+    const canvas = Canvas(Rgb).init(allocator, img);
+    const center: Point(2, f32) = .point(.{ 50, 50 });
+
+    // Clear to white
+    img.fill(Rgb.white);
+
+    // These should not crash and should not draw anything
+    try canvas.drawArc(center, 0, 0, std.math.pi, Rgb.black, 1, .fast);
+    try canvas.drawArc(center, -10, 0, std.math.pi, Rgb.black, 1, .fast);
+    try canvas.fillArc(center, 0, 0, std.math.pi, Rgb.black, .fast);
+    try canvas.fillArc(center, -10, 0, std.math.pi, Rgb.black, .fast);
+
+    // Image should still be all white
+    for (img.data) |pixel| {
+        try expect(pixel.r == 255 and pixel.g == 255 and pixel.b == 255);
+    }
+}
+
+test "arc drawing - NaN and Inf angles" {
+    const allocator = testing.allocator;
+    const width = 100;
+    const height = 100;
+    var img = try Image(Rgb).initAlloc(allocator, width, height);
+    defer img.deinit(allocator);
+
+    const canvas = Canvas(Rgb).init(allocator, img);
+    const center: Point(2, f32) = .point(.{ 50, 50 });
+
+    // Clear to white
+    img.fill(Rgb.white);
+
+    // These should not crash and should not draw anything
+    const nan = std.math.nan(f32);
+    const inf = std.math.inf(f32);
+
+    try canvas.drawArc(center, 30, nan, std.math.pi, Rgb.black, 2, .fast);
+    try canvas.drawArc(center, 30, 0, inf, Rgb.black, 2, .fast);
+    try canvas.drawArc(center, 30, -inf, inf, Rgb.black, 2, .fast);
+    try canvas.fillArc(center, 30, nan, std.math.pi, Rgb.black, .fast);
+    try canvas.fillArc(center, 30, 0, inf, Rgb.black, .fast);
+    try canvas.fillArc(center, 30, -inf, nan, Rgb.black, .fast);
+
+    // Image should still be all white (no drawing occurred)
+    for (img.data) |pixel| {
+        try expect(pixel.r == 255 and pixel.g == 255 and pixel.b == 255);
+    }
 }
