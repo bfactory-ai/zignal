@@ -23,6 +23,14 @@ pub const BorderMode = enum {
     wrap,
 };
 
+/// Check if a struct type has an alpha channel (4th field named 'a' or 'alpha')
+fn hasAlphaChannel(comptime T: type) bool {
+    const fields = std.meta.fields(T);
+    if (fields.len != 4) return false;
+    const last_field = fields[3];
+    return std.mem.eql(u8, last_field.name, "a") or std.mem.eql(u8, last_field.name, "alpha");
+}
+
 /// Filter operations for Image(T)
 pub fn Filter(comptime T: type) type {
     return struct {
@@ -167,7 +175,11 @@ pub fn Filter(comptime T: type) type {
                 return;
             }
 
-            // Create integral image with 4 channels
+            const fields = std.meta.fields(T);
+            const has_alpha = comptime hasAlphaChannel(T);
+            const channels_to_process = if (has_alpha) 3 else 4;
+
+            // Create integral image - only for channels we'll process
             var sat = try Image([4]f32).initAlloc(allocator, self.rows, self.cols);
             defer sat.deinit(allocator);
 
@@ -179,9 +191,10 @@ pub fn Filter(comptime T: type) type {
 
                 for (0..self.cols) |c| {
                     const pixel = self.data[row_offset + c];
-                    var pixel_vec: @Vector(4, f32) = undefined;
-                    inline for (std.meta.fields(T), 0..) |field, i| {
-                        pixel_vec[i] = @floatFromInt(@field(pixel, field.name));
+                    var pixel_vec: @Vector(4, f32) = @splat(0); // Initialize all to 0
+                    // Only accumulate channels we're processing
+                    inline for (0..channels_to_process) |i| {
+                        pixel_vec[i] = @floatFromInt(@field(pixel, fields[i].name));
                     }
                     tmp += pixel_vec;
                     sat.data[out_offset + c] = tmp;
@@ -221,8 +234,13 @@ pub fn Filter(comptime T: type) type {
 
                     // Convert back to struct
                     var result: T = undefined;
-                    inline for (std.meta.fields(T), 0..) |field, i| {
-                        @field(result, field.name) = @intFromFloat(@max(0, @min(255, @round(avg_vec[i]))));
+                    // Process color channels
+                    inline for (0..channels_to_process) |i| {
+                        @field(result, fields[i].name) = @intFromFloat(@max(0, @min(255, @round(avg_vec[i]))));
+                    }
+                    // Preserve alpha if present
+                    if (has_alpha) {
+                        @field(result, fields[3].name) = @field(self.at(r, c).*, fields[3].name);
                     }
                     blurred.at(r, c).* = result;
                 }
@@ -379,7 +397,11 @@ pub fn Filter(comptime T: type) type {
                 return;
             }
 
-            // Create integral image with 4 channels
+            const fields = std.meta.fields(T);
+            const has_alpha = comptime hasAlphaChannel(T);
+            const channels_to_process = if (has_alpha) 3 else 4;
+
+            // Create integral image - only for channels we'll process
             var sat = try Image([4]f32).initAlloc(allocator, self.rows, self.cols);
             defer sat.deinit(allocator);
 
@@ -391,9 +413,10 @@ pub fn Filter(comptime T: type) type {
 
                 for (0..self.cols) |c| {
                     const pixel = self.data[row_offset + c];
-                    var pixel_vec: @Vector(4, f32) = undefined;
-                    inline for (std.meta.fields(T), 0..) |field, i| {
-                        pixel_vec[i] = @floatFromInt(@field(pixel, field.name));
+                    var pixel_vec: @Vector(4, f32) = @splat(0); // Initialize all to 0
+                    // Only accumulate channels we're processing
+                    inline for (0..channels_to_process) |i| {
+                        pixel_vec[i] = @floatFromInt(@field(pixel, fields[i].name));
                     }
                     tmp += pixel_vec;
                     sat.data[out_offset + c] = tmp;
@@ -433,18 +456,24 @@ pub fn Filter(comptime T: type) type {
 
                     // Get original pixel as vector
                     const original_pixel = self.data[r * self.stride + c];
-                    var original_vec: @Vector(4, f32) = undefined;
-                    inline for (std.meta.fields(T), 0..) |field, i| {
-                        original_vec[i] = @floatFromInt(@field(original_pixel, field.name));
+                    var original_vec: @Vector(4, f32) = @splat(0);
+                    // Only process color channels
+                    inline for (0..channels_to_process) |i| {
+                        original_vec[i] = @floatFromInt(@field(original_pixel, fields[i].name));
                     }
 
-                    // Apply sharpening formula: 2 * original - blurred
+                    // Apply sharpening formula: 2 * original - blurred (only for color channels)
                     const sharpened_vec = @as(@Vector(4, f32), @splat(2.0)) * original_vec - blurred_vec;
 
                     // Convert back to struct with clamping
                     var result: T = undefined;
-                    inline for (std.meta.fields(T), 0..) |field, i| {
-                        @field(result, field.name) = @intFromFloat(@max(0, @min(255, @round(sharpened_vec[i]))));
+                    // Process color channels
+                    inline for (0..channels_to_process) |i| {
+                        @field(result, fields[i].name) = @intFromFloat(@max(0, @min(255, @round(sharpened_vec[i]))));
+                    }
+                    // Preserve alpha if present
+                    if (has_alpha) {
+                        @field(result, fields[3].name) = @field(original_pixel, fields[3].name);
                     }
                     sharpened.at(r, c).* = result;
                 }
@@ -524,11 +553,17 @@ pub fn Filter(comptime T: type) type {
                 },
                 .@"struct" => {
                     // Struct types (RGB, RGBA, etc.) - channel-wise convolution
+                    const fields = std.meta.fields(T);
+                    const has_alpha = comptime hasAlphaChannel(T);
+                    const channels_to_process = if (has_alpha) 3 else fields.len;
+
                     for (0..self.rows) |r| {
                         for (0..self.cols) |c| {
                             var result_pixel: T = undefined;
 
-                            inline for (std.meta.fields(T)) |field| {
+                            // Process color channels (skip alpha if present)
+                            inline for (0..channels_to_process) |field_idx| {
+                                const field = fields[field_idx];
                                 var accumulator: f32 = 0;
                                 const in_interior = (r >= half_h and r + half_h < self.rows and c >= half_w and c + half_w < self.cols);
                                 if (in_interior) {
@@ -562,6 +597,11 @@ pub fn Filter(comptime T: type) type {
                                     .float => as(field.type, accumulator),
                                     else => @compileError("Unsupported field type in struct"),
                                 };
+                            }
+
+                            // Preserve alpha channel if present
+                            if (has_alpha) {
+                                @field(result_pixel, fields[3].name) = @field(self.at(r, c).*, fields[3].name);
                             }
 
                             out.at(r, c).* = result_pixel;
@@ -698,28 +738,32 @@ pub fn Filter(comptime T: type) type {
                     }
                 },
                 .@"struct" => {
-                    // Check if this is a 4-channel u8 struct for SIMD optimization
-                    if (is4xu8Struct(T)) {
+                    // Optimized path for u8 structs (RGB, RGBA, etc.)
+                    const fields = std.meta.fields(T);
+                    const all_u8 = comptime blk: {
+                        for (fields) |field| {
+                            if (field.type != u8) break :blk false;
+                        }
+                        break :blk true;
+                    };
+
+                    if (all_u8 and (fields.len == 3 or fields.len == 4)) {
+                        // Determine how many channels to process (skip alpha if present)
+                        const has_alpha = comptime hasAlphaChannel(T);
+                        const channels_to_process = if (has_alpha) 3 else fields.len;
+
                         // Check if kernel is suitable for integer arithmetic
-                        // Gaussian-like kernels (all positive, sum ~1.0) need float precision
                         var kernel_sum: f32 = 0;
                         var all_positive = true;
                         for (kr) |k| {
                             kernel_sum += k;
                             if (k < 0) all_positive = false;
                         }
-
-                        // If kernel looks like a Gaussian blur kernel, use float path for accuracy
                         const is_gaussian_like = all_positive and @abs(kernel_sum - 1.0) < 0.1;
 
                         if (!is_gaussian_like) {
-                            // Optimized Integer SIMD path for edge detection/sharpening kernels
-                            // Process multiple pixels at once using integer arithmetic to avoid float conversions
-                            const pixels_per_vec = comptime std.simd.suggestVectorLength(u32) orelse 1;
-                            const vec_len = pixels_per_vec * 4; // 4 channels per pixel
+                            // Integer SIMD path for edge detection/sharpening kernels
                             const SCALE = 256;
-
-                            // Pre-scale kernel to integer values
                             const kr_int = [9]i32{
                                 @intFromFloat(@round(kr[0] * SCALE)),
                                 @intFromFloat(@round(kr[1] * SCALE)),
@@ -733,55 +777,9 @@ pub fn Filter(comptime T: type) type {
                             };
 
                             for (0..self.rows) |r| {
-                                var c: usize = 0;
-
-                                // Process interior pixels with SIMD
-                                if (r > 0 and r + 1 < self.rows and pixels_per_vec > 1) {
-                                    const safe_end = if (self.cols > pixels_per_vec + 1) self.cols - pixels_per_vec - 1 else 1;
-
-                                    // Skip first column (border)
-                                    c = 1;
-
-                                    while (c + pixels_per_vec <= safe_end) : (c += pixels_per_vec) {
-                                        var result_vec: @Vector(vec_len, i32) = @splat(0);
-
-                                        // Process each kernel position
-                                        inline for (0..3) |ky| {
-                                            inline for (0..3) |kx| {
-                                                const kernel_val: @Vector(vec_len, i32) = @splat(kr_int[ky * 3 + kx]);
-                                                var pixel_vec: @Vector(vec_len, i32) = undefined;
-
-                                                // Load pixels for this kernel position
-                                                inline for (0..pixels_per_vec) |px| {
-                                                    const p = self.at(r + ky - 1, c + px + kx - 1).*;
-                                                    const fields = std.meta.fields(T);
-                                                    pixel_vec[px * 4 + 0] = @field(p, fields[0].name);
-                                                    pixel_vec[px * 4 + 1] = @field(p, fields[1].name);
-                                                    pixel_vec[px * 4 + 2] = @field(p, fields[2].name);
-                                                    pixel_vec[px * 4 + 3] = @field(p, fields[3].name);
-                                                }
-
-                                                result_vec += pixel_vec * kernel_val;
-                                            }
-                                        }
-
-                                        // Store results
-                                        inline for (0..pixels_per_vec) |px| {
-                                            var result_pixel: T = undefined;
-                                            const fields = std.meta.fields(T);
-                                            inline for (0..4) |ch| {
-                                                const val = @divTrunc((result_vec[px * 4 + ch] + SCALE / 2), SCALE);
-                                                @field(result_pixel, fields[ch].name) = @intCast(@max(0, @min(255, val)));
-                                            }
-                                            out.at(r, c + px).* = result_pixel;
-                                        }
-                                    }
-                                }
-
-                                // Process remaining pixels with scalar fallback
-                                while (c < self.cols) : (c += 1) {
+                                for (0..self.cols) |c| {
                                     if (r > 0 and r + 1 < self.rows and c > 0 and c + 1 < self.cols) {
-                                        // Fast interior path (scalar)
+                                        // Fast interior path
                                         const p00 = self.at(r - 1, c - 1).*;
                                         const p01 = self.at(r - 1, c + 0).*;
                                         const p02 = self.at(r - 1, c + 1).*;
@@ -793,7 +791,10 @@ pub fn Filter(comptime T: type) type {
                                         const p22 = self.at(r + 1, c + 1).*;
 
                                         var result_pixel: T = undefined;
-                                        inline for (std.meta.fields(T)) |field| {
+
+                                        // Process color channels
+                                        inline for (0..channels_to_process) |i| {
+                                            const field = fields[i];
                                             const val = @divTrunc((@as(i32, @field(p00, field.name)) * kr_int[0] +
                                                 @as(i32, @field(p01, field.name)) * kr_int[1] +
                                                 @as(i32, @field(p02, field.name)) * kr_int[2] +
@@ -805,6 +806,12 @@ pub fn Filter(comptime T: type) type {
                                                 @as(i32, @field(p22, field.name)) * kr_int[8] + SCALE / 2), SCALE);
                                             @field(result_pixel, field.name) = @intCast(@max(0, @min(255, val)));
                                         }
+
+                                        // Preserve alpha if present
+                                        if (has_alpha) {
+                                            @field(result_pixel, fields[3].name) = @field(p11, fields[3].name);
+                                        }
+
                                         out.at(r, c).* = result_pixel;
                                     } else {
                                         // Border handling path
@@ -821,7 +828,10 @@ pub fn Filter(comptime T: type) type {
                                         const p22 = getPixelWithBorder(self, ir + 1, ic + 1, border_mode);
 
                                         var result_pixel: T = undefined;
-                                        inline for (std.meta.fields(T)) |field| {
+
+                                        // Process color channels
+                                        inline for (0..channels_to_process) |i| {
+                                            const field = fields[i];
                                             const val = @divTrunc((@as(i32, @field(p00, field.name)) * kr_int[0] +
                                                 @as(i32, @field(p01, field.name)) * kr_int[1] +
                                                 @as(i32, @field(p02, field.name)) * kr_int[2] +
@@ -833,18 +843,22 @@ pub fn Filter(comptime T: type) type {
                                                 @as(i32, @field(p22, field.name)) * kr_int[8] + SCALE / 2), SCALE);
                                             @field(result_pixel, field.name) = @intCast(@max(0, @min(255, val)));
                                         }
+
+                                        // Preserve alpha if present
+                                        if (has_alpha) {
+                                            @field(result_pixel, fields[3].name) = @field(p11, fields[3].name);
+                                        }
+
                                         out.at(r, c).* = result_pixel;
                                     }
                                 }
                             }
                         } else {
-                            // Float-based SIMD path for Gaussian-like kernels that need precision
-                            const kr_vec: @Vector(9, f32) = .{ kr[0], kr[1], kr[2], kr[3], kr[4], kr[5], kr[6], kr[7], kr[8] };
-
+                            // Float-based path for Gaussian-like kernels
                             for (0..self.rows) |r| {
                                 for (0..self.cols) |c| {
                                     if (r > 0 and r + 1 < self.rows and c > 0 and c + 1 < self.cols) {
-                                        // Fast interior path with SIMD for 4-channel pixels
+                                        // Fast interior path
                                         const p00 = self.at(r - 1, c - 1).*;
                                         const p01 = self.at(r - 1, c + 0).*;
                                         const p02 = self.at(r - 1, c + 1).*;
@@ -855,73 +869,55 @@ pub fn Filter(comptime T: type) type {
                                         const p21 = self.at(r + 1, c + 0).*;
                                         const p22 = self.at(r + 1, c + 1).*;
 
-                                        // Convert pixels to vectors for SIMD processing
-                                        var p00_vec: @Vector(4, f32) = undefined;
-                                        var p01_vec: @Vector(4, f32) = undefined;
-                                        var p02_vec: @Vector(4, f32) = undefined;
-                                        var p10_vec: @Vector(4, f32) = undefined;
-                                        var p11_vec: @Vector(4, f32) = undefined;
-                                        var p12_vec: @Vector(4, f32) = undefined;
-                                        var p20_vec: @Vector(4, f32) = undefined;
-                                        var p21_vec: @Vector(4, f32) = undefined;
-                                        var p22_vec: @Vector(4, f32) = undefined;
-
-                                        inline for (std.meta.fields(T), 0..) |field, i| {
-                                            p00_vec[i] = @floatFromInt(@field(p00, field.name));
-                                            p01_vec[i] = @floatFromInt(@field(p01, field.name));
-                                            p02_vec[i] = @floatFromInt(@field(p02, field.name));
-                                            p10_vec[i] = @floatFromInt(@field(p10, field.name));
-                                            p11_vec[i] = @floatFromInt(@field(p11, field.name));
-                                            p12_vec[i] = @floatFromInt(@field(p12, field.name));
-                                            p20_vec[i] = @floatFromInt(@field(p20, field.name));
-                                            p21_vec[i] = @floatFromInt(@field(p21, field.name));
-                                            p22_vec[i] = @floatFromInt(@field(p22, field.name));
-                                        }
-
-                                        // Perform convolution using SIMD
-                                        const kr0: @Vector(4, f32) = @splat(kr_vec[0]);
-                                        const kr1: @Vector(4, f32) = @splat(kr_vec[1]);
-                                        const kr2: @Vector(4, f32) = @splat(kr_vec[2]);
-                                        const kr3: @Vector(4, f32) = @splat(kr_vec[3]);
-                                        const kr4: @Vector(4, f32) = @splat(kr_vec[4]);
-                                        const kr5: @Vector(4, f32) = @splat(kr_vec[5]);
-                                        const kr6: @Vector(4, f32) = @splat(kr_vec[6]);
-                                        const kr7: @Vector(4, f32) = @splat(kr_vec[7]);
-                                        const kr8: @Vector(4, f32) = @splat(kr_vec[8]);
-
-                                        const result_vec =
-                                            p00_vec * kr0 + p01_vec * kr1 + p02_vec * kr2 +
-                                            p10_vec * kr3 + p11_vec * kr4 + p12_vec * kr5 +
-                                            p20_vec * kr6 + p21_vec * kr7 + p22_vec * kr8;
-
-                                        // Convert back to struct
                                         var result_pixel: T = undefined;
-                                        inline for (std.meta.fields(T), 0..) |field, i| {
-                                            @field(result_pixel, field.name) = @intFromFloat(@max(0, @min(255, @round(result_vec[i]))));
-                                        }
-                                        out.at(r, c).* = result_pixel;
-                                    } else {
-                                        // Border handling path
-                                        const ir = @as(isize, @intCast(r));
-                                        const ic = @as(isize, @intCast(c));
-                                        const p00 = getPixelWithBorder(self, ir - 1, ic - 1, border_mode);
-                                        const p01 = getPixelWithBorder(self, ir - 1, ic, border_mode);
-                                        const p02 = getPixelWithBorder(self, ir - 1, ic + 1, border_mode);
-                                        const p10 = getPixelWithBorder(self, ir, ic - 1, border_mode);
-                                        const p11 = getPixelWithBorder(self, ir, ic, border_mode);
-                                        const p12 = getPixelWithBorder(self, ir, ic + 1, border_mode);
-                                        const p20 = getPixelWithBorder(self, ir + 1, ic - 1, border_mode);
-                                        const p21 = getPixelWithBorder(self, ir + 1, ic, border_mode);
-                                        const p22 = getPixelWithBorder(self, ir + 1, ic + 1, border_mode);
 
-                                        var result_pixel: T = undefined;
-                                        inline for (std.meta.fields(T)) |field| {
+                                        // Process color channels
+                                        inline for (0..channels_to_process) |i| {
+                                            const field = fields[i];
                                             const result =
                                                 as(f32, @field(p00, field.name)) * kr[0] + as(f32, @field(p01, field.name)) * kr[1] + as(f32, @field(p02, field.name)) * kr[2] +
                                                 as(f32, @field(p10, field.name)) * kr[3] + as(f32, @field(p11, field.name)) * kr[4] + as(f32, @field(p12, field.name)) * kr[5] +
                                                 as(f32, @field(p20, field.name)) * kr[6] + as(f32, @field(p21, field.name)) * kr[7] + as(f32, @field(p22, field.name)) * kr[8];
                                             @field(result_pixel, field.name) = @intFromFloat(@max(0, @min(255, @round(result))));
                                         }
+
+                                        // Preserve alpha if present
+                                        if (has_alpha) {
+                                            @field(result_pixel, fields[3].name) = @field(p11, fields[3].name);
+                                        }
+
+                                        out.at(r, c).* = result_pixel;
+                                    } else {
+                                        // Border handling path
+                                        const ir = @as(isize, @intCast(r));
+                                        const ic = @as(isize, @intCast(c));
+                                        const p00 = getPixelWithBorder(self, ir - 1, ic - 1, border_mode);
+                                        const p01 = getPixelWithBorder(self, ir - 1, ic, border_mode);
+                                        const p02 = getPixelWithBorder(self, ir - 1, ic + 1, border_mode);
+                                        const p10 = getPixelWithBorder(self, ir, ic - 1, border_mode);
+                                        const p11 = getPixelWithBorder(self, ir, ic, border_mode);
+                                        const p12 = getPixelWithBorder(self, ir, ic + 1, border_mode);
+                                        const p20 = getPixelWithBorder(self, ir + 1, ic - 1, border_mode);
+                                        const p21 = getPixelWithBorder(self, ir + 1, ic, border_mode);
+                                        const p22 = getPixelWithBorder(self, ir + 1, ic + 1, border_mode);
+
+                                        var result_pixel: T = undefined;
+
+                                        // Process color channels
+                                        inline for (0..channels_to_process) |i| {
+                                            const field = fields[i];
+                                            const result =
+                                                as(f32, @field(p00, field.name)) * kr[0] + as(f32, @field(p01, field.name)) * kr[1] + as(f32, @field(p02, field.name)) * kr[2] +
+                                                as(f32, @field(p10, field.name)) * kr[3] + as(f32, @field(p11, field.name)) * kr[4] + as(f32, @field(p12, field.name)) * kr[5] +
+                                                as(f32, @field(p20, field.name)) * kr[6] + as(f32, @field(p21, field.name)) * kr[7] + as(f32, @field(p22, field.name)) * kr[8];
+                                            @field(result_pixel, field.name) = @intFromFloat(@max(0, @min(255, @round(result))));
+                                        }
+
+                                        // Preserve alpha if present
+                                        if (has_alpha) {
+                                            @field(result_pixel, fields[3].name) = @field(p11, fields[3].name);
+                                        }
+
                                         out.at(r, c).* = result_pixel;
                                     }
                                 }

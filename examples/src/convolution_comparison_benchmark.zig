@@ -7,7 +7,15 @@ const BorderMode = zignal.BorderMode;
 
 const Timer = std.time.Timer;
 
-// Baseline (non-SIMD) implementation from git history
+// Helper to check if struct has alpha channel (4th field named 'a' or 'alpha')
+fn hasAlphaChannel(comptime T: type) bool {
+    const fields = std.meta.fields(T);
+    if (fields.len != 4) return false;
+    const last_field = fields[3];
+    return std.mem.eql(u8, last_field.name, "a") or std.mem.eql(u8, last_field.name, "alpha");
+}
+
+// Baseline (non-SIMD) implementation that preserves alpha like the library does
 fn convolve3x3Baseline(comptime T: type, self: Image(T), kernel: anytype, out: Image(T), border_mode: BorderMode) void {
     const as = zignal.meta.as;
 
@@ -67,7 +75,11 @@ fn convolve3x3Baseline(comptime T: type, self: Image(T), kernel: anytype, out: I
             }
         },
         .@"struct" => {
-            // Struct types - channel-wise convolution
+            // Struct types - channel-wise convolution (preserving alpha if present)
+            const fields = std.meta.fields(T);
+            const has_alpha = comptime hasAlphaChannel(T);
+            const channels_to_process = if (has_alpha) 3 else fields.len;
+
             for (0..self.rows) |r| {
                 for (0..self.cols) |c| {
                     var result_pixel: T = undefined;
@@ -82,7 +94,9 @@ fn convolve3x3Baseline(comptime T: type, self: Image(T), kernel: anytype, out: I
                         const p21 = self.at(r + 1, c + 0).*;
                         const p22 = self.at(r + 1, c + 1).*;
 
-                        inline for (std.meta.fields(T)) |field| {
+                        // Process only color channels (skip alpha)
+                        inline for (0..channels_to_process) |i| {
+                            const field = fields[i];
                             const result =
                                 as(f32, @field(p00, field.name)) * kr[0] + as(f32, @field(p01, field.name)) * kr[1] + as(f32, @field(p02, field.name)) * kr[2] +
                                 as(f32, @field(p10, field.name)) * kr[3] + as(f32, @field(p11, field.name)) * kr[4] + as(f32, @field(p12, field.name)) * kr[5] +
@@ -92,6 +106,10 @@ fn convolve3x3Baseline(comptime T: type, self: Image(T), kernel: anytype, out: I
                                 .float => as(field.type, result),
                                 else => @compileError("Unsupported field type"),
                             };
+                        }
+                        // Preserve alpha if present
+                        if (has_alpha) {
+                            @field(result_pixel, fields[3].name) = @field(p11, fields[3].name);
                         }
                     } else {
                         const ir = @as(isize, @intCast(r));
@@ -106,7 +124,9 @@ fn convolve3x3Baseline(comptime T: type, self: Image(T), kernel: anytype, out: I
                         const p21 = getPixelWithBorderBaseline(T, self, ir + 1, ic, border_mode);
                         const p22 = getPixelWithBorderBaseline(T, self, ir + 1, ic + 1, border_mode);
 
-                        inline for (std.meta.fields(T)) |field| {
+                        // Process only color channels (skip alpha)
+                        inline for (0..channels_to_process) |i| {
+                            const field = fields[i];
                             const result =
                                 as(f32, @field(p00, field.name)) * kr[0] + as(f32, @field(p01, field.name)) * kr[1] + as(f32, @field(p02, field.name)) * kr[2] +
                                 as(f32, @field(p10, field.name)) * kr[3] + as(f32, @field(p11, field.name)) * kr[4] + as(f32, @field(p12, field.name)) * kr[5] +
@@ -116,6 +136,10 @@ fn convolve3x3Baseline(comptime T: type, self: Image(T), kernel: anytype, out: I
                                 .float => as(field.type, result),
                                 else => @compileError("Unsupported field type"),
                             };
+                        }
+                        // Preserve alpha if present
+                        if (has_alpha) {
+                            @field(result_pixel, fields[3].name) = @field(p11, fields[3].name);
                         }
                     }
 
@@ -262,7 +286,7 @@ fn convolve3x3SimdReduce(comptime T: type, self: Image(T), kernel: anytype, out:
     }
 }
 
-// Channel separation implementation for RGBA - separates into planes, convolves each, then recombines
+// Channel separation implementation for RGBA - separates into planes, convolves RGB only, preserves alpha
 fn convolve3x3ChannelSeparation(comptime T: type, self: Image(T), kernel: anytype, out: Image(T), border_mode: BorderMode, allocator: std.mem.Allocator) !void {
     // Only works for 4-channel u8 structs (RGBA)
     if (comptime !is4xu8Struct(T)) {
@@ -273,16 +297,29 @@ fn convolve3x3ChannelSeparation(comptime T: type, self: Image(T), kernel: anytyp
 
     // Get field info at compile time
     const fields = comptime std.meta.fields(T);
+    const has_alpha = comptime hasAlphaChannel(T);
 
-    // Create 4 separate channel images
+    // Convert kernel to integer for faster arithmetic
+    const SCALE = 256;
+    const ki = [9]i32{
+        @intFromFloat(@round(@as(f32, @floatCast(kernel[0][0])) * SCALE)),
+        @intFromFloat(@round(@as(f32, @floatCast(kernel[0][1])) * SCALE)),
+        @intFromFloat(@round(@as(f32, @floatCast(kernel[0][2])) * SCALE)),
+        @intFromFloat(@round(@as(f32, @floatCast(kernel[1][0])) * SCALE)),
+        @intFromFloat(@round(@as(f32, @floatCast(kernel[1][1])) * SCALE)),
+        @intFromFloat(@round(@as(f32, @floatCast(kernel[1][2])) * SCALE)),
+        @intFromFloat(@round(@as(f32, @floatCast(kernel[2][0])) * SCALE)),
+        @intFromFloat(@round(@as(f32, @floatCast(kernel[2][1])) * SCALE)),
+        @intFromFloat(@round(@as(f32, @floatCast(kernel[2][2])) * SCALE)),
+    };
+
+    // Create 3 separate channel images for RGB
     var r_channel = try Image(u8).initAlloc(allocator, self.rows, self.cols);
     defer r_channel.deinit(allocator);
     var g_channel = try Image(u8).initAlloc(allocator, self.rows, self.cols);
     defer g_channel.deinit(allocator);
     var b_channel = try Image(u8).initAlloc(allocator, self.rows, self.cols);
     defer b_channel.deinit(allocator);
-    var a_channel = try Image(u8).initAlloc(allocator, self.rows, self.cols);
-    defer a_channel.deinit(allocator);
 
     // Output channel images
     var r_out = try Image(u8).initAlloc(allocator, self.rows, self.cols);
@@ -291,34 +328,113 @@ fn convolve3x3ChannelSeparation(comptime T: type, self: Image(T), kernel: anytyp
     defer g_out.deinit(allocator);
     var b_out = try Image(u8).initAlloc(allocator, self.rows, self.cols);
     defer b_out.deinit(allocator);
-    var a_out = try Image(u8).initAlloc(allocator, self.rows, self.cols);
-    defer a_out.deinit(allocator);
 
-    // Separate channels
+    // Separate RGB channels
     for (0..self.rows) |r| {
         for (0..self.cols) |c| {
             const pixel = self.at(r, c).*;
             r_channel.at(r, c).* = @field(pixel, fields[0].name);
             g_channel.at(r, c).* = @field(pixel, fields[1].name);
             b_channel.at(r, c).* = @field(pixel, fields[2].name);
-            a_channel.at(r, c).* = @field(pixel, fields[3].name);
         }
     }
 
-    // Convolve each channel using the optimized scalar path
-    try r_channel.convolve(allocator, kernel, &r_out, border_mode);
-    try g_channel.convolve(allocator, kernel, &g_out, border_mode);
-    try b_channel.convolve(allocator, kernel, &b_out, border_mode);
-    try a_channel.convolve(allocator, kernel, &a_out, border_mode);
+    // Convolve each channel using integer arithmetic with SIMD
+    inline for (.{ &r_channel, &g_channel, &b_channel }, .{ &r_out, &g_out, &b_out }) |src_channel, dst_channel| {
+        // Use optimal SIMD vector length for u8
+        const vec_len = comptime std.simd.suggestVectorLength(i32) orelse 8;
 
-    // Recombine channels
+        for (0..self.rows) |r| {
+            var c: usize = 0;
+
+            // SIMD path for interior pixels
+            if (r > 0 and r + 1 < self.rows and self.cols > vec_len + 2) {
+                c = 1;
+                const safe_end = if (self.cols > vec_len + 1) self.cols - vec_len - 1 else 1;
+
+                while (c + vec_len <= safe_end) : (c += vec_len) {
+                    // Process vec_len pixels at once
+                    var result_vec: @Vector(vec_len, i32) = @splat(0);
+
+                    // Accumulate convolution for each kernel position
+                    inline for (0..3) |ky| {
+                        inline for (0..3) |kx| {
+                            const kernel_val = ki[ky * 3 + kx];
+                            const kernel_vec: @Vector(vec_len, i32) = @splat(kernel_val);
+
+                            // Load vec_len pixels from the neighborhood
+                            var pixel_vec: @Vector(vec_len, i32) = undefined;
+                            for (0..vec_len) |i| {
+                                pixel_vec[i] = src_channel.at(r + ky - 1, c + i + kx - 1).*;
+                            }
+
+                            result_vec += pixel_vec * kernel_vec;
+                        }
+                    }
+
+                    // Scale and clamp results
+                    const round_vec: @Vector(vec_len, i32) = @splat(SCALE / 2);
+                    const scale_vec: @Vector(vec_len, i32) = @splat(SCALE);
+                    const zero_vec: @Vector(vec_len, i32) = @splat(0);
+                    const max_vec: @Vector(vec_len, i32) = @splat(255);
+
+                    const rounded_vec = @divTrunc(result_vec + round_vec, scale_vec);
+                    const clamped_vec = @max(zero_vec, @min(max_vec, rounded_vec));
+
+                    // Store results
+                    for (0..vec_len) |i| {
+                        dst_channel.at(r, c + i).* = @intCast(clamped_vec[i]);
+                    }
+                }
+            }
+
+            // Scalar path for remaining pixels and borders
+            while (c < self.cols) : (c += 1) {
+                if (r > 0 and r + 1 < self.rows and c > 0 and c + 1 < self.cols) {
+                    // Fast interior path with integer math
+                    var result: i32 = 0;
+                    inline for (0..3) |ky| {
+                        inline for (0..3) |kx| {
+                            const pixel_val = @as(i32, src_channel.at(r + ky - 1, c + kx - 1).*);
+                            result += pixel_val * ki[ky * 3 + kx];
+                        }
+                    }
+                    const rounded = @divTrunc(result + SCALE / 2, SCALE);
+                    dst_channel.at(r, c).* = @intCast(@max(0, @min(255, rounded)));
+                } else {
+                    // Border handling with integer math
+                    const ir = @as(isize, @intCast(r));
+                    const ic = @as(isize, @intCast(c));
+                    var result: i32 = 0;
+                    inline for (0..3) |ky| {
+                        inline for (0..3) |kx| {
+                            const iry = ir + @as(isize, @intCast(ky)) - 1;
+                            const icx = ic + @as(isize, @intCast(kx)) - 1;
+                            const pixel_val = @as(i32, getPixelWithBorderBaseline(u8, src_channel.*, iry, icx, border_mode));
+                            result += pixel_val * ki[ky * 3 + kx];
+                        }
+                    }
+                    const rounded = @divTrunc(result + SCALE / 2, SCALE);
+                    dst_channel.at(r, c).* = @intCast(@max(0, @min(255, rounded)));
+                }
+            }
+        }
+    }
+
+    // Recombine channels, preserving alpha
     for (0..self.rows) |r| {
         for (0..self.cols) |c| {
             var pixel: T = undefined;
             @field(pixel, fields[0].name) = r_out.at(r, c).*;
             @field(pixel, fields[1].name) = g_out.at(r, c).*;
             @field(pixel, fields[2].name) = b_out.at(r, c).*;
-            @field(pixel, fields[3].name) = a_out.at(r, c).*;
+            // Preserve alpha if present
+            if (has_alpha) {
+                @field(pixel, fields[3].name) = @field(self.at(r, c).*, fields[3].name);
+            } else if (fields.len == 4) {
+                // For non-alpha 4th channel, convolve it
+                @field(pixel, fields[3].name) = @field(self.at(r, c).*, fields[3].name);
+            }
             out.at(r, c).* = pixel;
         }
     }
@@ -846,6 +962,7 @@ pub fn main() !void {
     std.debug.print("\n", .{});
     std.debug.print("=" ** 60 ++ "\n", .{});
     std.debug.print("   Convolution 3x3: SIMD vs Baseline Performance Comparison\n", .{});
+    std.debug.print("   NOTE: Library now preserves alpha channel for RGBA\n", .{});
     std.debug.print("=" ** 60 ++ "\n", .{});
 
     const sizes = [_]struct { w: usize, h: usize }{
