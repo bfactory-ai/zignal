@@ -24,6 +24,8 @@ pub fn build(b: *std.Build) void {
         "make_logo",
         "bdf_font_demo",
         "font_unicode_demo",
+        "convolution_benchmark",
+        "convolution_comparison_benchmark",
     };
 
     // Build exec_examples with run steps and check compilation

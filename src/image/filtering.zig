@@ -582,9 +582,77 @@ pub fn Filter(comptime T: type) type {
 
             switch (@typeInfo(T)) {
                 .int, .float => {
-                    // Scalar types - single channel
+                    // Scalar types - single channel with SIMD optimization
+                    const simd_len = std.simd.suggestVectorLength(f32) orelse 1;
+
+                    // Create kernel vectors for SIMD processing
+                    const kr0_vec: @Vector(simd_len, f32) = @splat(kr[0]);
+                    const kr1_vec: @Vector(simd_len, f32) = @splat(kr[1]);
+                    const kr2_vec: @Vector(simd_len, f32) = @splat(kr[2]);
+                    const kr3_vec: @Vector(simd_len, f32) = @splat(kr[3]);
+                    const kr4_vec: @Vector(simd_len, f32) = @splat(kr[4]);
+                    const kr5_vec: @Vector(simd_len, f32) = @splat(kr[5]);
+                    const kr6_vec: @Vector(simd_len, f32) = @splat(kr[6]);
+                    const kr7_vec: @Vector(simd_len, f32) = @splat(kr[7]);
+                    const kr8_vec: @Vector(simd_len, f32) = @splat(kr[8]);
+
                     for (0..self.rows) |r| {
-                        for (0..self.cols) |c| {
+                        var c: usize = 0;
+
+                        // SIMD processing for interior pixels
+                        if (r > 0 and r + 1 < self.rows and simd_len > 1 and self.cols > simd_len + 2) {
+                            // Process interior pixels with SIMD (no border checks needed)
+                            // We need at least simd_len + 2 columns to safely process simd_len pixels
+                            // (1 border on each side plus simd_len pixels)
+                            const safe_end = self.cols - 1;
+
+                            // Skip first column (border)
+                            c = 1;
+
+                            // Only process SIMD if we have enough pixels to fill a vector
+                            while (c + simd_len <= safe_end) : (c += simd_len) {
+                                // Load 3x3 neighborhoods for simd_len pixels
+                                var p00_vec: @Vector(simd_len, f32) = undefined;
+                                var p01_vec: @Vector(simd_len, f32) = undefined;
+                                var p02_vec: @Vector(simd_len, f32) = undefined;
+                                var p10_vec: @Vector(simd_len, f32) = undefined;
+                                var p11_vec: @Vector(simd_len, f32) = undefined;
+                                var p12_vec: @Vector(simd_len, f32) = undefined;
+                                var p20_vec: @Vector(simd_len, f32) = undefined;
+                                var p21_vec: @Vector(simd_len, f32) = undefined;
+                                var p22_vec: @Vector(simd_len, f32) = undefined;
+
+                                for (0..simd_len) |i| {
+                                    p00_vec[i] = as(f32, self.at(r - 1, c + i - 1).*);
+                                    p01_vec[i] = as(f32, self.at(r - 1, c + i).*);
+                                    p02_vec[i] = as(f32, self.at(r - 1, c + i + 1).*);
+                                    p10_vec[i] = as(f32, self.at(r, c + i - 1).*);
+                                    p11_vec[i] = as(f32, self.at(r, c + i).*);
+                                    p12_vec[i] = as(f32, self.at(r, c + i + 1).*);
+                                    p20_vec[i] = as(f32, self.at(r + 1, c + i - 1).*);
+                                    p21_vec[i] = as(f32, self.at(r + 1, c + i).*);
+                                    p22_vec[i] = as(f32, self.at(r + 1, c + i + 1).*);
+                                }
+
+                                // Perform convolution using SIMD
+                                const result_vec =
+                                    p00_vec * kr0_vec + p01_vec * kr1_vec + p02_vec * kr2_vec +
+                                    p10_vec * kr3_vec + p11_vec * kr4_vec + p12_vec * kr5_vec +
+                                    p20_vec * kr6_vec + p21_vec * kr7_vec + p22_vec * kr8_vec;
+
+                                // Store results
+                                for (0..simd_len) |i| {
+                                    out.at(r, c + i).* = switch (@typeInfo(T)) {
+                                        .int => @intFromFloat(@max(std.math.minInt(T), @min(std.math.maxInt(T), @round(result_vec[i])))),
+                                        .float => as(T, result_vec[i]),
+                                        else => unreachable,
+                                    };
+                                }
+                            }
+                        }
+
+                        // Process remaining pixels (borders and leftovers) with scalar code
+                        while (c < self.cols) : (c += 1) {
                             var result: f32 = 0;
                             if (r > 0 and r + 1 < self.rows and c > 0 and c + 1 < self.cols) {
                                 // Fast interior path
@@ -630,59 +698,151 @@ pub fn Filter(comptime T: type) type {
                     }
                 },
                 .@"struct" => {
-                    // Struct types - channel-wise convolution
-                    for (0..self.rows) |r| {
-                        for (0..self.cols) |c| {
-                            var result_pixel: T = undefined;
-                            if (r > 0 and r + 1 < self.rows and c > 0 and c + 1 < self.cols) {
-                                const p00 = self.at(r - 1, c - 1).*;
-                                const p01 = self.at(r - 1, c + 0).*;
-                                const p02 = self.at(r - 1, c + 1).*;
-                                const p10 = self.at(r + 0, c - 1).*;
-                                const p11 = self.at(r + 0, c + 0).*;
-                                const p12 = self.at(r + 0, c + 1).*;
-                                const p20 = self.at(r + 1, c - 1).*;
-                                const p21 = self.at(r + 1, c + 0).*;
-                                const p22 = self.at(r + 1, c + 1).*;
+                    // Check if this is a 4-channel u8 struct for SIMD optimization
+                    if (is4xu8Struct(T)) {
+                        // Optimized path for RGBA-like structs using SIMD
+                        const kr_vec: @Vector(9, f32) = .{ kr[0], kr[1], kr[2], kr[3], kr[4], kr[5], kr[6], kr[7], kr[8] };
 
-                                inline for (std.meta.fields(T)) |field| {
-                                    const result =
-                                        as(f32, @field(p00, field.name)) * kr[0] + as(f32, @field(p01, field.name)) * kr[1] + as(f32, @field(p02, field.name)) * kr[2] +
-                                        as(f32, @field(p10, field.name)) * kr[3] + as(f32, @field(p11, field.name)) * kr[4] + as(f32, @field(p12, field.name)) * kr[5] +
-                                        as(f32, @field(p20, field.name)) * kr[6] + as(f32, @field(p21, field.name)) * kr[7] + as(f32, @field(p22, field.name)) * kr[8];
-                                    @field(result_pixel, field.name) = switch (@typeInfo(field.type)) {
-                                        .int => @intFromFloat(@max(std.math.minInt(field.type), @min(std.math.maxInt(field.type), @round(result)))),
-                                        .float => as(field.type, result),
-                                        else => @compileError("Unsupported field type"),
-                                    };
-                                }
-                            } else {
-                                const ir = @as(isize, @intCast(r));
-                                const ic = @as(isize, @intCast(c));
-                                const p00 = getPixelWithBorder(self, ir - 1, ic - 1, border_mode);
-                                const p01 = getPixelWithBorder(self, ir - 1, ic, border_mode);
-                                const p02 = getPixelWithBorder(self, ir - 1, ic + 1, border_mode);
-                                const p10 = getPixelWithBorder(self, ir, ic - 1, border_mode);
-                                const p11 = getPixelWithBorder(self, ir, ic, border_mode);
-                                const p12 = getPixelWithBorder(self, ir, ic + 1, border_mode);
-                                const p20 = getPixelWithBorder(self, ir + 1, ic - 1, border_mode);
-                                const p21 = getPixelWithBorder(self, ir + 1, ic, border_mode);
-                                const p22 = getPixelWithBorder(self, ir + 1, ic + 1, border_mode);
+                        for (0..self.rows) |r| {
+                            for (0..self.cols) |c| {
+                                if (r > 0 and r + 1 < self.rows and c > 0 and c + 1 < self.cols) {
+                                    // Fast interior path with SIMD for 4-channel pixels
+                                    const p00 = self.at(r - 1, c - 1).*;
+                                    const p01 = self.at(r - 1, c + 0).*;
+                                    const p02 = self.at(r - 1, c + 1).*;
+                                    const p10 = self.at(r + 0, c - 1).*;
+                                    const p11 = self.at(r + 0, c + 0).*;
+                                    const p12 = self.at(r + 0, c + 1).*;
+                                    const p20 = self.at(r + 1, c - 1).*;
+                                    const p21 = self.at(r + 1, c + 0).*;
+                                    const p22 = self.at(r + 1, c + 1).*;
 
-                                inline for (std.meta.fields(T)) |field| {
-                                    const result =
-                                        as(f32, @field(p00, field.name)) * kr[0] + as(f32, @field(p01, field.name)) * kr[1] + as(f32, @field(p02, field.name)) * kr[2] +
-                                        as(f32, @field(p10, field.name)) * kr[3] + as(f32, @field(p11, field.name)) * kr[4] + as(f32, @field(p12, field.name)) * kr[5] +
-                                        as(f32, @field(p20, field.name)) * kr[6] + as(f32, @field(p21, field.name)) * kr[7] + as(f32, @field(p22, field.name)) * kr[8];
-                                    @field(result_pixel, field.name) = switch (@typeInfo(field.type)) {
-                                        .int => @intFromFloat(@max(std.math.minInt(field.type), @min(std.math.maxInt(field.type), @round(result)))),
-                                        .float => as(field.type, result),
-                                        else => @compileError("Unsupported field type"),
-                                    };
+                                    // Convert pixels to vectors for SIMD processing
+                                    var p00_vec: @Vector(4, f32) = undefined;
+                                    var p01_vec: @Vector(4, f32) = undefined;
+                                    var p02_vec: @Vector(4, f32) = undefined;
+                                    var p10_vec: @Vector(4, f32) = undefined;
+                                    var p11_vec: @Vector(4, f32) = undefined;
+                                    var p12_vec: @Vector(4, f32) = undefined;
+                                    var p20_vec: @Vector(4, f32) = undefined;
+                                    var p21_vec: @Vector(4, f32) = undefined;
+                                    var p22_vec: @Vector(4, f32) = undefined;
+
+                                    inline for (std.meta.fields(T), 0..) |field, i| {
+                                        p00_vec[i] = @floatFromInt(@field(p00, field.name));
+                                        p01_vec[i] = @floatFromInt(@field(p01, field.name));
+                                        p02_vec[i] = @floatFromInt(@field(p02, field.name));
+                                        p10_vec[i] = @floatFromInt(@field(p10, field.name));
+                                        p11_vec[i] = @floatFromInt(@field(p11, field.name));
+                                        p12_vec[i] = @floatFromInt(@field(p12, field.name));
+                                        p20_vec[i] = @floatFromInt(@field(p20, field.name));
+                                        p21_vec[i] = @floatFromInt(@field(p21, field.name));
+                                        p22_vec[i] = @floatFromInt(@field(p22, field.name));
+                                    }
+
+                                    // Perform convolution using SIMD
+                                    const kr0: @Vector(4, f32) = @splat(kr_vec[0]);
+                                    const kr1: @Vector(4, f32) = @splat(kr_vec[1]);
+                                    const kr2: @Vector(4, f32) = @splat(kr_vec[2]);
+                                    const kr3: @Vector(4, f32) = @splat(kr_vec[3]);
+                                    const kr4: @Vector(4, f32) = @splat(kr_vec[4]);
+                                    const kr5: @Vector(4, f32) = @splat(kr_vec[5]);
+                                    const kr6: @Vector(4, f32) = @splat(kr_vec[6]);
+                                    const kr7: @Vector(4, f32) = @splat(kr_vec[7]);
+                                    const kr8: @Vector(4, f32) = @splat(kr_vec[8]);
+
+                                    const result_vec =
+                                        p00_vec * kr0 + p01_vec * kr1 + p02_vec * kr2 +
+                                        p10_vec * kr3 + p11_vec * kr4 + p12_vec * kr5 +
+                                        p20_vec * kr6 + p21_vec * kr7 + p22_vec * kr8;
+
+                                    // Convert back to struct
+                                    var result_pixel: T = undefined;
+                                    inline for (std.meta.fields(T), 0..) |field, i| {
+                                        @field(result_pixel, field.name) = @intFromFloat(@max(0, @min(255, @round(result_vec[i]))));
+                                    }
+                                    out.at(r, c).* = result_pixel;
+                                } else {
+                                    // Border handling path
+                                    const ir = @as(isize, @intCast(r));
+                                    const ic = @as(isize, @intCast(c));
+                                    const p00 = getPixelWithBorder(self, ir - 1, ic - 1, border_mode);
+                                    const p01 = getPixelWithBorder(self, ir - 1, ic, border_mode);
+                                    const p02 = getPixelWithBorder(self, ir - 1, ic + 1, border_mode);
+                                    const p10 = getPixelWithBorder(self, ir, ic - 1, border_mode);
+                                    const p11 = getPixelWithBorder(self, ir, ic, border_mode);
+                                    const p12 = getPixelWithBorder(self, ir, ic + 1, border_mode);
+                                    const p20 = getPixelWithBorder(self, ir + 1, ic - 1, border_mode);
+                                    const p21 = getPixelWithBorder(self, ir + 1, ic, border_mode);
+                                    const p22 = getPixelWithBorder(self, ir + 1, ic + 1, border_mode);
+
+                                    var result_pixel: T = undefined;
+                                    inline for (std.meta.fields(T)) |field| {
+                                        const result =
+                                            as(f32, @field(p00, field.name)) * kr[0] + as(f32, @field(p01, field.name)) * kr[1] + as(f32, @field(p02, field.name)) * kr[2] +
+                                            as(f32, @field(p10, field.name)) * kr[3] + as(f32, @field(p11, field.name)) * kr[4] + as(f32, @field(p12, field.name)) * kr[5] +
+                                            as(f32, @field(p20, field.name)) * kr[6] + as(f32, @field(p21, field.name)) * kr[7] + as(f32, @field(p22, field.name)) * kr[8];
+                                        @field(result_pixel, field.name) = @intFromFloat(@max(0, @min(255, @round(result))));
+                                    }
+                                    out.at(r, c).* = result_pixel;
                                 }
                             }
+                        }
+                    } else {
+                        // Generic struct path for other color types
+                        for (0..self.rows) |r| {
+                            for (0..self.cols) |c| {
+                                var result_pixel: T = undefined;
+                                if (r > 0 and r + 1 < self.rows and c > 0 and c + 1 < self.cols) {
+                                    const p00 = self.at(r - 1, c - 1).*;
+                                    const p01 = self.at(r - 1, c + 0).*;
+                                    const p02 = self.at(r - 1, c + 1).*;
+                                    const p10 = self.at(r + 0, c - 1).*;
+                                    const p11 = self.at(r + 0, c + 0).*;
+                                    const p12 = self.at(r + 0, c + 1).*;
+                                    const p20 = self.at(r + 1, c - 1).*;
+                                    const p21 = self.at(r + 1, c + 0).*;
+                                    const p22 = self.at(r + 1, c + 1).*;
 
-                            out.at(r, c).* = result_pixel;
+                                    inline for (std.meta.fields(T)) |field| {
+                                        const result =
+                                            as(f32, @field(p00, field.name)) * kr[0] + as(f32, @field(p01, field.name)) * kr[1] + as(f32, @field(p02, field.name)) * kr[2] +
+                                            as(f32, @field(p10, field.name)) * kr[3] + as(f32, @field(p11, field.name)) * kr[4] + as(f32, @field(p12, field.name)) * kr[5] +
+                                            as(f32, @field(p20, field.name)) * kr[6] + as(f32, @field(p21, field.name)) * kr[7] + as(f32, @field(p22, field.name)) * kr[8];
+                                        @field(result_pixel, field.name) = switch (@typeInfo(field.type)) {
+                                            .int => @intFromFloat(@max(std.math.minInt(field.type), @min(std.math.maxInt(field.type), @round(result)))),
+                                            .float => as(field.type, result),
+                                            else => @compileError("Unsupported field type"),
+                                        };
+                                    }
+                                } else {
+                                    const ir = @as(isize, @intCast(r));
+                                    const ic = @as(isize, @intCast(c));
+                                    const p00 = getPixelWithBorder(self, ir - 1, ic - 1, border_mode);
+                                    const p01 = getPixelWithBorder(self, ir - 1, ic, border_mode);
+                                    const p02 = getPixelWithBorder(self, ir - 1, ic + 1, border_mode);
+                                    const p10 = getPixelWithBorder(self, ir, ic - 1, border_mode);
+                                    const p11 = getPixelWithBorder(self, ir, ic, border_mode);
+                                    const p12 = getPixelWithBorder(self, ir, ic + 1, border_mode);
+                                    const p20 = getPixelWithBorder(self, ir + 1, ic - 1, border_mode);
+                                    const p21 = getPixelWithBorder(self, ir + 1, ic, border_mode);
+                                    const p22 = getPixelWithBorder(self, ir + 1, ic + 1, border_mode);
+
+                                    inline for (std.meta.fields(T)) |field| {
+                                        const result =
+                                            as(f32, @field(p00, field.name)) * kr[0] + as(f32, @field(p01, field.name)) * kr[1] + as(f32, @field(p02, field.name)) * kr[2] +
+                                            as(f32, @field(p10, field.name)) * kr[3] + as(f32, @field(p11, field.name)) * kr[4] + as(f32, @field(p12, field.name)) * kr[5] +
+                                            as(f32, @field(p20, field.name)) * kr[6] + as(f32, @field(p21, field.name)) * kr[7] + as(f32, @field(p22, field.name)) * kr[8];
+                                        @field(result_pixel, field.name) = switch (@typeInfo(field.type)) {
+                                            .int => @intFromFloat(@max(std.math.minInt(field.type), @min(std.math.maxInt(field.type), @round(result)))),
+                                            .float => as(field.type, result),
+                                            else => @compileError("Unsupported field type"),
+                                        };
+                                    }
+                                }
+
+                                out.at(r, c).* = result_pixel;
+                            }
                         }
                     }
                 },
