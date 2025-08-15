@@ -18,15 +18,7 @@ pub fn build(b: *std.Build) void {
     };
 
     // List of additional examples to build as executables
-    const exec_examples = [_][]const u8{
-        "png_example",
-        "pca_example",
-        "make_logo",
-        "bdf_font_demo",
-        "font_unicode_demo",
-        "convolution_benchmark",
-        "convolution_comparison_benchmark",
-    };
+    const exec_examples = [_][]const u8{ "png_example", "pca_example", "make_logo", "bdf_font_demo", "font_unicode_demo", "convolution_demo", "convolution_benchmark", "convolution_comparison_benchmark", "test_library_convolution" };
 
     // Build exec_examples with run steps and check compilation
     const check = b.step("check", "Check if examples compile");
