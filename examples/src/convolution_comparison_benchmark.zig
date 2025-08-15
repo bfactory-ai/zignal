@@ -471,9 +471,10 @@ fn convolve3x3IntegerRgba(comptime T: type, self: Image(T), kernel: anytype, out
 
     const fields = comptime std.meta.fields(T);
 
-    // Process 2 RGBA pixels at once using @Vector(8, i32)
-    const pixels_per_vec = 2;
-    const vec_len = pixels_per_vec * 4; // 8 channels total
+    // Use CPU's optimal SIMD width for u32 (since RGBA = 4×u8 = 32 bits)
+    // This will typically be 4 on SSE (128-bit), 8 on AVX2 (256-bit), etc.
+    const pixels_per_vec = comptime std.simd.suggestVectorLength(u32) orelse 1;
+    const vec_len = pixels_per_vec * 4; // 4 channels per pixel
 
     for (0..self.rows) |r| {
         var c: usize = 0;
@@ -484,7 +485,7 @@ fn convolve3x3IntegerRgba(comptime T: type, self: Image(T), kernel: anytype, out
             const safe_end = self.cols - 1;
 
             while (c + pixels_per_vec <= safe_end) : (c += pixels_per_vec) {
-                // Result vector for 8 channels (2 RGBA pixels)
+                // Result vector for all channels (pixels_per_vec RGBA pixels)
                 var result_vec: @Vector(vec_len, i32) = @splat(0);
 
                 // Process each kernel position
@@ -493,22 +494,17 @@ fn convolve3x3IntegerRgba(comptime T: type, self: Image(T), kernel: anytype, out
                         const kernel_val = ki[ky * 3 + kx];
                         const kernel_vec: @Vector(vec_len, i32) = @splat(kernel_val);
 
-                        // Load 2 pixels from the neighborhood
+                        // Load pixels from the neighborhood
                         var pixel_vec: @Vector(vec_len, i32) = undefined;
 
-                        // First pixel's 4 channels
-                        const p1 = self.at(r + ky - 1, c + kx - 1).*;
-                        pixel_vec[0] = @field(p1, fields[0].name);
-                        pixel_vec[1] = @field(p1, fields[1].name);
-                        pixel_vec[2] = @field(p1, fields[2].name);
-                        pixel_vec[3] = @field(p1, fields[3].name);
-
-                        // Second pixel's 4 channels
-                        const p2 = self.at(r + ky - 1, c + 1 + kx - 1).*;
-                        pixel_vec[4] = @field(p2, fields[0].name);
-                        pixel_vec[5] = @field(p2, fields[1].name);
-                        pixel_vec[6] = @field(p2, fields[2].name);
-                        pixel_vec[7] = @field(p2, fields[3].name);
+                        // Load all pixels (up to pixels_per_vec)
+                        inline for (0..pixels_per_vec) |px| {
+                            const p = self.at(r + ky - 1, c + px + kx - 1).*;
+                            pixel_vec[px * 4 + 0] = @field(p, fields[0].name);
+                            pixel_vec[px * 4 + 1] = @field(p, fields[1].name);
+                            pixel_vec[px * 4 + 2] = @field(p, fields[2].name);
+                            pixel_vec[px * 4 + 3] = @field(p, fields[3].name);
+                        }
 
                         result_vec += pixel_vec * kernel_vec;
                     }
@@ -525,20 +521,15 @@ fn convolve3x3IntegerRgba(comptime T: type, self: Image(T), kernel: anytype, out
                 // Clamp to [0, 255]
                 const clamped_vec = @max(zero_vec, @min(max_vec, rounded_vec));
 
-                // Store results for both pixels
-                var out_pixel1: T = undefined;
-                @field(out_pixel1, fields[0].name) = @intCast(clamped_vec[0]);
-                @field(out_pixel1, fields[1].name) = @intCast(clamped_vec[1]);
-                @field(out_pixel1, fields[2].name) = @intCast(clamped_vec[2]);
-                @field(out_pixel1, fields[3].name) = @intCast(clamped_vec[3]);
-                out.at(r, c).* = out_pixel1;
-
-                var out_pixel2: T = undefined;
-                @field(out_pixel2, fields[0].name) = @intCast(clamped_vec[4]);
-                @field(out_pixel2, fields[1].name) = @intCast(clamped_vec[5]);
-                @field(out_pixel2, fields[2].name) = @intCast(clamped_vec[6]);
-                @field(out_pixel2, fields[3].name) = @intCast(clamped_vec[7]);
-                out.at(r, c + 1).* = out_pixel2;
+                // Store results for all pixels
+                inline for (0..pixels_per_vec) |px| {
+                    var out_pixel: T = undefined;
+                    @field(out_pixel, fields[0].name) = @intCast(clamped_vec[px * 4 + 0]);
+                    @field(out_pixel, fields[1].name) = @intCast(clamped_vec[px * 4 + 1]);
+                    @field(out_pixel, fields[2].name) = @intCast(clamped_vec[px * 4 + 2]);
+                    @field(out_pixel, fields[3].name) = @intCast(clamped_vec[px * 4 + 3]);
+                    out.at(r, c + px).* = out_pixel;
+                }
             }
         }
 
