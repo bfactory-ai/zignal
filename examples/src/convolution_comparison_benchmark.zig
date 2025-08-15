@@ -446,7 +446,7 @@ fn convolve3x3RgbaHorizontal(comptime T: type, self: Image(T), kernel: anytype, 
     }
 }
 
-// Integer arithmetic version - avoids float conversions for RGBA
+// Integer arithmetic version with SIMD - processes 2 RGBA pixels at once using integer math
 fn convolve3x3IntegerRgba(comptime T: type, self: Image(T), kernel: anytype, out: Image(T), border_mode: BorderMode) void {
     // Only works for 4-channel u8 structs (RGBA)
     if (comptime !is4xu8Struct(T)) {
@@ -471,8 +471,79 @@ fn convolve3x3IntegerRgba(comptime T: type, self: Image(T), kernel: anytype, out
 
     const fields = comptime std.meta.fields(T);
 
+    // Process 2 RGBA pixels at once using @Vector(8, i32)
+    const pixels_per_vec = 2;
+    const vec_len = pixels_per_vec * 4; // 8 channels total
+
     for (0..self.rows) |r| {
-        for (0..self.cols) |c| {
+        var c: usize = 0;
+
+        // Process interior pixels with SIMD (2 pixels at a time)
+        if (r > 0 and r + 1 < self.rows and self.cols > pixels_per_vec + 2) {
+            c = 1;
+            const safe_end = self.cols - 1;
+
+            while (c + pixels_per_vec <= safe_end) : (c += pixels_per_vec) {
+                // Result vector for 8 channels (2 RGBA pixels)
+                var result_vec: @Vector(vec_len, i32) = @splat(0);
+
+                // Process each kernel position
+                inline for (0..3) |ky| {
+                    inline for (0..3) |kx| {
+                        const kernel_val = ki[ky * 3 + kx];
+                        const kernel_vec: @Vector(vec_len, i32) = @splat(kernel_val);
+
+                        // Load 2 pixels from the neighborhood
+                        var pixel_vec: @Vector(vec_len, i32) = undefined;
+
+                        // First pixel's 4 channels
+                        const p1 = self.at(r + ky - 1, c + kx - 1).*;
+                        pixel_vec[0] = @field(p1, fields[0].name);
+                        pixel_vec[1] = @field(p1, fields[1].name);
+                        pixel_vec[2] = @field(p1, fields[2].name);
+                        pixel_vec[3] = @field(p1, fields[3].name);
+
+                        // Second pixel's 4 channels
+                        const p2 = self.at(r + ky - 1, c + 1 + kx - 1).*;
+                        pixel_vec[4] = @field(p2, fields[0].name);
+                        pixel_vec[5] = @field(p2, fields[1].name);
+                        pixel_vec[6] = @field(p2, fields[2].name);
+                        pixel_vec[7] = @field(p2, fields[3].name);
+
+                        result_vec += pixel_vec * kernel_vec;
+                    }
+                }
+
+                // Divide by scale and clamp - create rounding vector
+                const round_vec: @Vector(vec_len, i32) = @splat(SCALE / 2);
+                const scale_vec: @Vector(vec_len, i32) = @splat(SCALE);
+                const zero_vec: @Vector(vec_len, i32) = @splat(0);
+                const max_vec: @Vector(vec_len, i32) = @splat(255);
+
+                // Add rounding factor and divide
+                const rounded_vec = @divTrunc(result_vec + round_vec, scale_vec);
+                // Clamp to [0, 255]
+                const clamped_vec = @max(zero_vec, @min(max_vec, rounded_vec));
+
+                // Store results for both pixels
+                var out_pixel1: T = undefined;
+                @field(out_pixel1, fields[0].name) = @intCast(clamped_vec[0]);
+                @field(out_pixel1, fields[1].name) = @intCast(clamped_vec[1]);
+                @field(out_pixel1, fields[2].name) = @intCast(clamped_vec[2]);
+                @field(out_pixel1, fields[3].name) = @intCast(clamped_vec[3]);
+                out.at(r, c).* = out_pixel1;
+
+                var out_pixel2: T = undefined;
+                @field(out_pixel2, fields[0].name) = @intCast(clamped_vec[4]);
+                @field(out_pixel2, fields[1].name) = @intCast(clamped_vec[5]);
+                @field(out_pixel2, fields[2].name) = @intCast(clamped_vec[6]);
+                @field(out_pixel2, fields[3].name) = @intCast(clamped_vec[7]);
+                out.at(r, c + 1).* = out_pixel2;
+            }
+        }
+
+        // Process remaining pixels with scalar integer math
+        while (c < self.cols) : (c += 1) {
             var result_pixel: T = undefined;
 
             if (r > 0 and r + 1 < self.rows and c > 0 and c + 1 < self.cols) {
@@ -496,7 +567,6 @@ fn convolve3x3IntegerRgba(comptime T: type, self: Image(T), kernel: anytype, out
                         p20 * ki[6] + p21 * ki[7] + p22 * ki[8];
 
                     // Divide by scale factor and clamp to u8 range
-                    // Add SCALE/2 for rounding before division
                     const rounded = @divTrunc((result + SCALE / 2), SCALE);
                     @field(result_pixel, field.name) = @intCast(@max(0, @min(255, rounded)));
                 }
@@ -745,7 +815,7 @@ fn benchmarkComparison(comptime T: type, allocator: std.mem.Allocator, width: us
     if (is4xu8Struct(T)) {
         std.debug.print("    Channel Sep:   {d:.3} ms/iter ({d:.2} Mpixels/sec) - {d:.2}x speedup ⚡\n", .{ channel_sep_ms_per_iter, channel_sep_pixels_per_sec / 1_000_000.0, channel_sep_speedup });
         std.debug.print("    Horiz RGBA:    {d:.3} ms/iter ({d:.2} Mpixels/sec) - {d:.2}x speedup 🚀\n", .{ horiz_rgba_ms_per_iter, horiz_rgba_pixels_per_sec / 1_000_000.0, horiz_rgba_speedup });
-        std.debug.print("    Integer Math:  {d:.3} ms/iter ({d:.2} Mpixels/sec) - {d:.2}x speedup 🔢\n", .{ integer_ms_per_iter, integer_pixels_per_sec / 1_000_000.0, integer_speedup });
+        std.debug.print("    Int SIMD:      {d:.3} ms/iter ({d:.2} Mpixels/sec) - {d:.2}x speedup 🔢\n", .{ integer_ms_per_iter, integer_pixels_per_sec / 1_000_000.0, integer_speedup });
     }
 
     // Indicate the best performer
@@ -755,7 +825,7 @@ fn benchmarkComparison(comptime T: type, allocator: std.mem.Allocator, width: us
         if (channel_sep_speedup >= best_speedup * 0.95) {
             std.debug.print("    ⭐ Channel Separation is fastest for RGBA!\n", .{});
         } else if (integer_speedup >= best_speedup * 0.95) {
-            std.debug.print("    ⭐ Integer arithmetic is fastest for RGBA!\n", .{});
+            std.debug.print("    ⭐ Integer SIMD is fastest for RGBA!\n", .{});
         } else if (horiz_rgba_speedup >= best_speedup * 0.95) {
             std.debug.print("    ⭐ Horizontal RGBA SIMD is fastest!\n", .{});
         } else if (simd_speedup >= best_speedup * 0.95) {
