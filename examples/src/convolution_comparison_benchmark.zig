@@ -840,6 +840,8 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
+    std.debug.print("Rgba SIMD: {?}\n", .{std.simd.suggestVectorLength(Rgba)});
+    std.debug.print("Rgb SIMD: {?}\n", .{std.simd.suggestVectorLength(Rgb)});
 
     std.debug.print("\n", .{});
     std.debug.print("=" ** 60 ++ "\n", .{});
