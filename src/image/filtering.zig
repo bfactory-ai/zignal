@@ -502,7 +502,7 @@ pub fn Filter(comptime T: type) type {
 
             // Check for special optimized cases
             if (kernel_height == 3 and kernel_width == 3) {
-                return convolve3x3(self, kernel, out.*, border_mode);
+                return convolve3x3(self, allocator, kernel, out.*, border_mode);
             }
 
             // General convolution
@@ -613,7 +613,7 @@ pub fn Filter(comptime T: type) type {
         }
 
         /// Optimized convolution for 3x3 kernels using SIMD where possible.
-        fn convolve3x3(self: Self, kernel: anytype, out: Self, border_mode: BorderMode) void {
+        fn convolve3x3(self: Self, allocator: Allocator, kernel: anytype, out: Self, border_mode: BorderMode) !void {
             const kr = [9]f32{
                 as(f32, kernel[0][0]), as(f32, kernel[0][1]), as(f32, kernel[0][2]),
                 as(f32, kernel[1][0]), as(f32, kernel[1][1]), as(f32, kernel[1][2]),
@@ -748,179 +748,177 @@ pub fn Filter(comptime T: type) type {
                     };
 
                     if (all_u8 and (fields.len == 3 or fields.len == 4)) {
-                        // Determine how many channels to process (skip alpha if present)
+                        // Channel separation approach for optimal performance
                         const has_alpha = comptime hasAlphaChannel(T);
-                        const channels_to_process = if (has_alpha) 3 else fields.len;
 
-                        // Check if kernel is suitable for integer arithmetic
-                        var kernel_sum: f32 = 0;
-                        var all_positive = true;
-                        for (kr) |k| {
-                            kernel_sum += k;
-                            if (k < 0) all_positive = false;
+                        // Convert kernel to integer for faster arithmetic
+                        const SCALE = 256;
+                        const kr_int = [9]i32{
+                            @intFromFloat(@round(kr[0] * SCALE)),
+                            @intFromFloat(@round(kr[1] * SCALE)),
+                            @intFromFloat(@round(kr[2] * SCALE)),
+                            @intFromFloat(@round(kr[3] * SCALE)),
+                            @intFromFloat(@round(kr[4] * SCALE)),
+                            @intFromFloat(@round(kr[5] * SCALE)),
+                            @intFromFloat(@round(kr[6] * SCALE)),
+                            @intFromFloat(@round(kr[7] * SCALE)),
+                            @intFromFloat(@round(kr[8] * SCALE)),
+                        };
+
+                        // Allocate temporary planes for channel separation
+                        const plane_size = self.rows * self.cols;
+                        const r_channel = try allocator.alloc(u8, plane_size);
+                        defer allocator.free(r_channel);
+                        const g_channel = try allocator.alloc(u8, plane_size);
+                        defer allocator.free(g_channel);
+                        const b_channel = try allocator.alloc(u8, plane_size);
+                        defer allocator.free(b_channel);
+
+                        const r_out = try allocator.alloc(u8, plane_size);
+                        defer allocator.free(r_out);
+                        const g_out = try allocator.alloc(u8, plane_size);
+                        defer allocator.free(g_out);
+                        const b_out = try allocator.alloc(u8, plane_size);
+                        defer allocator.free(b_out);
+
+                        // Separate channels (single pass for cache efficiency)
+                        var idx: usize = 0;
+                        for (0..self.rows) |r| {
+                            for (0..self.cols) |c| {
+                                const pixel = self.at(r, c).*;
+                                r_channel[idx] = @field(pixel, fields[0].name);
+                                g_channel[idx] = @field(pixel, fields[1].name);
+                                b_channel[idx] = @field(pixel, fields[2].name);
+                                idx += 1;
+                            }
                         }
-                        const is_gaussian_like = all_positive and @abs(kernel_sum - 1.0) < 0.1;
 
-                        if (!is_gaussian_like) {
-                            // Integer SIMD path for edge detection/sharpening kernels
-                            const SCALE = 256;
-                            const kr_int = [9]i32{
-                                @intFromFloat(@round(kr[0] * SCALE)),
-                                @intFromFloat(@round(kr[1] * SCALE)),
-                                @intFromFloat(@round(kr[2] * SCALE)),
-                                @intFromFloat(@round(kr[3] * SCALE)),
-                                @intFromFloat(@round(kr[4] * SCALE)),
-                                @intFromFloat(@round(kr[5] * SCALE)),
-                                @intFromFloat(@round(kr[6] * SCALE)),
-                                @intFromFloat(@round(kr[7] * SCALE)),
-                                @intFromFloat(@round(kr[8] * SCALE)),
-                            };
+                        // Convolve each channel independently with integer arithmetic and SIMD
+                        inline for (.{ r_channel, g_channel, b_channel }, .{ r_out, g_out, b_out }) |src_channel, dst_channel| {
+                            // Use optimal SIMD vector length for i32
+                            const vec_len = comptime std.simd.suggestVectorLength(i32) orelse 8;
 
                             for (0..self.rows) |r| {
-                                for (0..self.cols) |c| {
+                                var c: usize = 0;
+
+                                // SIMD path for interior pixels
+                                if (r > 0 and r + 1 < self.rows and self.cols > vec_len + 2) {
+                                    c = 1;
+                                    const safe_end = if (self.cols > vec_len + 1) self.cols - vec_len - 1 else 1;
+
+                                    while (c + vec_len <= safe_end) : (c += vec_len) {
+                                        // Process vec_len pixels at once
+                                        var result_vec: @Vector(vec_len, i32) = @splat(0);
+
+                                        // Accumulate convolution for each kernel position
+                                        inline for (0..3) |ky| {
+                                            inline for (0..3) |kx| {
+                                                const kernel_val = kr_int[ky * 3 + kx];
+                                                const kernel_vec: @Vector(vec_len, i32) = @splat(kernel_val);
+
+                                                // Load vec_len pixels from the neighborhood
+                                                var pixel_vec: @Vector(vec_len, i32) = undefined;
+                                                for (0..vec_len) |i| {
+                                                    const src_idx = (r + ky - 1) * self.cols + (c + i + kx - 1);
+                                                    pixel_vec[i] = src_channel[src_idx];
+                                                }
+
+                                                result_vec += pixel_vec * kernel_vec;
+                                            }
+                                        }
+
+                                        // Scale and clamp results
+                                        const round_vec: @Vector(vec_len, i32) = @splat(SCALE / 2);
+                                        const scale_vec: @Vector(vec_len, i32) = @splat(SCALE);
+                                        const zero_vec: @Vector(vec_len, i32) = @splat(0);
+                                        const max_vec: @Vector(vec_len, i32) = @splat(255);
+
+                                        const rounded_vec = @divTrunc(result_vec + round_vec, scale_vec);
+                                        const clamped_vec = @max(zero_vec, @min(max_vec, rounded_vec));
+
+                                        // Store results
+                                        for (0..vec_len) |i| {
+                                            dst_channel[r * self.cols + c + i] = @intCast(clamped_vec[i]);
+                                        }
+                                    }
+                                }
+
+                                // Scalar path for remaining pixels and borders
+                                while (c < self.cols) : (c += 1) {
                                     if (r > 0 and r + 1 < self.rows and c > 0 and c + 1 < self.cols) {
-                                        // Fast interior path
-                                        const p00 = self.at(r - 1, c - 1).*;
-                                        const p01 = self.at(r - 1, c + 0).*;
-                                        const p02 = self.at(r - 1, c + 1).*;
-                                        const p10 = self.at(r + 0, c - 1).*;
-                                        const p11 = self.at(r + 0, c + 0).*;
-                                        const p12 = self.at(r + 0, c + 1).*;
-                                        const p20 = self.at(r + 1, c - 1).*;
-                                        const p21 = self.at(r + 1, c + 0).*;
-                                        const p22 = self.at(r + 1, c + 1).*;
-
-                                        var result_pixel: T = undefined;
-
-                                        // Process color channels
-                                        inline for (0..channels_to_process) |i| {
-                                            const field = fields[i];
-                                            const val = @divTrunc((@as(i32, @field(p00, field.name)) * kr_int[0] +
-                                                @as(i32, @field(p01, field.name)) * kr_int[1] +
-                                                @as(i32, @field(p02, field.name)) * kr_int[2] +
-                                                @as(i32, @field(p10, field.name)) * kr_int[3] +
-                                                @as(i32, @field(p11, field.name)) * kr_int[4] +
-                                                @as(i32, @field(p12, field.name)) * kr_int[5] +
-                                                @as(i32, @field(p20, field.name)) * kr_int[6] +
-                                                @as(i32, @field(p21, field.name)) * kr_int[7] +
-                                                @as(i32, @field(p22, field.name)) * kr_int[8] + SCALE / 2), SCALE);
-                                            @field(result_pixel, field.name) = @intCast(@max(0, @min(255, val)));
+                                        // Fast interior path with integer math
+                                        var result: i32 = 0;
+                                        inline for (0..3) |ky| {
+                                            inline for (0..3) |kx| {
+                                                const src_idx = (r + ky - 1) * self.cols + (c + kx - 1);
+                                                const pixel_val = @as(i32, src_channel[src_idx]);
+                                                result += pixel_val * kr_int[ky * 3 + kx];
+                                            }
                                         }
-
-                                        // Preserve alpha if present
-                                        if (has_alpha) {
-                                            @field(result_pixel, fields[3].name) = @field(p11, fields[3].name);
-                                        }
-
-                                        out.at(r, c).* = result_pixel;
+                                        const rounded = @divTrunc(result + SCALE / 2, SCALE);
+                                        dst_channel[r * self.cols + c] = @intCast(@max(0, @min(255, rounded)));
                                     } else {
-                                        // Border handling path
+                                        // Border handling with integer math
                                         const ir = @as(isize, @intCast(r));
                                         const ic = @as(isize, @intCast(c));
-                                        const p00 = getPixelWithBorder(self, ir - 1, ic - 1, border_mode);
-                                        const p01 = getPixelWithBorder(self, ir - 1, ic, border_mode);
-                                        const p02 = getPixelWithBorder(self, ir - 1, ic + 1, border_mode);
-                                        const p10 = getPixelWithBorder(self, ir, ic - 1, border_mode);
-                                        const p11 = getPixelWithBorder(self, ir, ic, border_mode);
-                                        const p12 = getPixelWithBorder(self, ir, ic + 1, border_mode);
-                                        const p20 = getPixelWithBorder(self, ir + 1, ic - 1, border_mode);
-                                        const p21 = getPixelWithBorder(self, ir + 1, ic, border_mode);
-                                        const p22 = getPixelWithBorder(self, ir + 1, ic + 1, border_mode);
-
-                                        var result_pixel: T = undefined;
-
-                                        // Process color channels
-                                        inline for (0..channels_to_process) |i| {
-                                            const field = fields[i];
-                                            const val = @divTrunc((@as(i32, @field(p00, field.name)) * kr_int[0] +
-                                                @as(i32, @field(p01, field.name)) * kr_int[1] +
-                                                @as(i32, @field(p02, field.name)) * kr_int[2] +
-                                                @as(i32, @field(p10, field.name)) * kr_int[3] +
-                                                @as(i32, @field(p11, field.name)) * kr_int[4] +
-                                                @as(i32, @field(p12, field.name)) * kr_int[5] +
-                                                @as(i32, @field(p20, field.name)) * kr_int[6] +
-                                                @as(i32, @field(p21, field.name)) * kr_int[7] +
-                                                @as(i32, @field(p22, field.name)) * kr_int[8] + SCALE / 2), SCALE);
-                                            @field(result_pixel, field.name) = @intCast(@max(0, @min(255, val)));
+                                        var result: i32 = 0;
+                                        inline for (0..3) |ky| {
+                                            inline for (0..3) |kx| {
+                                                const iry = ir + @as(isize, @intCast(ky)) - 1;
+                                                const icx = ic + @as(isize, @intCast(kx)) - 1;
+                                                const pixel_val = if (iry >= 0 and iry < self.rows and icx >= 0 and icx < self.cols)
+                                                    @as(i32, src_channel[@intCast(iry * @as(isize, @intCast(self.cols)) + icx)])
+                                                else switch (border_mode) {
+                                                    .zero => 0,
+                                                    .replicate => blk: {
+                                                        const clamped_r = @max(0, @min(@as(isize, @intCast(self.rows - 1)), iry));
+                                                        const clamped_c = @max(0, @min(@as(isize, @intCast(self.cols - 1)), icx));
+                                                        break :blk @as(i32, src_channel[@intCast(clamped_r * @as(isize, @intCast(self.cols)) + clamped_c)]);
+                                                    },
+                                                    .mirror => blk: {
+                                                        var rr = iry;
+                                                        var cc = icx;
+                                                        if (rr < 0) rr = -rr - 1;
+                                                        if (rr >= self.rows) rr = 2 * @as(isize, @intCast(self.rows)) - rr - 1;
+                                                        if (cc < 0) cc = -cc - 1;
+                                                        if (cc >= self.cols) cc = 2 * @as(isize, @intCast(self.cols)) - cc - 1;
+                                                        break :blk @as(i32, src_channel[@intCast(rr * @as(isize, @intCast(self.cols)) + cc)]);
+                                                    },
+                                                    .wrap => blk: {
+                                                        const wrapped_r = @mod(iry, @as(isize, @intCast(self.rows)));
+                                                        const wrapped_c = @mod(icx, @as(isize, @intCast(self.cols)));
+                                                        break :blk @as(i32, src_channel[@intCast(wrapped_r * @as(isize, @intCast(self.cols)) + wrapped_c)]);
+                                                    },
+                                                };
+                                                result += pixel_val * kr_int[ky * 3 + kx];
+                                            }
                                         }
-
-                                        // Preserve alpha if present
-                                        if (has_alpha) {
-                                            @field(result_pixel, fields[3].name) = @field(p11, fields[3].name);
-                                        }
-
-                                        out.at(r, c).* = result_pixel;
+                                        const rounded = @divTrunc(result + SCALE / 2, SCALE);
+                                        dst_channel[r * self.cols + c] = @intCast(@max(0, @min(255, rounded)));
                                     }
                                 }
                             }
-                        } else {
-                            // Float-based path for Gaussian-like kernels
-                            for (0..self.rows) |r| {
-                                for (0..self.cols) |c| {
-                                    if (r > 0 and r + 1 < self.rows and c > 0 and c + 1 < self.cols) {
-                                        // Fast interior path
-                                        const p00 = self.at(r - 1, c - 1).*;
-                                        const p01 = self.at(r - 1, c + 0).*;
-                                        const p02 = self.at(r - 1, c + 1).*;
-                                        const p10 = self.at(r + 0, c - 1).*;
-                                        const p11 = self.at(r + 0, c + 0).*;
-                                        const p12 = self.at(r + 0, c + 1).*;
-                                        const p20 = self.at(r + 1, c - 1).*;
-                                        const p21 = self.at(r + 1, c + 0).*;
-                                        const p22 = self.at(r + 1, c + 1).*;
+                        }
 
-                                        var result_pixel: T = undefined;
+                        // Recombine channels, preserving alpha
+                        idx = 0;
+                        for (0..self.rows) |r| {
+                            for (0..self.cols) |c| {
+                                var result_pixel: T = undefined;
+                                @field(result_pixel, fields[0].name) = r_out[idx];
+                                @field(result_pixel, fields[1].name) = g_out[idx];
+                                @field(result_pixel, fields[2].name) = b_out[idx];
 
-                                        // Process color channels
-                                        inline for (0..channels_to_process) |i| {
-                                            const field = fields[i];
-                                            const result =
-                                                as(f32, @field(p00, field.name)) * kr[0] + as(f32, @field(p01, field.name)) * kr[1] + as(f32, @field(p02, field.name)) * kr[2] +
-                                                as(f32, @field(p10, field.name)) * kr[3] + as(f32, @field(p11, field.name)) * kr[4] + as(f32, @field(p12, field.name)) * kr[5] +
-                                                as(f32, @field(p20, field.name)) * kr[6] + as(f32, @field(p21, field.name)) * kr[7] + as(f32, @field(p22, field.name)) * kr[8];
-                                            @field(result_pixel, field.name) = @intFromFloat(@max(0, @min(255, @round(result))));
-                                        }
-
-                                        // Preserve alpha if present
-                                        if (has_alpha) {
-                                            @field(result_pixel, fields[3].name) = @field(p11, fields[3].name);
-                                        }
-
-                                        out.at(r, c).* = result_pixel;
-                                    } else {
-                                        // Border handling path
-                                        const ir = @as(isize, @intCast(r));
-                                        const ic = @as(isize, @intCast(c));
-                                        const p00 = getPixelWithBorder(self, ir - 1, ic - 1, border_mode);
-                                        const p01 = getPixelWithBorder(self, ir - 1, ic, border_mode);
-                                        const p02 = getPixelWithBorder(self, ir - 1, ic + 1, border_mode);
-                                        const p10 = getPixelWithBorder(self, ir, ic - 1, border_mode);
-                                        const p11 = getPixelWithBorder(self, ir, ic, border_mode);
-                                        const p12 = getPixelWithBorder(self, ir, ic + 1, border_mode);
-                                        const p20 = getPixelWithBorder(self, ir + 1, ic - 1, border_mode);
-                                        const p21 = getPixelWithBorder(self, ir + 1, ic, border_mode);
-                                        const p22 = getPixelWithBorder(self, ir + 1, ic + 1, border_mode);
-
-                                        var result_pixel: T = undefined;
-
-                                        // Process color channels
-                                        inline for (0..channels_to_process) |i| {
-                                            const field = fields[i];
-                                            const result =
-                                                as(f32, @field(p00, field.name)) * kr[0] + as(f32, @field(p01, field.name)) * kr[1] + as(f32, @field(p02, field.name)) * kr[2] +
-                                                as(f32, @field(p10, field.name)) * kr[3] + as(f32, @field(p11, field.name)) * kr[4] + as(f32, @field(p12, field.name)) * kr[5] +
-                                                as(f32, @field(p20, field.name)) * kr[6] + as(f32, @field(p21, field.name)) * kr[7] + as(f32, @field(p22, field.name)) * kr[8];
-                                            @field(result_pixel, field.name) = @intFromFloat(@max(0, @min(255, @round(result))));
-                                        }
-
-                                        // Preserve alpha if present
-                                        if (has_alpha) {
-                                            @field(result_pixel, fields[3].name) = @field(p11, fields[3].name);
-                                        }
-
-                                        out.at(r, c).* = result_pixel;
-                                    }
+                                // Preserve alpha if present
+                                if (has_alpha) {
+                                    @field(result_pixel, fields[3].name) = @field(self.at(r, c).*, fields[3].name);
+                                } else if (fields.len == 4) {
+                                    // For non-alpha 4th channel, also preserve it
+                                    @field(result_pixel, fields[3].name) = @field(self.at(r, c).*, fields[3].name);
                                 }
+
+                                out.at(r, c).* = result_pixel;
+                                idx += 1;
                             }
                         }
                     } else {

@@ -914,29 +914,29 @@ fn benchmarkComparison(comptime T: type, allocator: std.mem.Allocator, width: us
 
     // Print results
     std.debug.print("\n  {s} ({} x {}):\n", .{ @typeName(T), width, height });
-    std.debug.print("    Baseline:      {d:.3} ms/iter ({d:.2} Mpixels/sec)\n", .{ baseline_ms_per_iter, baseline_pixels_per_sec / 1_000_000.0 });
-    std.debug.print("    SIMD (horiz):  {d:.3} ms/iter ({d:.2} Mpixels/sec) - {d:.2}x speedup\n", .{ simd_ms_per_iter, simd_pixels_per_sec / 1_000_000.0, simd_speedup });
-    std.debug.print("    SIMD @reduce:  {d:.3} ms/iter ({d:.2} Mpixels/sec) - {d:.2}x speedup\n", .{ reduce_ms_per_iter, reduce_pixels_per_sec / 1_000_000.0, reduce_speedup });
+    std.debug.print("    Baseline:           {d:.3} ms/iter ({d:.2} Mpixels/sec)\n", .{ baseline_ms_per_iter, baseline_pixels_per_sec / 1_000_000.0 });
+    std.debug.print("    Library (ChSep):    {d:.3} ms/iter ({d:.2} Mpixels/sec) - {d:.2}x speedup\n", .{ simd_ms_per_iter, simd_pixels_per_sec / 1_000_000.0, simd_speedup });
+    std.debug.print("    SIMD @reduce:       {d:.3} ms/iter ({d:.2} Mpixels/sec) - {d:.2}x speedup\n", .{ reduce_ms_per_iter, reduce_pixels_per_sec / 1_000_000.0, reduce_speedup });
 
     // Print channel separation and horizontal RGBA results for RGBA types
     if (is4xu8Struct(T)) {
-        std.debug.print("    Channel Sep:   {d:.3} ms/iter ({d:.2} Mpixels/sec) - {d:.2}x speedup ⚡\n", .{ channel_sep_ms_per_iter, channel_sep_pixels_per_sec / 1_000_000.0, channel_sep_speedup });
-        std.debug.print("    Horiz RGBA:    {d:.3} ms/iter ({d:.2} Mpixels/sec) - {d:.2}x speedup 🚀\n", .{ horiz_rgba_ms_per_iter, horiz_rgba_pixels_per_sec / 1_000_000.0, horiz_rgba_speedup });
-        std.debug.print("    Int SIMD:      {d:.3} ms/iter ({d:.2} Mpixels/sec) - {d:.2}x speedup 🔢\n", .{ integer_ms_per_iter, integer_pixels_per_sec / 1_000_000.0, integer_speedup });
+        std.debug.print("    Benchmark ChSep:    {d:.3} ms/iter ({d:.2} Mpixels/sec) - {d:.2}x speedup\n", .{ channel_sep_ms_per_iter, channel_sep_pixels_per_sec / 1_000_000.0, channel_sep_speedup });
+        std.debug.print("    Horiz RGBA:         {d:.3} ms/iter ({d:.2} Mpixels/sec) - {d:.2}x speedup\n", .{ horiz_rgba_ms_per_iter, horiz_rgba_pixels_per_sec / 1_000_000.0, horiz_rgba_speedup });
+        std.debug.print("    Int SIMD:           {d:.3} ms/iter ({d:.2} Mpixels/sec) - {d:.2}x speedup\n", .{ integer_ms_per_iter, integer_pixels_per_sec / 1_000_000.0, integer_speedup });
     }
 
     // Indicate the best performer
     if (is4xu8Struct(T)) {
         // For RGBA, compare all methods
         const best_speedup = @max(@max(@max(simd_speedup, reduce_speedup), @max(channel_sep_speedup, horiz_rgba_speedup)), integer_speedup);
-        if (channel_sep_speedup >= best_speedup * 0.95) {
-            std.debug.print("    ⭐ Channel Separation is fastest for RGBA!\n", .{});
+        if (simd_speedup >= best_speedup * 0.95) {
+            std.debug.print("    ⭐ Library (Channel Separation) is fastest!\n", .{});
+        } else if (channel_sep_speedup >= best_speedup * 0.95) {
+            std.debug.print("    ⭐ Benchmark Channel Separation is fastest!\n", .{});
         } else if (integer_speedup >= best_speedup * 0.95) {
-            std.debug.print("    ⭐ Integer SIMD is fastest for RGBA!\n", .{});
+            std.debug.print("    ⭐ Integer SIMD is fastest!\n", .{});
         } else if (horiz_rgba_speedup >= best_speedup * 0.95) {
             std.debug.print("    ⭐ Horizontal RGBA SIMD is fastest!\n", .{});
-        } else if (simd_speedup >= best_speedup * 0.95) {
-            std.debug.print("    ⭐ Horizontal SIMD is fastest\n", .{});
         } else {
             std.debug.print("    ⭐ @reduce SIMD is fastest\n", .{});
         }
@@ -961,8 +961,9 @@ pub fn main() !void {
 
     std.debug.print("\n", .{});
     std.debug.print("=" ** 60 ++ "\n", .{});
-    std.debug.print("   Convolution 3x3: SIMD vs Baseline Performance Comparison\n", .{});
-    std.debug.print("   NOTE: Library now preserves alpha channel for RGBA\n", .{});
+    std.debug.print("   Convolution 3x3: Performance Comparison\n", .{});
+    std.debug.print("   Library now uses Channel Separation with Integer SIMD\n", .{});
+    std.debug.print("   Alpha channel is preserved (not convolved) for RGBA\n", .{});
     std.debug.print("=" ** 60 ++ "\n", .{});
 
     const sizes = [_]struct { w: usize, h: usize }{
