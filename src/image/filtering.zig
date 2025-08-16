@@ -612,6 +612,262 @@ pub fn Filter(comptime T: type) type {
             }
         }
 
+        /// Optimized convolution for u8 planes with integer arithmetic and SIMD.
+        /// The kernel must be pre-scaled by 256 for integer arithmetic.
+        fn convolve3x3U8Plane(
+            src: []const u8,
+            dst: []u8,
+            rows: usize,
+            cols: usize,
+            kernel_int: [9]i32,
+            border_mode: BorderMode,
+        ) void {
+            const SCALE = 256;
+            const vec_len = comptime std.simd.suggestVectorLength(i32) orelse 8;
+
+            for (0..rows) |r| {
+                var c: usize = 0;
+
+                // SIMD path for interior pixels
+                if (r > 0 and r + 1 < rows and cols > vec_len + 2) {
+                    c = 1;
+                    const safe_end = if (cols > vec_len + 1) cols - vec_len - 1 else 1;
+
+                    while (c + vec_len <= safe_end) : (c += vec_len) {
+                        // Process vec_len pixels at once
+                        var result_vec: @Vector(vec_len, i32) = @splat(0);
+
+                        // Accumulate convolution for each kernel position
+                        inline for (0..3) |ky| {
+                            inline for (0..3) |kx| {
+                                const kernel_val = kernel_int[ky * 3 + kx];
+                                const kernel_vec: @Vector(vec_len, i32) = @splat(kernel_val);
+
+                                // Load vec_len pixels from the neighborhood
+                                var pixel_vec: @Vector(vec_len, i32) = undefined;
+                                for (0..vec_len) |i| {
+                                    const src_idx = (r + ky - 1) * cols + (c + i + kx - 1);
+                                    pixel_vec[i] = src[src_idx];
+                                }
+
+                                result_vec += pixel_vec * kernel_vec;
+                            }
+                        }
+
+                        // Scale and clamp results
+                        const round_vec: @Vector(vec_len, i32) = @splat(SCALE / 2);
+                        const scale_vec: @Vector(vec_len, i32) = @splat(SCALE);
+                        const zero_vec: @Vector(vec_len, i32) = @splat(0);
+                        const max_vec: @Vector(vec_len, i32) = @splat(255);
+
+                        const rounded_vec = @divTrunc(result_vec + round_vec, scale_vec);
+                        const clamped_vec = @max(zero_vec, @min(max_vec, rounded_vec));
+
+                        // Store results
+                        for (0..vec_len) |i| {
+                            dst[r * cols + c + i] = @intCast(clamped_vec[i]);
+                        }
+                    }
+                }
+
+                // Scalar path for remaining pixels and borders
+                while (c < cols) : (c += 1) {
+                    if (r > 0 and r + 1 < rows and c > 0 and c + 1 < cols) {
+                        // Fast interior path with integer math
+                        var result: i32 = 0;
+                        inline for (0..3) |ky| {
+                            inline for (0..3) |kx| {
+                                const src_idx = (r + ky - 1) * cols + (c + kx - 1);
+                                const pixel_val = @as(i32, src[src_idx]);
+                                result += pixel_val * kernel_int[ky * 3 + kx];
+                            }
+                        }
+                        const rounded = @divTrunc(result + SCALE / 2, SCALE);
+                        dst[r * cols + c] = @intCast(@max(0, @min(255, rounded)));
+                    } else {
+                        // Border handling with integer math
+                        const ir = @as(isize, @intCast(r));
+                        const ic = @as(isize, @intCast(c));
+                        var result: i32 = 0;
+                        inline for (0..3) |ky| {
+                            inline for (0..3) |kx| {
+                                const iry = ir + @as(isize, @intCast(ky)) - 1;
+                                const icx = ic + @as(isize, @intCast(kx)) - 1;
+                                const pixel_val = if (iry >= 0 and iry < rows and icx >= 0 and icx < cols)
+                                    @as(i32, src[@intCast(iry * @as(isize, @intCast(cols)) + icx)])
+                                else switch (border_mode) {
+                                    .zero => 0,
+                                    .replicate => blk: {
+                                        const clamped_r = @max(0, @min(@as(isize, @intCast(rows - 1)), iry));
+                                        const clamped_c = @max(0, @min(@as(isize, @intCast(cols - 1)), icx));
+                                        break :blk @as(i32, src[@intCast(clamped_r * @as(isize, @intCast(cols)) + clamped_c)]);
+                                    },
+                                    .mirror => blk: {
+                                        var rr = iry;
+                                        var cc = icx;
+                                        if (rr < 0) rr = -rr - 1;
+                                        if (rr >= rows) rr = 2 * @as(isize, @intCast(rows)) - rr - 1;
+                                        if (cc < 0) cc = -cc - 1;
+                                        if (cc >= cols) cc = 2 * @as(isize, @intCast(cols)) - cc - 1;
+                                        break :blk @as(i32, src[@intCast(rr * @as(isize, @intCast(cols)) + cc)]);
+                                    },
+                                    .wrap => blk: {
+                                        const wrapped_r = @mod(iry, @as(isize, @intCast(rows)));
+                                        const wrapped_c = @mod(icx, @as(isize, @intCast(cols)));
+                                        break :blk @as(i32, src[@intCast(wrapped_r * @as(isize, @intCast(cols)) + wrapped_c)]);
+                                    },
+                                };
+                                result += pixel_val * kernel_int[ky * 3 + kx];
+                            }
+                        }
+                        const rounded = @divTrunc(result + SCALE / 2, SCALE);
+                        dst[r * cols + c] = @intCast(@max(0, @min(255, rounded)));
+                    }
+                }
+            }
+        }
+
+        /// Optimized convolution for scalar types (int/float) with SIMD.
+        fn convolve3x3Scalar(comptime ScalarT: type, self: Image(ScalarT), kernel_f32: [9]f32, out: Image(ScalarT), border_mode: BorderMode) void {
+            const simd_len = std.simd.suggestVectorLength(f32) orelse 1;
+
+            // Create kernel vectors for SIMD processing
+            const kr0_vec: @Vector(simd_len, f32) = @splat(kernel_f32[0]);
+            const kr1_vec: @Vector(simd_len, f32) = @splat(kernel_f32[1]);
+            const kr2_vec: @Vector(simd_len, f32) = @splat(kernel_f32[2]);
+            const kr3_vec: @Vector(simd_len, f32) = @splat(kernel_f32[3]);
+            const kr4_vec: @Vector(simd_len, f32) = @splat(kernel_f32[4]);
+            const kr5_vec: @Vector(simd_len, f32) = @splat(kernel_f32[5]);
+            const kr6_vec: @Vector(simd_len, f32) = @splat(kernel_f32[6]);
+            const kr7_vec: @Vector(simd_len, f32) = @splat(kernel_f32[7]);
+            const kr8_vec: @Vector(simd_len, f32) = @splat(kernel_f32[8]);
+
+            for (0..self.rows) |r| {
+                var c: usize = 0;
+
+                // SIMD processing for interior pixels
+                if (r > 0 and r + 1 < self.rows and simd_len > 1 and self.cols > simd_len + 2) {
+                    const safe_end = self.cols - 1;
+                    c = 1;
+
+                    while (c + simd_len <= safe_end) : (c += simd_len) {
+                        // Load 3x3 neighborhoods for simd_len pixels
+                        var p00_vec: @Vector(simd_len, f32) = undefined;
+                        var p01_vec: @Vector(simd_len, f32) = undefined;
+                        var p02_vec: @Vector(simd_len, f32) = undefined;
+                        var p10_vec: @Vector(simd_len, f32) = undefined;
+                        var p11_vec: @Vector(simd_len, f32) = undefined;
+                        var p12_vec: @Vector(simd_len, f32) = undefined;
+                        var p20_vec: @Vector(simd_len, f32) = undefined;
+                        var p21_vec: @Vector(simd_len, f32) = undefined;
+                        var p22_vec: @Vector(simd_len, f32) = undefined;
+
+                        for (0..simd_len) |i| {
+                            p00_vec[i] = as(f32, self.at(r - 1, c + i - 1).*);
+                            p01_vec[i] = as(f32, self.at(r - 1, c + i).*);
+                            p02_vec[i] = as(f32, self.at(r - 1, c + i + 1).*);
+                            p10_vec[i] = as(f32, self.at(r, c + i - 1).*);
+                            p11_vec[i] = as(f32, self.at(r, c + i).*);
+                            p12_vec[i] = as(f32, self.at(r, c + i + 1).*);
+                            p20_vec[i] = as(f32, self.at(r + 1, c + i - 1).*);
+                            p21_vec[i] = as(f32, self.at(r + 1, c + i).*);
+                            p22_vec[i] = as(f32, self.at(r + 1, c + i + 1).*);
+                        }
+
+                        // Perform convolution using SIMD
+                        const result_vec =
+                            p00_vec * kr0_vec + p01_vec * kr1_vec + p02_vec * kr2_vec +
+                            p10_vec * kr3_vec + p11_vec * kr4_vec + p12_vec * kr5_vec +
+                            p20_vec * kr6_vec + p21_vec * kr7_vec + p22_vec * kr8_vec;
+
+                        // Store results
+                        for (0..simd_len) |i| {
+                            out.at(r, c + i).* = switch (@typeInfo(ScalarT)) {
+                                .int => @intFromFloat(@max(std.math.minInt(ScalarT), @min(std.math.maxInt(ScalarT), @round(result_vec[i])))),
+                                .float => as(ScalarT, result_vec[i]),
+                                else => unreachable,
+                            };
+                        }
+                    }
+                }
+
+                // Process remaining pixels (borders and leftovers) with scalar code
+                while (c < self.cols) : (c += 1) {
+                    var result: f32 = 0;
+                    if (r > 0 and r + 1 < self.rows and c > 0 and c + 1 < self.cols) {
+                        // Fast interior path
+                        const p00 = self.at(r - 1, c - 1).*;
+                        const p01 = self.at(r - 1, c + 0).*;
+                        const p02 = self.at(r - 1, c + 1).*;
+                        const p10 = self.at(r + 0, c - 1).*;
+                        const p11 = self.at(r + 0, c + 0).*;
+                        const p12 = self.at(r + 0, c + 1).*;
+                        const p20 = self.at(r + 1, c - 1).*;
+                        const p21 = self.at(r + 1, c + 0).*;
+                        const p22 = self.at(r + 1, c + 1).*;
+
+                        result =
+                            as(f32, p00) * kernel_f32[0] + as(f32, p01) * kernel_f32[1] + as(f32, p02) * kernel_f32[2] +
+                            as(f32, p10) * kernel_f32[3] + as(f32, p11) * kernel_f32[4] + as(f32, p12) * kernel_f32[5] +
+                            as(f32, p20) * kernel_f32[6] + as(f32, p21) * kernel_f32[7] + as(f32, p22) * kernel_f32[8];
+                    } else {
+                        const ir = @as(isize, @intCast(r));
+                        const ic = @as(isize, @intCast(c));
+                        const p00 = getPixelWithBorderScalar(ScalarT, self, ir - 1, ic - 1, border_mode);
+                        const p01 = getPixelWithBorderScalar(ScalarT, self, ir - 1, ic, border_mode);
+                        const p02 = getPixelWithBorderScalar(ScalarT, self, ir - 1, ic + 1, border_mode);
+                        const p10 = getPixelWithBorderScalar(ScalarT, self, ir, ic - 1, border_mode);
+                        const p11 = getPixelWithBorderScalar(ScalarT, self, ir, ic, border_mode);
+                        const p12 = getPixelWithBorderScalar(ScalarT, self, ir, ic + 1, border_mode);
+                        const p20 = getPixelWithBorderScalar(ScalarT, self, ir + 1, ic - 1, border_mode);
+                        const p21 = getPixelWithBorderScalar(ScalarT, self, ir + 1, ic, border_mode);
+                        const p22 = getPixelWithBorderScalar(ScalarT, self, ir + 1, ic + 1, border_mode);
+
+                        result =
+                            as(f32, p00) * kernel_f32[0] + as(f32, p01) * kernel_f32[1] + as(f32, p02) * kernel_f32[2] +
+                            as(f32, p10) * kernel_f32[3] + as(f32, p11) * kernel_f32[4] + as(f32, p12) * kernel_f32[5] +
+                            as(f32, p20) * kernel_f32[6] + as(f32, p21) * kernel_f32[7] + as(f32, p22) * kernel_f32[8];
+                    }
+
+                    out.at(r, c).* = switch (@typeInfo(ScalarT)) {
+                        .int => @intFromFloat(@max(std.math.minInt(ScalarT), @min(std.math.maxInt(ScalarT), @round(result)))),
+                        .float => as(ScalarT, result),
+                        else => unreachable,
+                    };
+                }
+            }
+        }
+
+        /// Helper function for getting scalar pixels with border handling
+        fn getPixelWithBorderScalar(comptime ScalarT: type, img: Image(ScalarT), row: isize, col: isize, border_mode: BorderMode) ScalarT {
+            if (row >= 0 and row < img.rows and col >= 0 and col < img.cols) {
+                return img.at(@intCast(row), @intCast(col)).*;
+            }
+
+            return switch (border_mode) {
+                .zero => 0,
+                .replicate => blk: {
+                    const r = @max(0, @min(@as(isize, @intCast(img.rows - 1)), row));
+                    const c = @max(0, @min(@as(isize, @intCast(img.cols - 1)), col));
+                    break :blk img.at(@intCast(r), @intCast(c)).*;
+                },
+                .mirror => blk: {
+                    var r = row;
+                    var c = col;
+                    if (r < 0) r = -r - 1;
+                    if (r >= img.rows) r = 2 * @as(isize, @intCast(img.rows)) - r - 1;
+                    if (c < 0) c = -c - 1;
+                    if (c >= img.cols) c = 2 * @as(isize, @intCast(img.cols)) - c - 1;
+                    break :blk img.at(@intCast(r), @intCast(c)).*;
+                },
+                .wrap => blk: {
+                    const r = @mod(row, @as(isize, @intCast(img.rows)));
+                    const c = @mod(col, @as(isize, @intCast(img.cols)));
+                    break :blk img.at(@intCast(r), @intCast(c)).*;
+                },
+            };
+        }
+
         /// Optimized convolution for 3x3 kernels using SIMD where possible.
         fn convolve3x3(self: Self, allocator: Allocator, kernel: anytype, out: Self, border_mode: BorderMode) !void {
             const kr = [9]f32{
@@ -622,119 +878,30 @@ pub fn Filter(comptime T: type) type {
 
             switch (@typeInfo(T)) {
                 .int, .float => {
-                    // Scalar types - single channel with SIMD optimization
-                    const simd_len = std.simd.suggestVectorLength(f32) orelse 1;
+                    // For u8, use the optimized integer plane convolution
+                    if (T == u8) {
+                        // Convert kernel to integer
+                        const SCALE = 256;
+                        const kr_int = [9]i32{
+                            @intFromFloat(@round(kr[0] * SCALE)),
+                            @intFromFloat(@round(kr[1] * SCALE)),
+                            @intFromFloat(@round(kr[2] * SCALE)),
+                            @intFromFloat(@round(kr[3] * SCALE)),
+                            @intFromFloat(@round(kr[4] * SCALE)),
+                            @intFromFloat(@round(kr[5] * SCALE)),
+                            @intFromFloat(@round(kr[6] * SCALE)),
+                            @intFromFloat(@round(kr[7] * SCALE)),
+                            @intFromFloat(@round(kr[8] * SCALE)),
+                        };
 
-                    // Create kernel vectors for SIMD processing
-                    const kr0_vec: @Vector(simd_len, f32) = @splat(kr[0]);
-                    const kr1_vec: @Vector(simd_len, f32) = @splat(kr[1]);
-                    const kr2_vec: @Vector(simd_len, f32) = @splat(kr[2]);
-                    const kr3_vec: @Vector(simd_len, f32) = @splat(kr[3]);
-                    const kr4_vec: @Vector(simd_len, f32) = @splat(kr[4]);
-                    const kr5_vec: @Vector(simd_len, f32) = @splat(kr[5]);
-                    const kr6_vec: @Vector(simd_len, f32) = @splat(kr[6]);
-                    const kr7_vec: @Vector(simd_len, f32) = @splat(kr[7]);
-                    const kr8_vec: @Vector(simd_len, f32) = @splat(kr[8]);
+                        // Get data as slices
+                        const src_data = self.data[0 .. self.rows * self.cols];
+                        const dst_data = out.data[0 .. out.rows * out.cols];
 
-                    for (0..self.rows) |r| {
-                        var c: usize = 0;
-
-                        // SIMD processing for interior pixels
-                        if (r > 0 and r + 1 < self.rows and simd_len > 1 and self.cols > simd_len + 2) {
-                            // Process interior pixels with SIMD (no border checks needed)
-                            // We need at least simd_len + 2 columns to safely process simd_len pixels
-                            // (1 border on each side plus simd_len pixels)
-                            const safe_end = self.cols - 1;
-
-                            // Skip first column (border)
-                            c = 1;
-
-                            // Only process SIMD if we have enough pixels to fill a vector
-                            while (c + simd_len <= safe_end) : (c += simd_len) {
-                                // Load 3x3 neighborhoods for simd_len pixels
-                                var p00_vec: @Vector(simd_len, f32) = undefined;
-                                var p01_vec: @Vector(simd_len, f32) = undefined;
-                                var p02_vec: @Vector(simd_len, f32) = undefined;
-                                var p10_vec: @Vector(simd_len, f32) = undefined;
-                                var p11_vec: @Vector(simd_len, f32) = undefined;
-                                var p12_vec: @Vector(simd_len, f32) = undefined;
-                                var p20_vec: @Vector(simd_len, f32) = undefined;
-                                var p21_vec: @Vector(simd_len, f32) = undefined;
-                                var p22_vec: @Vector(simd_len, f32) = undefined;
-
-                                for (0..simd_len) |i| {
-                                    p00_vec[i] = as(f32, self.at(r - 1, c + i - 1).*);
-                                    p01_vec[i] = as(f32, self.at(r - 1, c + i).*);
-                                    p02_vec[i] = as(f32, self.at(r - 1, c + i + 1).*);
-                                    p10_vec[i] = as(f32, self.at(r, c + i - 1).*);
-                                    p11_vec[i] = as(f32, self.at(r, c + i).*);
-                                    p12_vec[i] = as(f32, self.at(r, c + i + 1).*);
-                                    p20_vec[i] = as(f32, self.at(r + 1, c + i - 1).*);
-                                    p21_vec[i] = as(f32, self.at(r + 1, c + i).*);
-                                    p22_vec[i] = as(f32, self.at(r + 1, c + i + 1).*);
-                                }
-
-                                // Perform convolution using SIMD
-                                const result_vec =
-                                    p00_vec * kr0_vec + p01_vec * kr1_vec + p02_vec * kr2_vec +
-                                    p10_vec * kr3_vec + p11_vec * kr4_vec + p12_vec * kr5_vec +
-                                    p20_vec * kr6_vec + p21_vec * kr7_vec + p22_vec * kr8_vec;
-
-                                // Store results
-                                for (0..simd_len) |i| {
-                                    out.at(r, c + i).* = switch (@typeInfo(T)) {
-                                        .int => @intFromFloat(@max(std.math.minInt(T), @min(std.math.maxInt(T), @round(result_vec[i])))),
-                                        .float => as(T, result_vec[i]),
-                                        else => unreachable,
-                                    };
-                                }
-                            }
-                        }
-
-                        // Process remaining pixels (borders and leftovers) with scalar code
-                        while (c < self.cols) : (c += 1) {
-                            var result: f32 = 0;
-                            if (r > 0 and r + 1 < self.rows and c > 0 and c + 1 < self.cols) {
-                                // Fast interior path
-                                const p00 = self.at(r - 1, c - 1).*;
-                                const p01 = self.at(r - 1, c + 0).*;
-                                const p02 = self.at(r - 1, c + 1).*;
-                                const p10 = self.at(r + 0, c - 1).*;
-                                const p11 = self.at(r + 0, c + 0).*;
-                                const p12 = self.at(r + 0, c + 1).*;
-                                const p20 = self.at(r + 1, c - 1).*;
-                                const p21 = self.at(r + 1, c + 0).*;
-                                const p22 = self.at(r + 1, c + 1).*;
-
-                                result =
-                                    as(f32, p00) * kr[0] + as(f32, p01) * kr[1] + as(f32, p02) * kr[2] +
-                                    as(f32, p10) * kr[3] + as(f32, p11) * kr[4] + as(f32, p12) * kr[5] +
-                                    as(f32, p20) * kr[6] + as(f32, p21) * kr[7] + as(f32, p22) * kr[8];
-                            } else {
-                                const ir = @as(isize, @intCast(r));
-                                const ic = @as(isize, @intCast(c));
-                                const p00 = getPixelWithBorder(self, ir - 1, ic - 1, border_mode);
-                                const p01 = getPixelWithBorder(self, ir - 1, ic, border_mode);
-                                const p02 = getPixelWithBorder(self, ir - 1, ic + 1, border_mode);
-                                const p10 = getPixelWithBorder(self, ir, ic - 1, border_mode);
-                                const p11 = getPixelWithBorder(self, ir, ic, border_mode);
-                                const p12 = getPixelWithBorder(self, ir, ic + 1, border_mode);
-                                const p20 = getPixelWithBorder(self, ir + 1, ic - 1, border_mode);
-                                const p21 = getPixelWithBorder(self, ir + 1, ic, border_mode);
-                                const p22 = getPixelWithBorder(self, ir + 1, ic + 1, border_mode);
-
-                                result =
-                                    as(f32, p00) * kr[0] + as(f32, p01) * kr[1] + as(f32, p02) * kr[2] +
-                                    as(f32, p10) * kr[3] + as(f32, p11) * kr[4] + as(f32, p12) * kr[5] +
-                                    as(f32, p20) * kr[6] + as(f32, p21) * kr[7] + as(f32, p22) * kr[8];
-                            }
-
-                            out.at(r, c).* = switch (@typeInfo(T)) {
-                                .int => @intFromFloat(@max(std.math.minInt(T), @min(std.math.maxInt(T), @round(result)))),
-                                .float => as(T, result),
-                                else => unreachable,
-                            };
-                        }
+                        convolve3x3U8Plane(src_data, dst_data, self.rows, self.cols, kr_int, border_mode);
+                    } else {
+                        // Use scalar convolution for other types
+                        convolve3x3Scalar(T, self, kr, out, border_mode);
                     }
                 },
                 .@"struct" => {
@@ -793,111 +960,9 @@ pub fn Filter(comptime T: type) type {
                             }
                         }
 
-                        // Convolve each channel independently with integer arithmetic and SIMD
+                        // Convolve each channel independently using the optimized u8 plane function
                         inline for (.{ r_channel, g_channel, b_channel }, .{ r_out, g_out, b_out }) |src_channel, dst_channel| {
-                            // Use optimal SIMD vector length for i32
-                            const vec_len = comptime std.simd.suggestVectorLength(i32) orelse 8;
-
-                            for (0..self.rows) |r| {
-                                var c: usize = 0;
-
-                                // SIMD path for interior pixels
-                                if (r > 0 and r + 1 < self.rows and self.cols > vec_len + 2) {
-                                    c = 1;
-                                    const safe_end = if (self.cols > vec_len + 1) self.cols - vec_len - 1 else 1;
-
-                                    while (c + vec_len <= safe_end) : (c += vec_len) {
-                                        // Process vec_len pixels at once
-                                        var result_vec: @Vector(vec_len, i32) = @splat(0);
-
-                                        // Accumulate convolution for each kernel position
-                                        inline for (0..3) |ky| {
-                                            inline for (0..3) |kx| {
-                                                const kernel_val = kr_int[ky * 3 + kx];
-                                                const kernel_vec: @Vector(vec_len, i32) = @splat(kernel_val);
-
-                                                // Load vec_len pixels from the neighborhood
-                                                var pixel_vec: @Vector(vec_len, i32) = undefined;
-                                                for (0..vec_len) |i| {
-                                                    const src_idx = (r + ky - 1) * self.cols + (c + i + kx - 1);
-                                                    pixel_vec[i] = src_channel[src_idx];
-                                                }
-
-                                                result_vec += pixel_vec * kernel_vec;
-                                            }
-                                        }
-
-                                        // Scale and clamp results
-                                        const round_vec: @Vector(vec_len, i32) = @splat(SCALE / 2);
-                                        const scale_vec: @Vector(vec_len, i32) = @splat(SCALE);
-                                        const zero_vec: @Vector(vec_len, i32) = @splat(0);
-                                        const max_vec: @Vector(vec_len, i32) = @splat(255);
-
-                                        const rounded_vec = @divTrunc(result_vec + round_vec, scale_vec);
-                                        const clamped_vec = @max(zero_vec, @min(max_vec, rounded_vec));
-
-                                        // Store results
-                                        for (0..vec_len) |i| {
-                                            dst_channel[r * self.cols + c + i] = @intCast(clamped_vec[i]);
-                                        }
-                                    }
-                                }
-
-                                // Scalar path for remaining pixels and borders
-                                while (c < self.cols) : (c += 1) {
-                                    if (r > 0 and r + 1 < self.rows and c > 0 and c + 1 < self.cols) {
-                                        // Fast interior path with integer math
-                                        var result: i32 = 0;
-                                        inline for (0..3) |ky| {
-                                            inline for (0..3) |kx| {
-                                                const src_idx = (r + ky - 1) * self.cols + (c + kx - 1);
-                                                const pixel_val = @as(i32, src_channel[src_idx]);
-                                                result += pixel_val * kr_int[ky * 3 + kx];
-                                            }
-                                        }
-                                        const rounded = @divTrunc(result + SCALE / 2, SCALE);
-                                        dst_channel[r * self.cols + c] = @intCast(@max(0, @min(255, rounded)));
-                                    } else {
-                                        // Border handling with integer math
-                                        const ir = @as(isize, @intCast(r));
-                                        const ic = @as(isize, @intCast(c));
-                                        var result: i32 = 0;
-                                        inline for (0..3) |ky| {
-                                            inline for (0..3) |kx| {
-                                                const iry = ir + @as(isize, @intCast(ky)) - 1;
-                                                const icx = ic + @as(isize, @intCast(kx)) - 1;
-                                                const pixel_val = if (iry >= 0 and iry < self.rows and icx >= 0 and icx < self.cols)
-                                                    @as(i32, src_channel[@intCast(iry * @as(isize, @intCast(self.cols)) + icx)])
-                                                else switch (border_mode) {
-                                                    .zero => 0,
-                                                    .replicate => blk: {
-                                                        const clamped_r = @max(0, @min(@as(isize, @intCast(self.rows - 1)), iry));
-                                                        const clamped_c = @max(0, @min(@as(isize, @intCast(self.cols - 1)), icx));
-                                                        break :blk @as(i32, src_channel[@intCast(clamped_r * @as(isize, @intCast(self.cols)) + clamped_c)]);
-                                                    },
-                                                    .mirror => blk: {
-                                                        var rr = iry;
-                                                        var cc = icx;
-                                                        if (rr < 0) rr = -rr - 1;
-                                                        if (rr >= self.rows) rr = 2 * @as(isize, @intCast(self.rows)) - rr - 1;
-                                                        if (cc < 0) cc = -cc - 1;
-                                                        if (cc >= self.cols) cc = 2 * @as(isize, @intCast(self.cols)) - cc - 1;
-                                                        break :blk @as(i32, src_channel[@intCast(rr * @as(isize, @intCast(self.cols)) + cc)]);
-                                                    },
-                                                    .wrap => blk: {
-                                                        const wrapped_r = @mod(iry, @as(isize, @intCast(self.rows)));
-                                                        const wrapped_c = @mod(icx, @as(isize, @intCast(self.cols)));
-                                                        break :blk @as(i32, src_channel[@intCast(wrapped_r * @as(isize, @intCast(self.cols)) + wrapped_c)]);
-                                                    },
-                                                };
-                                                result += pixel_val * kr_int[ky * 3 + kx];
-                                            }
-                                        }
-                                        const rounded = @divTrunc(result + SCALE / 2, SCALE);
-                                        dst_channel[r * self.cols + c] = @intCast(@max(0, @min(255, rounded)));
-                                    }
-                                }
-                            }
+                            convolve3x3U8Plane(src_channel, dst_channel, self.rows, self.cols, kr_int, border_mode);
                         }
 
                         // Recombine channels, preserving alpha
