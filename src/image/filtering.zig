@@ -154,34 +154,66 @@ pub fn Filter(comptime T: type) type {
             }
         }
 
-        /// Optimized box blur implementation for structs with 4 u8 fields using SIMD throughout.
-        /// This is automatically called by boxBlur() when T has exactly 4 u8 fields (e.g., RGBA, BGRA, etc).
-        fn boxBlur4xu8Simd(self: Self, allocator: std.mem.Allocator, blurred: *Self, radius: usize) !void {
-            // Verify at compile time that this is a struct with 4 u8 fields
-            comptime {
-                const fields = std.meta.fields(T);
-                assert(fields.len == 4);
-                for (fields) |field| {
-                    assert(field.type == u8);
+        /// Separate RGB channels from a struct image into individual planes.
+        /// Allocates and fills 3 channel planes (r, g, b).
+        fn separateRGBChannels(self: Self, allocator: std.mem.Allocator) ![3][]u8 {
+            const fields = std.meta.fields(T);
+            const plane_size = self.rows * self.cols;
+
+            const r_channel = try allocator.alloc(u8, plane_size);
+            errdefer allocator.free(r_channel);
+            const g_channel = try allocator.alloc(u8, plane_size);
+            errdefer allocator.free(g_channel);
+            const b_channel = try allocator.alloc(u8, plane_size);
+            errdefer allocator.free(b_channel);
+
+            // Separate channels (single pass for cache efficiency)
+            var idx: usize = 0;
+            for (0..self.rows) |r| {
+                for (0..self.cols) |c| {
+                    const pixel = self.at(r, c).*;
+                    r_channel[idx] = @field(pixel, fields[0].name);
+                    g_channel[idx] = @field(pixel, fields[1].name);
+                    b_channel[idx] = @field(pixel, fields[2].name);
+                    idx += 1;
                 }
             }
 
-            // Initialize output if needed
-            if (!self.hasSameShape(blurred.*)) {
-                blurred.* = try .initAlloc(allocator, self.rows, self.cols);
-            }
-            if (radius == 0) {
-                self.copy(blurred.*);
-                return;
-            }
+            return .{ r_channel, g_channel, b_channel };
+        }
 
+        /// Combine RGB channels back into struct image, optionally preserving alpha from original.
+        fn combineRGBChannels(self: Self, r_out: []const u8, g_out: []const u8, b_out: []const u8, out: Self) void {
             const fields = std.meta.fields(T);
             const has_alpha = comptime hasAlphaChannel(T);
-            const channels_to_process = if (has_alpha) 3 else 4;
 
-            // Create integral image - only for channels we'll process
-            var sat = try Image([4]f32).initAlloc(allocator, self.rows, self.cols);
-            defer sat.deinit(allocator);
+            // Recombine channels, preserving alpha
+            var idx: usize = 0;
+            for (0..self.rows) |r| {
+                for (0..self.cols) |c| {
+                    var result_pixel: T = undefined;
+                    @field(result_pixel, fields[0].name) = r_out[idx];
+                    @field(result_pixel, fields[1].name) = g_out[idx];
+                    @field(result_pixel, fields[2].name) = b_out[idx];
+
+                    // Preserve alpha if present
+                    if (has_alpha) {
+                        @field(result_pixel, fields[3].name) = @field(self.at(r, c).*, fields[3].name);
+                    } else if (fields.len == 4) {
+                        // For non-alpha 4th channel, also preserve it
+                        @field(result_pixel, fields[3].name) = @field(self.at(r, c).*, fields[3].name);
+                    }
+
+                    out.at(r, c).* = result_pixel;
+                    idx += 1;
+                }
+            }
+        }
+
+        /// Build a 4-channel integral image for structs with 4 u8 fields.
+        /// Only processes the first `channels_to_process` channels (3 for RGBA to skip alpha, 4 for others).
+        fn build4ChannelIntegralImage(self: Self, sat: Image([4]f32), comptime channels_to_process: usize) void {
+            const fields = std.meta.fields(T);
 
             // Build integral image - first pass: row-wise cumulative sums
             for (0..self.rows) |r| {
@@ -211,6 +243,43 @@ pub fn Filter(comptime T: type) type {
                     const curr_vec: @Vector(4, f32) = sat.data[curr_row_offset + c];
                     sat.data[curr_row_offset + c] = prev_vec + curr_vec;
                 }
+            }
+        }
+
+        /// Optimized box blur implementation for structs with 4 u8 fields using SIMD throughout.
+        /// This is automatically called by boxBlur() when T has exactly 4 u8 fields (e.g., RGBA, BGRA, etc).
+        fn boxBlur4xu8Simd(self: Self, allocator: std.mem.Allocator, blurred: *Self, radius: usize) !void {
+            // Verify at compile time that this is a struct with 4 u8 fields
+            comptime {
+                const fields = std.meta.fields(T);
+                assert(fields.len == 4);
+                for (fields) |field| {
+                    assert(field.type == u8);
+                }
+            }
+
+            // Initialize output if needed
+            if (!self.hasSameShape(blurred.*)) {
+                blurred.* = try .initAlloc(allocator, self.rows, self.cols);
+            }
+            if (radius == 0) {
+                self.copy(blurred.*);
+                return;
+            }
+
+            const fields = std.meta.fields(T);
+            const has_alpha = comptime hasAlphaChannel(T);
+            const channels_to_process = if (has_alpha) 3 else 4;
+
+            // Create integral image - only for channels we'll process
+            var sat = try Image([4]f32).initAlloc(allocator, self.rows, self.cols);
+            defer sat.deinit(allocator);
+
+            // Build the integral image using the helper function
+            if (has_alpha) {
+                build4ChannelIntegralImage(self, sat, 3);
+            } else {
+                build4ChannelIntegralImage(self, sat, 4);
             }
 
             // Apply box blur with SIMD
@@ -405,34 +474,11 @@ pub fn Filter(comptime T: type) type {
             var sat = try Image([4]f32).initAlloc(allocator, self.rows, self.cols);
             defer sat.deinit(allocator);
 
-            // Build integral image - first pass: row-wise cumulative sums
-            for (0..self.rows) |r| {
-                var tmp: @Vector(4, f32) = @splat(0);
-                const row_offset = r * self.stride;
-                const out_offset = r * sat.cols;
-
-                for (0..self.cols) |c| {
-                    const pixel = self.data[row_offset + c];
-                    var pixel_vec: @Vector(4, f32) = @splat(0); // Initialize all to 0
-                    // Only accumulate channels we're processing
-                    inline for (0..channels_to_process) |i| {
-                        pixel_vec[i] = @floatFromInt(@field(pixel, fields[i].name));
-                    }
-                    tmp += pixel_vec;
-                    sat.data[out_offset + c] = tmp;
-                }
-            }
-
-            // Second pass: column-wise cumulative sums
-            for (1..self.rows) |r| {
-                const prev_row_offset = (r - 1) * sat.cols;
-                const curr_row_offset = r * sat.cols;
-
-                for (0..self.cols) |c| {
-                    const prev_vec: @Vector(4, f32) = sat.data[prev_row_offset + c];
-                    const curr_vec: @Vector(4, f32) = sat.data[curr_row_offset + c];
-                    sat.data[curr_row_offset + c] = prev_vec + curr_vec;
-                }
+            // Build the integral image using the helper function
+            if (has_alpha) {
+                build4ChannelIntegralImage(self, sat, 3);
+            } else {
+                build4ChannelIntegralImage(self, sat, 4);
             }
 
             // Apply sharpen with SIMD: sharpened = 2 * original - blurred
@@ -813,15 +859,15 @@ pub fn Filter(comptime T: type) type {
                     } else {
                         const ir = @as(isize, @intCast(r));
                         const ic = @as(isize, @intCast(c));
-                        const p00 = getPixelWithBorderScalar(ScalarT, self, ir - 1, ic - 1, border_mode);
-                        const p01 = getPixelWithBorderScalar(ScalarT, self, ir - 1, ic, border_mode);
-                        const p02 = getPixelWithBorderScalar(ScalarT, self, ir - 1, ic + 1, border_mode);
-                        const p10 = getPixelWithBorderScalar(ScalarT, self, ir, ic - 1, border_mode);
-                        const p11 = getPixelWithBorderScalar(ScalarT, self, ir, ic, border_mode);
-                        const p12 = getPixelWithBorderScalar(ScalarT, self, ir, ic + 1, border_mode);
-                        const p20 = getPixelWithBorderScalar(ScalarT, self, ir + 1, ic - 1, border_mode);
-                        const p21 = getPixelWithBorderScalar(ScalarT, self, ir + 1, ic, border_mode);
-                        const p22 = getPixelWithBorderScalar(ScalarT, self, ir + 1, ic + 1, border_mode);
+                        const p00 = getPixelWithBorder(self, ir - 1, ic - 1, border_mode);
+                        const p01 = getPixelWithBorder(self, ir - 1, ic, border_mode);
+                        const p02 = getPixelWithBorder(self, ir - 1, ic + 1, border_mode);
+                        const p10 = getPixelWithBorder(self, ir, ic - 1, border_mode);
+                        const p11 = getPixelWithBorder(self, ir, ic, border_mode);
+                        const p12 = getPixelWithBorder(self, ir, ic + 1, border_mode);
+                        const p20 = getPixelWithBorder(self, ir + 1, ic - 1, border_mode);
+                        const p21 = getPixelWithBorder(self, ir + 1, ic, border_mode);
+                        const p22 = getPixelWithBorder(self, ir + 1, ic + 1, border_mode);
 
                         result =
                             as(f32, p00) * kernel_f32[0] + as(f32, p01) * kernel_f32[1] + as(f32, p02) * kernel_f32[2] +
@@ -836,36 +882,6 @@ pub fn Filter(comptime T: type) type {
                     };
                 }
             }
-        }
-
-        /// Helper function for getting scalar pixels with border handling
-        fn getPixelWithBorderScalar(comptime ScalarT: type, img: Image(ScalarT), row: isize, col: isize, border_mode: BorderMode) ScalarT {
-            if (row >= 0 and row < img.rows and col >= 0 and col < img.cols) {
-                return img.at(@intCast(row), @intCast(col)).*;
-            }
-
-            return switch (border_mode) {
-                .zero => 0,
-                .replicate => blk: {
-                    const r = @max(0, @min(@as(isize, @intCast(img.rows - 1)), row));
-                    const c = @max(0, @min(@as(isize, @intCast(img.cols - 1)), col));
-                    break :blk img.at(@intCast(r), @intCast(c)).*;
-                },
-                .mirror => blk: {
-                    var r = row;
-                    var c = col;
-                    if (r < 0) r = -r - 1;
-                    if (r >= img.rows) r = 2 * @as(isize, @intCast(img.rows)) - r - 1;
-                    if (c < 0) c = -c - 1;
-                    if (c >= img.cols) c = 2 * @as(isize, @intCast(img.cols)) - c - 1;
-                    break :blk img.at(@intCast(r), @intCast(c)).*;
-                },
-                .wrap => blk: {
-                    const r = @mod(row, @as(isize, @intCast(img.rows)));
-                    const c = @mod(col, @as(isize, @intCast(img.cols)));
-                    break :blk img.at(@intCast(r), @intCast(c)).*;
-                },
-            };
         }
 
         /// Optimized convolution for 3x3 kernels using SIMD where possible.
@@ -916,7 +932,6 @@ pub fn Filter(comptime T: type) type {
 
                     if (all_u8 and (fields.len == 3 or fields.len == 4)) {
                         // Channel separation approach for optimal performance
-                        const has_alpha = comptime hasAlphaChannel(T);
 
                         // Convert kernel to integer for faster arithmetic
                         const SCALE = 256;
@@ -932,15 +947,14 @@ pub fn Filter(comptime T: type) type {
                             @intFromFloat(@round(kr[8] * SCALE)),
                         };
 
-                        // Allocate temporary planes for channel separation
-                        const plane_size = self.rows * self.cols;
-                        const r_channel = try allocator.alloc(u8, plane_size);
-                        defer allocator.free(r_channel);
-                        const g_channel = try allocator.alloc(u8, plane_size);
-                        defer allocator.free(g_channel);
-                        const b_channel = try allocator.alloc(u8, plane_size);
-                        defer allocator.free(b_channel);
+                        // Separate channels using helper
+                        const channels = try separateRGBChannels(self, allocator);
+                        defer allocator.free(channels[0]);
+                        defer allocator.free(channels[1]);
+                        defer allocator.free(channels[2]);
 
+                        // Allocate output planes
+                        const plane_size = self.rows * self.cols;
                         const r_out = try allocator.alloc(u8, plane_size);
                         defer allocator.free(r_out);
                         const g_out = try allocator.alloc(u8, plane_size);
@@ -948,44 +962,13 @@ pub fn Filter(comptime T: type) type {
                         const b_out = try allocator.alloc(u8, plane_size);
                         defer allocator.free(b_out);
 
-                        // Separate channels (single pass for cache efficiency)
-                        var idx: usize = 0;
-                        for (0..self.rows) |r| {
-                            for (0..self.cols) |c| {
-                                const pixel = self.at(r, c).*;
-                                r_channel[idx] = @field(pixel, fields[0].name);
-                                g_channel[idx] = @field(pixel, fields[1].name);
-                                b_channel[idx] = @field(pixel, fields[2].name);
-                                idx += 1;
-                            }
-                        }
-
                         // Convolve each channel independently using the optimized u8 plane function
-                        inline for (.{ r_channel, g_channel, b_channel }, .{ r_out, g_out, b_out }) |src_channel, dst_channel| {
+                        inline for (.{ channels[0], channels[1], channels[2] }, .{ r_out, g_out, b_out }) |src_channel, dst_channel| {
                             convolve3x3U8Plane(src_channel, dst_channel, self.rows, self.cols, kr_int, border_mode);
                         }
 
-                        // Recombine channels, preserving alpha
-                        idx = 0;
-                        for (0..self.rows) |r| {
-                            for (0..self.cols) |c| {
-                                var result_pixel: T = undefined;
-                                @field(result_pixel, fields[0].name) = r_out[idx];
-                                @field(result_pixel, fields[1].name) = g_out[idx];
-                                @field(result_pixel, fields[2].name) = b_out[idx];
-
-                                // Preserve alpha if present
-                                if (has_alpha) {
-                                    @field(result_pixel, fields[3].name) = @field(self.at(r, c).*, fields[3].name);
-                                } else if (fields.len == 4) {
-                                    // For non-alpha 4th channel, also preserve it
-                                    @field(result_pixel, fields[3].name) = @field(self.at(r, c).*, fields[3].name);
-                                }
-
-                                out.at(r, c).* = result_pixel;
-                                idx += 1;
-                            }
-                        }
+                        // Recombine channels using helper
+                        combineRGBChannels(self, r_out, g_out, b_out, out);
                     } else {
                         // Generic struct path for other color types
                         for (0..self.rows) |r| {
