@@ -1369,50 +1369,54 @@ pub fn Filter(comptime T: type) type {
                 out.* = try .initAlloc(allocator, self.rows, self.cols);
             }
 
-            // Sobel kernels for edge detection
-            const sobel_x = [3][3]f32{
-                .{ -1, 0, 1 },
-                .{ -2, 0, 2 },
-                .{ -1, 0, 1 },
-            };
-            const sobel_y = [3][3]f32{
-                .{ -1, -2, -1 },
-                .{ 0, 0, 0 },
-                .{ 1, 2, 1 },
-            };
+            // For now, use float path for all types to ensure correctness
+            // TODO: Optimize with signed integer gradients for u8/RGB inputs
+            {
+                // Original float path for other types
+                const sobel_x = [3][3]f32{
+                    .{ -1, 0, 1 },
+                    .{ -2, 0, 2 },
+                    .{ -1, 0, 1 },
+                };
+                const sobel_y = [3][3]f32{
+                    .{ -1, -2, -1 },
+                    .{ 0, 0, 0 },
+                    .{ 1, 2, 1 },
+                };
 
-            // Convert input to grayscale float if needed
-            var gray_float: Image(f32) = undefined;
-            const needs_conversion = !isScalar(T) or @typeInfo(T) != .float;
-            if (needs_conversion) {
-                gray_float = try .initAlloc(allocator, self.rows, self.cols);
+                // Convert input to grayscale float if needed
+                var gray_float: Image(f32) = undefined;
+                const needs_conversion = !isScalar(T) or @typeInfo(T) != .float;
+                if (needs_conversion) {
+                    gray_float = try .initAlloc(allocator, self.rows, self.cols);
+                    for (0..self.rows) |r| {
+                        for (0..self.cols) |c| {
+                            gray_float.at(r, c).* = as(f32, convertColor(u8, self.at(r, c).*));
+                        }
+                    }
+                } else {
+                    gray_float = self;
+                }
+                defer if (needs_conversion) gray_float.deinit(allocator);
+
+                // Apply Sobel X and Y filters
+                var grad_x = Image(f32).empty;
+                var grad_y = Image(f32).empty;
+                defer grad_x.deinit(allocator);
+                defer grad_y.deinit(allocator);
+
+                const GrayFilter = Filter(f32);
+                try GrayFilter.convolve(gray_float, allocator, sobel_x, &grad_x, .zero);
+                try GrayFilter.convolve(gray_float, allocator, sobel_y, &grad_y, .zero);
+
+                // Compute gradient magnitude
                 for (0..self.rows) |r| {
                     for (0..self.cols) |c| {
-                        gray_float.at(r, c).* = as(f32, convertColor(u8, self.at(r, c).*));
+                        const gx = grad_x.at(r, c).*;
+                        const gy = grad_y.at(r, c).*;
+                        const magnitude = @sqrt(gx * gx + gy * gy);
+                        out.at(r, c).* = @intFromFloat(@max(0, @min(255, magnitude)));
                     }
-                }
-            } else {
-                gray_float = self;
-            }
-            defer if (needs_conversion) gray_float.deinit(allocator);
-
-            // Apply Sobel X and Y filters
-            var grad_x = Image(f32).empty;
-            var grad_y = Image(f32).empty;
-            defer grad_x.deinit(allocator);
-            defer grad_y.deinit(allocator);
-
-            const GrayFilter = Filter(f32);
-            try GrayFilter.convolve(gray_float, allocator, sobel_x, &grad_x, .zero);
-            try GrayFilter.convolve(gray_float, allocator, sobel_y, &grad_y, .zero);
-
-            // Compute gradient magnitude
-            for (0..self.rows) |r| {
-                for (0..self.cols) |c| {
-                    const gx = grad_x.at(r, c).*;
-                    const gy = grad_y.at(r, c).*;
-                    const magnitude = @sqrt(gx * gx + gy * gy);
-                    out.at(r, c).* = @intFromFloat(@max(0, @min(255, magnitude)));
                 }
             }
         }
