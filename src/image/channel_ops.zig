@@ -238,6 +238,88 @@ pub fn resizePlaneBicubicU8(
     }
 }
 
+/// Optimized Catmull-Rom resize for u8 planes using integer arithmetic.
+pub fn resizePlaneCatmullRomU8(
+    src: []const u8,
+    dst: []u8,
+    src_rows: usize,
+    src_cols: usize,
+    dst_rows: usize,
+    dst_cols: usize,
+) void {
+    const SCALE = 256;
+
+    // Catmull-Rom kernel function
+    const catmullRomKernel = struct {
+        fn eval(t: i32) i32 {
+            const at: i32 = @intCast(@abs(t));
+            if (at <= SCALE) {
+                // 1.5*|t|^3 - 2.5*|t|^2 + 1
+                const t2 = @divTrunc(at * at, SCALE);
+                const t3 = @divTrunc(t2 * at, SCALE);
+                return SCALE - @divTrunc(5 * t2, 2) + @divTrunc(3 * t3, 2);
+            } else if (at <= 2 * SCALE) {
+                // -0.5*|t|^3 + 2.5*|t|^2 - 4*|t| + 2
+                const t2 = @divTrunc(at * at, SCALE);
+                const t3 = @divTrunc(t2 * at, SCALE);
+                return 2 * SCALE - 4 * at + @divTrunc(5 * t2, 2) - @divTrunc(t3, 2);
+            }
+            return 0;
+        }
+    }.eval;
+
+    const x_ratio = if (dst_cols > 1)
+        @as(f32, @floatFromInt(src_cols - 1)) / @as(f32, @floatFromInt(dst_cols - 1))
+    else
+        0;
+    const y_ratio = if (dst_rows > 1)
+        @as(f32, @floatFromInt(src_rows - 1)) / @as(f32, @floatFromInt(dst_rows - 1))
+    else
+        0;
+
+    for (0..dst_rows) |r| {
+        const src_y_f = @as(f32, @floatFromInt(r)) * y_ratio;
+        const src_y = @as(isize, @intFromFloat(@floor(src_y_f)));
+        const fy = @as(i32, @intFromFloat((src_y_f - @floor(src_y_f)) * SCALE));
+
+        for (0..dst_cols) |c| {
+            const src_x_f = @as(f32, @floatFromInt(c)) * x_ratio;
+            const src_x = @as(isize, @intFromFloat(@floor(src_x_f)));
+            const fx = @as(i32, @intFromFloat((src_x_f - @floor(src_x_f)) * SCALE));
+
+            var sum: i32 = 0;
+            var weight_sum: i32 = 0;
+
+            // 4x4 kernel
+            for (0..4) |ky| {
+                const y_idx = src_y + @as(isize, @intCast(ky)) - 1;
+                if (y_idx < 0 or y_idx >= src_rows) continue;
+
+                const wy = catmullRomKernel(@as(i32, @intCast(ky)) * SCALE - SCALE - fy);
+
+                for (0..4) |kx| {
+                    const x_idx = src_x + @as(isize, @intCast(kx)) - 1;
+                    if (x_idx < 0 or x_idx >= src_cols) continue;
+
+                    const wx = catmullRomKernel(@as(i32, @intCast(kx)) * SCALE - SCALE - fx);
+                    const w = @divTrunc(wx * wy, SCALE);
+
+                    const pixel_val = @as(i32, src[@as(usize, @intCast(y_idx)) * src_cols + @as(usize, @intCast(x_idx))]);
+                    sum += pixel_val * w;
+                    weight_sum += w;
+                }
+            }
+
+            const result = if (weight_sum != 0)
+                @divTrunc(sum, weight_sum)
+            else
+                0;
+
+            dst[r * dst_cols + c] = @intCast(@max(0, @min(255, result)));
+        }
+    }
+}
+
 /// Generic f32 plane resize with SIMD optimization.
 pub fn resizePlaneF32(
     src: []const f32,

@@ -151,11 +151,21 @@ pub fn resize(comptime T: type, self: anytype, out: anytype, method: Interpolati
                 channel_ops.resizePlaneBilinearU8(channels[1], g_out, self.rows, self.cols, out.rows, out.cols);
                 channel_ops.resizePlaneBilinearU8(channels[2], b_out, self.rows, self.cols, out.rows, out.cols);
             },
-            .bicubic, .catmull_rom, .mitchell, .lanczos => {
-                // For now, use bicubic for all cubic-based methods
+            .bicubic => {
                 channel_ops.resizePlaneBicubicU8(channels[0], r_out, self.rows, self.cols, out.rows, out.cols);
                 channel_ops.resizePlaneBicubicU8(channels[1], g_out, self.rows, self.cols, out.rows, out.cols);
                 channel_ops.resizePlaneBicubicU8(channels[2], b_out, self.rows, self.cols, out.rows, out.cols);
+            },
+            .catmull_rom => {
+                channel_ops.resizePlaneCatmullRomU8(channels[0], r_out, self.rows, self.cols, out.rows, out.cols);
+                channel_ops.resizePlaneCatmullRomU8(channels[1], g_out, self.rows, self.cols, out.rows, out.cols);
+                channel_ops.resizePlaneCatmullRomU8(channels[2], b_out, self.rows, self.cols, out.rows, out.cols);
+            },
+            .mitchell, .lanczos => {
+                // Mitchell and Lanczos are more complex, fall back to generic for now
+                // This ensures correct interpolation even if not optimized
+                resizeGeneric(T, self, out, method);
+                return;
             },
         }
 
