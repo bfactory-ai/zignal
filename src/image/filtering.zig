@@ -36,6 +36,37 @@ pub fn Filter(comptime T: type) type {
     return struct {
         const Self = Image(T);
 
+        /// Flatten a 2D kernel and convert to i32 (if scale provided) or f32
+        inline fn flattenKernelInt(comptime size: usize, kernel: anytype, scale: i32) [size]i32 {
+            const kernel_info = @typeInfo(@TypeOf(kernel));
+            const kernel_height = kernel_info.array.len;
+            const kernel_width = @typeInfo(kernel_info.array.child).array.len;
+            var result: [size]i32 = undefined;
+            var idx: usize = 0;
+            inline for (0..kernel_height) |kr| {
+                inline for (0..kernel_width) |kc| {
+                    result[idx] = @intFromFloat(@round(as(f32, kernel[kr][kc]) * @as(f32, @floatFromInt(scale))));
+                    idx += 1;
+                }
+            }
+            return result;
+        }
+
+        inline fn flattenKernelFloat(comptime size: usize, kernel: anytype) [size]f32 {
+            const kernel_info = @typeInfo(@TypeOf(kernel));
+            const kernel_height = kernel_info.array.len;
+            const kernel_width = @typeInfo(kernel_info.array.child).array.len;
+            var result: [size]f32 = undefined;
+            var idx: usize = 0;
+            inline for (0..kernel_height) |kr| {
+                inline for (0..kernel_width) |kc| {
+                    result[idx] = as(f32, kernel[kr][kc]);
+                    idx += 1;
+                }
+            }
+            return result;
+        }
+
         /// Computes a blurred version of `self` using a box blur algorithm, efficiently implemented
         /// using an integral image. The `radius` parameter determines the size of the box window.
         /// This function is optimized using SIMD instructions for performance where applicable.
@@ -119,15 +150,12 @@ pub fn Filter(comptime T: type) type {
                         const b_out = try allocator.alloc(u8, plane_size);
                         defer allocator.free(b_out);
 
-                        // R channel
                         integralPlane(u8, channels[0], integral_img, self.rows, self.cols);
                         boxBlurPlane(u8, integral_img, r_out, self.rows, self.cols, radius);
 
-                        // G channel
                         integralPlane(u8, channels[1], integral_img, self.rows, self.cols);
                         boxBlurPlane(u8, integral_img, g_out, self.rows, self.cols, radius);
 
-                        // B channel
                         integralPlane(u8, channels[2], integral_img, self.rows, self.cols);
                         boxBlurPlane(u8, integral_img, b_out, self.rows, self.cols, radius);
 
@@ -187,7 +215,7 @@ pub fn Filter(comptime T: type) type {
             const b_channel = try allocator.alloc(u8, plane_size);
             errdefer allocator.free(b_channel);
 
-            // Separate channels (single pass for cache efficiency)
+            // Single pass for cache efficiency
             var idx: usize = 0;
             for (0..self.rows) |r| {
                 for (0..self.cols) |c| {
@@ -207,7 +235,6 @@ pub fn Filter(comptime T: type) type {
             const fields = std.meta.fields(T);
             const has_alpha = comptime hasAlphaChannel(T);
 
-            // Recombine channels, preserving alpha
             var idx: usize = 0;
             for (0..self.rows) |r| {
                 for (0..self.cols) |c| {
@@ -314,15 +341,12 @@ pub fn Filter(comptime T: type) type {
                         const b_out = try allocator.alloc(u8, plane_size);
                         defer allocator.free(b_out);
 
-                        // R channel
                         integralPlane(u8, channels[0], integral_img, self.rows, self.cols);
                         sharpenPlane(u8, channels[0], integral_img, r_out, self.rows, self.cols, radius);
 
-                        // G channel
                         integralPlane(u8, channels[1], integral_img, self.rows, self.cols);
                         sharpenPlane(u8, channels[1], integral_img, g_out, self.rows, self.cols, radius);
 
-                        // B channel
                         integralPlane(u8, channels[2], integral_img, self.rows, self.cols);
                         sharpenPlane(u8, channels[2], integral_img, b_out, self.rows, self.cols, radius);
 
@@ -422,7 +446,6 @@ pub fn Filter(comptime T: type) type {
                                     }
                                 }
 
-                                // Scale and store
                                 const half_scale_vec: @Vector(vec_len, i32) = @splat(SCALE / 2);
                                 const scale_vec: @Vector(vec_len, i32) = @splat(SCALE);
                                 const rounded_vec = @divTrunc(result_vec + half_scale_vec, scale_vec);
@@ -433,10 +456,8 @@ pub fn Filter(comptime T: type) type {
                             }
                         }
 
-                        // Scalar path for remaining pixels
                         while (c < cols) : (c += 1) {
                             if (r >= half_h and r + half_h < rows and c >= half_w and c + half_w < cols) {
-                                // Fast path without border checks
                                 var result: i32 = 0;
                                 inline for (0..height) |ky| {
                                     inline for (0..width) |kx| {
@@ -449,7 +470,6 @@ pub fn Filter(comptime T: type) type {
                                 const rounded = @divTrunc(result + SCALE / 2, SCALE);
                                 dst[r * cols + c] = @intCast(@max(0, @min(255, rounded)));
                             } else {
-                                // Border handling
                                 const ir = @as(isize, @intCast(r));
                                 const ic = @as(isize, @intCast(c));
                                 var result: i32 = 0;
@@ -506,7 +526,6 @@ pub fn Filter(comptime T: type) type {
                     const use_kernel_vecs = comptime (kernel_size <= 25);
                     var kernel_vecs: if (use_kernel_vecs) [kernel_size]@Vector(vec_len, f32) else void = undefined;
 
-                    // Initialize kernel vectors if small enough
                     if (use_kernel_vecs) {
                         inline for (0..kernel_size) |i| {
                             kernel_vecs[i] = @splat(kernel[i]);
@@ -549,7 +568,6 @@ pub fn Filter(comptime T: type) type {
                             }
                         }
 
-                        // Scalar path
                         while (c < cols) : (c += 1) {
                             if (r >= half_h and r + half_h < rows and c >= half_w and c + half_w < cols) {
                                 var result: f32 = 0;
@@ -562,7 +580,6 @@ pub fn Filter(comptime T: type) type {
                                 }
                                 dst[r * cols + c] = result;
                             } else {
-                                // Border handling
                                 const ir = @as(isize, @intCast(r));
                                 const ic = @as(isize, @intCast(c));
                                 var result: f32 = 0;
@@ -634,36 +651,16 @@ pub fn Filter(comptime T: type) type {
                     if (T == u8) {
                         // Convert floating-point kernel to integer
                         const SCALE = 256;
-                        var kernel_int: [Kernel.kernel_size]i32 = undefined;
+                        const kernel_int = flattenKernelInt(Kernel.kernel_size, kernel, SCALE);
 
-                        // Flatten and scale the kernel
-                        var idx: usize = 0;
-                        inline for (0..kernel_height) |kr| {
-                            inline for (0..kernel_width) |kc| {
-                                kernel_int[idx] = @intFromFloat(@round(as(f32, kernel[kr][kc]) * SCALE));
-                                idx += 1;
-                            }
-                        }
-
-                        // Get data as slices
                         const src_data = self.data[0 .. self.rows * self.cols];
                         const dst_data = out.data[0 .. out.rows * out.cols];
 
                         Kernel.convolveU8Plane(src_data, dst_data, self.rows, self.cols, kernel_int, border_mode);
                     } else if (T == f32) {
                         // Optimized path for f32 with SIMD
-                        var kernel_flat: [Kernel.kernel_size]f32 = undefined;
+                        const kernel_flat = flattenKernelFloat(Kernel.kernel_size, kernel);
 
-                        // Flatten the kernel
-                        var idx: usize = 0;
-                        inline for (0..kernel_height) |kr| {
-                            inline for (0..kernel_width) |kc| {
-                                kernel_flat[idx] = as(f32, kernel[kr][kc]);
-                                idx += 1;
-                            }
-                        }
-
-                        // Get data as slices
                         const src_data = self.data[0 .. self.rows * self.cols];
                         const dst_data = out.data[0 .. out.rows * out.cols];
 
@@ -724,19 +721,8 @@ pub fn Filter(comptime T: type) type {
 
                     if (all_u8 and (fields.len == 3 or fields.len == 4)) {
                         // Channel separation approach for optimal performance
-
-                        // Convert kernel to integer for faster arithmetic
                         const SCALE = 256;
-                        var kernel_int: [Kernel.kernel_size]i32 = undefined;
-
-                        // Flatten and scale the kernel
-                        var idx: usize = 0;
-                        inline for (0..kernel_height) |kr| {
-                            inline for (0..kernel_width) |kc| {
-                                kernel_int[idx] = @intFromFloat(@round(as(f32, kernel[kr][kc]) * SCALE));
-                                idx += 1;
-                            }
-                        }
+                        const kernel_int = flattenKernelInt(Kernel.kernel_size, kernel, SCALE);
 
                         // Separate channels using helper
                         const channels = try separateRGBChannels(self, allocator);
@@ -771,7 +757,6 @@ pub fn Filter(comptime T: type) type {
                             for (0..self.cols) |c| {
                                 var result_pixel: T = undefined;
 
-                                // Process color channels (skip alpha if present)
                                 inline for (0..channels_to_process) |field_idx| {
                                     const field = fields[field_idx];
                                     var accumulator: f32 = 0;
@@ -809,7 +794,6 @@ pub fn Filter(comptime T: type) type {
                                     };
                                 }
 
-                                // Preserve alpha channel if present
                                 if (has_alpha) {
                                     @field(result_pixel, fields[3].name) = @field(self.at(r, c).*, fields[3].name);
                                 }
@@ -878,7 +862,6 @@ pub fn Filter(comptime T: type) type {
                             result += pixel_val * k;
                         }
                     }
-                    // Store intermediate result with scaling
                     const rounded = @divTrunc(result + SCALE / 2, SCALE);
                     temp[r * cols + c] = @intCast(@max(0, @min(255, rounded)));
                 }
@@ -923,7 +906,6 @@ pub fn Filter(comptime T: type) type {
                             result += pixel_val * k;
                         }
                     }
-                    // Store final result with scaling
                     const rounded = @divTrunc(result + SCALE / 2, SCALE);
                     dst[r * cols + c] = @intCast(@max(0, @min(255, rounded)));
                 }
@@ -1029,7 +1011,6 @@ pub fn Filter(comptime T: type) type {
                     }
                 }
 
-                // Process remaining pixels
                 while (c < cols) : (c += 1) {
                     const c1 = c -| radius;
                     const c2 = @min(c + radius, cols - 1);
@@ -1040,7 +1021,10 @@ pub fn Filter(comptime T: type) type {
                         (if (r1 > 0) integral_img[(r1 - 1) * cols + c2] else 0) +
                         (if (r1 > 0 and c1 > 0) integral_img[(r1 - 1) * cols + c1 - 1] else 0);
 
-                    dst[r * cols + c] = @intCast(@max(0, @min(255, @as(i32, @intFromFloat(@round(sum / area))))));
+                    dst[r * cols + c] = if (PlaneType == u8)
+                        @intCast(@max(0, @min(255, @as(i32, @intFromFloat(@round(sum / area))))))
+                    else
+                        sum / area;
                 }
             }
         }
@@ -1114,7 +1098,6 @@ pub fn Filter(comptime T: type) type {
                     }
                 }
 
-                // Process remaining pixels
                 while (c < cols) : (c += 1) {
                     const c1 = c -| radius;
                     const c2 = @min(c + radius, cols - 1);
@@ -1263,7 +1246,6 @@ pub fn Filter(comptime T: type) type {
                             kernel_y_int[i] = @intFromFloat(@round(k * SCALE));
                         }
 
-                        // Get data as slices
                         const src_data = self.data[0 .. self.rows * self.cols];
                         const dst_data = out.data[0 .. out.rows * out.cols];
                         const temp_data = temp.data[0 .. temp.rows * temp.cols];
@@ -1613,7 +1595,6 @@ pub fn Filter(comptime T: type) type {
             }
 
             // For now, use float path for all types to ensure correctness
-            // TODO: Optimize with signed integer gradients for u8/RGB inputs
             {
                 // Original float path for other types
                 const sobel_x = [3][3]f32{
@@ -1649,8 +1630,8 @@ pub fn Filter(comptime T: type) type {
                 defer grad_y.deinit(allocator);
 
                 const GrayFilter = Filter(f32);
-                try GrayFilter.convolve(gray_float, allocator, sobel_x, &grad_x, .zero);
-                try GrayFilter.convolve(gray_float, allocator, sobel_y, &grad_y, .zero);
+                try GrayFilter.convolve(gray_float, allocator, sobel_x, &grad_x, .replicate);
+                try GrayFilter.convolve(gray_float, allocator, sobel_y, &grad_y, .replicate);
 
                 // Compute gradient magnitude
                 for (0..self.rows) |r| {
