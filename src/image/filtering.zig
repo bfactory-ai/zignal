@@ -8,7 +8,6 @@ const convertColor = @import("../color.zig").convertColor;
 const meta = @import("../meta.zig");
 const as = meta.as;
 const isScalar = meta.isScalar;
-const is4xu8Struct = meta.is4xu8Struct;
 const Image = @import("Image.zig").Image;
 const channel_ops = @import("channel_ops.zig");
 
@@ -95,11 +94,7 @@ pub fn Filter(comptime T: type) type {
 
                         // Separate channels
                         const channels = try channel_ops.separateRGBChannels(T, self, allocator);
-                        defer {
-                            allocator.free(channels[0]);
-                            allocator.free(channels[1]);
-                            allocator.free(channels[2]);
-                        }
+                        defer for (channels) |channel| allocator.free(channel);
 
                         // Process each channel
                         const integral_img = try allocator.alloc(f32, plane_size);
@@ -231,11 +226,7 @@ pub fn Filter(comptime T: type) type {
 
                         // Separate channels
                         const channels = try channel_ops.separateRGBChannels(T, self, allocator);
-                        defer {
-                            allocator.free(channels[0]);
-                            allocator.free(channels[1]);
-                            allocator.free(channels[2]);
-                        }
+                        defer for (channels) |channel| allocator.free(channel);
 
                         // Process each channel
                         const integral_img = try allocator.alloc(f32, plane_size);

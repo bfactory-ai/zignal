@@ -10,7 +10,6 @@ const Rectangle = @import("../geometry.zig").Rectangle;
 const Point = @import("../geometry/Point.zig").Point;
 const jpeg = @import("../jpeg.zig");
 const as = @import("../meta.zig").as;
-const is4xu8Struct = @import("../meta.zig").is4xu8Struct;
 const isScalar = @import("../meta.zig").isScalar;
 const png = @import("../png.zig");
 const BorderMode = @import("filtering.zig").BorderMode;
