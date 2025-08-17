@@ -36,37 +36,6 @@ pub fn Filter(comptime T: type) type {
     return struct {
         const Self = Image(T);
 
-        /// Flatten a 2D kernel and convert to i32 (if scale provided) or f32
-        inline fn flattenKernelInt(comptime size: usize, kernel: anytype, scale: i32) [size]i32 {
-            const kernel_info = @typeInfo(@TypeOf(kernel));
-            const kernel_height = kernel_info.array.len;
-            const kernel_width = @typeInfo(kernel_info.array.child).array.len;
-            var result: [size]i32 = undefined;
-            var idx: usize = 0;
-            inline for (0..kernel_height) |kr| {
-                inline for (0..kernel_width) |kc| {
-                    result[idx] = @intFromFloat(@round(as(f32, kernel[kr][kc]) * @as(f32, @floatFromInt(scale))));
-                    idx += 1;
-                }
-            }
-            return result;
-        }
-
-        inline fn flattenKernelFloat(comptime size: usize, kernel: anytype) [size]f32 {
-            const kernel_info = @typeInfo(@TypeOf(kernel));
-            const kernel_height = kernel_info.array.len;
-            const kernel_width = @typeInfo(kernel_info.array.child).array.len;
-            var result: [size]f32 = undefined;
-            var idx: usize = 0;
-            inline for (0..kernel_height) |kr| {
-                inline for (0..kernel_width) |kc| {
-                    result[idx] = as(f32, kernel[kr][kc]);
-                    idx += 1;
-                }
-            }
-            return result;
-        }
-
         /// Computes a blurred version of `self` using a box blur algorithm, efficiently implemented
         /// using an integral image. The `radius` parameter determines the size of the box window.
         /// This function is optimized using SIMD instructions for performance where applicable.
@@ -199,61 +168,6 @@ pub fn Filter(comptime T: type) type {
                     }
                 },
                 else => @compileError("Can't compute the boxBlur image of " ++ @typeName(T) ++ "."),
-            }
-        }
-
-        /// Separate RGB channels from a struct image into individual planes.
-        /// Allocates and fills 3 channel planes (r, g, b).
-        fn separateRGBChannels(self: Self, allocator: std.mem.Allocator) ![3][]u8 {
-            const fields = std.meta.fields(T);
-            const plane_size = self.rows * self.cols;
-
-            const r_channel = try allocator.alloc(u8, plane_size);
-            errdefer allocator.free(r_channel);
-            const g_channel = try allocator.alloc(u8, plane_size);
-            errdefer allocator.free(g_channel);
-            const b_channel = try allocator.alloc(u8, plane_size);
-            errdefer allocator.free(b_channel);
-
-            // Single pass for cache efficiency
-            var idx: usize = 0;
-            for (0..self.rows) |r| {
-                for (0..self.cols) |c| {
-                    const pixel = self.at(r, c).*;
-                    r_channel[idx] = @field(pixel, fields[0].name);
-                    g_channel[idx] = @field(pixel, fields[1].name);
-                    b_channel[idx] = @field(pixel, fields[2].name);
-                    idx += 1;
-                }
-            }
-
-            return .{ r_channel, g_channel, b_channel };
-        }
-
-        /// Combine RGB channels back into struct image, optionally preserving alpha from original.
-        fn combineRGBChannels(self: Self, r_out: []const u8, g_out: []const u8, b_out: []const u8, out: Self) void {
-            const fields = std.meta.fields(T);
-            const has_alpha = comptime hasAlphaChannel(T);
-
-            var idx: usize = 0;
-            for (0..self.rows) |r| {
-                for (0..self.cols) |c| {
-                    var result_pixel: T = undefined;
-                    @field(result_pixel, fields[0].name) = r_out[idx];
-                    @field(result_pixel, fields[1].name) = g_out[idx];
-                    @field(result_pixel, fields[2].name) = b_out[idx];
-
-                    // Preserve alpha if present
-                    if (has_alpha) {
-                        @field(result_pixel, fields[3].name) = @field(self.at(r, c).*, fields[3].name);
-                    } else if (fields.len == 4) {
-                        // For non-alpha 4th channel, also preserve it
-                        @field(result_pixel, fields[3].name) = @field(self.at(r, c).*, fields[3].name);
-                    }
-
-                    out.at(r, c).* = result_pixel;
-                    idx += 1;
-                }
             }
         }
 
@@ -1172,40 +1086,6 @@ pub fn Filter(comptime T: type) type {
             }
         }
 
-        /// Get pixel value with border handling.
-        inline fn getPixelWithBorder(self: Self, row: isize, col: isize, border_mode: BorderMode) T {
-            const irows = @as(isize, @intCast(self.rows));
-            const icols = @as(isize, @intCast(self.cols));
-
-            switch (border_mode) {
-                .zero => {
-                    if (row < 0 or col < 0 or row >= irows or col >= icols) {
-                        return std.mem.zeroes(T);
-                    }
-                    return self.at(@intCast(row), @intCast(col)).*;
-                },
-                .replicate => {
-                    const r = @max(0, @min(row, irows - 1));
-                    const c = @max(0, @min(col, icols - 1));
-                    return self.at(@intCast(r), @intCast(c)).*;
-                },
-                .mirror => {
-                    // Reflect indices across borders with period 2*N
-                    if (irows == 0 or icols == 0) return std.mem.zeroes(T);
-                    var r = @mod(row, 2 * irows);
-                    var c = @mod(col, 2 * icols);
-                    if (r >= irows) r = 2 * irows - 1 - r;
-                    if (c >= icols) c = 2 * icols - 1 - c;
-                    return self.at(@intCast(r), @intCast(c)).*;
-                },
-                .wrap => {
-                    const r = @mod(row, irows);
-                    const c = @mod(col, icols);
-                    return self.at(@intCast(r), @intCast(c)).*;
-                },
-            }
-        }
-
         /// Performs separable convolution using two 1D kernels (horizontal and vertical).
         /// This is much more efficient for separable filters like Gaussian blur.
         ///
@@ -1641,6 +1521,128 @@ pub fn Filter(comptime T: type) type {
                         const magnitude = @sqrt(gx * gx + gy * gy);
                         out.at(r, c).* = @intFromFloat(@max(0, @min(255, magnitude)));
                     }
+                }
+            }
+        }
+
+        // ========== Helper Functions ==========
+
+        /// Get pixel value with border handling.
+        inline fn getPixelWithBorder(self: Self, row: isize, col: isize, border_mode: BorderMode) T {
+            const irows = @as(isize, @intCast(self.rows));
+            const icols = @as(isize, @intCast(self.cols));
+
+            switch (border_mode) {
+                .zero => {
+                    if (row < 0 or col < 0 or row >= irows or col >= icols) {
+                        return std.mem.zeroes(T);
+                    }
+                    return self.at(@intCast(row), @intCast(col)).*;
+                },
+                .replicate => {
+                    const r = @max(0, @min(row, irows - 1));
+                    const c = @max(0, @min(col, icols - 1));
+                    return self.at(@intCast(r), @intCast(c)).*;
+                },
+                .mirror => {
+                    // Reflect indices across borders with period 2*N
+                    if (irows == 0 or icols == 0) return std.mem.zeroes(T);
+                    var r = @mod(row, 2 * irows);
+                    var c = @mod(col, 2 * icols);
+                    if (r >= irows) r = 2 * irows - 1 - r;
+                    if (c >= icols) c = 2 * icols - 1 - c;
+                    return self.at(@intCast(r), @intCast(c)).*;
+                },
+                .wrap => {
+                    const r = @mod(row, irows);
+                    const c = @mod(col, icols);
+                    return self.at(@intCast(r), @intCast(c)).*;
+                },
+            }
+        }
+
+        /// Flatten a 2D kernel and convert to i32 (if scale provided) or f32
+        inline fn flattenKernelInt(comptime size: usize, kernel: anytype, scale: i32) [size]i32 {
+            const kernel_info = @typeInfo(@TypeOf(kernel));
+            const kernel_height = kernel_info.array.len;
+            const kernel_width = @typeInfo(kernel_info.array.child).array.len;
+            var result: [size]i32 = undefined;
+            var idx: usize = 0;
+            inline for (0..kernel_height) |kr| {
+                inline for (0..kernel_width) |kc| {
+                    result[idx] = @intFromFloat(@round(as(f32, kernel[kr][kc]) * @as(f32, @floatFromInt(scale))));
+                    idx += 1;
+                }
+            }
+            return result;
+        }
+
+        inline fn flattenKernelFloat(comptime size: usize, kernel: anytype) [size]f32 {
+            const kernel_info = @typeInfo(@TypeOf(kernel));
+            const kernel_height = kernel_info.array.len;
+            const kernel_width = @typeInfo(kernel_info.array.child).array.len;
+            var result: [size]f32 = undefined;
+            var idx: usize = 0;
+            inline for (0..kernel_height) |kr| {
+                inline for (0..kernel_width) |kc| {
+                    result[idx] = as(f32, kernel[kr][kc]);
+                    idx += 1;
+                }
+            }
+            return result;
+        }
+
+        /// Separate RGB channels from a struct image into individual planes.
+        /// Allocates and fills 3 channel planes (r, g, b).
+        fn separateRGBChannels(self: Self, allocator: std.mem.Allocator) ![3][]u8 {
+            const fields = std.meta.fields(T);
+            const plane_size = self.rows * self.cols;
+
+            const r_channel = try allocator.alloc(u8, plane_size);
+            errdefer allocator.free(r_channel);
+            const g_channel = try allocator.alloc(u8, plane_size);
+            errdefer allocator.free(g_channel);
+            const b_channel = try allocator.alloc(u8, plane_size);
+            errdefer allocator.free(b_channel);
+
+            // Single pass for cache efficiency
+            var idx: usize = 0;
+            for (0..self.rows) |r| {
+                for (0..self.cols) |c| {
+                    const pixel = self.at(r, c).*;
+                    r_channel[idx] = @field(pixel, fields[0].name);
+                    g_channel[idx] = @field(pixel, fields[1].name);
+                    b_channel[idx] = @field(pixel, fields[2].name);
+                    idx += 1;
+                }
+            }
+
+            return .{ r_channel, g_channel, b_channel };
+        }
+
+        /// Combine RGB channels back into struct image, optionally preserving alpha from original.
+        fn combineRGBChannels(self: Self, r_out: []const u8, g_out: []const u8, b_out: []const u8, out: Self) void {
+            const fields = std.meta.fields(T);
+            const has_alpha = comptime hasAlphaChannel(T);
+
+            var idx: usize = 0;
+            for (0..self.rows) |r| {
+                for (0..self.cols) |c| {
+                    var result_pixel: T = undefined;
+                    @field(result_pixel, fields[0].name) = r_out[idx];
+                    @field(result_pixel, fields[1].name) = g_out[idx];
+                    @field(result_pixel, fields[2].name) = b_out[idx];
+
+                    // Preserve alpha if present
+                    if (has_alpha) {
+                        @field(result_pixel, fields[3].name) = @field(self.at(r, c).*, fields[3].name);
+                    } else if (fields.len == 4) {
+                        // For non-alpha 4th channel, also preserve it
+                        @field(result_pixel, fields[3].name) = @field(self.at(r, c).*, fields[3].name);
+                    }
+
+                    out.at(r, c).* = result_pixel;
+                    idx += 1;
                 }
             }
         }
