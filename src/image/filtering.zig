@@ -10,6 +10,7 @@ const as = meta.as;
 const isScalar = meta.isScalar;
 const is4xu8Struct = meta.is4xu8Struct;
 const Image = @import("Image.zig").Image;
+const channel_ops = @import("channel_ops.zig");
 
 /// Border handling modes for filter operations
 pub const BorderMode = enum {
@@ -22,14 +23,6 @@ pub const BorderMode = enum {
     /// Wrap around (circular)
     wrap,
 };
-
-/// Check if a struct type has an alpha channel (4th field named 'a' or 'alpha')
-fn hasAlphaChannel(comptime T: type) bool {
-    const fields = std.meta.fields(T);
-    if (fields.len != 4) return false;
-    const last_field = fields[3];
-    return std.mem.eql(u8, last_field.name, "a") or std.mem.eql(u8, last_field.name, "alpha");
-}
 
 /// Filter operations for Image(T)
 pub fn Filter(comptime T: type) type {
@@ -86,7 +79,7 @@ pub fn Filter(comptime T: type) type {
                 },
                 .@"struct" => {
                     const fields = std.meta.fields(T);
-                    const has_alpha = comptime hasAlphaChannel(T);
+                    const has_alpha = comptime channel_ops.hasAlphaChannel(T);
 
                     // Check if all RGB fields are u8
                     const all_u8 = comptime blk: {
@@ -101,7 +94,7 @@ pub fn Filter(comptime T: type) type {
                         const plane_size = self.rows * self.cols;
 
                         // Separate channels
-                        const channels = try separateRGBChannels(self, allocator);
+                        const channels = try channel_ops.separateRGBChannels(T, self, allocator);
                         defer {
                             allocator.free(channels[0]);
                             allocator.free(channels[1]);
@@ -129,7 +122,7 @@ pub fn Filter(comptime T: type) type {
                         boxBlurPlane(u8, integral_img, b_out, self.rows, self.cols, radius);
 
                         // Recombine channels
-                        combineRGBChannels(self, r_out, g_out, b_out, blurred.*);
+                        channel_ops.combineRGBChannels(T, self, r_out, g_out, b_out, blurred.*);
                     } else {
                         // Generic struct path for other color types
                         var sat: Image([Self.channels()]f32) = undefined;
@@ -222,7 +215,7 @@ pub fn Filter(comptime T: type) type {
                 },
                 .@"struct" => {
                     const fields = std.meta.fields(T);
-                    const has_alpha = comptime hasAlphaChannel(T);
+                    const has_alpha = comptime channel_ops.hasAlphaChannel(T);
 
                     // Check if all RGB fields are u8
                     const all_u8 = comptime blk: {
@@ -237,7 +230,7 @@ pub fn Filter(comptime T: type) type {
                         const plane_size = self.rows * self.cols;
 
                         // Separate channels
-                        const channels = try separateRGBChannels(self, allocator);
+                        const channels = try channel_ops.separateRGBChannels(T, self, allocator);
                         defer {
                             allocator.free(channels[0]);
                             allocator.free(channels[1]);
@@ -265,7 +258,7 @@ pub fn Filter(comptime T: type) type {
                         sharpenPlane(u8, channels[2], integral_img, b_out, self.rows, self.cols, radius);
 
                         // Recombine channels
-                        combineRGBChannels(self, r_out, g_out, b_out, sharpened.*);
+                        channel_ops.combineRGBChannels(T, self, r_out, g_out, b_out, sharpened.*);
                     } else {
                         // Generic struct path for other color types
                         var sat: Image([Self.channels()]f32) = undefined;
@@ -639,7 +632,7 @@ pub fn Filter(comptime T: type) type {
                         const kernel_int = flattenKernelInt(Kernel.kernel_size, kernel, SCALE);
 
                         // Separate channels using helper
-                        const channels = try separateRGBChannels(self, allocator);
+                        const channels = try channel_ops.separateRGBChannels(T, self, allocator);
                         defer allocator.free(channels[0]);
                         defer allocator.free(channels[1]);
                         defer allocator.free(channels[2]);
@@ -659,10 +652,10 @@ pub fn Filter(comptime T: type) type {
                         }
 
                         // Recombine channels using helper
-                        combineRGBChannels(self, r_out, g_out, b_out, out.*);
+                        channel_ops.combineRGBChannels(T, self, r_out, g_out, b_out, out.*);
                     } else {
                         // Generic struct path for other color types
-                        const has_alpha = comptime hasAlphaChannel(T);
+                        const has_alpha = comptime channel_ops.hasAlphaChannel(T);
                         const channels_to_process = if (has_alpha) 3 else fields.len;
                         const half_h = Kernel.half_h;
                         const half_w = Kernel.half_w;
@@ -1188,7 +1181,7 @@ pub fn Filter(comptime T: type) type {
                         }
 
                         // Separate channels using helper
-                        const channels = try separateRGBChannels(self, allocator);
+                        const channels = try channel_ops.separateRGBChannels(T, self, allocator);
                         defer allocator.free(channels[0]);
                         defer allocator.free(channels[1]);
                         defer allocator.free(channels[2]);
@@ -1215,7 +1208,7 @@ pub fn Filter(comptime T: type) type {
                         }
 
                         // Recombine channels using helper
-                        combineRGBChannels(self, r_out, g_out, b_out, out.*);
+                        channel_ops.combineRGBChannels(T, self, r_out, g_out, b_out, out.*);
                         return; // Skip the rest of the function
                     }
 
@@ -1590,61 +1583,6 @@ pub fn Filter(comptime T: type) type {
                 }
             }
             return result;
-        }
-
-        /// Separate RGB channels from a struct image into individual planes.
-        /// Allocates and fills 3 channel planes (r, g, b).
-        fn separateRGBChannels(self: Self, allocator: std.mem.Allocator) ![3][]u8 {
-            const fields = std.meta.fields(T);
-            const plane_size = self.rows * self.cols;
-
-            const r_channel = try allocator.alloc(u8, plane_size);
-            errdefer allocator.free(r_channel);
-            const g_channel = try allocator.alloc(u8, plane_size);
-            errdefer allocator.free(g_channel);
-            const b_channel = try allocator.alloc(u8, plane_size);
-            errdefer allocator.free(b_channel);
-
-            // Single pass for cache efficiency
-            var idx: usize = 0;
-            for (0..self.rows) |r| {
-                for (0..self.cols) |c| {
-                    const pixel = self.at(r, c).*;
-                    r_channel[idx] = @field(pixel, fields[0].name);
-                    g_channel[idx] = @field(pixel, fields[1].name);
-                    b_channel[idx] = @field(pixel, fields[2].name);
-                    idx += 1;
-                }
-            }
-
-            return .{ r_channel, g_channel, b_channel };
-        }
-
-        /// Combine RGB channels back into struct image, optionally preserving alpha from original.
-        fn combineRGBChannels(self: Self, r_out: []const u8, g_out: []const u8, b_out: []const u8, out: Self) void {
-            const fields = std.meta.fields(T);
-            const has_alpha = comptime hasAlphaChannel(T);
-
-            var idx: usize = 0;
-            for (0..self.rows) |r| {
-                for (0..self.cols) |c| {
-                    var result_pixel: T = undefined;
-                    @field(result_pixel, fields[0].name) = r_out[idx];
-                    @field(result_pixel, fields[1].name) = g_out[idx];
-                    @field(result_pixel, fields[2].name) = b_out[idx];
-
-                    // Preserve alpha if present
-                    if (has_alpha) {
-                        @field(result_pixel, fields[3].name) = @field(self.at(r, c).*, fields[3].name);
-                    } else if (fields.len == 4) {
-                        // For non-alpha 4th channel, also preserve it
-                        @field(result_pixel, fields[3].name) = @field(self.at(r, c).*, fields[3].name);
-                    }
-
-                    out.at(r, c).* = result_pixel;
-                    idx += 1;
-                }
-            }
         }
     };
 }

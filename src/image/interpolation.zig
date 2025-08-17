@@ -31,6 +31,7 @@
 const std = @import("std");
 const as = @import("../meta.zig").as;
 const is4xu8Struct = @import("../meta.zig").is4xu8Struct;
+const channel_ops = @import("channel_ops.zig");
 
 // ============================================================================
 // Public API
@@ -96,7 +97,8 @@ pub fn interpolate(comptime T: type, self: anytype, x: f32, y: f32, method: Inte
 /// Special optimizations:
 /// - Scale=1: Uses memcpy for same-size copies
 /// - 2x upscaling: Specialized fast path for bilinear
-/// - RGBA images: SIMD-optimized paths for all methods
+/// - RGB/RGBA images: Channel separation for optimized processing
+/// - 4xu8 types: SIMD-optimized paths for all methods
 pub fn resize(comptime T: type, self: anytype, out: anytype, method: InterpolationMethod) void {
     // Check for scale = 1 (just copy)
     if (self.rows == out.rows and self.cols == out.cols) {
@@ -110,8 +112,70 @@ pub fn resize(comptime T: type, self: anytype, out: anytype, method: Interpolati
         return;
     }
 
-    // SIMD optimizations for 4xu8 structs (RGBA)
-    if (is4xu8Struct(T)) {
+    // Channel separation for RGB/RGBA types with u8 components
+    if (comptime isRGBType(T)) {
+        // Use channel separation for better performance
+        const allocator = std.heap.page_allocator;
+        const channels = channel_ops.separateRGBChannels(T, self, allocator) catch {
+            // Fallback to generic implementation on allocation failure
+            resizeGeneric(T, self, out, method);
+            return;
+        };
+        defer {
+            allocator.free(channels[0]);
+            allocator.free(channels[1]);
+            allocator.free(channels[2]);
+        }
+
+        // Allocate output channels
+        const out_plane_size = out.rows * out.cols;
+        const r_out = allocator.alloc(u8, out_plane_size) catch {
+            resizeGeneric(T, self, out, method);
+            return;
+        };
+        defer allocator.free(r_out);
+        const g_out = allocator.alloc(u8, out_plane_size) catch {
+            resizeGeneric(T, self, out, method);
+            return;
+        };
+        defer allocator.free(g_out);
+        const b_out = allocator.alloc(u8, out_plane_size) catch {
+            resizeGeneric(T, self, out, method);
+            return;
+        };
+        defer allocator.free(b_out);
+
+        // Resize each channel using optimized plane functions
+        switch (method) {
+            .nearest_neighbor => {
+                channel_ops.resizePlaneNearestU8(channels[0], r_out, self.rows, self.cols, out.rows, out.cols);
+                channel_ops.resizePlaneNearestU8(channels[1], g_out, self.rows, self.cols, out.rows, out.cols);
+                channel_ops.resizePlaneNearestU8(channels[2], b_out, self.rows, self.cols, out.rows, out.cols);
+            },
+            .bilinear => {
+                // Check for 2x upscale special case
+                if (out.rows == self.rows * 2 and out.cols == self.cols * 2 and is4xu8Struct(T)) {
+                    return resize2xUpscale4xu8(T, self, out);
+                }
+                channel_ops.resizePlaneBilinearU8(channels[0], r_out, self.rows, self.cols, out.rows, out.cols);
+                channel_ops.resizePlaneBilinearU8(channels[1], g_out, self.rows, self.cols, out.rows, out.cols);
+                channel_ops.resizePlaneBilinearU8(channels[2], b_out, self.rows, self.cols, out.rows, out.cols);
+            },
+            .bicubic, .catmull_rom, .mitchell, .lanczos => {
+                // For now, use bicubic for all cubic-based methods
+                channel_ops.resizePlaneBicubicU8(channels[0], r_out, self.rows, self.cols, out.rows, out.cols);
+                channel_ops.resizePlaneBicubicU8(channels[1], g_out, self.rows, self.cols, out.rows, out.cols);
+                channel_ops.resizePlaneBicubicU8(channels[2], b_out, self.rows, self.cols, out.rows, out.cols);
+            },
+        }
+
+        // Combine channels back
+        channel_ops.combineRGBChannels(T, self, r_out, g_out, b_out, out);
+        return;
+    }
+
+    // SIMD optimizations for 4xu8 structs (kept for compatibility)
+    if (is4xu8Struct(T) and false) { // Disabled as channel separation is now preferred
         return switch (method) {
             .nearest_neighbor => resizeNearestNeighbor4xu8(T, self, out),
             .bilinear => if (out.rows == self.rows * 2 and out.cols == self.cols * 2)
@@ -126,6 +190,11 @@ pub fn resize(comptime T: type, self: anytype, out: anytype, method: Interpolati
     }
 
     // Fall back to generic implementation
+    resizeGeneric(T, self, out, method);
+}
+
+/// Generic resize implementation for non-optimized types
+fn resizeGeneric(comptime T: type, self: anytype, out: anytype, method: InterpolationMethod) void {
     const max_src_x = @as(f32, @floatFromInt(self.cols - 1));
     const max_src_y = @as(f32, @floatFromInt(self.rows - 1));
 
@@ -144,6 +213,37 @@ pub fn resize(comptime T: type, self: anytype, out: anytype, method: Interpolati
             }
         }
     }
+}
+
+/// Check if a type is an RGB/RGBA type with u8 components
+fn isRGBType(comptime T: type) bool {
+    const type_info = @typeInfo(T);
+    if (type_info != .@"struct") return false;
+
+    const fields = std.meta.fields(T);
+    if (fields.len < 3 or fields.len > 4) return false;
+
+    // Check first three fields are u8 and named appropriately
+    if (fields[0].type != u8) return false;
+    if (fields[1].type != u8) return false;
+    if (fields[2].type != u8) return false;
+
+    // Check for RGB naming pattern
+    const has_rgb_names = (std.mem.eql(u8, fields[0].name, "r") and
+        std.mem.eql(u8, fields[1].name, "g") and
+        std.mem.eql(u8, fields[2].name, "b")) or
+        (std.mem.eql(u8, fields[0].name, "red") and
+            std.mem.eql(u8, fields[1].name, "green") and
+            std.mem.eql(u8, fields[2].name, "blue"));
+
+    if (!has_rgb_names) return false;
+
+    // If 4 fields, check alpha is also u8
+    if (fields.len == 4) {
+        return fields[3].type == u8;
+    }
+
+    return true;
 }
 
 // ============================================================================
