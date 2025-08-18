@@ -106,3 +106,6 @@ pub const imageToColorPoints = pca.imageToColorPoints;
 pub const colorPointsToImage = pca.colorPointsToImage;
 pub const imageToIntensityPoints = pca.imageToIntensityPoints;
 pub const intensityPointsToImage = pca.intensityPointsToImage;
+
+// Feature detection (ORB)
+pub const features = @import("features.zig");
