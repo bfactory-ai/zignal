@@ -93,7 +93,7 @@ pub fn Filter(comptime T: type) type {
                         const plane_size = self.rows * self.cols;
 
                         // Separate channels
-                        const channels = try channel_ops.separateRGBChannels(T, self, allocator);
+                        const channels = try channel_ops.splitRgbChannels(T, self, allocator);
                         defer for (channels) |channel| allocator.free(channel);
 
                         // Process each channel
@@ -117,7 +117,7 @@ pub fn Filter(comptime T: type) type {
                         boxBlurPlane(u8, integral_img, b_out, self.rows, self.cols, radius);
 
                         // Recombine channels
-                        channel_ops.combineRGBChannels(T, self, r_out, g_out, b_out, blurred.*);
+                        channel_ops.mergeRgbChannels(T, self, r_out, g_out, b_out, blurred.*);
                     } else {
                         // Generic struct path for other color types
                         var sat: Image([Self.channels()]f32) = undefined;
@@ -225,7 +225,7 @@ pub fn Filter(comptime T: type) type {
                         const plane_size = self.rows * self.cols;
 
                         // Separate channels
-                        const channels = try channel_ops.separateRGBChannels(T, self, allocator);
+                        const channels = try channel_ops.splitRgbChannels(T, self, allocator);
                         defer for (channels) |channel| allocator.free(channel);
 
                         // Process each channel
@@ -249,7 +249,7 @@ pub fn Filter(comptime T: type) type {
                         sharpenPlane(u8, channels[2], integral_img, b_out, self.rows, self.cols, radius);
 
                         // Recombine channels
-                        channel_ops.combineRGBChannels(T, self, r_out, g_out, b_out, sharpened.*);
+                        channel_ops.mergeRgbChannels(T, self, r_out, g_out, b_out, sharpened.*);
                     } else {
                         // Generic struct path for other color types
                         var sat: Image([Self.channels()]f32) = undefined;
@@ -623,7 +623,7 @@ pub fn Filter(comptime T: type) type {
                         const kernel_int = flattenKernelInt(Kernel.kernel_size, kernel, SCALE);
 
                         // Separate channels using helper
-                        const channels = try channel_ops.separateRGBChannels(T, self, allocator);
+                        const channels = try channel_ops.splitRgbChannels(T, self, allocator);
                         defer allocator.free(channels[0]);
                         defer allocator.free(channels[1]);
                         defer allocator.free(channels[2]);
@@ -643,7 +643,7 @@ pub fn Filter(comptime T: type) type {
                         }
 
                         // Recombine channels using helper
-                        channel_ops.combineRGBChannels(T, self, r_out, g_out, b_out, out.*);
+                        channel_ops.mergeRgbChannels(T, self, r_out, g_out, b_out, out.*);
                     } else {
                         // Generic struct path for other color types
                         const has_alpha = comptime channel_ops.hasAlphaChannel(T);
@@ -1172,7 +1172,7 @@ pub fn Filter(comptime T: type) type {
                         }
 
                         // Separate channels using helper
-                        const channels = try channel_ops.separateRGBChannels(T, self, allocator);
+                        const channels = try channel_ops.splitRgbChannels(T, self, allocator);
                         defer allocator.free(channels[0]);
                         defer allocator.free(channels[1]);
                         defer allocator.free(channels[2]);
@@ -1199,7 +1199,7 @@ pub fn Filter(comptime T: type) type {
                         }
 
                         // Recombine channels using helper
-                        channel_ops.combineRGBChannels(T, self, r_out, g_out, b_out, out.*);
+                        channel_ops.mergeRgbChannels(T, self, r_out, g_out, b_out, out.*);
                         return; // Skip the rest of the function
                     }
 

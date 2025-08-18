@@ -29,12 +29,10 @@
 //! - Mitchell: ~22 Mpix/s
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+
 const as = @import("../meta.zig").as;
 const channel_ops = @import("channel_ops.zig");
-
-// ============================================================================
-// Public API
-// ============================================================================
 
 /// Interpolation method for image resizing and sampling
 ///
@@ -97,7 +95,7 @@ pub fn interpolate(comptime T: type, self: anytype, x: f32, y: f32, method: Inte
 /// - Scale=1: Uses memcpy for same-size copies
 /// - 2x upscaling: Specialized fast path for bilinear
 /// - RGB/RGBA images: Channel separation for optimized processing
-pub fn resize(comptime T: type, self: anytype, out: anytype, method: InterpolationMethod) void {
+pub fn resize(comptime T: type, allocator: Allocator, self: anytype, out: anytype, method: InterpolationMethod) !void {
     // Check for scale = 1 (just copy)
     if (self.rows == out.rows and self.cols == out.cols) {
         // If dimensions match exactly, just copy the data
@@ -112,9 +110,7 @@ pub fn resize(comptime T: type, self: anytype, out: anytype, method: Interpolati
 
     // Channel separation for RGB/RGBA types with u8 components
     if (comptime isRGBType(T)) {
-        // Use channel separation for better performance
-        const allocator = std.heap.page_allocator;
-        const channels = channel_ops.separateRGBChannels(T, self, allocator) catch {
+        const channels = channel_ops.splitRgbChannels(T, self, allocator) catch {
             // Fallback to generic implementation on allocation failure
             resizeGeneric(T, self, out, method);
             return;
@@ -170,7 +166,7 @@ pub fn resize(comptime T: type, self: anytype, out: anytype, method: Interpolati
         }
 
         // Combine channels back
-        channel_ops.combineRGBChannels(T, self, r_out, g_out, b_out, out);
+        channel_ops.mergeRgbChannels(T, self, r_out, g_out, b_out, out);
         return;
     }
 

@@ -20,7 +20,7 @@ pub fn hasAlphaChannel(comptime T: type) bool {
 /// Separate RGB channels from a struct image into individual planes.
 /// Allocates and fills 3 channel planes (r, g, b).
 /// The caller is responsible for freeing the returned slices.
-pub fn separateRGBChannels(comptime T: type, image: anytype, allocator: std.mem.Allocator) ![3][]u8 {
+pub fn splitRgbChannels(comptime T: type, image: anytype, allocator: std.mem.Allocator) ![3][]u8 {
     const fields = std.meta.fields(T);
     const plane_size = image.rows * image.cols;
 
@@ -47,7 +47,7 @@ pub fn separateRGBChannels(comptime T: type, image: anytype, allocator: std.mem.
 }
 
 /// Combine RGB channels back into struct image, optionally preserving alpha from original.
-pub fn combineRGBChannels(
+pub fn mergeRgbChannels(
     comptime T: type,
     original_image: anytype,
     r_out: []const u8,

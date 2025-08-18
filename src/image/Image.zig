@@ -307,8 +307,8 @@ pub fn Image(comptime T: type) type {
         }
 
         /// Resizes an image to fit in out, using the specified interpolation method.
-        pub fn resize(self: Self, out: Self, method: InterpolationMethod) void {
-            interpolation.resize(T, self, out, method);
+        pub fn resize(self: Self, allocator: Allocator, out: Self, method: InterpolationMethod) !void {
+            try interpolation.resize(T, allocator, self, out, method);
         }
 
         /// Scales the image by the given factor using the specified interpolation method.
@@ -323,7 +323,7 @@ pub fn Image(comptime T: type) type {
             if (new_rows == 0 or new_cols == 0) return error.InvalidDimensions;
 
             const scaled = try Self.initAlloc(allocator, new_rows, new_cols);
-            self.resize(scaled, method);
+            try self.resize(allocator, scaled, method);
             return scaled;
         }
 
@@ -354,7 +354,7 @@ pub fn Image(comptime T: type) type {
 
             // If scale factors are exactly equal, aspect ratios match - skip letterboxing
             if (rows_scale == cols_scale) {
-                self.resize(out.*, method);
+                try self.resize(allocator, out.*, method);
                 return out.getRectangle();
             }
 
@@ -384,7 +384,7 @@ pub fn Image(comptime T: type) type {
             const output_view = out.view(content_rect);
 
             // Resize the image into the view
-            self.resize(output_view, method);
+            try self.resize(allocator, output_view, method);
 
             return content_rect;
         }
