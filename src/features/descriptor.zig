@@ -14,37 +14,17 @@ pub const BinaryDescriptor = struct {
         return .{ .bits = [_]u8{0} ** 32 };
     }
 
-    /// Compute Hamming distance to another descriptor
-    /// This is the number of bits that differ between descriptors
+    /// Compute Hamming distance to another descriptor.
+    /// This is the number of bits that differ between descriptors.
     pub fn hammingDistance(self: BinaryDescriptor, other: BinaryDescriptor) u32 {
-        var dist: u32 = 0;
-
-        // For each byte, XOR and count set bits
-        inline for (0..32) |i| {
-            dist += @popCount(self.bits[i] ^ other.bits[i]);
-        }
-
-        return dist;
-    }
-
-    /// Compute Hamming distance with SIMD optimization (when available)
-    pub fn hammingDistanceSIMD(self: BinaryDescriptor, other: BinaryDescriptor) u32 {
-        // Convert to vectors for SIMD operations
         const vec_self: @Vector(32, u8) = self.bits;
         const vec_other: @Vector(32, u8) = other.bits;
+        const popcount = @popCount(vec_self ^ vec_other);
 
-        // XOR the vectors
-        const xor_result = vec_self ^ vec_other;
-
-        // Count set bits using @reduce for better SIMD utilization
-        // First convert each byte's popcount to a vector
-        var popcount_vec: @Vector(32, u8) = undefined;
-        inline for (0..32) |i| {
-            popcount_vec[i] = @popCount(xor_result[i]);
-        }
-
-        // Sum all popcounts using vector reduction
-        return @reduce(.Add, @as(@Vector(32, u32), popcount_vec));
+        // Need to sum as u32 to avoid overflow (max sum is 256)
+        var sum: u32 = 0;
+        for (0..32) |i| sum += popcount[i];
+        return sum;
     }
 
     /// Set a specific bit in the descriptor
@@ -142,7 +122,6 @@ test "BinaryDescriptor Hamming distance" {
 
     // Same descriptors should have distance 0
     try expectEqual(@as(u32, 0), desc1.hammingDistance(desc2));
-    try expectEqual(@as(u32, 0), desc1.hammingDistanceSIMD(desc2));
 
     // Set different bits
     desc1.setBit(0);
@@ -155,7 +134,6 @@ test "BinaryDescriptor Hamming distance" {
 
     // Should have distance of 4 (2 bits only in desc1, 2 only in desc2)
     try expectEqual(@as(u32, 4), desc1.hammingDistance(desc2));
-    try expectEqual(@as(u32, 4), desc1.hammingDistanceSIMD(desc2));
 }
 
 test "BinaryDescriptor normalized distance" {

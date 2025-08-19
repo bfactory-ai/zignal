@@ -25,7 +25,7 @@ pub fn main() !void {
     std.debug.print("Converted to grayscale\n", .{});
 
     // Create ORB detector
-    var orb = zignal.features.Orb{
+    var orb: zignal.features.Orb = .{
         .n_features = 500,
         .scale_factor = 1.2,
         .n_levels = 8,
