@@ -1,3 +1,9 @@
+//! FAST (Features from Accelerated Segment Test) corner detector.
+//!
+//! FAST is a high-speed corner detection algorithm that tests pixels in a
+//! Bresenham circle around a candidate point. A corner is detected when a
+//! contiguous arc of pixels are significantly brighter or darker than the center.
+
 const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
