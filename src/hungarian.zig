@@ -45,44 +45,69 @@ pub fn solve(allocator: Allocator, cost_matrix: Matrix(f32), policy: Optimizatio
     const n_cols = cost_matrix.cols;
     const n = @max(n_rows, n_cols);
 
-    // Create square working matrix padded with large values if needed
-    var work = try Matrix(f32).init(allocator, n, n);
-    defer work.deinit();
+    // Create square working matrix with optional values for padding
+    var work = try allocator.alloc(?f32, n * n);
+    defer allocator.free(work);
 
-    // Initialize with large value, applying multiplier for max/min
-    const BIG: f32 = 1e9;
+    // Initialize work matrix - null for padding cells
     for (0..n) |i| {
         for (0..n) |j| {
             if (i < n_rows and j < n_cols) {
-                work.at(i, j).* = cost_matrix.at(i, j).* * multiplier;
+                work[i * n + j] = cost_matrix.at(i, j).* * multiplier;
             } else {
-                work.at(i, j).* = BIG;
+                work[i * n + j] = null;
             }
         }
     }
 
     // Step 1: Row reduction - subtract row minimum from each row
     for (0..n) |i| {
-        var min_val: f32 = work.at(i, 0).*;
-        for (1..n) |j| {
-            min_val = @min(min_val, work.at(i, j).*);
+        // Find minimum value in non-null cells of this row
+        var min_val: ?f32 = null;
+        for (0..n) |j| {
+            if (work[i * n + j]) |val| {
+                if (min_val) |current_min| {
+                    min_val = @min(current_min, val);
+                } else {
+                    min_val = val;
+                }
+            }
         }
-        if (min_val != BIG and min_val != 0) {
-            for (0..n) |j| {
-                work.at(i, j).* -= min_val;
+
+        // Subtract minimum from all non-null cells in the row
+        if (min_val) |min| {
+            if (min != 0) {
+                for (0..n) |j| {
+                    if (work[i * n + j]) |*val| {
+                        val.* -= min;
+                    }
+                }
             }
         }
     }
 
     // Step 2: Column reduction - subtract column minimum from each column
     for (0..n) |j| {
-        var min_val: f32 = work.at(0, j).*;
-        for (1..n) |i| {
-            min_val = @min(min_val, work.at(i, j).*);
+        // Find minimum value in non-null cells of this column
+        var min_val: ?f32 = null;
+        for (0..n) |i| {
+            if (work[i * n + j]) |val| {
+                if (min_val) |current_min| {
+                    min_val = @min(current_min, val);
+                } else {
+                    min_val = val;
+                }
+            }
         }
-        if (min_val != BIG and min_val != 0) {
-            for (0..n) |i| {
-                work.at(i, j).* -= min_val;
+
+        // Subtract minimum from all non-null cells in the column
+        if (min_val) |min| {
+            if (min != 0) {
+                for (0..n) |i| {
+                    if (work[i * n + j]) |*val| {
+                        val.* -= min;
+                    }
+                }
             }
         }
     }
@@ -113,10 +138,12 @@ pub fn solve(allocator: Allocator, cost_matrix: Matrix(f32), policy: Optimizatio
     // Step 1: Find initial zeros and create stars (assignments)
     for (0..n) |i| {
         for (0..n) |j| {
-            if (work.at(i, j).* == 0 and row_assignment[i] == null and col_assignment[j] == null) {
-                row_assignment[i] = j;
-                col_assignment[j] = i;
-                starred[i * n + j] = true; // Star the zero
+            if (work[i * n + j]) |val| {
+                if (val == 0 and row_assignment[i] == null and col_assignment[j] == null) {
+                    row_assignment[i] = j;
+                    col_assignment[j] = i;
+                    starred[i * n + j] = true; // Star the zero
+                }
             }
         }
     }
@@ -156,11 +183,15 @@ pub fn solve(allocator: Allocator, cost_matrix: Matrix(f32), policy: Optimizatio
         search: for (0..n) |i| {
             if (!row_covered[i]) {
                 for (0..n) |j| {
-                    if (!col_covered[j] and work.at(i, j).* == 0) {
-                        zero_row = i;
-                        zero_col = j;
-                        found_zero = true;
-                        break :search;
+                    if (!col_covered[j]) {
+                        if (work[i * n + j]) |val| {
+                            if (val == 0) {
+                                zero_row = i;
+                                zero_col = j;
+                                found_zero = true;
+                                break :search;
+                            }
+                        }
                     }
                 }
             }
@@ -194,29 +225,39 @@ pub fn solve(allocator: Allocator, cost_matrix: Matrix(f32), policy: Optimizatio
             }
         } else {
             // Step 4: No uncovered zeros, modify matrix
-            var min_uncovered: f32 = BIG;
+            var min_uncovered: ?f32 = null;
 
             // Find minimum uncovered value
             for (0..n) |i| {
                 if (!row_covered[i]) {
                     for (0..n) |j| {
                         if (!col_covered[j]) {
-                            min_uncovered = @min(min_uncovered, work.at(i, j).*);
+                            if (work[i * n + j]) |val| {
+                                if (min_uncovered) |current_min| {
+                                    min_uncovered = @min(current_min, val);
+                                } else {
+                                    min_uncovered = val;
+                                }
+                            }
                         }
                     }
                 }
             }
 
-            if (min_uncovered >= BIG - 1) break; // No valid solution
+            if (min_uncovered == null) break; // No valid solution
 
             // Add to covered rows, subtract from uncovered columns
-            for (0..n) |i| {
-                for (0..n) |j| {
-                    if (row_covered[i]) {
-                        work.at(i, j).* += min_uncovered;
-                    }
-                    if (!col_covered[j]) {
-                        work.at(i, j).* -= min_uncovered;
+            if (min_uncovered) |min| {
+                for (0..n) |i| {
+                    for (0..n) |j| {
+                        if (work[i * n + j]) |*val| {
+                            if (row_covered[i]) {
+                                val.* += min;
+                            }
+                            if (!col_covered[j]) {
+                                val.* -= min;
+                            }
+                        }
                     }
                 }
             }
