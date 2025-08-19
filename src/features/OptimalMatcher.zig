@@ -8,7 +8,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Matrix = @import("../matrix.zig").Matrix;
-const hungarian = @import("../hungarian.zig");
+const optimization = @import("../optimization.zig");
 const BinaryDescriptor = @import("BinaryDescriptor.zig");
 
 /// Maximum distance threshold for valid matches
@@ -77,7 +77,7 @@ pub fn match(
     }
 
     // Solve assignment problem (minimize cost)
-    var assignment = try hungarian.solve(allocator, cost_matrix, .min);
+    var assignment = try optimization.solveAssignmentProblem(allocator, cost_matrix, .min);
     defer assignment.deinit();
 
     // Convert assignments to Match structs, filtering by max_distance

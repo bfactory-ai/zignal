@@ -1,7 +1,7 @@
-//! Hungarian algorithm (Kuhn-Munkres algorithm) for solving the assignment problem
+//! Optimization algorithms for solving various mathematical optimization problems
 //!
-//! Finds the optimal one-to-one assignment that minimizes total cost in O(n³) time.
-//! This implementation handles both square and rectangular cost matrices.
+//! This module provides implementations of classical optimization algorithms
+//! including the Hungarian algorithm for assignment problems.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -16,7 +16,7 @@ pub const OptimizationPolicy = enum {
     max,
 };
 
-/// Result of the Hungarian algorithm
+/// Result of the assignment problem
 pub const Assignment = struct {
     /// assignments[i] = j means row i is assigned to column j
     /// null means row i has no assignment
@@ -31,12 +31,16 @@ pub const Assignment = struct {
     }
 };
 
-/// Solves the assignment problem using the Hungarian algorithm
+/// Solves the assignment problem using the Hungarian algorithm (Kuhn-Munkres algorithm)
+///
+/// Finds the optimal one-to-one assignment that minimizes/maximizes total cost in O(n³) time.
+/// This implementation handles both square and rectangular cost matrices.
+///
 /// @param allocator Memory allocator for temporary data structures
 /// @param cost_matrix Matrix where element (i,j) is the cost/profit of assigning row i to column j
 /// @param policy Whether to minimize cost or maximize profit
 /// @return Optimal assignment that minimizes/maximizes total cost
-pub fn solve(allocator: Allocator, cost_matrix: Matrix(f32), policy: OptimizationPolicy) !Assignment {
+pub fn solveAssignmentProblem(allocator: Allocator, cost_matrix: Matrix(f32), policy: OptimizationPolicy) !Assignment {
     const multiplier: f32 = switch (policy) {
         .min => 1,
         .max => -1,
@@ -199,13 +203,11 @@ pub fn solve(allocator: Allocator, cost_matrix: Matrix(f32), policy: Optimizatio
             primed[zero_row * n + zero_col] = true;
 
             // Check if there's a starred zero in the same row
-            var star_col: ?usize = null;
-            for (0..n) |j| {
+            const star_col = for (0..n) |j| {
                 if (starred[zero_row * n + j]) {
-                    star_col = j;
-                    break;
+                    break j;
                 }
-            }
+            } else null;
 
             if (star_col) |col| {
                 // Cover this row and uncover the star's column
@@ -308,26 +310,22 @@ fn constructAugmentingPath(
 
     while (true) {
         // Find starred zero in column (if any)
-        var star_row: ?usize = null;
-        for (0..n) |i| {
+        const star_row = for (0..n) |i| {
             if (starred[i * n + path_col]) {
-                star_row = i;
-                break;
+                break i;
             }
-        }
+        } else null;
 
         if (star_row) |row| {
             // Unstar the zero
             starred[row * n + path_col] = false;
 
             // Find primed zero in row (must exist)
-            var prime_col: ?usize = null;
-            for (0..n) |j| {
+            const prime_col = for (0..n) |j| {
                 if (primed[row * n + j]) {
-                    prime_col = j;
-                    break;
+                    break j;
                 }
-            }
+            } else null;
 
             if (prime_col) |col| {
                 // Star the primed zero
@@ -382,7 +380,7 @@ test "Hungarian algorithm - simple 3x3" {
     cost.at(2, 1).* = 6;
     cost.at(2, 2).* = 9;
 
-    var result = try solve(allocator, cost, .min);
+    var result = try solveAssignmentProblem(allocator, cost, .min);
     defer result.deinit();
 
     // Optimal assignment should have cost 1+4+9=14 or similar minimal
@@ -404,7 +402,7 @@ test "Hungarian algorithm - rectangular matrix" {
     cost.at(1, 1).* = 2;
     cost.at(1, 2).* = 1;
 
-    var result = try solve(allocator, cost, .min);
+    var result = try solveAssignmentProblem(allocator, cost, .min);
     defer result.deinit();
 
     try expectEqual(@as(usize, 2), result.assignments.len);

@@ -119,5 +119,5 @@ pub const Match = features.Match;
 pub const MatchStats = features.MatchStats;
 pub const filterMatchesRatioTest = features.filterMatchesRatioTest;
 
-// Algorithms
-pub const hungarian = @import("hungarian.zig");
+// Optimization algorithms
+pub const optimization = @import("optimization.zig");
