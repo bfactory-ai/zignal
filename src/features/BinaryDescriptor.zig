@@ -13,7 +13,7 @@ const BinaryDescriptor = @This();
 
 /// Initialize with all zeros
 pub fn init() BinaryDescriptor {
-    return .{ .bits = [_]u8{0} ** 32 };
+    return .{ .bits = @splat(0) };
 }
 
 /// Compute Hamming distance to another descriptor.
