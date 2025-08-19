@@ -19,14 +19,12 @@ pub const OptimizationPolicy = enum {
 /// Result of the Hungarian algorithm
 pub const Assignment = struct {
     /// assignments[i] = j means row i is assigned to column j
-    /// NO_ASSIGNMENT means row i has no assignment
-    assignments: []usize,
+    /// null means row i has no assignment
+    assignments: []?usize,
     /// Total cost of the assignment
     total_cost: f32,
     /// Allocator used for assignments array
     allocator: Allocator,
-
-    pub const NO_ASSIGNMENT = std.math.maxInt(usize);
 
     pub fn deinit(self: *Assignment) void {
         self.allocator.free(self.assignments);
@@ -90,9 +88,9 @@ pub fn solve(allocator: Allocator, cost_matrix: Matrix(f32), policy: Optimizatio
     }
 
     // Arrays for tracking assignments and coverings
-    var row_assignment = try allocator.alloc(usize, n);
+    var row_assignment = try allocator.alloc(?usize, n);
     defer allocator.free(row_assignment);
-    var col_assignment = try allocator.alloc(usize, n);
+    var col_assignment = try allocator.alloc(?usize, n);
     defer allocator.free(col_assignment);
     const row_covered = try allocator.alloc(bool, n);
     defer allocator.free(row_covered);
@@ -109,13 +107,13 @@ pub fn solve(allocator: Allocator, cost_matrix: Matrix(f32), policy: Optimizatio
     @memset(primed, false);
 
     // Initialize assignments
-    for (row_assignment) |*r| r.* = Assignment.NO_ASSIGNMENT;
-    for (col_assignment) |*c| c.* = Assignment.NO_ASSIGNMENT;
+    for (row_assignment) |*r| r.* = null;
+    for (col_assignment) |*c| c.* = null;
 
     // Step 1: Find initial zeros and create stars (assignments)
     for (0..n) |i| {
         for (0..n) |j| {
-            if (work.at(i, j).* == 0 and row_assignment[i] == Assignment.NO_ASSIGNMENT and col_assignment[j] == Assignment.NO_ASSIGNMENT) {
+            if (work.at(i, j).* == 0 and row_assignment[i] == null and col_assignment[j] == null) {
                 row_assignment[i] = j;
                 col_assignment[j] = i;
                 starred[i * n + j] = true; // Star the zero
@@ -135,8 +133,8 @@ pub fn solve(allocator: Allocator, cost_matrix: Matrix(f32), policy: Optimizatio
         @memset(col_covered, false);
 
         for (0..n) |i| {
-            if (row_assignment[i] != Assignment.NO_ASSIGNMENT) {
-                col_covered[row_assignment[i]] = true;
+            if (row_assignment[i]) |col| {
+                col_covered[col] = true;
             }
         }
 
@@ -227,14 +225,18 @@ pub fn solve(allocator: Allocator, cost_matrix: Matrix(f32), policy: Optimizatio
 
     // Calculate total cost and prepare result
     var total_cost: f32 = 0;
-    var result_assignments = try allocator.alloc(usize, n_rows);
+    var result_assignments = try allocator.alloc(?usize, n_rows);
     for (0..n_rows) |i| {
-        if (row_assignment[i] < n_cols) {
-            result_assignments[i] = row_assignment[i];
-            // Use original cost matrix values (not the multiplied work matrix)
-            total_cost += cost_matrix.at(i, row_assignment[i]).*;
+        if (row_assignment[i]) |col| {
+            if (col < n_cols) {
+                result_assignments[i] = col;
+                // Use original cost matrix values (not the multiplied work matrix)
+                total_cost += cost_matrix.at(i, col).*;
+            } else {
+                result_assignments[i] = null;
+            }
         } else {
-            result_assignments[i] = Assignment.NO_ASSIGNMENT;
+            result_assignments[i] = null;
         }
     }
 
@@ -245,10 +247,10 @@ pub fn solve(allocator: Allocator, cost_matrix: Matrix(f32), policy: Optimizatio
     };
 }
 
-fn countAssignments(assignments: []const usize) usize {
+fn countAssignments(assignments: []const ?usize) usize {
     var count: usize = 0;
     for (assignments) |a| {
-        if (a != Assignment.NO_ASSIGNMENT) count += 1;
+        if (a != null) count += 1;
     }
     return count;
 }
@@ -258,8 +260,8 @@ fn constructAugmentingPath(
     primed: []bool,
     start_row: usize,
     start_col: usize,
-    row_assignment: []usize,
-    col_assignment: []usize,
+    row_assignment: []?usize,
+    col_assignment: []?usize,
     n: usize,
 ) !void {
     // Build augmenting path starting from uncovered primed zero
@@ -305,8 +307,8 @@ fn constructAugmentingPath(
     }
 
     // Update assignments based on starred zeros
-    for (row_assignment) |*r| r.* = Assignment.NO_ASSIGNMENT;
-    for (col_assignment) |*c| c.* = Assignment.NO_ASSIGNMENT;
+    for (row_assignment) |*r| r.* = null;
+    for (col_assignment) |*c| c.* = null;
 
     for (0..n) |i| {
         for (0..n) |j| {

@@ -84,8 +84,8 @@ pub fn match(
     var matches: std.ArrayList(Match) = .{};
     defer matches.deinit(allocator);
 
-    for (assignment.assignments, 0..) |train_idx, query_idx| {
-        if (train_idx != hungarian.Assignment.NO_ASSIGNMENT) {
+    for (assignment.assignments, 0..) |maybe_train_idx, query_idx| {
+        if (maybe_train_idx) |train_idx| {
             const dist = @as(f32, @floatFromInt(query_descriptors[query_idx].hammingDistance(train_descriptors[train_idx])));
 
             if (dist <= self.max_distance) {
