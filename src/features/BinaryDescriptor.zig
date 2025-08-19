@@ -60,11 +60,13 @@ pub fn equals(self: BinaryDescriptor, other: BinaryDescriptor) bool {
 
 /// Count the number of set bits (1s) in the descriptor
 pub fn popCount(self: BinaryDescriptor) u32 {
-    var count: u32 = 0;
-    for (self.bits) |byte| {
-        count += @popCount(byte);
-    }
-    return count;
+    const vec: @Vector(32, u8) = self.bits;
+    const popcount = @popCount(vec);
+
+    // Sum as u32 to avoid overflow (max sum is 256)
+    var sum: u32 = 0;
+    for (0..32) |i| sum += popcount[i];
+    return sum;
 }
 
 /// Create a random descriptor (useful for testing)

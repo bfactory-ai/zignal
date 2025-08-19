@@ -1,8 +1,15 @@
 const std = @import("std");
+
 const zignal = @import("zignal");
+const BruteForceMatcher = zignal.BruteForceMatcher;
+const Canvas = zignal.Canvas;
+const Image = zignal.Image;
+const Orb = zignal.Orb;
+const Point = zignal.Point;
+const Rgb = zignal.Rgb;
 
 pub fn main() !void {
-    var debug_allocator = std.heap.GeneralPurposeAllocator(.{}){};
+    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
     defer _ = debug_allocator.deinit();
     const gpa = debug_allocator.allocator();
 
@@ -13,7 +20,7 @@ pub fn main() !void {
     const image_path = if (args.next()) |arg| arg else "../assets/liza.jpg";
 
     // Load image
-    var image = try zignal.Image(zignal.Rgb).load(gpa, image_path);
+    var image = try Image(Rgb).load(gpa, image_path);
     defer image.deinit(gpa);
 
     std.debug.print("Loaded image: {}x{} pixels\n", .{ image.cols, image.rows });
@@ -25,7 +32,7 @@ pub fn main() !void {
     std.debug.print("Converted to grayscale\n", .{});
 
     // Create ORB detector
-    var orb: zignal.features.Orb = .{
+    var orb: Orb = .{
         .n_features = 500,
         .scale_factor = 1.2,
         .n_levels = 8,
@@ -57,7 +64,7 @@ pub fn main() !void {
 
     // Test matching between two copies (should give perfect matches)
     if (result.descriptors.len > 0) {
-        const matcher = zignal.features.BruteForceMatcher{
+        const matcher: BruteForceMatcher = .{
             .max_distance = 64,
             .cross_check = false,
         };
@@ -69,10 +76,10 @@ pub fn main() !void {
     }
 
     // Visualize features on the original image
-    var canvas = zignal.Canvas(zignal.Rgb).init(gpa, image);
+    var canvas: Canvas(Rgb) = .init(gpa, image);
 
     // Define colors for different octaves
-    const colors = [_]zignal.Rgb{
+    const colors = [_]Rgb{
         .{ .r = 255, .g = 0, .b = 0 }, // Red for octave 0
         .{ .r = 0, .g = 255, .b = 0 }, // Green for octave 1
         .{ .r = 0, .g = 0, .b = 255 }, // Blue for octave 2
@@ -92,9 +99,9 @@ pub fn main() !void {
         const color = colors[color_idx];
 
         // Draw circle at keypoint location
-        const center: zignal.Point(2, f32) = .point(.{ kp.x, kp.y });
+        const center: Point(2, f32) = .point(.{ kp.x, kp.y });
         // Calculate patch size like OpenCV using ORB's default patch size
-        const patch_size = @as(f32, @floatFromInt(zignal.features.Orb.DEFAULT_PATCH_SIZE));
+        const patch_size = @as(f32, @floatFromInt(Orb.DEFAULT_PATCH_SIZE));
         const scale = std.math.pow(f32, orb.scale_factor, @as(f32, @floatFromInt(kp.octave)));
         const radius = @max(3.0, (patch_size * scale) / 2);
         canvas.drawCircle(center, radius, color, 2, .soft);
@@ -104,7 +111,7 @@ pub fn main() !void {
         const line_length = radius * 2;
         const end_x = kp.x + @cos(angle_rad) * line_length;
         const end_y = kp.y + @sin(angle_rad) * line_length;
-        const end_point: zignal.Point(2, f32) = .point(.{ end_x, end_y });
+        const end_point: Point(2, f32) = .point(.{ end_x, end_y });
 
         canvas.drawLine(center, end_point, color, 1, .soft);
     }

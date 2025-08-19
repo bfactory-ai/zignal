@@ -107,5 +107,13 @@ pub const colorPointsToImage = pca.colorPointsToImage;
 pub const imageToIntensityPoints = pca.imageToIntensityPoints;
 pub const intensityPointsToImage = pca.intensityPointsToImage;
 
-// Feature detection (ORB)
-pub const features = @import("features.zig");
+// Feature detection and description
+const features = @import("features.zig");
+pub const KeyPoint = features.KeyPoint;
+pub const BinaryDescriptor = features.BinaryDescriptor;
+pub const Fast = features.Fast;
+pub const Orb = features.Orb;
+pub const BruteForceMatcher = features.BruteForceMatcher;
+pub const Match = features.Match;
+pub const MatchStats = features.MatchStats;
+pub const filterMatchesRatioTest = features.filterMatchesRatioTest;
