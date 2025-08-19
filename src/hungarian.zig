@@ -166,14 +166,11 @@ pub fn solve(allocator: Allocator, cost_matrix: Matrix(f32), policy: Optimizatio
         }
 
         // Check if all columns are covered (optimal assignment found)
-        var all_covered = true;
-        for (0..n) |j| {
-            if (!col_covered[j]) {
-                all_covered = false;
-                break;
-            }
+        for (col_covered) |covered| {
+            if (!covered) break;
+        } else {
+            break;
         }
-        if (all_covered) break;
 
         // Step 3: Find uncovered zero
         var found_zero = false;
