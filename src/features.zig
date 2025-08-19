@@ -5,12 +5,12 @@
 //! real-time applications.
 
 // Core data structures
-pub const KeyPoint = @import("features/keypoint.zig").KeyPoint;
-pub const BinaryDescriptor = @import("features/descriptor.zig").BinaryDescriptor;
+pub const KeyPoint = @import("features/KeyPoint.zig");
+pub const BinaryDescriptor = @import("features/BinaryDescriptor.zig");
 
 // Feature detection
-pub const Fast = @import("features/fast.zig").Fast;
-pub const Orb = @import("features/orb.zig").Orb;
+pub const Fast = @import("features/Fast.zig");
+pub const Orb = @import("features/Orb.zig");
 
 // Feature matching
 pub const BruteForceMatcher = @import("features/matcher.zig").BruteForceMatcher;
@@ -22,9 +22,9 @@ pub const filterMatchesRatioTest = @import("features/matcher.zig").filterMatches
 
 test {
     // Run all feature module tests
-    _ = @import("features/keypoint.zig");
-    _ = @import("features/descriptor.zig");
-    _ = @import("features/fast.zig");
-    _ = @import("features/orb.zig");
+    _ = @import("features/KeyPoint.zig");
+    _ = @import("features/BinaryDescriptor.zig");
+    _ = @import("features/Fast.zig");
+    _ = @import("features/Orb.zig");
     _ = @import("features/matcher.zig");
 }

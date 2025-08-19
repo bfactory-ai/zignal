@@ -3,7 +3,7 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 
-const BinaryDescriptor = @import("descriptor.zig").BinaryDescriptor;
+const BinaryDescriptor = @import("BinaryDescriptor.zig");
 
 /// A match between two feature descriptors
 pub const Match = struct {
