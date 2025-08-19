@@ -36,13 +36,15 @@ pub const BinaryDescriptor = struct {
         // XOR the vectors
         const xor_result = vec_self ^ vec_other;
 
-        // Count set bits
-        var dist: u32 = 0;
+        // Count set bits using @reduce for better SIMD utilization
+        // First convert each byte's popcount to a vector
+        var popcount_vec: @Vector(32, u8) = undefined;
         inline for (0..32) |i| {
-            dist += @popCount(xor_result[i]);
+            popcount_vec[i] = @popCount(xor_result[i]);
         }
 
-        return dist;
+        // Sum all popcounts using vector reduction
+        return @reduce(.Add, @as(@Vector(32, u32), popcount_vec));
     }
 
     /// Set a specific bit in the descriptor
