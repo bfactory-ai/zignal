@@ -11,6 +11,9 @@ const ImagePyramid = @import("../image/pyramid.zig").ImagePyramid;
 
 /// ORB (Oriented FAST and Rotated BRIEF) feature detector and descriptor
 pub const Orb = struct {
+    /// Default patch size for BRIEF descriptor (industry standard)
+    pub const DEFAULT_PATCH_SIZE: u8 = 31;
+
     /// Maximum number of features to detect
     n_features: usize = 500,
 
@@ -21,7 +24,7 @@ pub const Orb = struct {
     n_levels: u8 = 8,
 
     /// Border width where features are not detected
-    edge_threshold: u8 = 31,
+    edge_threshold: u8 = DEFAULT_PATCH_SIZE,
 
     /// First pyramid level to use (0 = original resolution)
     first_level: u8 = 0,
@@ -30,7 +33,7 @@ pub const Orb = struct {
     wta_k: u8 = 2,
 
     /// Patch size for BRIEF descriptor
-    patch_size: u8 = 31,
+    patch_size: u8 = DEFAULT_PATCH_SIZE,
 
     /// FAST threshold for corner detection
     fast_threshold: u8 = 20,

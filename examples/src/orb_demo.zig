@@ -93,9 +93,9 @@ pub fn main() !void {
 
         // Draw circle at keypoint location
         const center: zignal.Point(2, f32) = .point(.{ kp.x, kp.y });
-        // Calculate patch size like OpenCV (31 pixels at base scale)
-        const patch_size = 31.0;
-        const scale = std.math.pow(f32, 1.2, @as(f32, @floatFromInt(kp.octave)));
+        // Calculate patch size like OpenCV using ORB's default patch size
+        const patch_size = @as(f32, @floatFromInt(zignal.features.Orb.DEFAULT_PATCH_SIZE));
+        const scale = std.math.pow(f32, orb.scale_factor, @as(f32, @floatFromInt(kp.octave)));
         const radius = @max(3.0, (patch_size * scale) / 2);
         canvas.drawCircle(center, radius, color, 2, .soft);
 
