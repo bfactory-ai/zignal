@@ -22,7 +22,7 @@ const stub_metadata = @import("stub_metadata.zig");
 
 const image_class_doc =
     \\
-    \\RGBA image for processing and manipulation.\n\n
+    \\Image for processing and manipulation.\n\n
     \\This object is iterable: iterating yields (row, col, Rgba) for each pixel\n
     \\in row-major order. For bulk numeric work, prefer to_numpy().
 ;
@@ -66,23 +66,30 @@ const image_init_doc =
     \\  - RGBA tuple (r, g, b, a) with values 0-255
     \\  - Any color object (Rgb, Hsl, Hsv, etc.)
     \\  - Defaults to transparent (0, 0, 0, 0)
+    \\- `format` (type, keyword-only): Pixel format sentinel specifying storage type.
+    \\  - `zignal.Grayscale` → single-channel u8 (NumPy shape (H, W, 1))
+    \\  - `zignal.Rgb` → 3-channel RGB (NumPy shape (H, W, 3))
+    \\  - `zignal.Rgba` (default) → 4-channel RGBA (NumPy shape (H, W, 4))
     \\
     \\## Examples
     \\```python
-    \\# Create a 100x200 transparent image
+    \\# Create a 100x200 transparent image (default RGBA)
     \\img = Image(100, 200)
     \\
-    \\# Create a 100x200 red image
+    \\# Create a 100x200 red image (RGBA)
     \\img = Image(100, 200, (255, 0, 0))
     \\
-    \\# Create a 100x200 gray image
-    \\img = Image(100, 200, 128)
+    \\# Create a 100x200 grayscale image with mid-gray fill
+    \\img = Image(100, 200, 128, format=zignal.Grayscale)
+    \\
+    \\# Create a 100x200 RGB image
+    \\img = Image(100, 200, (0, 255, 0), format=zignal.Rgb)
     \\
     \\# Create an image from numpy array dimensions
     \\img = Image(*arr.shape[:2])
     \\
     \\# Create with semi-transparent blue
-    \\img = Image(100, 200, (0, 0, 255, 128))
+    \\img = Image(100, 200, (0, 0, 255, 128), format=zignal.Rgba)
     \\```
 ;
 
@@ -963,7 +970,7 @@ const image_convert_doc =
     \\
     \\Convert the image to a different pixel format.
     \\
-    \\Supported targets: zignal.Grayscale, zignal.Rgb, zignal.Rgba.
+    \\Supported targets: Grayscale, Rgb, Rgba.
     \\
     \\Returns a new Image with the requested format.
 ;
@@ -2986,7 +2993,7 @@ pub const image_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&image_convert),
         .flags = c.METH_VARARGS,
         .doc = image_convert_doc,
-        .params = "self, format: type",
+        .params = "self, format: Grayscale | Rgb | Rgba",
         .returns = "Image",
     },
     .{
@@ -3188,8 +3195,8 @@ pub const image_properties_metadata = [_]stub_metadata.PropertyWithMetadata{
         .name = "format",
         .get = @ptrCast(&image_get_format),
         .set = null,
-        .doc = "Pixel format sentinel (zignal.Grayscale, zignal.Rgb, or zignal.Rgba)",
-        .type = "type",
+        .doc = "Pixel format sentinel (Grayscale, Rgb, or Rgba)",
+        .type = "Grayscale | Rgb | Rgba",
     },
 };
 
@@ -3199,8 +3206,7 @@ var image_getset = stub_metadata.toPyGetSetDefArray(&image_properties_metadata);
 pub const image_special_methods_metadata = [_]stub_metadata.MethodInfo{
     .{
         .name = "__init__",
-        // .params = "self, rows: int, cols: int, color: " ++ stub_metadata.COLOR ++ " | None = None",
-        .params = "self, rows: int, cols: int, color: " ++ stub_metadata.COLOR ++ " | None = None",
+        .params = "self, rows: int, cols: int, color: " ++ stub_metadata.COLOR ++ " | None = None, format = Grayscale | Rgb | Rgba",
         .returns = "None",
         .doc = image_init_doc,
     },
