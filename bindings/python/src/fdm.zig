@@ -107,16 +107,26 @@ fn fdm_set_target(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.P
 
     const target_img_obj = @as(*image.ImageObject, @ptrCast(target_obj.?));
 
-    // Check if image is initialized
-    const target_img_ptr = py_utils.validateNonNull(*Image(Rgba), target_img_obj.image_ptr, "Target image") catch return null;
-
-    // Set the target
-    fdm_ptr.setTarget(target_img_ptr.*) catch |err| {
-        switch (err) {
-            error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory setting target"),
-        }
+    // Accept only RGBA images via PyImage variant for now
+    if (target_img_obj.py_image == null) {
+        c.PyErr_SetString(c.PyExc_TypeError, "Target image must be RGBA (PyImage)");
         return null;
-    };
+    }
+    switch (target_img_obj.py_image.?.data) {
+        .rgba => |imgv| {
+            fdm_ptr.setTarget(imgv) catch |err| {
+                switch (err) {
+                    error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory setting target"),
+                }
+                return null;
+            };
+        },
+        else => {
+            c.PyErr_SetString(c.PyExc_TypeError, "Target image must be RGBA");
+            return null;
+        },
+    }
+    // Success
 
     const none = c.Py_None();
     c.Py_INCREF(none);
@@ -159,16 +169,25 @@ fn fdm_set_source(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.P
 
     const source_img_obj = @as(*image.ImageObject, @ptrCast(source_obj.?));
 
-    // Check if image is initialized
-    const source_img_ptr = py_utils.validateNonNull(*Image(Rgba), source_img_obj.image_ptr, "Source image") catch return null;
-
-    // Set the source
-    fdm_ptr.setSource(source_img_ptr.*) catch |err| {
-        switch (err) {
-            error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory setting source"),
-        }
+    if (source_img_obj.py_image == null) {
+        c.PyErr_SetString(c.PyExc_TypeError, "Source image must be RGBA (PyImage)");
         return null;
-    };
+    }
+    switch (source_img_obj.py_image.?.data) {
+        .rgba => |imgv| {
+            fdm_ptr.setSource(imgv) catch |err| {
+                switch (err) {
+                    error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory setting source"),
+                }
+                return null;
+            };
+        },
+        else => {
+            c.PyErr_SetString(c.PyExc_TypeError, "Source image must be RGBA");
+            return null;
+        },
+    }
+    // Success
 
     const none = c.Py_None();
     c.Py_INCREF(none);
@@ -224,12 +243,28 @@ fn fdm_match(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObje
     const source_img_obj = @as(*image.ImageObject, @ptrCast(source_obj.?));
     const target_img_obj = @as(*image.ImageObject, @ptrCast(target_obj.?));
 
-    // Check if images are initialized
-    const source_img_ptr = py_utils.validateNonNull(*Image(Rgba), source_img_obj.image_ptr, "Source image") catch return null;
-    const target_img_ptr = py_utils.validateNonNull(*Image(Rgba), target_img_obj.image_ptr, "Target image") catch return null;
+    // Ensure RGBA images via PyImage
+    if (source_img_obj.py_image == null or target_img_obj.py_image == null) {
+        c.PyErr_SetString(c.PyExc_TypeError, "Source and target must be RGBA (PyImage)");
+        return null;
+    }
+    const src_variant = source_img_obj.py_image.?.data;
+    const dst_variant = target_img_obj.py_image.?.data;
+    const src_rgba: ?Image(Rgba) = switch (src_variant) {
+        .rgba => |imgv| imgv,
+        else => null,
+    };
+    const dst_rgba: ?Image(Rgba) = switch (dst_variant) {
+        .rgba => |imgv| imgv,
+        else => null,
+    };
+    if (src_rgba == null or dst_rgba == null) {
+        c.PyErr_SetString(c.PyExc_TypeError, "Source and target must be RGBA");
+        return null;
+    }
 
-    // Call match (which now includes update)
-    fdm_ptr.match(source_img_ptr.*, target_img_ptr.*) catch |err| {
+    // Call match
+    fdm_ptr.match(src_rgba.?, dst_rgba.?) catch |err| {
         switch (err) {
             error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory during match"),
             error.NoTargetSet => c.PyErr_SetString(c.PyExc_RuntimeError, "No target image set"),

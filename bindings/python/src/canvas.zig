@@ -139,17 +139,6 @@ fn canvas_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
                 self.kind = .rgba;
             },
         }
-    } else if (image.image_ptr) |img_ptr| {
-        const cptr = allocator.create(Canvas(Rgba)) catch {
-            c.Py_DECREF(image_obj.?);
-            c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate Canvas");
-            return -1;
-        };
-        cptr.* = Canvas(Rgba).init(allocator, img_ptr.*);
-        self.canvas_gray = null;
-        self.canvas_rgb = null;
-        self.canvas_rgba = cptr;
-        self.kind = .rgba;
     } else {
         c.Py_DECREF(image_obj.?);
         c.PyErr_SetString(c.PyExc_ValueError, "Image not initialized");

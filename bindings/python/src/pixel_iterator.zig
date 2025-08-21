@@ -55,13 +55,7 @@ fn pixel_iterator_next(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     }
 
     const img_py = @as(*ImageObject, @ptrCast(self.image_ref.?));
-    const total = if (img_py.py_image) |pimg| pimg.rows() * pimg.cols() else blk: {
-        const img = @import("py_utils.zig").validateNonNull(*zignal.Image(Rgba), img_py.image_ptr, "Image") catch {
-            c.PyErr_SetNone(c.PyExc_StopIteration);
-            return null;
-        };
-        break :blk img.rows * img.cols;
-    };
+    const total = if (img_py.py_image) |pimg| pimg.rows() * pimg.cols() else 0;
     if (self.index >= total) {
         c.PyErr_SetNone(c.PyExc_StopIteration);
         return null;
@@ -72,49 +66,39 @@ fn pixel_iterator_next(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     var col: usize = undefined;
     var pixel_obj: ?*c.PyObject = null;
 
-    if (img_py.py_image) |pimg| {
-        row = self.index / pimg.cols();
-        col = self.index % pimg.cols();
-        switch (pimg.data) {
-            .gray => |img| {
-                const v = img.at(row, col).*;
-                pixel_obj = c.PyLong_FromLong(@intCast(v));
-            },
-            .rgb => |img| {
-                const p = img.at(row, col).*;
-                const color_module = @import("color.zig");
-                const rgb_obj = c.PyType_GenericAlloc(@ptrCast(&color_module.RgbType), 0) orelse return null;
-                const rgb = @as(*color_module.RgbBinding.PyObjectType, @ptrCast(rgb_obj));
-                rgb.field0 = p.r;
-                rgb.field1 = p.g;
-                rgb.field2 = p.b;
-                pixel_obj = rgb_obj;
-            },
-            .rgba => |img| {
-                const p = img.at(row, col).*;
-                const color_module = @import("color.zig");
-                const rgba_obj = c.PyType_GenericAlloc(@ptrCast(&color_module.RgbaType), 0) orelse return null;
-                const rgba = @as(*color_module.RgbaBinding.PyObjectType, @ptrCast(rgba_obj));
-                rgba.field0 = p.r;
-                rgba.field1 = p.g;
-                rgba.field2 = p.b;
-                rgba.field3 = p.a;
-                pixel_obj = rgba_obj;
-            },
-        }
-    } else {
-        const img = @import("py_utils.zig").validateNonNull(*zignal.Image(Rgba), img_py.image_ptr, "Image") catch return null;
-        row = self.index / img.cols;
-        col = self.index % img.cols;
-        const p = img.at(row, col).*;
-        const color_module = @import("color.zig");
-        const rgba_obj = c.PyType_GenericAlloc(@ptrCast(&color_module.RgbaType), 0) orelse return null;
-        const rgba = @as(*color_module.RgbaBinding.PyObjectType, @ptrCast(rgba_obj));
-        rgba.field0 = p.r;
-        rgba.field1 = p.g;
-        rgba.field2 = p.b;
-        rgba.field3 = p.a;
-        pixel_obj = rgba_obj;
+    if (img_py.py_image == null) {
+        c.PyErr_SetNone(c.PyExc_StopIteration);
+        return null;
+    }
+    const pimg = img_py.py_image.?;
+    row = self.index / pimg.cols();
+    col = self.index % pimg.cols();
+    switch (pimg.data) {
+        .gray => |img| {
+            const v = img.at(row, col).*;
+            pixel_obj = c.PyLong_FromLong(@intCast(v));
+        },
+        .rgb => |img| {
+            const p = img.at(row, col).*;
+            const color_module = @import("color.zig");
+            const rgb_obj = c.PyType_GenericAlloc(@ptrCast(&color_module.RgbType), 0) orelse return null;
+            const rgb = @as(*color_module.RgbBinding.PyObjectType, @ptrCast(rgb_obj));
+            rgb.field0 = p.r;
+            rgb.field1 = p.g;
+            rgb.field2 = p.b;
+            pixel_obj = rgb_obj;
+        },
+        .rgba => |img| {
+            const p = img.at(row, col).*;
+            const color_module = @import("color.zig");
+            const rgba_obj = c.PyType_GenericAlloc(@ptrCast(&color_module.RgbaType), 0) orelse return null;
+            const rgba = @as(*color_module.RgbaBinding.PyObjectType, @ptrCast(rgba_obj));
+            rgba.field0 = p.r;
+            rgba.field1 = p.g;
+            rgba.field2 = p.b;
+            rgba.field3 = p.a;
+            pixel_obj = rgba_obj;
+        },
     }
 
     if (pixel_obj == null) return null;
