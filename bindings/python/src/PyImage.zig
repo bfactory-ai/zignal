@@ -16,16 +16,19 @@ pub const PyImage = struct {
     };
 
     data: Variant,
+    owning: bool = true,
 
     pub fn initRgba(image: Image(Rgba)) PyImage {
         return .{ .data = .{ .rgba = image } };
     }
 
     pub fn deinit(self: *PyImage, allocator: std.mem.Allocator) void {
-        switch (self.data) {
-            .gray => |*img| img.deinit(allocator),
-            .rgb => |*img| img.deinit(allocator),
-            .rgba => |*img| img.deinit(allocator),
+        if (self.owning) {
+            switch (self.data) {
+                .gray => |*img| img.deinit(allocator),
+                .rgb => |*img| img.deinit(allocator),
+                .rgba => |*img| img.deinit(allocator),
+            }
         }
     }
 
