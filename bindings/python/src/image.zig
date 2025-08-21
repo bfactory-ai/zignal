@@ -667,11 +667,14 @@ fn image_to_numpy(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
 }
 
 const image_from_numpy_doc =
-    \\Create Image from NumPy array with shape (rows, cols, 3) or (rows, cols, 4) and dtype uint8.
+    \\Create Image from a NumPy array with dtype uint8.
     \\
-    \\For 4-channel arrays, zero-copy is used. For 3-channel arrays, the data is
-    \\converted to RGBA format with alpha=255 (requires allocation).
-    \\To enable zero-copy for RGB arrays, use Image.add_alpha() first.
+    \\Zero-copy is used for contiguous arrays with these shapes:
+    \\- Grayscale: (rows, cols) or (rows, cols, 1) → Image(Grayscale)
+    \\- RGB: (rows, cols, 3) → Image(Rgb)
+    \\- RGBA: (rows, cols, 4) → Image(Rgba)
+    \\
+    \\Arrays must be C-contiguous. Non-contiguous inputs should be converted with `numpy.ascontiguousarray`.
     \\
     \\## Parameters
     \\- `array` (NDArray[np.uint8]): NumPy array with shape (rows, cols, 3) or (rows, cols, 4) and dtype uint8.
@@ -731,33 +734,41 @@ fn image_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c
         return null;
     }
 
-    // Validate dimensions (should be 3D with shape (rows, cols, 3 or 4))
-    if (buffer.ndim != 3) {
-        c.PyErr_SetString(c.PyExc_ValueError, "Array must have shape (rows, cols, 3) or (rows, cols, 4)");
+    // Validate dimensions and shape
+    const ndim: c_int = buffer.ndim;
+    if (ndim != 2 and ndim != 3) {
+        c.PyErr_SetString(c.PyExc_ValueError, "Array must have shape (rows, cols), (rows, cols, 1|3|4)");
         return null;
     }
 
-    // Get shape information
     const shape = @as([*]c.Py_ssize_t, @ptrCast(buffer.shape));
     const rows = @as(usize, @intCast(shape[0]));
     const cols = @as(usize, @intCast(shape[1]));
-    const channels = @as(usize, @intCast(shape[2]));
-
-    if (channels != 3 and channels != 4) {
-        c.PyErr_SetString(c.PyExc_ValueError, "Array must have 3 channels (RGB) or 4 channels (RGBA)");
+    var channels: usize = 1;
+    if (ndim == 3) channels = @as(usize, @intCast(shape[2]));
+    if (!(channels == 1 or channels == 3 or channels == 4)) {
+        c.PyErr_SetString(c.PyExc_ValueError, "Array channels must be 1, 3, or 4");
         return null;
     }
 
     // Check if array is C-contiguous
-    // For C-contiguous, strides should be: (cols*channels, channels, 1)
     const strides = @as([*]c.Py_ssize_t, @ptrCast(buffer.strides));
-    const expected_stride_2 = buffer.itemsize; // Should be 1 for uint8
-    const expected_stride_1 = expected_stride_2 * @as(c.Py_ssize_t, @intCast(channels)); // Should be 3 or 4
-    const expected_stride_0 = expected_stride_1 * @as(c.Py_ssize_t, @intCast(cols)); // Should be cols * channels
-
-    if (strides[0] != expected_stride_0 or strides[1] != expected_stride_1 or strides[2] != expected_stride_2) {
-        c.PyErr_SetString(c.PyExc_ValueError, "Array is not C-contiguous. Use numpy.ascontiguousarray() first.");
-        return null;
+    const item = buffer.itemsize; // 1 for uint8
+    if (ndim == 2) {
+        const expected_stride_1 = item; // 1
+        const expected_stride_0 = expected_stride_1 * @as(c.Py_ssize_t, @intCast(cols));
+        if (strides[1] != expected_stride_1 or strides[0] != expected_stride_0) {
+            c.PyErr_SetString(c.PyExc_ValueError, "Array is not C-contiguous. Use numpy.ascontiguousarray() first.");
+            return null;
+        }
+    } else {
+        const expected_stride_2 = item; // 1
+        const expected_stride_1 = expected_stride_2 * @as(c.Py_ssize_t, @intCast(channels));
+        const expected_stride_0 = expected_stride_1 * @as(c.Py_ssize_t, @intCast(cols));
+        if (strides[2] != expected_stride_2 or strides[1] != expected_stride_1 or strides[0] != expected_stride_0) {
+            c.PyErr_SetString(c.PyExc_ValueError, "Array is not C-contiguous. Use numpy.ascontiguousarray() first.");
+            return null;
+        }
     }
 
     // Create new Python object
@@ -787,39 +798,35 @@ fn image_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c
         self.?.py_image = pimg;
         self.?.parent_ref = null;
         return @as(?*c.PyObject, @ptrCast(self));
-    } else {
-        // 3 channels - need to allocate and convert to RGBA
-        var rgba_image = Image(Rgba).initAlloc(allocator, rows, cols) catch {
-            c.Py_DECREF(@as(*c.PyObject, @ptrCast(self)));
-            c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate RGBA image");
-            return null;
-        };
-
-        // Copy RGB data and set alpha to 255
-        const rgb_data = @as([*]const u8, @ptrCast(buffer.buf));
-        for (0..rows) |r| {
-            for (0..cols) |col| {
-                const src_idx = (r * cols + col) * 3;
-                const dst_idx = r * cols + col;
-                rgba_image.data[dst_idx] = Rgba{
-                    .r = rgb_data[src_idx],
-                    .g = rgb_data[src_idx + 1],
-                    .b = rgb_data[src_idx + 2],
-                    .a = 255,
-                };
-            }
-        }
-
-        // Wrap as owning RGBA PyImage
+    } else if (channels == 3) {
+        // Zero-copy RGB
+        const data_ptr = @as([*]u8, @ptrCast(buffer.buf));
+        const data_slice = data_ptr[0..@intCast(buffer.len)];
+        const img = Image(Rgb).initFromBytes(rows, cols, data_slice);
+        c.Py_INCREF(array_obj.?);
+        self.?.numpy_ref = array_obj;
         const pimg = allocator.create(PyImage) catch {
-            rgba_image.deinit(allocator);
             c.Py_DECREF(@as(*c.PyObject, @ptrCast(self)));
             c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
             return null;
         };
-        pimg.* = .{ .data = .{ .rgba = rgba_image }, .owning = true };
+        pimg.* = .{ .data = .{ .rgb = img }, .owning = false };
         self.?.py_image = pimg;
-        self.?.numpy_ref = null;
+        self.?.parent_ref = null;
+    } else {
+        // channels == 1 OR ndim == 2 → grayscale
+        const data_ptr = @as([*]u8, @ptrCast(buffer.buf));
+        const data_slice = data_ptr[0..@intCast(buffer.len)];
+        const img = Image(u8).initFromBytes(rows, cols, data_slice);
+        c.Py_INCREF(array_obj.?);
+        self.?.numpy_ref = array_obj;
+        const pimg = allocator.create(PyImage) catch {
+            c.Py_DECREF(@as(*c.PyObject, @ptrCast(self)));
+            c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
+            return null;
+        };
+        pimg.* = .{ .data = .{ .gray = img }, .owning = false };
+        self.?.py_image = pimg;
         self.?.parent_ref = null;
     }
     return @as(?*c.PyObject, @ptrCast(self));
