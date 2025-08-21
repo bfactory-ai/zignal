@@ -4,10 +4,15 @@ const zignal = @import("zignal");
 const InterpolationMethod = zignal.InterpolationMethod;
 const Image = zignal.Image;
 const Rgba = zignal.Rgba;
+const Rgb = zignal.Rgb;
 const DisplayFormat = zignal.DisplayFormat;
 
 const canvas = @import("canvas.zig");
 const color_utils = @import("color_utils.zig");
+const color_bindings = @import("color.zig");
+const grayscale_format = @import("grayscale_format.zig");
+const PyImageMod = @import("PyImage.zig");
+const PyImage = PyImageMod.PyImage;
 const pixel_iterator = @import("pixel_iterator.zig");
 const py_utils = @import("py_utils.zig");
 const allocator = py_utils.allocator;
@@ -26,6 +31,8 @@ pub const ImageObject = extern struct {
     ob_base: c.PyObject,
     // Store pointer to heap-allocated image data (optional)
     image_ptr: ?*Image(Rgba),
+    // Store dynamic image for non-RGBA formats (or future migration)
+    py_image: ?*PyImage,
     // Store reference to NumPy array if created from numpy (for zero-copy)
     numpy_ref: ?*c.PyObject,
     // Store reference to parent Image if this is a view (for memory management)
@@ -40,6 +47,7 @@ fn image_new(type_obj: ?*c.PyTypeObject, args: ?*c.PyObject, kwds: ?*c.PyObject)
     if (self) |obj| {
         // Initialize to null pointer to avoid undefined behavior
         obj.image_ptr = null;
+        obj.py_image = null;
         obj.numpy_ref = null;
         obj.parent_ref = null;
     }
@@ -79,7 +87,6 @@ const image_init_doc =
 ;
 
 fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) c_int {
-    _ = kwds; // Not used in current implementation
     const self = @as(*ImageObject, @ptrCast(self_obj.?));
 
     // Check if the image is already initialized (might be from load or from_numpy)
@@ -88,15 +95,16 @@ fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) ca
         return 0;
     }
 
-    // Parse arguments
+    // Parse arguments: rows, cols, optional color, keyword-only format
     var rows: c_int = 0;
     var cols: c_int = 0;
     var color_obj: ?*c.PyObject = null;
+    var format_obj: ?*c.PyObject = null;
 
-    // Parse as separate integers
-    const format = std.fmt.comptimePrint("ii|O", .{});
-    if (c.PyArg_ParseTuple(args, format.ptr, &rows, &cols, &color_obj) == 0) {
-        c.PyErr_SetString(c.PyExc_TypeError, "Image() requires (rows, cols, color=None) as arguments");
+    var kwlist = [_:null]?[*:0]u8{ @constCast("rows"), @constCast("cols"), @constCast("color"), @constCast("format"), null };
+    const fmt = std.fmt.comptimePrint("ii|O$O", .{});
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, fmt.ptr, @ptrCast(&kwlist), &rows, &cols, &color_obj, &format_obj) == 0) {
+        c.PyErr_SetString(c.PyExc_TypeError, "Image() requires (rows, cols, color=None, *, format=...) arguments");
         return -1;
     }
 
@@ -113,32 +121,105 @@ fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) ca
         };
     }
 
-    // Create image
-    var image = Image(Rgba).initAlloc(allocator, validated_rows, validated_cols) catch {
-        c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image data");
-        return -1;
-    };
+    // Determine requested format (sentinel types); default to RGBA for compatibility.
+    var _use_gray: bool = false;
+    var _use_rgb: bool = false;
+    if (format_obj) |fmt_obj| {
+        // Accept either the type object itself or an instance of the type
+        // Compare pointer identity for type objects
+        const is_type_obj = c.PyObject_TypeCheck(fmt_obj, @ptrCast(&c.PyType_Type)) != 0;
+        if (is_type_obj) {
+            if (fmt_obj == @as(*c.PyObject, @ptrCast(&grayscale_format.GrayscaleType))) {
+                _use_gray = true;
+            } else if (fmt_obj == @as(*c.PyObject, @ptrCast(&color_bindings.RgbType))) {
+                _use_rgb = true;
+            } else if (fmt_obj == @as(*c.PyObject, @ptrCast(&color_bindings.RgbaType))) {
+                // default already RGBA
+            } else {
+                c.PyErr_SetString(c.PyExc_TypeError, "format must be zignal.Grayscale, zignal.Rgb, or zignal.Rgba");
+                return -1;
+            }
+        } else {
+            // Instances: allow Rgb/Rgba instances for convenience
+            if (c.PyObject_IsInstance(fmt_obj, @ptrCast(&color_bindings.RgbType)) == 1) {
+                _use_rgb = true;
+            } else if (c.PyObject_IsInstance(fmt_obj, @ptrCast(&color_bindings.RgbaType)) == 1) {
+                // default already RGBA
+            } else {
+                c.PyErr_SetString(c.PyExc_TypeError, "format must be zignal.Grayscale, zignal.Rgb, or zignal.Rgba");
+                return -1;
+            }
+        }
+    }
 
-    // Fill with specified color
-    @memset(image.data, fill_color);
-
-    // Store the image
-    const image_ptr = allocator.create(Image(Rgba)) catch {
-        image.deinit(allocator);
-        c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
-        return -1;
-    };
-
-    image_ptr.* = image;
-    self.image_ptr = image_ptr;
-    self.numpy_ref = null;
-    self.parent_ref = null;
-
-    return 0;
+    // Create grayscale or RGBA depending on requested format
+    if (_use_gray) {
+        // Grayscale path
+        var gimg = Image(u8).initAlloc(allocator, validated_rows, validated_cols) catch {
+            c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image data");
+            return -1;
+        };
+        // Fill with grayscale value derived from provided color using luma
+        @memset(gimg.data, fill_color.toGray());
+        const pimg = allocator.create(PyImage) catch {
+            gimg.deinit(allocator);
+            c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
+            return -1;
+        };
+        pimg.data = PyImage.Variant{ .gray = gimg };
+        self.py_image = pimg;
+        self.image_ptr = null;
+        self.numpy_ref = null;
+        self.parent_ref = null;
+        return 0;
+    } else if (_use_rgb) {
+        // RGB path
+        var rimg = Image(Rgb).initAlloc(allocator, validated_rows, validated_cols) catch {
+            c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image data");
+            return -1;
+        };
+        @memset(rimg.data, fill_color.toRgb());
+        const pimg = allocator.create(PyImage) catch {
+            rimg.deinit(allocator);
+            c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
+            return -1;
+        };
+        pimg.data = PyImage.Variant{ .rgb = rimg };
+        self.py_image = pimg;
+        self.image_ptr = null;
+        self.numpy_ref = null;
+        self.parent_ref = null;
+        return 0;
+    } else {
+        // RGBA path (default)
+        var image = Image(Rgba).initAlloc(allocator, validated_rows, validated_cols) catch {
+            c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image data");
+            return -1;
+        };
+        @memset(image.data, fill_color);
+        const image_ptr = allocator.create(Image(Rgba)) catch {
+            image.deinit(allocator);
+            c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
+            return -1;
+        };
+        image_ptr.* = image;
+        self.image_ptr = image_ptr;
+        self.numpy_ref = null;
+        self.parent_ref = null;
+        return 0;
+    }
 }
 
 fn image_dealloc(self_obj: ?*c.PyObject) callconv(.c) void {
     const self = @as(*ImageObject, @ptrCast(self_obj.?));
+
+    // Free PyImage if present
+    if (self.py_image) |pimg| {
+        var tmp = pimg.*;
+        tmp.deinit(py_utils.allocator);
+        py_utils.allocator.destroy(pimg);
+        self.py_image = null;
+    }
 
     // Free the image data if it was allocated
     if (self.image_ptr) |ptr| {
@@ -247,9 +328,18 @@ fn image_richcompare(self_obj: [*c]c.PyObject, other_obj: [*c]c.PyObject, op: c_
 fn image_repr(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*ImageObject, @ptrCast(self_obj.?));
 
-    if (self.image_ptr) |ptr| {
-        var buffer: [64]u8 = undefined;
-        const formatted = std.fmt.bufPrintZ(&buffer, "Image({d}x{d})", .{ ptr.rows, ptr.cols }) catch return null;
+    if (self.py_image) |pimg| {
+        var buffer: [96]u8 = undefined;
+        const fmt_name = switch (pimg.data) {
+            .gray => "Grayscale",
+            .rgb => "Rgb",
+            .rgba => "Rgba",
+        };
+        const formatted = std.fmt.bufPrintZ(&buffer, "Image({d}x{d}, format={s})", .{ pimg.rows(), pimg.cols(), fmt_name }) catch return null;
+        return c.PyUnicode_FromString(formatted.ptr);
+    } else if (self.image_ptr) |ptr| {
+        var buffer: [96]u8 = undefined;
+        const formatted = std.fmt.bufPrintZ(&buffer, "Image({d}x{d}, format=Rgba)", .{ ptr.rows, ptr.cols }) catch return null;
         return c.PyUnicode_FromString(formatted.ptr);
     } else {
         return c.PyUnicode_FromString("Image(uninitialized)");
@@ -260,6 +350,9 @@ fn image_get_rows(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c
     _ = closure;
     const self = @as(*ImageObject, @ptrCast(self_obj.?));
 
+    if (self.py_image) |pimg| {
+        return c.PyLong_FromLong(@intCast(pimg.rows()));
+    }
     const ptr = py_utils.validateNonNull(*Image(Rgba), self.image_ptr, "Image") catch return null;
     return c.PyLong_FromLong(@intCast(ptr.rows));
 }
@@ -268,14 +361,51 @@ fn image_get_cols(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c
     _ = closure;
     const self = @as(*ImageObject, @ptrCast(self_obj.?));
 
+    if (self.py_image) |pimg| {
+        return c.PyLong_FromLong(@intCast(pimg.cols()));
+    }
     const ptr = py_utils.validateNonNull(*Image(Rgba), self.image_ptr, "Image") catch return null;
     return c.PyLong_FromLong(@intCast(ptr.cols));
+}
+
+fn image_get_format(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
+    _ = closure;
+    const self = @as(*ImageObject, @ptrCast(self_obj.?));
+
+    // Return sentinel type objects: zignal.Grayscale, zignal.Rgb, or zignal.Rgba
+    if (self.py_image) |pimg| {
+        return switch (pimg.data) {
+            .gray => blk: {
+                const obj = @as(*c.PyObject, @ptrCast(&grayscale_format.GrayscaleType));
+                c.Py_INCREF(obj);
+                break :blk obj;
+            },
+            .rgb => blk: {
+                const obj = @as(*c.PyObject, @ptrCast(&color_bindings.RgbType));
+                c.Py_INCREF(obj);
+                break :blk obj;
+            },
+            .rgba => blk: {
+                const obj = @as(*c.PyObject, @ptrCast(&color_bindings.RgbaType));
+                c.Py_INCREF(obj);
+                break :blk obj;
+            },
+        };
+    }
+
+    // Default RGBA path
+    const obj = @as(*c.PyObject, @ptrCast(&color_bindings.RgbaType));
+    c.Py_INCREF(obj);
+    return obj;
 }
 
 fn image_is_view(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args; // No arguments
     const self = @as(*ImageObject, @ptrCast(self_obj.?));
 
+    if (self.py_image) |_| {
+        return @ptrCast(py_utils.getPyBool(false));
+    }
     const ptr = py_utils.validateNonNull(*Image(Rgba), self.image_ptr, "Image") catch return null;
     return @ptrCast(py_utils.getPyBool(ptr.isView()));
 }
@@ -367,6 +497,121 @@ fn image_to_numpy(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
         return null;
     }
 
+    if (self.py_image) |pimg| {
+        switch (pimg.data) {
+            .gray => |img| {
+                // Import numpy
+                const np_module = c.PyImport_ImportModule("numpy") orelse {
+                    c.PyErr_SetString(c.PyExc_ImportError, "NumPy is not installed. Please install it with: pip install numpy");
+                    return null;
+                };
+                defer c.Py_DECREF(np_module);
+
+                // Create a memoryview from our image data
+                var buffer = c.Py_buffer{
+                    .buf = @ptrCast(img.data.ptr),
+                    .obj = self_obj,
+                    .len = @intCast(img.rows * img.cols * @sizeOf(u8)),
+                    .itemsize = 1,
+                    .readonly = 0,
+                    .ndim = 1,
+                    .format = @constCast("B"),
+                    .shape = null,
+                    .strides = null,
+                    .suboffsets = null,
+                    .internal = null,
+                };
+                c.Py_INCREF(self_obj); // Keep parent alive
+
+                const memview = c.PyMemoryView_FromBuffer(&buffer) orelse {
+                    c.Py_DECREF(self_obj);
+                    return null;
+                };
+                defer c.Py_DECREF(memview);
+
+                // numpy.frombuffer(memview, dtype='uint8').reshape(rows, cols, 1)
+                const frombuffer = c.PyObject_GetAttrString(np_module, "frombuffer") orelse return null;
+                defer c.Py_DECREF(frombuffer);
+                const args_tuple2 = c.Py_BuildValue("(O)", memview) orelse return null;
+                defer c.Py_DECREF(args_tuple2);
+                const kwargs2 = c.Py_BuildValue("{s:s}", "dtype", "uint8") orelse return null;
+                defer c.Py_DECREF(kwargs2);
+                const flat_array = c.PyObject_Call(frombuffer, args_tuple2, kwargs2) orelse return null;
+                const reshape_method = c.PyObject_GetAttrString(flat_array, "reshape") orelse {
+                    c.Py_DECREF(flat_array);
+                    return null;
+                };
+                defer c.Py_DECREF(reshape_method);
+                const shape_tuple = c.Py_BuildValue("(III)", img.rows, img.cols, @as(c_uint, 1)) orelse {
+                    c.Py_DECREF(flat_array);
+                    return null;
+                };
+                defer c.Py_DECREF(shape_tuple);
+                const reshaped = c.PyObject_CallObject(reshape_method, shape_tuple) orelse {
+                    c.Py_DECREF(flat_array);
+                    return null;
+                };
+                c.Py_DECREF(flat_array);
+                return reshaped;
+            },
+            .rgb => |img| {
+                // Import numpy
+                const np_module = c.PyImport_ImportModule("numpy") orelse {
+                    c.PyErr_SetString(c.PyExc_ImportError, "NumPy is not installed. Please install it with: pip install numpy");
+                    return null;
+                };
+                defer c.Py_DECREF(np_module);
+
+                // Create a memoryview from our image data (packed RGB u8)
+                var buffer = c.Py_buffer{
+                    .buf = @ptrCast(img.data.ptr),
+                    .obj = self_obj,
+                    .len = @intCast(img.rows * img.cols * @sizeOf(Rgb)),
+                    .itemsize = 1,
+                    .readonly = 0,
+                    .ndim = 1,
+                    .format = @constCast("B"),
+                    .shape = null,
+                    .strides = null,
+                    .suboffsets = null,
+                    .internal = null,
+                };
+                c.Py_INCREF(self_obj); // Keep parent alive
+
+                const memview = c.PyMemoryView_FromBuffer(&buffer) orelse {
+                    c.Py_DECREF(self_obj);
+                    return null;
+                };
+                defer c.Py_DECREF(memview);
+
+                // numpy.frombuffer(memview, dtype='uint8').reshape(rows, cols, 3)
+                const frombuffer = c.PyObject_GetAttrString(np_module, "frombuffer") orelse return null;
+                defer c.Py_DECREF(frombuffer);
+                const args_tuple2 = c.Py_BuildValue("(O)", memview) orelse return null;
+                defer c.Py_DECREF(args_tuple2);
+                const kwargs2 = c.Py_BuildValue("{s:s}", "dtype", "uint8") orelse return null;
+                defer c.Py_DECREF(kwargs2);
+                const flat_array = c.PyObject_Call(frombuffer, args_tuple2, kwargs2) orelse return null;
+                const reshape_method = c.PyObject_GetAttrString(flat_array, "reshape") orelse {
+                    c.Py_DECREF(flat_array);
+                    return null;
+                };
+                defer c.Py_DECREF(reshape_method);
+                const shape_tuple = c.Py_BuildValue("(III)", img.rows, img.cols, @as(c_uint, 3)) orelse {
+                    c.Py_DECREF(flat_array);
+                    return null;
+                };
+                defer c.Py_DECREF(shape_tuple);
+                const reshaped = c.PyObject_CallObject(reshape_method, shape_tuple) orelse {
+                    c.Py_DECREF(flat_array);
+                    return null;
+                };
+                c.Py_DECREF(flat_array);
+                return reshaped;
+            },
+            .rgba => {},
+        }
+    }
     const ptr = py_utils.validateNonNull(*Image(Rgba), self.image_ptr, "Image") catch return null;
 
     // If created from numpy and include_alpha matches, return the original array
@@ -650,8 +895,7 @@ const image_save_doc =
 fn image_save(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*ImageObject, @ptrCast(self_obj.?));
 
-    // Check if image is initialized
-    const image_ptr = py_utils.validateNonNull(*Image(Rgba), self.image_ptr, "Image") catch return null;
+    // Determine display format based on spec (parsed below)
 
     // Parse file path argument
     var file_path: [*c]const u8 = undefined;
@@ -671,11 +915,24 @@ fn image_save(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObj
         return null;
     }
 
-    // Get allocator and save PNG
-    image_ptr.save(allocator, path_slice) catch |err| {
-        py_utils.setErrorWithPath(err, path_slice);
-        return null;
-    };
+    // Save PNG for current image format
+    if (self.py_image) |pimg| {
+        const res = switch (pimg.data) {
+            .gray => |img| img.save(allocator, path_slice),
+            .rgb => |img| img.save(allocator, path_slice),
+            .rgba => |img| img.save(allocator, path_slice),
+        };
+        res catch |err| {
+            py_utils.setErrorWithPath(err, path_slice);
+            return null;
+        };
+    } else {
+        const image_ptr = py_utils.validateNonNull(*Image(Rgba), self.image_ptr, "Image") catch return null;
+        image_ptr.save(allocator, path_slice) catch |err| {
+            py_utils.setErrorWithPath(err, path_slice);
+            return null;
+        };
+    }
 
     // Return None
     const none = c.Py_None();
@@ -865,8 +1122,7 @@ fn image_format(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyO
         return image_repr(self_obj);
     }
 
-    // Check if image is initialized
-    const image_ptr = py_utils.validateNonNull(*Image(Rgba), self.image_ptr, "Image") catch return null;
+    // Determine display format based on spec
 
     // Determine display format based on spec
     const display_format: DisplayFormat = if (std.mem.eql(u8, spec_slice, "ansi"))
@@ -943,23 +1199,37 @@ fn image_format(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyO
         return null;
     };
 
-    // Create formatter
-    const formatter = image_ptr.display(display_format);
-
-    // Capture formatted output using std.fmt.format
-    var buffer: std.ArrayList(u8) = .empty;
-    defer buffer.deinit(allocator);
-
-    // Use std.fmt.format to invoke the formatter's format method properly
-    std.fmt.format(buffer.writer(allocator), "{f}", .{formatter}) catch |err| {
-        switch (err) {
-            error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory"),
+    // Format image according to display_format and return a string
+    if (self.py_image) |pimg| {
+        var buffer: std.ArrayList(u8) = .empty;
+        defer buffer.deinit(allocator);
+        const w = buffer.writer(allocator);
+        switch (pimg.data) {
+            .gray => |*img| std.fmt.format(w, "{f}", .{img.display(display_format)}) catch |err| {
+                if (err == error.OutOfMemory) c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory");
+                return null;
+            },
+            .rgb => |*img| std.fmt.format(w, "{f}", .{img.display(display_format)}) catch |err| {
+                if (err == error.OutOfMemory) c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory");
+                return null;
+            },
+            .rgba => |*img| std.fmt.format(w, "{f}", .{img.display(display_format)}) catch |err| {
+                if (err == error.OutOfMemory) c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory");
+                return null;
+            },
         }
-        return null;
-    };
-
-    // Create Python string from buffer
-    return c.PyUnicode_FromStringAndSize(buffer.items.ptr, @intCast(buffer.items.len));
+        return c.PyUnicode_FromStringAndSize(buffer.items.ptr, @intCast(buffer.items.len));
+    } else {
+        const image_ptr = py_utils.validateNonNull(*Image(Rgba), self.image_ptr, "Image") catch return null;
+        const formatter = image_ptr.display(display_format);
+        var buffer: std.ArrayList(u8) = .empty;
+        defer buffer.deinit(allocator);
+        std.fmt.format(buffer.writer(allocator), "{f}", .{formatter}) catch |err| {
+            if (err == error.OutOfMemory) c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory");
+            return null;
+        };
+        return c.PyUnicode_FromStringAndSize(buffer.items.ptr, @intCast(buffer.items.len));
+    }
 }
 
 fn pythonToZigInterpolation(py_value: c_long) !InterpolationMethod {
@@ -2225,7 +2495,14 @@ fn image_canvas(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyO
     _ = args; // No arguments expected
     const self = @as(*ImageObject, @ptrCast(self_obj.?));
 
-    // Check if image is initialized
+    // If PyImage present, use it; otherwise use RGBA pointer
+    const pimg_opt = self.py_image;
+
+    if (pimg_opt) |_| {
+        c.PyErr_SetString(c.PyExc_NotImplementedError, "Canvas not supported for non-RGBA images yet");
+        return null;
+    }
+
     const img_ptr = py_utils.validateNonNull(*Image(Rgba), self.image_ptr, "Image") catch return null;
 
     // Create new Canvas object
@@ -2255,9 +2532,7 @@ fn image_canvas(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyO
 
 fn image_getitem(self_obj: ?*c.PyObject, key: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*ImageObject, @ptrCast(self_obj.?));
-
-    // Check if image is initialized
-    const img_ptr = py_utils.validateNonNull(*Image(Rgba), self.image_ptr, "Image") catch return null;
+    const pimg_opt = self.py_image;
 
     // Parse the key - expecting a tuple of (row, col)
     if (c.PyTuple_Check(key) == 0) {
@@ -2287,41 +2562,79 @@ fn image_getitem(self_obj: ?*c.PyObject, key: ?*c.PyObject) callconv(.c) ?*c.PyO
     }
 
     // Bounds checking
-    if (row < 0 or row >= img_ptr.rows) {
-        c.PyErr_SetString(c.PyExc_IndexError, "Row index out of bounds");
-        return null;
-    }
-    if (col < 0 or col >= img_ptr.cols) {
-        c.PyErr_SetString(c.PyExc_IndexError, "Column index out of bounds");
-        return null;
+    if (pimg_opt) |pimg| {
+        if (row < 0 or row >= pimg.rows()) {
+            c.PyErr_SetString(c.PyExc_IndexError, "Row index out of bounds");
+            return null;
+        }
+        if (col < 0 or col >= pimg.cols()) {
+            c.PyErr_SetString(c.PyExc_IndexError, "Column index out of bounds");
+            return null;
+        }
+    } else {
+        const img_ptr = py_utils.validateNonNull(*Image(Rgba), self.image_ptr, "Image") catch return null;
+        if (row < 0 or row >= img_ptr.rows) {
+            c.PyErr_SetString(c.PyExc_IndexError, "Row index out of bounds");
+            return null;
+        }
+        if (col < 0 or col >= img_ptr.cols) {
+            c.PyErr_SetString(c.PyExc_IndexError, "Column index out of bounds");
+            return null;
+        }
     }
 
-    // Get the pixel value
+    // Variant-specific pixel return
+    if (pimg_opt) |pimg| {
+        switch (pimg.data) {
+            .gray => |img| {
+                const gray = img.at(@intCast(row), @intCast(col)).*;
+                return c.PyLong_FromLong(@intCast(gray));
+            },
+            .rgb => |img| {
+                const p = img.at(@intCast(row), @intCast(col)).*;
+                const color_module = @import("color.zig");
+                const rgb_obj = c.PyType_GenericAlloc(@ptrCast(&color_module.RgbType), 0);
+                if (rgb_obj == null) return null;
+                const rgb = @as(*color_module.RgbBinding.PyObjectType, @ptrCast(rgb_obj));
+                rgb.field0 = p.r;
+                rgb.field1 = p.g;
+                rgb.field2 = p.b;
+                return rgb_obj;
+            },
+            .rgba => |img| {
+                const p = img.at(@intCast(row), @intCast(col)).*;
+                const color_module = @import("color.zig");
+                const rgba_obj = c.PyType_GenericAlloc(@ptrCast(&color_module.RgbaType), 0);
+                if (rgba_obj == null) return null;
+                const rgba = @as(*color_module.RgbaBinding.PyObjectType, @ptrCast(rgba_obj));
+                rgba.field0 = p.r;
+                rgba.field1 = p.g;
+                rgba.field2 = p.b;
+                rgba.field3 = p.a;
+                return rgba_obj;
+            },
+        }
+    }
+
+    // Fallback: RGBA pointer path
+    const img_ptr = py_utils.validateNonNull(*Image(Rgba), self.image_ptr, "Image") catch return null;
     const pixel = img_ptr.at(@intCast(row), @intCast(col)).*;
-
-    // Import color module to get RgbaType
     const color_module = @import("color.zig");
-
-    // Create and return an Rgba object
     const rgba_obj = c.PyType_GenericAlloc(@ptrCast(&color_module.RgbaType), 0);
-    if (rgba_obj == null) {
-        return null;
-    }
-
+    if (rgba_obj == null) return null;
     const rgba = @as(*color_module.RgbaBinding.PyObjectType, @ptrCast(rgba_obj));
     rgba.field0 = pixel.r;
     rgba.field1 = pixel.g;
     rgba.field2 = pixel.b;
     rgba.field3 = pixel.a;
-
     return rgba_obj;
 }
 
 fn image_setitem(self_obj: ?*c.PyObject, key: ?*c.PyObject, value: ?*c.PyObject) callconv(.c) c_int {
     const self = @as(*ImageObject, @ptrCast(self_obj.?));
 
-    // Check if image is initialized
-    const img_ptr = py_utils.validateNonNull(*Image(Rgba), self.image_ptr, "Image") catch return -1;
+    // If PyImage present, use it; else use RGBA pointer
+    const pimg_opt = self.py_image;
 
     // Parse the key - expecting a tuple of (row, col)
     if (c.PyTuple_Check(key) == 0) {
@@ -2351,13 +2664,25 @@ fn image_setitem(self_obj: ?*c.PyObject, key: ?*c.PyObject, value: ?*c.PyObject)
     }
 
     // Bounds checking
-    if (row < 0 or row >= img_ptr.rows) {
-        c.PyErr_SetString(c.PyExc_IndexError, "Row index out of bounds");
-        return -1;
-    }
-    if (col < 0 or col >= img_ptr.cols) {
-        c.PyErr_SetString(c.PyExc_IndexError, "Column index out of bounds");
-        return -1;
+    if (pimg_opt) |pimg| {
+        if (row < 0 or row >= pimg.rows()) {
+            c.PyErr_SetString(c.PyExc_IndexError, "Row index out of bounds");
+            return -1;
+        }
+        if (col < 0 or col >= pimg.cols()) {
+            c.PyErr_SetString(c.PyExc_IndexError, "Column index out of bounds");
+            return -1;
+        }
+    } else {
+        const img_ptr = py_utils.validateNonNull(*Image(Rgba), self.image_ptr, "Image") catch return -1;
+        if (row < 0 or row >= img_ptr.rows) {
+            c.PyErr_SetString(c.PyExc_IndexError, "Row index out of bounds");
+            return -1;
+        }
+        if (col < 0 or col >= img_ptr.cols) {
+            c.PyErr_SetString(c.PyExc_IndexError, "Column index out of bounds");
+            return -1;
+        }
     }
 
     // Parse the color value using parseColorToRgba
@@ -2367,7 +2692,12 @@ fn image_setitem(self_obj: ?*c.PyObject, key: ?*c.PyObject, value: ?*c.PyObject)
     };
 
     // Set the pixel value
-    img_ptr.at(@intCast(row), @intCast(col)).* = color;
+    if (pimg_opt) |pimg| {
+        pimg.setPixelRgba(@intCast(row), @intCast(col), color);
+    } else {
+        const img_ptr = py_utils.validateNonNull(*Image(Rgba), self.image_ptr, "Image") catch return -1;
+        img_ptr.at(@intCast(row), @intCast(col)).* = color;
+    }
 
     return 0;
 }
@@ -2376,6 +2706,9 @@ fn image_len(self_obj: ?*c.PyObject) callconv(.c) c.Py_ssize_t {
     const self = @as(*ImageObject, @ptrCast(self_obj.?));
 
     // Check if image is initialized
+    if (self.py_image) |pimg| {
+        return @intCast(pimg.rows() * pimg.cols());
+    }
     if (self.image_ptr == null) {
         c.PyErr_SetString(c.PyExc_ValueError, "Image not initialized");
         return -1;
@@ -2588,6 +2921,13 @@ pub const image_properties_metadata = [_]stub_metadata.PropertyWithMetadata{
         .set = null,
         .doc = "Number of columns (width) in the image",
         .type = "int",
+    },
+    .{
+        .name = "format",
+        .get = @ptrCast(&image_get_format),
+        .set = null,
+        .doc = "Pixel format sentinel (zignal.Grayscale, zignal.Rgb, or zignal.Rgba)",
+        .type = "type",
     },
 };
 
