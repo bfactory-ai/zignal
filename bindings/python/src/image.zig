@@ -959,6 +959,260 @@ const image_add_alpha_doc =
     \\```
 ;
 
+const image_convert_doc =
+    \\
+    \\Convert the image to a different pixel format.
+    \\
+    \\Supported targets: zignal.Grayscale, zignal.Rgb, zignal.Rgba.
+    \\
+    \\Returns a new Image with the requested format.
+;
+
+fn image_convert(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    const self = @as(*ImageObject, @ptrCast(self_obj.?));
+
+    // Parse one argument: target format sentinel or instance of Rgb/Rgba
+    var format_obj: ?*c.PyObject = null;
+    const fmt = std.fmt.comptimePrint("O", .{});
+    if (c.PyArg_ParseTuple(args, fmt.ptr, &format_obj) == 0) {
+        return null;
+    }
+
+    if (format_obj == null) {
+        c.PyErr_SetString(c.PyExc_TypeError, "convert() requires a target format (zignal.Grayscale, zignal.Rgb, or zignal.Rgba)");
+        return null;
+    }
+
+    // Determine target type
+    var target_gray = false;
+    var target_rgb = false;
+    var target_rgba = false;
+
+    const is_type_obj = c.PyObject_TypeCheck(format_obj.?, @ptrCast(&c.PyType_Type)) != 0;
+    if (is_type_obj) {
+        if (format_obj.? == @as(*c.PyObject, @ptrCast(&grayscale_format.GrayscaleType))) {
+            target_gray = true;
+        } else if (format_obj.? == @as(*c.PyObject, @ptrCast(&color_bindings.RgbType))) {
+            target_rgb = true;
+        } else if (format_obj.? == @as(*c.PyObject, @ptrCast(&color_bindings.RgbaType))) {
+            target_rgba = true;
+        } else {
+            c.PyErr_SetString(c.PyExc_TypeError, "format must be zignal.Grayscale, zignal.Rgb, or zignal.Rgba");
+            return null;
+        }
+    } else {
+        if (c.PyObject_IsInstance(format_obj.?, @ptrCast(&color_bindings.RgbType)) == 1) {
+            target_rgb = true;
+        } else if (c.PyObject_IsInstance(format_obj.?, @ptrCast(&color_bindings.RgbaType)) == 1) {
+            target_rgba = true;
+        } else {
+            c.PyErr_SetString(c.PyExc_TypeError, "format must be zignal.Grayscale, zignal.Rgb, or zignal.Rgba");
+            return null;
+        }
+    }
+
+    // Execute conversion using underlying Image(T).convert
+    if (self.py_image) |pimg| {
+        switch (pimg.data) {
+            .gray => |*img| {
+                if (target_gray) {
+                    // Same format: copy
+                    var out = Image(u8).initAlloc(allocator, img.rows, img.cols) catch {
+                        c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image data");
+                        return null;
+                    };
+                    img.copy(out);
+                    const py = c.PyType_GenericAlloc(@ptrCast(&ImageType), 0) orelse return null;
+                    const out_self = @as(*ImageObject, @ptrCast(py));
+                    const pnew = allocator.create(PyImage) catch {
+                        out.deinit(allocator);
+                        c.Py_DECREF(py);
+                        c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
+                        return null;
+                    };
+                    pnew.* = .{ .data = .{ .gray = out } };
+                    out_self.py_image = pnew;
+                    out_self.image_ptr = null;
+                    out_self.numpy_ref = null;
+                    out_self.parent_ref = null;
+                    return py;
+                } else if (target_rgb) {
+                    const out = img.convert(Rgb, allocator) catch {
+                        c.PyErr_SetString(c.PyExc_MemoryError, "Failed to convert image");
+                        return null;
+                    };
+                    const py = c.PyType_GenericAlloc(@ptrCast(&ImageType), 0) orelse return null;
+                    const out_self = @as(*ImageObject, @ptrCast(py));
+                    const pnew = allocator.create(PyImage) catch {
+                        var tmp = out;
+                        tmp.deinit(allocator);
+                        c.Py_DECREF(py);
+                        c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
+                        return null;
+                    };
+                    pnew.* = .{ .data = .{ .rgb = out } };
+                    out_self.py_image = pnew;
+                    out_self.image_ptr = null;
+                    out_self.numpy_ref = null;
+                    out_self.parent_ref = null;
+                    return py;
+                } else if (target_rgba) {
+                    const out = img.convert(Rgba, allocator) catch {
+                        c.PyErr_SetString(c.PyExc_MemoryError, "Failed to convert image");
+                        return null;
+                    };
+                    const py = c.PyType_GenericAlloc(@ptrCast(&ImageType), 0) orelse return null;
+                    const out_self = @as(*ImageObject, @ptrCast(py));
+                    const img_ptr = allocator.create(Image(Rgba)) catch {
+                        var tmp = out;
+                        tmp.deinit(allocator);
+                        c.Py_DECREF(py);
+                        c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
+                        return null;
+                    };
+                    img_ptr.* = out;
+                    out_self.image_ptr = img_ptr;
+                    out_self.py_image = null;
+                    out_self.numpy_ref = null;
+                    out_self.parent_ref = null;
+                    return py;
+                }
+            },
+            .rgb => |*img| {
+                if (target_gray) {
+                    const out = img.convert(u8, allocator) catch {
+                        c.PyErr_SetString(c.PyExc_MemoryError, "Failed to convert image");
+                        return null;
+                    };
+                    const py = c.PyType_GenericAlloc(@ptrCast(&ImageType), 0) orelse return null;
+                    const out_self = @as(*ImageObject, @ptrCast(py));
+                    const pnew = allocator.create(PyImage) catch {
+                        var tmp = out;
+                        tmp.deinit(allocator);
+                        c.Py_DECREF(py);
+                        c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
+                        return null;
+                    };
+                    pnew.* = .{ .data = .{ .gray = out } };
+                    out_self.py_image = pnew;
+                    out_self.image_ptr = null;
+                    out_self.numpy_ref = null;
+                    out_self.parent_ref = null;
+                    return py;
+                } else if (target_rgb) {
+                    var out = Image(Rgb).initAlloc(allocator, img.rows, img.cols) catch {
+                        c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image data");
+                        return null;
+                    };
+                    img.copy(out);
+                    const py = c.PyType_GenericAlloc(@ptrCast(&ImageType), 0) orelse return null;
+                    const out_self = @as(*ImageObject, @ptrCast(py));
+                    const pnew = allocator.create(PyImage) catch {
+                        out.deinit(allocator);
+                        c.Py_DECREF(py);
+                        c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
+                        return null;
+                    };
+                    pnew.* = .{ .data = .{ .rgb = out } };
+                    out_self.py_image = pnew;
+                    out_self.image_ptr = null;
+                    out_self.numpy_ref = null;
+                    out_self.parent_ref = null;
+                    return py;
+                } else if (target_rgba) {
+                    const out = img.convert(Rgba, allocator) catch {
+                        c.PyErr_SetString(c.PyExc_MemoryError, "Failed to convert image");
+                        return null;
+                    };
+                    const py = c.PyType_GenericAlloc(@ptrCast(&ImageType), 0) orelse return null;
+                    const out_self = @as(*ImageObject, @ptrCast(py));
+                    const img_ptr = allocator.create(Image(Rgba)) catch {
+                        var tmp = out;
+                        tmp.deinit(allocator);
+                        c.Py_DECREF(py);
+                        c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
+                        return null;
+                    };
+                    img_ptr.* = out;
+                    out_self.image_ptr = img_ptr;
+                    out_self.py_image = null;
+                    out_self.numpy_ref = null;
+                    out_self.parent_ref = null;
+                    return py;
+                }
+            },
+            .rgba => {},
+        }
+    }
+
+    // Fallback: source is RGBA pointer
+    const src = py_utils.validateNonNull(*Image(Rgba), self.image_ptr, "Image") catch return null;
+    if (target_gray) {
+        const out = src.convert(u8, allocator) catch {
+            c.PyErr_SetString(c.PyExc_MemoryError, "Failed to convert image");
+            return null;
+        };
+        const py = c.PyType_GenericAlloc(@ptrCast(&ImageType), 0) orelse return null;
+        const out_self = @as(*ImageObject, @ptrCast(py));
+        const pnew = allocator.create(PyImage) catch {
+            var tmp = out;
+            tmp.deinit(allocator);
+            c.Py_DECREF(py);
+            c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
+            return null;
+        };
+        pnew.* = .{ .data = .{ .gray = out } };
+        out_self.py_image = pnew;
+        out_self.image_ptr = null;
+        out_self.numpy_ref = null;
+        out_self.parent_ref = null;
+        return py;
+    } else if (target_rgb) {
+        const out = src.convert(Rgb, allocator) catch {
+            c.PyErr_SetString(c.PyExc_MemoryError, "Failed to convert image");
+            return null;
+        };
+        const py = c.PyType_GenericAlloc(@ptrCast(&ImageType), 0) orelse return null;
+        const out_self = @as(*ImageObject, @ptrCast(py));
+        const pnew = allocator.create(PyImage) catch {
+            var tmp = out;
+            tmp.deinit(allocator);
+            c.Py_DECREF(py);
+            c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
+            return null;
+        };
+        pnew.* = .{ .data = .{ .rgb = out } };
+        out_self.py_image = pnew;
+        out_self.image_ptr = null;
+        out_self.numpy_ref = null;
+        out_self.parent_ref = null;
+        return py;
+    } else if (target_rgba) {
+        var out = Image(Rgba).initAlloc(allocator, src.rows, src.cols) catch {
+            c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image data");
+            return null;
+        };
+        src.copy(out);
+        const py = c.PyType_GenericAlloc(@ptrCast(&ImageType), 0) orelse return null;
+        const out_self = @as(*ImageObject, @ptrCast(py));
+        const img_ptr = allocator.create(Image(Rgba)) catch {
+            out.deinit(allocator);
+            c.Py_DECREF(py);
+            c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
+            return null;
+        };
+        img_ptr.* = out;
+        out_self.image_ptr = img_ptr;
+        out_self.py_image = null;
+        out_self.numpy_ref = null;
+        out_self.parent_ref = null;
+        return py;
+    }
+
+    c.PyErr_SetString(c.PyExc_TypeError, "Unsupported conversion target");
+    return null;
+}
+
 fn image_add_alpha(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = type_obj;
     var array_obj: ?*c.PyObject = undefined;
@@ -2725,6 +2979,14 @@ pub const image_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .flags = c.METH_VARARGS | c.METH_CLASS,
         .doc = image_load_doc,
         .params = "cls, path: str",
+        .returns = "Image",
+    },
+    .{
+        .name = "convert",
+        .meth = @ptrCast(&image_convert),
+        .flags = c.METH_VARARGS,
+        .doc = image_convert_doc,
+        .params = "self, format: type",
         .returns = "Image",
     },
     .{
