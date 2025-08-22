@@ -275,8 +275,11 @@ fn image_richcompare(self_obj: [*c]c.PyObject, other_obj: [*c]c.PyObject, op: c_
         // If either is uninitialized, they are equal only for != case
         return @ptrCast(py_utils.getPyBool(op != c.Py_EQ));
     }
-    const dims_self = .{ self.py_image.?.rows(), self.py_image.?.cols() };
-    const dims_other = .{ other.py_image.?.rows(), other.py_image.?.cols() };
+    // Store in local variables after null check to avoid repeated unwrapping
+    const self_img = self.py_image.?;
+    const other_img = other.py_image.?;
+    const dims_self = .{ self_img.rows(), self_img.cols() };
+    const dims_other = .{ other_img.rows(), other_img.cols() };
 
     if (dims_self[0] != dims_other[0] or dims_self[1] != dims_other[1]) {
         return @ptrCast(py_utils.getPyBool(op != c.Py_EQ));
@@ -289,8 +292,8 @@ fn image_richcompare(self_obj: [*c]c.PyObject, other_obj: [*c]c.PyObject, op: c_
     while (r < rows) : (r += 1) {
         var cidx: usize = 0;
         while (cidx < cols) : (cidx += 1) {
-            const a = self.py_image.?.getPixelRgba(r, cidx);
-            const b = other.py_image.?.getPixelRgba(r, cidx);
+            const a = self_img.getPixelRgba(r, cidx);
+            const b = other_img.getPixelRgba(r, cidx);
             if (a != b) {
                 equal = false;
                 break;
@@ -2243,6 +2246,7 @@ fn image_psnr(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObj
         return null;
     }
 
+    // Store in local variables after null check
     const a = self.py_image.?;
     const b = other.py_image.?;
 
@@ -3074,7 +3078,8 @@ fn image_insert(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) 
                     c.PyErr_SetString(c.PyExc_TypeError, "Source image not initialized");
                     return null;
                 }
-                switch (source.py_image.?.data) {
+                const src_pimg = source.py_image.?;
+                switch (src_pimg.data) {
                     .gray => |img| src_u8 = img,
                     .rgb => |img| src_u8 = img.convert(u8, allocator) catch {
                         c.PyErr_SetString(c.PyExc_MemoryError, "Failed to convert source image");
@@ -3094,7 +3099,8 @@ fn image_insert(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) 
                     c.PyErr_SetString(c.PyExc_TypeError, "Source image not initialized");
                     return null;
                 }
-                switch (source.py_image.?.data) {
+                const src_pimg = source.py_image.?;
+                switch (src_pimg.data) {
                     .rgb => |img| src_rgb = img,
                     .gray => |img| src_rgb = img.convert(Rgb, allocator) catch {
                         c.PyErr_SetString(c.PyExc_MemoryError, "Failed to convert source image");
@@ -3114,7 +3120,8 @@ fn image_insert(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) 
                     c.PyErr_SetString(c.PyExc_TypeError, "Source image not initialized");
                     return null;
                 }
-                switch (source.py_image.?.data) {
+                const src_pimg = source.py_image.?;
+                switch (src_pimg.data) {
                     .rgba => |img| src_rgba = img,
                     .gray => |img| src_rgba = img.convert(Rgba, allocator) catch {
                         c.PyErr_SetString(c.PyExc_MemoryError, "Failed to convert source image");
