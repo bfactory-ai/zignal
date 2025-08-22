@@ -119,16 +119,21 @@ fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) ca
 
     // Parse color if provided, otherwise use transparent
     var fill_color = Rgba{ .r = 0, .g = 0, .b = 0, .a = 0 }; // Default transparent
+    var color_components: usize = 0; // Track number of color components
     if (color_obj != null and color_obj != c.Py_None()) {
+        // Check tuple size if it's a tuple to auto-detect format
+        if (c.PyTuple_Check(color_obj) != 0) {
+            color_components = @intCast(c.PyTuple_Size(color_obj));
+        }
         fill_color = color_utils.parseColorToRgba(color_obj) catch {
             // Error already set by parseColorToRgba
             return -1;
         };
     }
 
-    // Determine requested format (sentinel types); default to RGB.
+    // Determine requested format (sentinel types); default based on color components.
     var _use_gray: bool = false;
-    var _use_rgb: bool = true;
+    var _use_rgb: bool = (color_components != 4); // Default to RGB unless 4-component color
     if (format_obj) |fmt_obj| {
         // Accept either the type object itself or an instance of the type
         // Compare pointer identity for type objects

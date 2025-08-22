@@ -387,11 +387,29 @@ pub fn Filter(comptime T: type) type {
                                             .mirror => blk: {
                                                 var rr = iry;
                                                 var cc = icx;
-                                                if (rr < 0) rr = -rr - 1;
-                                                if (rr >= rows) rr = 2 * @as(isize, @intCast(rows)) - rr - 1;
-                                                if (cc < 0) cc = -cc - 1;
-                                                if (cc >= cols) cc = 2 * @as(isize, @intCast(cols)) - cc - 1;
-                                                break :blk @as(i32, src[@as(usize, @intCast(rr * @as(isize, @intCast(cols)) + cc))]);
+                                                const rows_i = @as(isize, @intCast(rows));
+                                                const cols_i = @as(isize, @intCast(cols));
+                                                // Handle negative row indices
+                                                while (rr < 0) {
+                                                    rr = -rr - 1;
+                                                    if (rr >= rows_i) rr = 2 * rows_i - rr - 1;
+                                                }
+                                                // Handle row indices >= rows
+                                                while (rr >= rows_i) {
+                                                    rr = 2 * rows_i - rr - 1;
+                                                    if (rr < 0) rr = -rr - 1;
+                                                }
+                                                // Handle negative column indices
+                                                while (cc < 0) {
+                                                    cc = -cc - 1;
+                                                    if (cc >= cols_i) cc = 2 * cols_i - cc - 1;
+                                                }
+                                                // Handle column indices >= cols
+                                                while (cc >= cols_i) {
+                                                    cc = 2 * cols_i - cc - 1;
+                                                    if (cc < 0) cc = -cc - 1;
+                                                }
+                                                break :blk @as(i32, src[@as(usize, @intCast(rr * cols_i + cc))]);
                                             },
                                             .wrap => blk: {
                                                 const wrapped_r = @mod(iry, @as(isize, @intCast(rows)));
@@ -497,11 +515,29 @@ pub fn Filter(comptime T: type) type {
                                             .mirror => blk: {
                                                 var rr = iry;
                                                 var cc = icx;
-                                                if (rr < 0) rr = -rr - 1;
-                                                if (rr >= rows) rr = 2 * @as(isize, @intCast(rows)) - rr - 1;
-                                                if (cc < 0) cc = -cc - 1;
-                                                if (cc >= cols) cc = 2 * @as(isize, @intCast(cols)) - cc - 1;
-                                                break :blk src[@as(usize, @intCast(rr * @as(isize, @intCast(cols)) + cc))];
+                                                const rows_i = @as(isize, @intCast(rows));
+                                                const cols_i = @as(isize, @intCast(cols));
+                                                // Handle negative row indices
+                                                while (rr < 0) {
+                                                    rr = -rr - 1;
+                                                    if (rr >= rows_i) rr = 2 * rows_i - rr - 1;
+                                                }
+                                                // Handle row indices >= rows
+                                                while (rr >= rows_i) {
+                                                    rr = 2 * rows_i - rr - 1;
+                                                    if (rr < 0) rr = -rr - 1;
+                                                }
+                                                // Handle negative column indices
+                                                while (cc < 0) {
+                                                    cc = -cc - 1;
+                                                    if (cc >= cols_i) cc = 2 * cols_i - cc - 1;
+                                                }
+                                                // Handle column indices >= cols
+                                                while (cc >= cols_i) {
+                                                    cc = 2 * cols_i - cc - 1;
+                                                    if (cc < 0) cc = -cc - 1;
+                                                }
+                                                break :blk src[@as(usize, @intCast(rr * cols_i + cc))];
                                             },
                                             .wrap => blk: {
                                                 const wrapped_r = @mod(iry, @as(isize, @intCast(rows)));
@@ -748,8 +784,17 @@ pub fn Filter(comptime T: type) type {
                                 },
                                 .mirror => blk: {
                                     var cc = icx;
-                                    if (cc < 0) cc = -cc - 1;
-                                    if (cc >= cols) cc = 2 * @as(isize, @intCast(cols)) - cc - 1;
+                                    const cols_i = @as(isize, @intCast(cols));
+                                    // Handle negative indices
+                                    while (cc < 0) {
+                                        cc = -cc - 1;
+                                        if (cc >= cols_i) cc = 2 * cols_i - cc - 1;
+                                    }
+                                    // Handle indices >= cols
+                                    while (cc >= cols_i) {
+                                        cc = 2 * cols_i - cc - 1;
+                                        if (cc < 0) cc = -cc - 1;
+                                    }
                                     break :blk @as(i32, src[r * cols + @as(usize, @intCast(cc))]);
                                 },
                                 .wrap => blk: {
@@ -792,8 +837,17 @@ pub fn Filter(comptime T: type) type {
                                 },
                                 .mirror => blk: {
                                     var rr = iry;
-                                    if (rr < 0) rr = -rr - 1;
-                                    if (rr >= rows) rr = 2 * @as(isize, @intCast(rows)) - rr - 1;
+                                    const rows_i = @as(isize, @intCast(rows));
+                                    // Handle negative indices
+                                    while (rr < 0) {
+                                        rr = -rr - 1;
+                                        if (rr >= rows_i) rr = 2 * rows_i - rr - 1;
+                                    }
+                                    // Handle indices >= rows
+                                    while (rr >= rows_i) {
+                                        rr = 2 * rows_i - rr - 1;
+                                        if (rr < 0) rr = -rr - 1;
+                                    }
                                     break :blk @as(i32, temp[@as(usize, @intCast(rr)) * cols + c]);
                                 },
                                 .wrap => blk: {
@@ -1080,7 +1134,8 @@ pub fn Filter(comptime T: type) type {
         /// - `out`: Output image.
         /// - `border_mode`: How to handle image borders.
         pub fn convolveSeparable(self: Self, allocator: Allocator, kernel_x: []const f32, kernel_y: []const f32, out: *Self, border_mode: BorderMode) !void {
-            if (!self.hasSameShape(out.*)) {
+            // Ensure output is properly allocated
+            if (out.rows == 0 or out.cols == 0 or !self.hasSameShape(out.*)) {
                 out.* = try .initAlloc(allocator, self.rows, self.cols);
             }
 
