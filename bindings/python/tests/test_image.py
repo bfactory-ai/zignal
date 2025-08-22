@@ -378,7 +378,6 @@ class TestImageBinding:
         """Test class methods are available."""
         assert hasattr(zignal.Image, "load")
         assert hasattr(zignal.Image, "from_numpy")
-        assert hasattr(zignal.Image, "add_alpha")
 
 
 class TestResize:
@@ -587,34 +586,6 @@ class TestNumpyIntegration:
         arr_view = arr[:, :, ::2]  # Non-contiguous view
         with pytest.raises(ValueError, match="not C-contiguous"):
             zignal.Image.from_numpy(arr_view)
-
-    def test_to_numpy_options(self):
-        """Test to_numpy include_alpha parameter."""
-        arr = np.zeros((5, 5, 4), dtype=np.uint8)
-        arr[:, :] = [100, 150, 200, 128]
-        img = zignal.Image.from_numpy(arr)
-
-        # With alpha (default)
-        arr_with_alpha = img.to_numpy()
-        assert arr_with_alpha.shape == (5, 5, 4)
-
-        # Without alpha
-        arr_without_alpha = img.to_numpy(include_alpha=False)
-        assert arr_without_alpha.shape == (5, 5, 3)
-
-    def test_add_alpha_static_method(self):
-        """Test add_alpha helper method."""
-        # Create 3-channel array
-        arr_rgb = np.zeros((10, 20, 3), dtype=np.uint8)
-
-        # Add alpha with default
-        arr_rgba = zignal.Image.add_alpha(arr_rgb)
-        assert arr_rgba.shape == (10, 20, 4)
-        assert np.all(arr_rgba[:, :, 3] == 255)
-
-        # Add alpha with custom value
-        arr_rgba2 = zignal.Image.add_alpha(arr_rgb, 128)
-        assert np.all(arr_rgba2[:, :, 3] == 128)
 
 
 class TestPixelAccess:

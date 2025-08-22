@@ -605,32 +605,18 @@ const image_to_numpy_doc =
     \\- Rgb → shape (rows, cols, 3)\n
     \\- Rgba → shape (rows, cols, 4)
     \\
-    \\## Parameters
-    \\- `include_alpha` (bool, optional): Only applies to RGBA images. When False,\n
-    \\  drops the alpha channel and returns shape (rows, cols, 3). Default: True.
-    \\
     \\## Examples
     \\```python
     \\img = Image.load("photo.png")
     \\arr = img.to_numpy()
     \\print(arr.shape, arr.dtype)
     \\# Example: (H, W, C) uint8 where C is 1, 3, or 4
-    \\
-    \\# For RGBA images, drop alpha:
-    \\arr_rgb = img.to_numpy(include_alpha=False)
     \\```
 ;
 
-fn image_to_numpy(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+fn image_to_numpy(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    _ = args; // No arguments
     const self = @as(*ImageObject, @ptrCast(self_obj.?));
-
-    // Parse arguments - include_alpha defaults to true
-    var include_alpha: c_int = 1;
-    var kwlist = [_:null]?[*:0]u8{ @constCast("include_alpha"), null };
-    const format = std.fmt.comptimePrint("|p", .{});
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(&kwlist), &include_alpha) == 0) {
-        return null;
-    }
 
     if (self.py_image) |pimg| {
         switch (pimg.data) {
@@ -797,35 +783,6 @@ fn image_to_numpy(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
                     return null;
                 };
                 c.Py_DECREF(flat_array);
-
-                // Optionally drop alpha if include_alpha is false
-                if (include_alpha == 0) {
-                    // array[:, :, :3]
-                    const slice_obj = c.PySlice_New(c.Py_None(), c.Py_None(), c.Py_None()) orelse {
-                        c.Py_DECREF(reshaped);
-                        return null;
-                    };
-                    defer c.Py_DECREF(slice_obj);
-
-                    const three = c.PyLong_FromLong(3) orelse {
-                        c.Py_DECREF(reshaped);
-                        return null;
-                    };
-                    defer c.Py_DECREF(three);
-
-                    const slice_tuple = c.Py_BuildValue("(OOO)", slice_obj, slice_obj, c.PySlice_New(c.Py_None(), three, c.Py_None())) orelse {
-                        c.Py_DECREF(reshaped);
-                        return null;
-                    };
-                    defer c.Py_DECREF(slice_tuple);
-                    const sliced_array = c.PyObject_GetItem(reshaped, slice_tuple) orelse {
-                        c.Py_DECREF(reshaped);
-                        return null;
-                    };
-                    c.Py_DECREF(reshaped);
-                    return sliced_array;
-                }
-
                 return reshaped;
             },
         }
@@ -1037,25 +994,6 @@ fn image_save(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObj
     c.Py_INCREF(none);
     return none;
 }
-
-const image_add_alpha_doc =
-    \\Add alpha channel to a 3-channel RGB numpy array.
-    \\
-    \\This is useful for enabling zero-copy when creating Images from RGB arrays.
-    \\
-    \\## Parameters
-    \\- `array` (NDArray[np.uint8]): NumPy array with shape (rows, cols, 3) and dtype uint8
-    \\- `alpha` (int, optional): Alpha value to use for all pixels (default: 255)
-    \\
-    \\## Examples
-    \\```python
-    \\rgb_arr = np.zeros((100, 200, 3), dtype=np.uint8)
-    \\rgba_arr = Image.add_alpha(rgb_arr)
-    \\print(rgba_arr.shape)
-    \\# Output: (100, 200, 4)
-    \\img = Image.from_numpy(rgba_arr)  # Zero-copy creation
-    \\```
-;
 
 const image_convert_doc =
     \\
@@ -1298,83 +1236,6 @@ fn image_convert(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.Py
 
     c.PyErr_SetString(c.PyExc_ValueError, "Image not initialized");
     return null;
-}
-
-fn image_add_alpha(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-    _ = type_obj;
-    var array_obj: ?*c.PyObject = undefined;
-    var alpha_value: c_int = 255;
-
-    const format = std.fmt.comptimePrint("O|i", .{});
-    if (c.PyArg_ParseTuple(args, format.ptr, &array_obj, &alpha_value) == 0) {
-        return null;
-    }
-
-    if (array_obj == null or array_obj == c.Py_None()) {
-        c.PyErr_SetString(c.PyExc_TypeError, "Array cannot be None");
-        return null;
-    }
-
-    // Import numpy if not already imported
-    const np_module = c.PyImport_ImportModule("numpy") orelse {
-        c.PyErr_SetString(c.PyExc_ImportError, "NumPy is not installed. Please install it with: pip install numpy");
-        return null;
-    };
-    defer c.Py_DECREF(np_module);
-
-    // Get array shape
-    const shape_attr = c.PyObject_GetAttrString(array_obj, "shape") orelse {
-        c.PyErr_SetString(c.PyExc_TypeError, "Input must be a numpy array");
-        return null;
-    };
-    defer c.Py_DECREF(shape_attr);
-
-    // Check if shape is (h, w, 3)
-    var h: c.Py_ssize_t = 0;
-    var w: c.Py_ssize_t = 0;
-    var c_var: c.Py_ssize_t = 0;
-    if (c.PyArg_ParseTuple(shape_attr, "nnn", &h, &w, &c_var) == 0) {
-        c.PyErr_SetString(c.PyExc_ValueError, "Array must have shape (rows, cols, 3)");
-        return null;
-    }
-
-    if (c_var != 3) {
-        c.PyErr_SetString(c.PyExc_ValueError, "Array must have 3 channels (RGB)");
-        return null;
-    }
-
-    // Create alpha array: np.full((h, w, 1), alpha_value, dtype=np.uint8)
-    const full_func = c.PyObject_GetAttrString(np_module, "full") orelse return null;
-    defer c.Py_DECREF(full_func);
-
-    const shape_tuple = c.Py_BuildValue("((nnn)i)", h, w, @as(c.Py_ssize_t, 1), alpha_value) orelse return null;
-    defer c.Py_DECREF(shape_tuple);
-
-    const kwargs = c.Py_BuildValue("{s:s}", "dtype", "uint8") orelse return null;
-    defer c.Py_DECREF(kwargs);
-
-    const alpha_array = c.PyObject_Call(full_func, shape_tuple, kwargs) orelse return null;
-    defer c.Py_DECREF(alpha_array);
-
-    // Concatenate: np.concatenate([array, alpha_array], axis=2)
-    const concatenate_func = c.PyObject_GetAttrString(np_module, "concatenate") orelse return null;
-    defer c.Py_DECREF(concatenate_func);
-
-    const arrays_list = c.PyList_New(2) orelse return null;
-    defer c.Py_DECREF(arrays_list);
-
-    c.Py_INCREF(array_obj.?);
-    _ = c.PyList_SetItem(arrays_list, 0, array_obj.?);
-    c.Py_INCREF(alpha_array);
-    _ = c.PyList_SetItem(arrays_list, 1, alpha_array);
-
-    const concat_args = c.Py_BuildValue("(O)", arrays_list) orelse return null;
-    defer c.Py_DECREF(concat_args);
-
-    const concat_kwargs = c.Py_BuildValue("{s:i}", "axis", @as(c_int, 2)) orelse return null;
-    defer c.Py_DECREF(concat_kwargs);
-
-    return c.PyObject_Call(concatenate_func, concat_args, concat_kwargs);
 }
 
 fn image_iter(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
@@ -3473,19 +3334,11 @@ pub const image_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .returns = "Image",
     },
     .{
-        .name = "add_alpha",
-        .meth = @ptrCast(&image_add_alpha),
-        .flags = c.METH_VARARGS | c.METH_STATIC,
-        .doc = image_add_alpha_doc,
-        .params = "array: NDArray[np.uint8], alpha: int = 255",
-        .returns = "NDArray[np.uint8]",
-    },
-    .{
         .name = "to_numpy",
         .meth = @ptrCast(&image_to_numpy),
-        .flags = c.METH_VARARGS | c.METH_KEYWORDS,
+        .flags = c.METH_NOARGS,
         .doc = image_to_numpy_doc,
-        .params = "self, include_alpha: bool = True",
+        .params = "self",
         .returns = "NDArray[np.uint8]",
     },
     .{
