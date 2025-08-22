@@ -120,9 +120,14 @@ fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) ca
     // Parse color if provided, otherwise use transparent
     var fill_color = Rgba{ .r = 0, .g = 0, .b = 0, .a = 0 }; // Default transparent
     var color_components: usize = 0; // Track number of color components
+    var is_integer_color = false;
     if (color_obj != null and color_obj != c.Py_None()) {
+        // Check if it's an integer (grayscale)
+        if (c.PyLong_Check(color_obj) != 0) {
+            is_integer_color = true;
+        }
         // Check tuple size if it's a tuple to auto-detect format
-        if (c.PyTuple_Check(color_obj) != 0) {
+        else if (c.PyTuple_Check(color_obj) != 0) {
             color_components = @intCast(c.PyTuple_Size(color_obj));
         }
         fill_color = color_utils.parseColorToRgba(color_obj) catch {
@@ -131,9 +136,9 @@ fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) ca
         };
     }
 
-    // Determine requested format (sentinel types); default based on color components.
-    var _use_gray: bool = false;
-    var _use_rgb: bool = (color_components != 4); // Default to RGB unless 4-component color
+    // Determine requested format (sentinel types); default based on color type.
+    var _use_gray: bool = is_integer_color; // Integer color defaults to grayscale
+    var _use_rgb: bool = (!is_integer_color and color_components != 4); // Default to RGB unless grayscale or 4-component
     if (format_obj) |fmt_obj| {
         // Accept either the type object itself or an instance of the type
         // Compare pointer identity for type objects
