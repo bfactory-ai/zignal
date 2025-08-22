@@ -87,7 +87,7 @@ class TestColorParsing:
 
     def test_color_object_parsing(self):
         """Test all color object types are accepted"""
-        canvas = zignal.Image(10, 10, 0).canvas()
+        canvas = zignal.Image(10, 10, (0, 0, 0)).canvas()
 
         # Test a variety of color objects
         color_objects = [
@@ -136,7 +136,7 @@ class TestDrawLineBinding:
 
     def test_draw_line_basic(self):
         """Test draw_line accepts required parameters"""
-        canvas = zignal.Image(50, 50, 0).canvas()
+        canvas = zignal.Image(50, 50, (0, 0, 0)).canvas()
 
         canvas.draw_line((10, 10), (40, 40), (255, 0, 0))
 
@@ -146,7 +146,7 @@ class TestDrawLineBinding:
 
     def test_draw_line_optional_params(self):
         """Test optional width and mode parameters"""
-        canvas = zignal.Image(50, 50, 0).canvas()
+        canvas = zignal.Image(50, 50, (0, 0, 0)).canvas()
 
         # Test width parameter
         canvas.draw_line((0, 10), (50, 10), (255, 0, 0), width=3)
@@ -165,7 +165,7 @@ class TestDrawLineBinding:
 
     def test_point_tuple_parsing(self):
         """Test point tuples are properly parsed"""
-        canvas = zignal.Image(100, 100, 0).canvas()
+        canvas = zignal.Image(100, 100, (0, 0, 0)).canvas()
 
         # Integer coordinates
         canvas.draw_line((0, 0), (50, 50), (255, 0, 0))
@@ -250,7 +250,7 @@ class TestRectangleParameter:
 
     def test_rectangle_usage(self):
         """Test Rectangle objects work correctly with canvas methods"""
-        canvas = zignal.Image(50, 50, 0).canvas()
+        canvas = zignal.Image(50, 50, (0, 0, 0)).canvas()
 
         # Create rectangles in different ways
         rect1 = zignal.Rectangle(5, 5, 20, 20)
