@@ -407,21 +407,138 @@ fn image_load(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObj
     // Convert C string to Zig slice
     const path_slice = std.mem.span(file_path);
 
-    // Load the image as RGBA for SIMD optimization benefits
-    const image = Image(Rgba).load(allocator, path_slice) catch |err| {
+    // PNG: load native format (Grayscale, RGB, RGBA)
+    if (std.mem.endsWith(u8, path_slice, ".png") or std.mem.endsWith(u8, path_slice, ".PNG")) {
+        const data = std.fs.cwd().readFileAlloc(allocator, path_slice, 100 * 1024 * 1024) catch |err| {
+            py_utils.setErrorWithPath(err, path_slice);
+            return null;
+        };
+        defer allocator.free(data);
+        var decoded = zignal.png.decode(allocator, data) catch |err| {
+            py_utils.setErrorWithPath(err, path_slice);
+            return null;
+        };
+        defer decoded.deinit(allocator);
+        const native = zignal.png.toNativeImage(allocator, decoded) catch |err| {
+            py_utils.setErrorWithPath(err, path_slice);
+            return null;
+        };
+        const self = @as(?*ImageObject, @ptrCast(c.PyType_GenericAlloc(@ptrCast(type_obj), 0)));
+        if (self == null) return null;
+        switch (native) {
+            .grayscale => |img| {
+                const p = allocator.create(PyImage) catch {
+                    var tmp = img;
+                    tmp.deinit(allocator);
+                    c.Py_DECREF(@as(*c.PyObject, @ptrCast(self)));
+                    c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
+                    return null;
+                };
+                p.* = .{ .data = .{ .gray = img }, .owning = true };
+                self.?.py_image = p;
+            },
+            .rgb => |img| {
+                const p = allocator.create(PyImage) catch {
+                    var tmp = img;
+                    tmp.deinit(allocator);
+                    c.Py_DECREF(@as(*c.PyObject, @ptrCast(self)));
+                    c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
+                    return null;
+                };
+                p.* = .{ .data = .{ .rgb = img }, .owning = true };
+                self.?.py_image = p;
+            },
+            .rgba => |img| {
+                const p = allocator.create(PyImage) catch {
+                    var tmp = img;
+                    tmp.deinit(allocator);
+                    c.Py_DECREF(@as(*c.PyObject, @ptrCast(self)));
+                    c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
+                    return null;
+                };
+                p.* = .{ .data = .{ .rgba = img }, .owning = true };
+                self.?.py_image = p;
+            },
+        }
+        self.?.numpy_ref = null;
+        self.?.parent_ref = null;
+        return @as(?*c.PyObject, @ptrCast(self));
+    }
+
+    // JPEG: detect grayscale vs color and load native
+    if (std.mem.endsWith(u8, path_slice, ".jpg") or std.mem.endsWith(u8, path_slice, ".JPG") or
+        std.mem.endsWith(u8, path_slice, ".jpeg") or std.mem.endsWith(u8, path_slice, ".JPEG"))
+    {
+        const data = std.fs.cwd().readFileAlloc(allocator, path_slice, 200 * 1024 * 1024) catch |err| {
+            py_utils.setErrorWithPath(err, path_slice);
+            return null;
+        };
+        defer allocator.free(data);
+
+        const comps = detectJpegComponents(data) orelse {
+            c.PyErr_SetString(c.PyExc_ValueError, "Invalid JPEG file (no SOF marker)");
+            return null;
+        };
+        if (comps == 1) {
+            const image = Image(u8).load(allocator, path_slice) catch |err| {
+                py_utils.setErrorWithPath(err, path_slice);
+                return null;
+            };
+            const self = @as(?*ImageObject, @ptrCast(c.PyType_GenericAlloc(@ptrCast(type_obj), 0)));
+            if (self == null) {
+                var img = image;
+                img.deinit(allocator);
+                return null;
+            }
+            const pimg = allocator.create(PyImage) catch {
+                var img = image;
+                img.deinit(allocator);
+                c.Py_DECREF(@as(*c.PyObject, @ptrCast(self)));
+                c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
+                return null;
+            };
+            pimg.* = .{ .data = .{ .gray = image }, .owning = true };
+            self.?.py_image = pimg;
+            self.?.numpy_ref = null;
+            self.?.parent_ref = null;
+            return @as(?*c.PyObject, @ptrCast(self));
+        } else {
+            const image = Image(Rgb).load(allocator, path_slice) catch |err| {
+                py_utils.setErrorWithPath(err, path_slice);
+                return null;
+            };
+            const self = @as(?*ImageObject, @ptrCast(c.PyType_GenericAlloc(@ptrCast(type_obj), 0)));
+            if (self == null) {
+                var img = image;
+                img.deinit(allocator);
+                return null;
+            }
+            const pimg = allocator.create(PyImage) catch {
+                var img = image;
+                img.deinit(allocator);
+                c.Py_DECREF(@as(*c.PyObject, @ptrCast(self)));
+                c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
+                return null;
+            };
+            pimg.* = .{ .data = .{ .rgb = image }, .owning = true };
+            self.?.py_image = pimg;
+            self.?.numpy_ref = null;
+            self.?.parent_ref = null;
+            return @as(?*c.PyObject, @ptrCast(self));
+        }
+    }
+
+    // Others: default to RGB
+    const image = Image(Rgb).load(allocator, path_slice) catch |err| {
         py_utils.setErrorWithPath(err, path_slice);
         return null;
     };
-
-    // Create new Python object
     const self = @as(?*ImageObject, @ptrCast(c.PyType_GenericAlloc(@ptrCast(type_obj), 0)));
     if (self == null) {
         var img = image;
         img.deinit(allocator);
         return null;
     }
-
-    // Wrap in PyImage as RGBA variant
     const pimg = allocator.create(PyImage) catch {
         var img = image;
         img.deinit(allocator);
@@ -429,11 +546,49 @@ fn image_load(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObj
         c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
         return null;
     };
-    pimg.* = .{ .data = .{ .rgba = image }, .owning = true };
+    pimg.* = .{ .data = .{ .rgb = image }, .owning = true };
     self.?.py_image = pimg;
     self.?.numpy_ref = null;
     self.?.parent_ref = null;
     return @as(?*c.PyObject, @ptrCast(self));
+}
+
+// Minimal JPEG header scan to detect number of components.
+// Returns 1 for grayscale, 3 for color, or null on error.
+fn detectJpegComponents(data: []const u8) ?u8 {
+    if (data.len < 4) return null;
+    // SOI
+    if (!(data[0] == 0xFF and data[1] == 0xD8)) return null;
+    var i: usize = 2;
+    while (i + 3 < data.len) {
+        // Find marker prefix 0xFF
+        if (data[i] != 0xFF) {
+            i += 1;
+            continue;
+        }
+        // Skip fill bytes 0xFF
+        while (i < data.len and data[i] == 0xFF) i += 1;
+        if (i >= data.len) break;
+        const marker = data[i];
+        i += 1;
+        // Markers without length
+        if (marker == 0xD8 or marker == 0xD9 or (marker >= 0xD0 and marker <= 0xD7) or marker == 0x01) {
+            continue;
+        }
+        if (i + 1 >= data.len) break;
+        const len: usize = (@as(usize, data[i]) << 8) | data[i + 1];
+        i += 2;
+        if (len < 2 or i + len - 2 > data.len) break;
+        // SOF0 or SOF2
+        if (marker == 0xC0 or marker == 0xC2) {
+            if (len < 8) break; // need at least up to components byte
+            // length bytes cover: [precision(1), height(2), width(2), components(1), ...]
+            const components = data[i + 5];
+            return components;
+        }
+        i += len - 2;
+    }
+    return null;
 }
 
 const image_to_numpy_doc =
