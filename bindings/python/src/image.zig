@@ -142,7 +142,8 @@ fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) ca
     if (format_obj) |fmt_obj| {
         // Accept either the type object itself or an instance of the type
         // Compare pointer identity for type objects
-        const is_type_obj = c.PyObject_TypeCheck(fmt_obj, @ptrCast(&c.PyType_Type)) != 0;
+        // TODO: Remove explicit cast after Python 3.10 is dropped
+        const is_type_obj = c.PyObject_TypeCheck(fmt_obj, @as([*c]c.PyTypeObject, @ptrCast(&c.PyType_Type))) != 0;
         if (is_type_obj) {
             if (fmt_obj == @as(*c.PyObject, @ptrCast(&grayscale_format.GrayscaleType))) {
                 _use_gray = true;
@@ -1029,7 +1030,8 @@ fn image_convert(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.Py
     var target_rgb = false;
     var target_rgba = false;
 
-    const is_type_obj = c.PyObject_TypeCheck(format_obj.?, @ptrCast(&c.PyType_Type)) != 0;
+    // TODO: Remove explicit cast after Python 3.10 is dropped
+    const is_type_obj = c.PyObject_TypeCheck(format_obj.?, @as([*c]c.PyTypeObject, @ptrCast(&c.PyType_Type))) != 0;
     if (is_type_obj) {
         if (format_obj.? == @as(*c.PyObject, @ptrCast(&grayscale_format.GrayscaleType))) {
             target_gray = true;
