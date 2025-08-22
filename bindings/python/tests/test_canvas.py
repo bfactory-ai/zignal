@@ -100,10 +100,15 @@ class TestColorParsing:
             zignal.Xyz(50, 50, 50),
         ]
 
-        # All should work without errors
+        # All should work without errors; for RGBA with alpha != 255 on RGB images,
+        # equality should be False since alpha is discarded.
         for color in color_objects:
             canvas.fill(color)
-            assert canvas.image[0, 0] == color
+            px = canvas.image[0, 0]
+            if isinstance(color, zignal.Rgba) and color.a != 255:
+                assert px != color
+            else:
+                assert px == color
 
         # Also test with draw_line
         canvas.draw_line((0, 0), (5, 5), zignal.Rgb(255, 255, 255))

@@ -2,7 +2,7 @@ const std = @import("std");
 
 const zignal = @import("zignal");
 const FeatureDistributionMatching = zignal.FeatureDistributionMatching;
-const Rgba = zignal.Rgba;
+const Rgb = zignal.Rgb;
 const Image = zignal.Image;
 
 const image = @import("image.zig");
@@ -15,7 +15,7 @@ const stub_metadata = @import("stub_metadata.zig");
 pub const FeatureDistributionMatchingObject = extern struct {
     ob_base: c.PyObject,
     // Store a pointer to the heap-allocated FDM struct
-    fdm_ptr: ?*FeatureDistributionMatching(Rgba),
+    fdm_ptr: ?*FeatureDistributionMatching(Rgb),
 };
 
 fn fdm_new(type_obj: ?*c.PyTypeObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
@@ -35,13 +35,13 @@ fn fdm_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) call
     const self = @as(*FeatureDistributionMatchingObject, @ptrCast(self_obj.?));
 
     // Create and store the FDM struct
-    const fdm_ptr = allocator.create(FeatureDistributionMatching(Rgba)) catch {
+    const fdm_ptr = allocator.create(FeatureDistributionMatching(Rgb)) catch {
         c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate FeatureDistributionMatching");
         return -1;
     };
 
     // Initialize the FDM instance
-    fdm_ptr.* = FeatureDistributionMatching(Rgba).init(allocator);
+    fdm_ptr.* = FeatureDistributionMatching(Rgb).init(allocator);
     self.fdm_ptr = fdm_ptr;
 
     return 0;
@@ -78,7 +78,7 @@ const set_target_doc =
     \\the statistics for each image when applying the same style to multiple images.
     \\
     \\## Parameters
-    \\- `image` (`Image`): Target image providing the color distribution to match
+    \\- `image` (`Image`): Target image providing the color distribution to match. Must be RGB.
     \\
     \\## Examples
     \\```python
@@ -91,7 +91,7 @@ const set_target_doc =
 fn fdm_set_target(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*FeatureDistributionMatchingObject, @ptrCast(self_obj.?));
 
-    const fdm_ptr = py_utils.validateNonNull(*FeatureDistributionMatching(Rgba), self.fdm_ptr, "FeatureDistributionMatching") catch return null;
+    const fdm_ptr = py_utils.validateNonNull(*FeatureDistributionMatching(Rgb), self.fdm_ptr, "FeatureDistributionMatching") catch return null;
 
     var target_obj: ?*c.PyObject = undefined;
     const format = std.fmt.comptimePrint("O", .{});
@@ -107,25 +107,24 @@ fn fdm_set_target(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.P
 
     const target_img_obj = @as(*image.ImageObject, @ptrCast(target_obj.?));
 
-    // Accept only RGBA images via PyImage variant for now
+    // Accept only RGB format
     if (target_img_obj.py_image == null) {
-        c.PyErr_SetString(c.PyExc_TypeError, "Target image must be RGBA (PyImage)");
+        c.PyErr_SetString(c.PyExc_TypeError, "Target image must be an Image");
         return null;
     }
-    switch (target_img_obj.py_image.?.data) {
-        .rgba => |imgv| {
-            fdm_ptr.setTarget(imgv) catch |err| {
-                switch (err) {
-                    error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory setting target"),
-                }
-                return null;
-            };
-        },
+    const target_rgb: zignal.Image(zignal.Rgb) = switch (target_img_obj.py_image.?.data) {
+        .rgb => |imgv| imgv,
         else => {
-            c.PyErr_SetString(c.PyExc_TypeError, "Target image must be RGBA");
+            c.PyErr_SetString(c.PyExc_TypeError, "Target image must be RGB");
             return null;
         },
-    }
+    };
+    fdm_ptr.setTarget(target_rgb) catch |err| {
+        switch (err) {
+            error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory setting target"),
+        }
+        return null;
+    };
     // Success
 
     const none = c.Py_None();
@@ -140,7 +139,7 @@ const set_source_doc =
     \\The source image will be modified in-place when update() is called.
     \\
     \\## Parameters
-    \\- `image` (`Image`): Source image to be modified
+    \\- `image` (`Image`): Source image to be modified. Must be RGB.
     \\
     \\## Examples
     \\```python
@@ -153,7 +152,7 @@ const set_source_doc =
 fn fdm_set_source(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*FeatureDistributionMatchingObject, @ptrCast(self_obj.?));
 
-    const fdm_ptr = py_utils.validateNonNull(*FeatureDistributionMatching(Rgba), self.fdm_ptr, "FeatureDistributionMatching") catch return null;
+    const fdm_ptr = py_utils.validateNonNull(*FeatureDistributionMatching(Rgb), self.fdm_ptr, "FeatureDistributionMatching") catch return null;
 
     var source_obj: ?*c.PyObject = undefined;
     const format = std.fmt.comptimePrint("O", .{});
@@ -170,23 +169,22 @@ fn fdm_set_source(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.P
     const source_img_obj = @as(*image.ImageObject, @ptrCast(source_obj.?));
 
     if (source_img_obj.py_image == null) {
-        c.PyErr_SetString(c.PyExc_TypeError, "Source image must be RGBA (PyImage)");
+        c.PyErr_SetString(c.PyExc_TypeError, "Source image must be an Image");
         return null;
     }
-    switch (source_img_obj.py_image.?.data) {
-        .rgba => |imgv| {
-            fdm_ptr.setSource(imgv) catch |err| {
-                switch (err) {
-                    error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory setting source"),
-                }
-                return null;
-            };
-        },
+    const src_rgb: zignal.Image(zignal.Rgb) = switch (source_img_obj.py_image.?.data) {
+        .rgb => |imgv| imgv,
         else => {
-            c.PyErr_SetString(c.PyExc_TypeError, "Source image must be RGBA");
+            c.PyErr_SetString(c.PyExc_TypeError, "Source image must be RGB");
             return null;
         },
-    }
+    };
+    fdm_ptr.setSource(src_rgb) catch |err| {
+        switch (err) {
+            error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory setting source"),
+        }
+        return null;
+    };
     // Success
 
     const none = c.Py_None();
@@ -202,8 +200,8 @@ const match_doc =
     \\into a single call. The source image is modified in-place.
     \\
     \\## Parameters
-    \\- `source` (`Image`): Source image to be modified
-    \\- `target` (`Image`): Target image providing the color distribution to match
+    \\- `source` (`Image`): Source image to be modified (RGB)
+    \\- `target` (`Image`): Target image providing the color distribution to match (RGB)
     \\
     \\## Examples
     \\```python
@@ -218,7 +216,7 @@ const match_doc =
 fn fdm_match(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*FeatureDistributionMatchingObject, @ptrCast(self_obj.?));
 
-    const fdm_ptr = py_utils.validateNonNull(*FeatureDistributionMatching(Rgba), self.fdm_ptr, "FeatureDistributionMatching") catch return null;
+    const fdm_ptr = py_utils.validateNonNull(*FeatureDistributionMatching(Rgb), self.fdm_ptr, "FeatureDistributionMatching") catch return null;
 
     var source_obj: ?*c.PyObject = undefined;
     var target_obj: ?*c.PyObject = undefined;
@@ -243,28 +241,28 @@ fn fdm_match(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObje
     const source_img_obj = @as(*image.ImageObject, @ptrCast(source_obj.?));
     const target_img_obj = @as(*image.ImageObject, @ptrCast(target_obj.?));
 
-    // Ensure RGBA images via PyImage
+    // Accept only RGB format
     if (source_img_obj.py_image == null or target_img_obj.py_image == null) {
-        c.PyErr_SetString(c.PyExc_TypeError, "Source and target must be RGBA (PyImage)");
+        c.PyErr_SetString(c.PyExc_TypeError, "Source and target must be Image objects");
         return null;
     }
-    const src_variant = source_img_obj.py_image.?.data;
-    const dst_variant = target_img_obj.py_image.?.data;
-    const src_rgba: ?Image(Rgba) = switch (src_variant) {
-        .rgba => |imgv| imgv,
-        else => null,
+    const src_rgb2: zignal.Image(zignal.Rgb) = switch (source_img_obj.py_image.?.data) {
+        .rgb => |imgv| imgv,
+        else => {
+            c.PyErr_SetString(c.PyExc_TypeError, "Source image must be RGB");
+            return null;
+        },
     };
-    const dst_rgba: ?Image(Rgba) = switch (dst_variant) {
-        .rgba => |imgv| imgv,
-        else => null,
+    const dst_rgb2: zignal.Image(zignal.Rgb) = switch (target_img_obj.py_image.?.data) {
+        .rgb => |imgv| imgv,
+        else => {
+            c.PyErr_SetString(c.PyExc_TypeError, "Target image must be RGB");
+            return null;
+        },
     };
-    if (src_rgba == null or dst_rgba == null) {
-        c.PyErr_SetString(c.PyExc_TypeError, "Source and target must be RGBA");
-        return null;
-    }
 
     // Call match
-    fdm_ptr.match(src_rgba.?, dst_rgba.?) catch |err| {
+    fdm_ptr.match(src_rgb2, dst_rgb2) catch |err| {
         switch (err) {
             error.OutOfMemory => c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory during match"),
             error.NoTargetSet => c.PyErr_SetString(c.PyExc_RuntimeError, "No target image set"),

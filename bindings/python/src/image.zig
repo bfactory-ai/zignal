@@ -23,8 +23,9 @@ const stub_metadata = @import("stub_metadata.zig");
 const image_class_doc =
     \\
     \\Image for processing and manipulation.\n\n
-    \\This object is iterable: iterating yields (row, col, Rgba) for each pixel\n
-    \\in row-major order. For bulk numeric work, prefer to_numpy().
+    \\This object is iterable: iterating yields (row, col, pixel) in native\n
+    \\format (Grayscale→int, Rgb→Rgb, Rgba→Rgba) in row-major order. For bulk\n
+    \\numeric work, prefer to_numpy().
 ;
 
 pub const ImageObject = extern struct {
@@ -65,12 +66,12 @@ const image_init_doc =
     \\  - Defaults to transparent (0, 0, 0, 0)
     \\- `format` (type, keyword-only): Pixel format sentinel specifying storage type.
     \\  - `zignal.Grayscale` → single-channel u8 (NumPy shape (H, W, 1))
-    \\  - `zignal.Rgb` → 3-channel RGB (NumPy shape (H, W, 3))
-    \\  - `zignal.Rgba` (default) → 4-channel RGBA (NumPy shape (H, W, 4))
+    \\  - `zignal.Rgb` (default) → 3-channel RGB (NumPy shape (H, W, 3))
+    \\  - `zignal.Rgba` → 4-channel RGBA (NumPy shape (H, W, 4))
     \\
     \\## Examples
     \\```python
-    \\# Create a 100x200 transparent image (default RGB)
+    \\# Create a 100x200 black image (default RGB)
     \\img = Image(100, 200)
     \\
     \\# Create a 100x200 red image (RGBA)
@@ -85,7 +86,7 @@ const image_init_doc =
     \\# Create an image from numpy array dimensions
     \\img = Image(*arr.shape[:2])
     \\
-    \\# Create with semi-transparent blue
+    \\# Create with semi-transparent blue (requires RGBA)
     \\img = Image(100, 200, (0, 0, 255, 128), format=zignal.Rgba)
     \\```
 ;
@@ -125,7 +126,7 @@ fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) ca
         };
     }
 
-    // Determine requested format (sentinel types); default to RGB for new API.
+    // Determine requested format (sentinel types); default to RGB.
     var _use_gray: bool = false;
     var _use_rgb: bool = true;
     if (format_obj) |fmt_obj| {
@@ -195,7 +196,7 @@ fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) ca
         self.parent_ref = null;
         return 0;
     } else {
-        // RGBA path (default)
+        // RGBA path (explicit)
         var image = Image(Rgba).initAlloc(allocator, validated_rows, validated_cols) catch {
             c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image data");
             return -1;
@@ -594,17 +595,24 @@ fn detectJpegComponents(data: []const u8) ?u8 {
 const image_to_numpy_doc =
     \\Convert the image to a NumPy array (zero-copy when possible).
     \\
+    \\Returns an array in the image's native format:\n
+    \\- Grayscale → shape (rows, cols, 1)\n
+    \\- Rgb → shape (rows, cols, 3)\n
+    \\- Rgba → shape (rows, cols, 4)
+    \\
     \\## Parameters
-    \\- `include_alpha` (bool, optional): If True (default), returns array with shape (rows, cols, 4).
-    \\  If False, returns array with shape (rows, cols, 3).
+    \\- `include_alpha` (bool, optional): Only applies to RGBA images. When False,\n
+    \\  drops the alpha channel and returns shape (rows, cols, 3). Default: True.
     \\
     \\## Examples
     \\```python
     \\img = Image.load("photo.png")
-    \\arr_rgba = img.to_numpy()  # Include alpha
-    \\arr_rgb = img.to_numpy(include_alpha=False)  # RGB only
-    \\print(arr_rgba.shape, arr_rgb.shape)
-    \\# Output: (512, 768, 4) (512, 768, 3)
+    \\arr = img.to_numpy()
+    \\print(arr.shape, arr.dtype)
+    \\# Example: (H, W, C) uint8 where C is 1, 3, or 4
+    \\
+    \\# For RGBA images, drop alpha:
+    \\arr_rgb = img.to_numpy(include_alpha=False)
     \\```
 ;
 
@@ -825,7 +833,6 @@ const image_from_numpy_doc =
     \\Create Image from a NumPy array with dtype uint8.
     \\
     \\Zero-copy is used for contiguous arrays with these shapes:
-    \\- Grayscale: (rows, cols) or (rows, cols, 1) → Image(Grayscale)
     \\- RGB: (rows, cols, 3) → Image(Rgb)
     \\- RGBA: (rows, cols, 4) → Image(Rgba)
     \\
@@ -889,41 +896,31 @@ fn image_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c
         return null;
     }
 
-    // Validate dimensions and shape
+    // Validate dimensions and shape: only 3D arrays with 3 or 4 channels are supported
     const ndim: c_int = buffer.ndim;
-    if (ndim != 2 and ndim != 3) {
-        c.PyErr_SetString(c.PyExc_ValueError, "Array must have shape (rows, cols), (rows, cols, 1|3|4)");
+    if (ndim != 3) {
+        c.PyErr_SetString(c.PyExc_ValueError, "Array must have shape (rows, cols, 3|4)");
         return null;
     }
 
     const shape = @as([*]c.Py_ssize_t, @ptrCast(buffer.shape));
     const rows = @as(usize, @intCast(shape[0]));
     const cols = @as(usize, @intCast(shape[1]));
-    var channels: usize = 1;
-    if (ndim == 3) channels = @as(usize, @intCast(shape[2]));
-    if (!(channels == 1 or channels == 3 or channels == 4)) {
-        c.PyErr_SetString(c.PyExc_ValueError, "Array channels must be 1, 3, or 4");
+    const channels: usize = @as(usize, @intCast(shape[2]));
+    if (!(channels == 3 or channels == 4)) {
+        c.PyErr_SetString(c.PyExc_ValueError, "Array must have 3 channels (RGB) or 4 channels (RGBA)");
         return null;
     }
 
     // Check if array is C-contiguous
     const strides = @as([*]c.Py_ssize_t, @ptrCast(buffer.strides));
     const item = buffer.itemsize; // 1 for uint8
-    if (ndim == 2) {
-        const expected_stride_1 = item; // 1
-        const expected_stride_0 = expected_stride_1 * @as(c.Py_ssize_t, @intCast(cols));
-        if (strides[1] != expected_stride_1 or strides[0] != expected_stride_0) {
-            c.PyErr_SetString(c.PyExc_ValueError, "Array is not C-contiguous. Use numpy.ascontiguousarray() first.");
-            return null;
-        }
-    } else {
-        const expected_stride_2 = item; // 1
-        const expected_stride_1 = expected_stride_2 * @as(c.Py_ssize_t, @intCast(channels));
-        const expected_stride_0 = expected_stride_1 * @as(c.Py_ssize_t, @intCast(cols));
-        if (strides[2] != expected_stride_2 or strides[1] != expected_stride_1 or strides[0] != expected_stride_0) {
-            c.PyErr_SetString(c.PyExc_ValueError, "Array is not C-contiguous. Use numpy.ascontiguousarray() first.");
-            return null;
-        }
+    const expected_stride_2 = item; // 1
+    const expected_stride_1 = expected_stride_2 * @as(c.Py_ssize_t, @intCast(channels));
+    const expected_stride_0 = expected_stride_1 * @as(c.Py_ssize_t, @intCast(cols));
+    if (strides[2] != expected_stride_2 or strides[1] != expected_stride_1 or strides[0] != expected_stride_0) {
+        c.PyErr_SetString(c.PyExc_ValueError, "Array is not C-contiguous. Use numpy.ascontiguousarray() first.");
+        return null;
     }
 
     // Create new Python object
@@ -968,22 +965,7 @@ fn image_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c
         pimg.* = .{ .data = .{ .rgb = img }, .owning = false };
         self.?.py_image = pimg;
         self.?.parent_ref = null;
-    } else {
-        // channels == 1 OR ndim == 2 → grayscale
-        const data_ptr = @as([*]u8, @ptrCast(buffer.buf));
-        const data_slice = data_ptr[0..@intCast(buffer.len)];
-        const img = Image(u8).initFromBytes(rows, cols, data_slice);
-        c.Py_INCREF(array_obj.?);
-        self.?.numpy_ref = array_obj;
-        const pimg = allocator.create(PyImage) catch {
-            c.Py_DECREF(@as(*c.PyObject, @ptrCast(self)));
-            c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate image");
-            return null;
-        };
-        pimg.* = .{ .data = .{ .gray = img }, .owning = false };
-        self.?.py_image = pimg;
-        self.?.parent_ref = null;
-    }
+    } else unreachable; // validated above
     return @as(?*c.PyObject, @ptrCast(self));
 }
 
@@ -1726,12 +1708,14 @@ fn mapScaleError(err: anyerror) anyerror {
 const image_fill_doc =
     \\Fill the entire image with a solid color.
     \\
+    \\The color is converted to the image's native pixel format (Grayscale/Rgb/Rgba).
+    \\
     \\## Parameters
     \\- `color`: Color value as:
-    \\  - int: Grayscale value (0-255), expanded to RGBA
+    \\  - int: Grayscale value (0-255)
     \\  - tuple[int, int, int]: RGB values
     \\  - tuple[int, int, int, int]: RGBA values
-    \\  - Color object with to_rgba() method or r,g,b,a attributes
+    \\  - Any supported color object (e.g., Rgb, Rgba)
     \\
     \\## Examples
     \\```python
@@ -2258,7 +2242,8 @@ fn image_gaussian_blur(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyO
         return null;
     }
 
-    if (sigma <= 0) {
+    // Validate sigma: must be finite and > 0
+    if (!std.math.isFinite(sigma) or sigma <= 0) {
         c.PyErr_SetString(c.PyExc_ValueError, "sigma must be > 0");
         return null;
     }
@@ -3697,12 +3682,12 @@ pub const image_special_methods_metadata = [_]stub_metadata.MethodInfo{
         .name = "__iter__",
         .params = "self",
         .returns = "PixelIterator",
-        .doc = "Iterate over pixels in row-major order, yielding (row, col, Rgba).",
+        .doc = "Iterate over pixels in row-major order, yielding (row, col, pixel) in native format (int|Rgb|Rgba).",
     },
     .{
         .name = "__getitem__",
         .params = "self, key: tuple[int, int]",
-        .returns = "Rgba",
+        .returns = "int | Rgb | Rgba",
     },
     .{
         .name = "__setitem__",

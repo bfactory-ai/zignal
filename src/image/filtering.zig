@@ -1136,9 +1136,11 @@ pub fn Filter(comptime T: type) type {
                                     sum += as(f32, pixel) * k;
                                 }
                             }
+                            // Guard against NaN/Inf before casting
+                            const sum_safe: f32 = if (std.math.isFinite(sum)) sum else 0.0;
                             temp.at(r, c).* = switch (@typeInfo(T)) {
-                                .int => @intFromFloat(@max(std.math.minInt(T), @min(std.math.maxInt(T), @round(sum)))),
-                                .float => as(T, sum),
+                                .int => @intFromFloat(@max(std.math.minInt(T), @min(std.math.maxInt(T), @round(sum_safe)))),
+                                .float => as(T, sum_safe),
                                 else => unreachable,
                             };
                         }
@@ -1223,9 +1225,10 @@ pub fn Filter(comptime T: type) type {
                                         sum += as(f32, @field(pixel, field.name)) * k;
                                     }
                                 }
+                                const sum_safe: f32 = if (std.math.isFinite(sum)) sum else 0.0;
                                 @field(result_pixel, field.name) = switch (@typeInfo(field.type)) {
-                                    .int => @intFromFloat(@max(std.math.minInt(field.type), @min(std.math.maxInt(field.type), @round(sum)))),
-                                    .float => as(field.type, sum),
+                                    .int => @intFromFloat(@max(std.math.minInt(field.type), @min(std.math.maxInt(field.type), @round(sum_safe)))),
+                                    .float => as(field.type, sum_safe),
                                     else => @compileError("Unsupported field type"),
                                 };
                             }
@@ -1256,9 +1259,10 @@ pub fn Filter(comptime T: type) type {
                                     sum += as(f32, pixel) * k;
                                 }
                             }
+                            const sum_safe: f32 = if (std.math.isFinite(sum)) sum else 0.0;
                             out.at(r, c).* = switch (@typeInfo(T)) {
-                                .int => @intFromFloat(@max(std.math.minInt(T), @min(std.math.maxInt(T), @round(sum)))),
-                                .float => as(T, sum),
+                                .int => @intFromFloat(@max(std.math.minInt(T), @min(std.math.maxInt(T), @round(sum_safe)))),
+                                .float => as(T, sum_safe),
                                 else => unreachable,
                             };
                         }
@@ -1284,9 +1288,10 @@ pub fn Filter(comptime T: type) type {
                                         sum += as(f32, @field(pixel, field.name)) * k;
                                     }
                                 }
+                                const sum_safe: f32 = if (std.math.isFinite(sum)) sum else 0.0;
                                 @field(result_pixel, field.name) = switch (@typeInfo(field.type)) {
-                                    .int => @intFromFloat(@max(std.math.minInt(field.type), @min(std.math.maxInt(field.type), @round(sum)))),
-                                    .float => as(field.type, sum),
+                                    .int => @intFromFloat(@max(std.math.minInt(field.type), @min(std.math.maxInt(field.type), @round(sum_safe)))),
+                                    .float => as(field.type, sum_safe),
                                     else => @compileError("Unsupported field type"),
                                 };
                             }
