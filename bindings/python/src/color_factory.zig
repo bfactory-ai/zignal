@@ -223,29 +223,6 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
             };
             index += 1;
 
-            // Add to_gray method (all color types have toGray in Zig)
-            methods[index] = c.PyMethodDef{
-                .ml_name = "to_gray",
-                .ml_meth = @ptrCast(&toGrayMethod),
-                .ml_flags = c.METH_NOARGS,
-                .ml_doc =
-                \\Convert the color to a grayscale value.
-                \\
-                \\Returns an integer value between 0 and 255 representing
-                \\the luminance/lightness of the color.
-                \\
-                \\## Returns
-                \\int: Grayscale value (0-255)
-                \\
-                \\## Examples
-                \\```python
-                \\color = zignal.Rgb(128, 128, 128)
-                \\gray = color.to_gray()
-                \\```
-                ,
-            };
-            index += 1;
-
             // Add blend method if the type has it
             if (@hasDecl(ZigColorType, "blend")) {
                 methods[index] = c.PyMethodDef{
@@ -272,6 +249,15 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
                 };
                 index += 1;
             }
+
+            // Add to_gray method (all color types have toGray in Zig)
+            methods[index] = c.PyMethodDef{
+                .ml_name = "to_gray",
+                .ml_meth = @ptrCast(&toGrayMethod),
+                .ml_flags = c.METH_NOARGS,
+                .ml_doc = "Convert to a grayscale value representing the luminance/lightness as an integer between 0 and 255.",
+            };
+            index += 1;
 
             // Generate conversion methods for each color type
             inline for (color_types) |TargetColorType| {
