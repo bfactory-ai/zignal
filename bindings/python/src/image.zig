@@ -3254,7 +3254,9 @@ fn image_setitem(self_obj: ?*c.PyObject, key: ?*c.PyObject, value: ?*c.PyObject)
     const pimg_opt = self.py_image;
 
     // Check if key is a slice object (for view[:] = image syntax)
-    if (c.PySlice_Check(key) != 0) {
+    // Use direct type comparison instead of PySlice_Check to avoid Zig translation issues
+    // TODO: replace with `if (c.PySlice_Check(key) != 0) {` after Python 3.10 support is dropped
+    if (c.Py_TYPE(key) == &c.PySlice_Type) {
         // Handle slice assignment
         var start: c.Py_ssize_t = undefined;
         var stop: c.Py_ssize_t = undefined;
