@@ -159,6 +159,9 @@ fn generateColorClass(stub: *GeneratedStub, comptime ColorType: type) !void {
         }
     }
 
+    // Add to_gray method (all color types have it)
+    try stub.write("    def to_gray(self) -> int: ...\n");
+
     // Add blend method if the type has it
     if (@hasDecl(ColorType, "blend")) {
         try stub.write("    def blend(self, overlay: Rgba | tuple[int, int, int, int], mode: BlendMode) -> ");

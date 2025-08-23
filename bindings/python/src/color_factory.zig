@@ -195,9 +195,9 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
             }.setter;
         }
 
-        /// Generate methods array - automatically create conversion methods for all color types + __format__ + blend
-        pub fn generateMethods() [color_types.len + 2]c.PyMethodDef {
-            var methods: [color_types.len + 2]c.PyMethodDef = undefined;
+        /// Generate methods array - automatically create conversion methods for all color types + __format__ + blend + to_gray
+        pub fn generateMethods() [color_types.len + 3]c.PyMethodDef {
+            var methods: [color_types.len + 3]c.PyMethodDef = undefined;
             var index: usize = 0;
 
             // Add __format__ method
@@ -218,6 +218,29 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
                 \\color = zignal.Rgb(255, 0, 0)
                 \\print(f"{color}")        # Default repr: Rgb(r=255, g=0, b=0)
                 \\print(f"{color:ansi}")   # ANSI colored output in terminal
+                \\```
+                ,
+            };
+            index += 1;
+
+            // Add to_gray method (all color types have toGray in Zig)
+            methods[index] = c.PyMethodDef{
+                .ml_name = "to_gray",
+                .ml_meth = @ptrCast(&toGrayMethod),
+                .ml_flags = c.METH_NOARGS,
+                .ml_doc =
+                \\Convert the color to a grayscale value.
+                \\
+                \\Returns an integer value between 0 and 255 representing
+                \\the luminance/lightness of the color.
+                \\
+                \\## Returns
+                \\int: Grayscale value (0-255)
+                \\
+                \\## Examples
+                \\```python
+                \\color = zignal.Rgb(128, 128, 128)
+                \\gray = color.to_gray()
                 \\```
                 ,
             };
@@ -694,6 +717,14 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
                 _ = c.PyErr_Format(c.PyExc_ValueError, "Unknown format code '%s' for object of type '%s'", format_spec, name.ptr);
                 return null;
             }
+        }
+
+        /// to_gray method implementation
+        pub fn toGrayMethod(self_obj: [*c]c.PyObject, _: [*c]c.PyObject) callconv(.c) [*c]c.PyObject {
+            const self = @as(*ObjectType, @ptrCast(self_obj));
+            const zig_color = objectToZigColor(self);
+            const gray_value = zig_color.toGray();
+            return @ptrCast(c.PyLong_FromLong(gray_value));
         }
 
         /// Blend method implementation
