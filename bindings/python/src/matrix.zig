@@ -57,7 +57,7 @@ const matrix_init_doc =
     \\
     \\## Parameters
     \\- `rows` (int): Number of rows
-    \\- `cols` (int): Number of columns  
+    \\- `cols` (int): Number of columns
     \\- `fill_value` (float, optional): Value to fill the matrix with (default: 0.0)
     \\
     \\## Examples
@@ -83,7 +83,8 @@ fn matrix_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
     const kwlist = [_:null]?[*:0]const u8{ "rows", "cols", "fill_value", null };
     const format = std.fmt.comptimePrint("ii|d:Matrix", .{});
 
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(&kwlist), &rows, &cols, &fill_value) == 0) {
+    // TODO: remove @constCast when we don't use Python < 3.13
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kwlist)), &rows, &cols, &fill_value) == 0) {
         return -1;
     }
 
@@ -384,7 +385,8 @@ fn matrix_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*
 
     // Create Matrix that references the numpy data
     const matrix_ptr = allocator.create(Matrix(f64)) catch {
-        c.Py_DECREF(@ptrCast(self));
+        // TODO: remove explcit cast when we don't use Python < 3.13
+        c.Py_DECREF(@as(?*c.PyObject, @ptrCast(self)));
         c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate Matrix");
         return null;
     };
