@@ -517,37 +517,99 @@ fn matrix_setitem(self_obj: ?*c.PyObject, key: ?*c.PyObject, value: ?*c.PyObject
     return -1;
 }
 
-// Method definitions
-var matrix_methods = [_]c.PyMethodDef{
-    .{
-        .ml_name = "from_numpy",
-        .ml_meth = @ptrCast(&matrix_from_numpy),
-        .ml_flags = c.METH_VARARGS | c.METH_CLASS,
-        .ml_doc = matrix_from_numpy_doc,
-    },
-    .{
-        .ml_name = "to_numpy",
-        .ml_meth = @ptrCast(&matrix_to_numpy),
-        .ml_flags = c.METH_NOARGS,
-        .ml_doc = matrix_to_numpy_doc,
-    },
-    .{ .ml_name = null, .ml_meth = null, .ml_flags = 0, .ml_doc = null },
-};
-
-// Property definitions
-var matrix_getset = [_]c.PyGetSetDef{
-    .{ .name = "rows", .get = matrix_rows_getter, .set = null, .doc = "Number of rows", .closure = null },
-    .{ .name = "cols", .get = matrix_cols_getter, .set = null, .doc = "Number of columns", .closure = null },
-    .{ .name = "shape", .get = matrix_shape_getter, .set = null, .doc = "Shape as (rows, cols) tuple", .closure = null },
-    .{ .name = "dtype", .get = matrix_dtype_getter, .set = null, .doc = "Data type (always 'float64')", .closure = null },
-    .{ .name = null, .get = null, .set = null, .doc = null, .closure = null },
-};
-
 // Mapping methods for indexing
 var matrix_as_mapping = c.PyMappingMethods{
     .mp_length = null,
     .mp_subscript = matrix_getitem,
     .mp_ass_subscript = matrix_setitem,
+};
+
+// Metadata for stub generation
+pub const matrix_methods_metadata = [_]stub_metadata.MethodWithMetadata{
+    .{
+        .name = "from_numpy",
+        .meth = @ptrCast(&matrix_from_numpy),
+        .flags = c.METH_VARARGS | c.METH_CLASS,
+        .doc = matrix_from_numpy_doc,
+        .params = "cls, array: NDArray[np.float64]",
+        .returns = "Matrix",
+    },
+    .{
+        .name = "to_numpy",
+        .meth = @ptrCast(&matrix_to_numpy),
+        .flags = c.METH_NOARGS,
+        .doc = matrix_to_numpy_doc,
+        .params = "self",
+        .returns = "NDArray[np.float64]",
+    },
+};
+
+var matrix_methods = stub_metadata.toPyMethodDefArray(&matrix_methods_metadata);
+
+pub const matrix_properties_metadata = [_]stub_metadata.PropertyWithMetadata{
+    .{
+        .name = "rows",
+        .get = matrix_rows_getter,
+        .set = null,
+        .doc = "Number of rows",
+        .type = "int",
+    },
+    .{
+        .name = "cols",
+        .get = matrix_cols_getter,
+        .set = null,
+        .doc = "Number of columns",
+        .type = "int",
+    },
+    .{
+        .name = "shape",
+        .get = matrix_shape_getter,
+        .set = null,
+        .doc = "Shape as (rows, cols) tuple",
+        .type = "tuple[int, int]",
+    },
+    .{
+        .name = "dtype",
+        .get = matrix_dtype_getter,
+        .set = null,
+        .doc = "Data type (always 'float64')",
+        .type = "str",
+    },
+};
+
+var matrix_getset = stub_metadata.toPyGetSetDefArray(&matrix_properties_metadata);
+
+pub const matrix_special_methods_metadata = [_]stub_metadata.MethodInfo{
+    .{
+        .name = "__init__",
+        .params = "self, rows: int, cols: int, fill_value: float = 0.0",
+        .returns = "None",
+        .doc = matrix_init_doc,
+    },
+    .{
+        .name = "__getitem__",
+        .params = "self, key: tuple[int, int]",
+        .returns = "float",
+        .doc = "Get matrix element at (row, col)",
+    },
+    .{
+        .name = "__setitem__",
+        .params = "self, key: tuple[int, int], value: float",
+        .returns = "None",
+        .doc = "Set matrix element at (row, col)",
+    },
+    .{
+        .name = "__repr__",
+        .params = "self",
+        .returns = "str",
+        .doc = null,
+    },
+    .{
+        .name = "__str__",
+        .params = "self",
+        .returns = "str",
+        .doc = null,
+    },
 };
 
 // Type object definition
