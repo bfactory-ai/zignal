@@ -19,9 +19,12 @@ const matrix_class_doc =
     \\import zignal
     \\import numpy as np
     \\
-    \\# Create from dimensions
-    \\m = zignal.Matrix(3, 4)  # 3x4 matrix of zeros
-    \\m = zignal.Matrix(3, 4, fill_value=1.0)  # filled with 1.0
+    \\# Create from list of lists
+    \\m = zignal.Matrix([[1, 2, 3], [4, 5, 6]])
+    \\
+    \\# Create with dimensions using full()
+    \\m = zignal.Matrix.full(3, 4)  # 3x4 matrix of zeros
+    \\m = zignal.Matrix.full(3, 4, fill_value=1.0)  # filled with 1.0
     \\
     \\# From numpy (zero-copy for float64 contiguous arrays)
     \\arr = np.random.randn(10, 5)
@@ -140,14 +143,16 @@ fn matrix_full(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
 
     // Create the matrix
     const matrix_ptr = allocator.create(Matrix(f64)) catch {
-        c.Py_DECREF(@ptrCast(self));
+        // TODO: Remove explicit cast after Python 3.10 is dropped
+        c.Py_DECREF(@as(?*c.PyObject, @ptrCast(self)));
         c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate Matrix");
         return null;
     };
 
     matrix_ptr.* = Matrix(f64).init(allocator, @intCast(rows), @intCast(cols)) catch {
         allocator.destroy(matrix_ptr);
-        c.Py_DECREF(@ptrCast(self));
+        // TODO: Remove explicit cast after Python 3.10 is dropped
+        c.Py_DECREF(@as(?*c.PyObject, @ptrCast(self)));
         c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate matrix data");
         return null;
     };
