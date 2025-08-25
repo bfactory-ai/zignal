@@ -7,6 +7,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const expectEqual = std.testing.expectEqual;
 
+const as = @import("meta.zig").as;
 const Matrix = @import("matrix.zig").Matrix;
 
 /// Optimization policy for the assignment problem
@@ -51,7 +52,7 @@ fn findScaleFactor(comptime T: type, matrix: Matrix(T)) i32 {
 }
 
 /// Count the number of significant decimal places in a float
-fn countDecimalPlaces(val: f32) u8 {
+fn countDecimalPlaces(val: anytype) u8 {
     if (val == 0) return 0;
 
     const abs_val = @abs(val);
@@ -324,10 +325,7 @@ pub fn solveAssignmentProblem(
                 result_assignments[i] = col;
                 // Use original cost matrix values (not the multiplied work matrix)
                 const cost_val = cost_matrix.at(i, col).*;
-                total_cost += if (@typeInfo(T) == .float)
-                    cost_val
-                else
-                    @as(f32, @floatFromInt(cost_val));
+                total_cost += as(f32, cost_val);
             } else {
                 result_assignments[i] = null;
             }
