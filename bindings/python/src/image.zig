@@ -441,24 +441,24 @@ fn image_get_dtype(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*
     return null;
 }
 
-const image_is_view_doc =
-    \\Check if this image is a sub-image view
+const image_is_contiguous_doc =
+    \\Check if this image data is stored contiguously in memory
     \\
-    \\Returns True only when the image is a sub-image (its internal stride differs from its width),
-    \\and False otherwise. Full-image views (degenerate views covering the entire image) return False.
+    \\Returns True when the image data is stored without padding between rows (stride equals width).
+    \\Returns False when there is padding between rows, typically for sub-image views.
 ;
 
-fn image_is_view(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+fn image_is_contiguous(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args; // No arguments
     const self = @as(*ImageObject, @ptrCast(self_obj.?));
 
     if (self.py_image) |pimg| {
-        const is_view = switch (pimg.data) {
-            .gray => |img| img.isView(),
-            .rgb => |img| img.isView(),
-            .rgba => |img| img.isView(),
+        const is_contiguous = switch (pimg.data) {
+            .gray => |img| img.isContiguous(),
+            .rgb => |img| img.isContiguous(),
+            .rgba => |img| img.isContiguous(),
         };
-        return @ptrCast(py_utils.getPyBool(is_view));
+        return @ptrCast(py_utils.getPyBool(is_contiguous));
     }
     c.PyErr_SetString(c.PyExc_ValueError, "Image not initialized");
     return null;
@@ -3562,10 +3562,10 @@ pub const image_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .returns = "Image",
     },
     .{
-        .name = "is_view",
-        .meth = @ptrCast(&image_is_view),
+        .name = "is_contiguous",
+        .meth = @ptrCast(&image_is_contiguous),
         .flags = c.METH_NOARGS,
-        .doc = image_is_view_doc,
+        .doc = image_is_contiguous_doc,
         .params = "self",
         .returns = "bool",
     },
