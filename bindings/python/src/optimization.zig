@@ -226,25 +226,23 @@ const solve_assignment_problem_doc =
     \\the total cost in O(n³) time. Handles both square and rectangular matrices.
     \\
     \\## Parameters
-    \\- `cost_matrix` (Matrix): Cost matrix where element (i,j) is the cost of assigning row i to column j
-    \\- `policy` (OptimizationPolicy): Whether to minimize or maximize total cost (default: MIN)
+    \\- `cost_matrix` (`Matrix`): Cost matrix where element (i,j) is the cost of assigning row i to column j
+    \\- `policy` (`OptimizationPolicy`): Whether to minimize or maximize total cost (default: MIN)
     \\
     \\## Returns
-    \\Assignment: Object containing the optimal assignments and total cost
+    \\`Assignment`: Object containing the optimal assignments and total cost
     \\
     \\## Examples
     \\```python
     \\import zignal
-    \\import numpy as np
     \\
     \\# Create cost matrix
-    \\costs = np.array([[1, 2, 3],
-    \\                   [4, 5, 6],
-    \\                   [7, 8, 9]], dtype=np.float64)
-    \\matrix = zignal.Matrix.from_numpy(costs)
+    \\costs = zignal.Matrix([[1, 2, 3],
+    \\                       [4, 5, 6],
+    \\                       [7, 8, 9]])
     \\
     \\# Solve for minimum cost
-    \\result = zignal.solve_assignment_problem(matrix)
+    \\result = zignal.solve_assignment_problem(costs)
     \\print(f"Total cost: {result.total_cost}")
     \\for i, j in enumerate(result.assignments):
     \\    if j is not None:

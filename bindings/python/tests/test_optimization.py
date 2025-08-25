@@ -1,6 +1,5 @@
 """Test optimization module functionality."""
 
-import numpy as np
 import pytest
 import zignal
 
@@ -22,11 +21,10 @@ def test_assignment_type():
 def test_solve_assignment_problem_basic():
     """Test basic assignment problem solving."""
     # Create a simple 3x3 cost matrix
-    costs = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]], dtype=np.float64)
-    matrix = zignal.Matrix.from_numpy(costs)
+    costs = zignal.Matrix([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
 
     # Solve for minimum cost
-    result = zignal.solve_assignment_problem(matrix)
+    result = zignal.solve_assignment_problem(costs)
 
     # Check result type
     assert isinstance(result, zignal.Assignment)
@@ -46,11 +44,10 @@ def test_solve_assignment_problem_basic():
 def test_solve_assignment_problem_minimize():
     """Test minimization policy."""
     # Create a cost matrix where diagonal is cheapest
-    costs = np.array([[1.0, 10.0, 10.0], [10.0, 2.0, 10.0], [10.0, 10.0, 3.0]], dtype=np.float64)
-    matrix = zignal.Matrix.from_numpy(costs)
+    costs = zignal.Matrix([[1.0, 10.0, 10.0], [10.0, 2.0, 10.0], [10.0, 10.0, 3.0]])
 
     # Solve for minimum cost
-    result = zignal.solve_assignment_problem(matrix, zignal.OptimizationPolicy.MIN)
+    result = zignal.solve_assignment_problem(costs, zignal.OptimizationPolicy.MIN)
 
     # Optimal should be diagonal (0->0, 1->1, 2->2) with cost 1+2+3=6
     assert result.total_cost == pytest.approx(6.0)
@@ -60,11 +57,10 @@ def test_solve_assignment_problem_minimize():
 def test_solve_assignment_problem_maximize():
     """Test maximization policy."""
     # Create a profit matrix where anti-diagonal is most profitable
-    profits = np.array([[1.0, 2.0, 10.0], [2.0, 5.0, 8.0], [10.0, 6.0, 3.0]], dtype=np.float64)
-    matrix = zignal.Matrix.from_numpy(profits)
+    profits = zignal.Matrix([[1.0, 2.0, 10.0], [2.0, 5.0, 8.0], [10.0, 6.0, 3.0]])
 
     # Solve for maximum profit
-    result = zignal.solve_assignment_problem(matrix, zignal.OptimizationPolicy.MAX)
+    result = zignal.solve_assignment_problem(profits, zignal.OptimizationPolicy.MAX)
 
     # Check that we get a valid assignment
     assert len(result.assignments) == 3
@@ -77,10 +73,8 @@ def test_solve_assignment_problem_maximize():
 def test_solve_assignment_problem_rectangular():
     """Test with rectangular matrices."""
     # Test 2x3 matrix (more columns than rows)
-    costs = np.array([[1.0, 2.0, 3.0], [4.0, 2.0, 1.0]], dtype=np.float64)
-    matrix = zignal.Matrix.from_numpy(costs)
-
-    result = zignal.solve_assignment_problem(matrix)
+    costs = zignal.Matrix([[1.0, 2.0, 3.0], [4.0, 2.0, 1.0]])
+    result = zignal.solve_assignment_problem(costs)
 
     # Should have 2 assignments (one for each row)
     assert len(result.assignments) == 2
@@ -94,10 +88,8 @@ def test_solve_assignment_problem_rectangular():
 def test_solve_assignment_problem_rectangular_tall():
     """Test with tall rectangular matrix (more rows than columns)."""
     # Test 3x2 matrix
-    costs = np.array([[1.0, 2.0], [3.0, 1.0], [2.0, 3.0]], dtype=np.float64)
-    matrix = zignal.Matrix.from_numpy(costs)
-
-    result = zignal.solve_assignment_problem(matrix)
+    costs = zignal.Matrix([[1.0, 2.0], [3.0, 1.0], [2.0, 3.0]])
+    result = zignal.solve_assignment_problem(costs)
 
     # Should have 3 potential assignments (one for each row)
     assert len(result.assignments) == 3
@@ -109,10 +101,8 @@ def test_solve_assignment_problem_rectangular_tall():
 
 def test_solve_assignment_problem_single_element():
     """Test with 1x1 matrix."""
-    costs = np.array([[5.0]], dtype=np.float64)
-    matrix = zignal.Matrix.from_numpy(costs)
-
-    result = zignal.solve_assignment_problem(matrix)
+    costs = zignal.Matrix([[5.0]])
+    result = zignal.solve_assignment_problem(costs)
 
     assert len(result.assignments) == 1
     assert result.assignments[0] == 0
@@ -122,13 +112,8 @@ def test_solve_assignment_problem_single_element():
 def test_solve_assignment_problem_integer_costs():
     """Test that integer costs work correctly."""
     # Create matrix with integer values
-    costs = np.array(
-        [[10, 20, 30], [15, 25, 35], [20, 30, 40]],
-        dtype=np.float64,  # Matrix expects float64
-    )
-    matrix = zignal.Matrix.from_numpy(costs)
-
-    result = zignal.solve_assignment_problem(matrix)
+    costs = zignal.Matrix([[10, 20, 30], [15, 25, 35], [20, 30, 40]])
+    result = zignal.solve_assignment_problem(costs)
 
     # Should get valid assignments
     assert len(result.assignments) == 3
@@ -138,10 +123,8 @@ def test_solve_assignment_problem_integer_costs():
 
 def test_solve_assignment_problem_zeros():
     """Test with matrix containing zeros."""
-    costs = np.array([[0.0, 1.0, 2.0], [1.0, 0.0, 3.0], [2.0, 3.0, 0.0]], dtype=np.float64)
-    matrix = zignal.Matrix.from_numpy(costs)
-
-    result = zignal.solve_assignment_problem(matrix)
+    costs = zignal.Matrix([[0.0, 1.0, 2.0], [1.0, 0.0, 3.0], [2.0, 3.0, 0.0]])
+    result = zignal.solve_assignment_problem(costs)
 
     # Optimal is all zeros on diagonal, total cost = 0
     assert result.total_cost == pytest.approx(0.0)
@@ -149,9 +132,8 @@ def test_solve_assignment_problem_zeros():
 
 def test_assignment_repr():
     """Test Assignment object string representation."""
-    costs = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float64)
-    matrix = zignal.Matrix.from_numpy(costs)
-    result = zignal.solve_assignment_problem(matrix)
+    costs = zignal.Matrix([[1.0, 2.0], [3.0, 4.0]])
+    result = zignal.solve_assignment_problem(costs)
 
     repr_str = repr(result)
     assert "Assignment" in repr_str
@@ -160,33 +142,28 @@ def test_assignment_repr():
 
 def test_invalid_policy():
     """Test that invalid policy values are rejected."""
-    costs = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float64)
-    matrix = zignal.Matrix.from_numpy(costs)
+    costs = zignal.Matrix([[1.0, 2.0], [3.0, 4.0]])
 
     # String values should be rejected
     with pytest.raises(TypeError):
-        zignal.solve_assignment_problem(matrix, "invalid")
+        zignal.solve_assignment_problem(costs, "invalid")
 
     # Raw ints 0 and 1 are allowed (they match enum values)
-    result = zignal.solve_assignment_problem(matrix, 0)  # MIN
+    result = zignal.solve_assignment_problem(costs, 0)  # MIN
     assert isinstance(result, zignal.Assignment)
 
-    result = zignal.solve_assignment_problem(matrix, 1)  # MAX
+    result = zignal.solve_assignment_problem(costs, 1)  # MAX
     assert isinstance(result, zignal.Assignment)
 
     # Invalid integer values should be rejected
     with pytest.raises(ValueError):
-        zignal.solve_assignment_problem(matrix, 2)  # Invalid enum value
+        zignal.solve_assignment_problem(costs, 2)  # Invalid enum value
 
 
 def test_invalid_matrix_type():
     """Test that non-Matrix inputs are rejected."""
     costs = [[1.0, 2.0], [3.0, 4.0]]
 
+    # List directly should fail (need Matrix wrapper)
     with pytest.raises(TypeError):
         zignal.solve_assignment_problem(costs)
-
-    # NumPy array directly should also fail
-    np_costs = np.array(costs)
-    with pytest.raises(TypeError):
-        zignal.solve_assignment_problem(np_costs)

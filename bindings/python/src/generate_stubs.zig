@@ -216,7 +216,7 @@ fn generateClassFromMetadata(stub: *GeneratedStub, class_info: stub_metadata.Cla
     // Generate special methods if provided
     if (class_info.special_methods) |special_methods| {
         for (special_methods) |method| {
-            // Write method signature
+            // Write method signature normally
             try stub.writef("    def {s}({s}) -> {s}:", .{
                 method.name,
                 method.params,
@@ -314,7 +314,7 @@ fn generateStubFile(gpa: std.mem.Allocator) ![]u8 {
         \\from __future__ import annotations
         \\
         \\from enum import IntEnum
-        \\from typing import TypeAlias, List, Optional
+        \\from typing import TypeAlias, Optional, overload
         \\
         \\import numpy as np
         \\from numpy.typing import NDArray
