@@ -195,6 +195,22 @@ class TestImageBinding:
         # View should be marked as a view
         assert view.is_view() is True
 
+    def test_view_no_args_is_full_image_view(self):
+        """view() with no args returns full image; not considered a view."""
+        arr = np.zeros((10, 20, 4), dtype=np.uint8)
+        img = zignal.Image.from_numpy(arr)
+
+        v = img.view()
+        assert v.rows == img.rows
+        assert v.cols == img.cols
+        # Full-image views are degenerate and report as non-views
+        assert v.is_view() is False
+
+        v2 = img.view(None)
+        assert v2.rows == img.rows
+        assert v2.cols == img.cols
+        assert v2.is_view() is False
+
     def test_view_basic(self):
         """Test creating a basic view of an image."""
         # Create an image with identifiable content
@@ -237,6 +253,24 @@ class TestImageBinding:
         # Outside the view should still be black
         np.testing.assert_array_equal(parent_arr[0, 0], [0, 0, 0, 0])
         np.testing.assert_array_equal(parent_arr[9, 9], [0, 0, 0, 0])
+
+    def test_view_no_args_shares_memory_with_parent(self):
+        """Full-image view shares memory with parent both ways."""
+        arr = np.zeros((5, 7, 4), dtype=np.uint8)
+        img = zignal.Image.from_numpy(arr)
+
+        v = img.view()
+        color = (255, 128, 64, 255)
+
+        # Modify the view; parent must reflect change
+        v[0, 0] = color
+        np.testing.assert_array_equal(img.to_numpy()[0, 0], np.array(color, dtype=np.uint8))
+
+        # Modify the parent; view must reflect change
+        img[1, 1] = (10, 20, 30, 255)
+        np.testing.assert_array_equal(
+            v.to_numpy()[1, 1], np.array([10, 20, 30, 255], dtype=np.uint8)
+        )
 
     def test_view_bounds_clipping(self):
         """Test that view bounds are clipped to image dimensions."""

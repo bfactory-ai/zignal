@@ -441,6 +441,13 @@ fn image_get_dtype(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*
     return null;
 }
 
+const image_is_view_doc =
+    \\Check if this image is a sub-image view
+    \\
+    \\Returns True only when the image is a sub-image (its internal stride differs from its width),
+    \\and False otherwise. Full-image views (degenerate views covering the entire image) return False.
+;
+
 fn image_is_view(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args; // No arguments
     const self = @as(*ImageObject, @ptrCast(self_obj.?));
@@ -2476,7 +2483,7 @@ const image_view_doc =
     \\are reflected in both. This is a zero-copy operation.
     \\
     \\## Parameters
-    \\- `rect` (`Rectangle`): The rectangular region to view
+    \\- `rect` (`Rectangle | None`, optional): The rectangular region to view. If omitted or `None`, returns a view of the full image.
     \\
     \\## Examples
     \\```python
@@ -2501,23 +2508,34 @@ const image_view_doc =
 fn image_view(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*ImageObject, @ptrCast(self_obj.?));
 
-    // Parse the Rectangle argument
-    var rect_obj: ?*c.PyObject = null;
-    const format = std.fmt.comptimePrint("O", .{});
-    if (c.PyArg_ParseTuple(args, format.ptr, &rect_obj) == 0) {
+    // Optional rectangle argument; default to full image
+    var use_full: bool = false;
+    var rect: zignal.Rectangle(usize) = undefined;
+
+    const argc: c.Py_ssize_t = if (args != null) c.PyTuple_Size(args) else 0;
+    if (argc == 0) {
+        use_full = true;
+    } else if (argc == 1) {
+        var rect_obj: ?*c.PyObject = null;
+        const format = std.fmt.comptimePrint("O", .{});
+        if (c.PyArg_ParseTuple(args, format.ptr, &rect_obj) == 0) {
+            return null;
+        }
+        if (rect_obj == c.Py_None()) {
+            use_full = true;
+        } else {
+            const frect = py_utils.parseRectangle(rect_obj) catch return null;
+            rect = zignal.Rectangle(usize).init(
+                @intFromFloat(@max(0, frect.l)),
+                @intFromFloat(@max(0, frect.t)),
+                @intFromFloat(@max(0, frect.r)),
+                @intFromFloat(@max(0, frect.b)),
+            );
+        }
+    } else {
+        c.PyErr_SetString(c.PyExc_TypeError, "view() takes at most 1 argument (rect)");
         return null;
     }
-
-    // Parse the Rectangle object
-    const frect = py_utils.parseRectangle(rect_obj) catch return null;
-
-    // Convert f32 rectangle to usize for the view method
-    const rect = zignal.Rectangle(usize).init(
-        @intFromFloat(@max(0, frect.l)),
-        @intFromFloat(@max(0, frect.t)),
-        @intFromFloat(@max(0, frect.r)),
-        @intFromFloat(@max(0, frect.b)),
-    );
 
     if (self.py_image) |pimg| {
         // Create new Python Image wrapping the view in the same variant
@@ -2525,7 +2543,10 @@ fn image_view(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObj
         const result = @as(*ImageObject, @ptrCast(py_obj));
         switch (pimg.data) {
             .gray => |img| {
-                const view_img = img.view(rect);
+                const view_img = if (use_full)
+                    img.view(zignal.Rectangle(usize).init(0, 0, img.cols, img.rows))
+                else
+                    img.view(rect);
                 const pnew = allocator.create(PyImage) catch {
                     c.Py_DECREF(py_obj);
                     c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate view");
@@ -2535,7 +2556,10 @@ fn image_view(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObj
                 result.py_image = pnew;
             },
             .rgb => |img| {
-                const view_img = img.view(rect);
+                const view_img = if (use_full)
+                    img.view(zignal.Rectangle(usize).init(0, 0, img.cols, img.rows))
+                else
+                    img.view(rect);
                 const pnew = allocator.create(PyImage) catch {
                     c.Py_DECREF(py_obj);
                     c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate view");
@@ -2545,7 +2569,10 @@ fn image_view(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObj
                 result.py_image = pnew;
             },
             .rgba => |img| {
-                const view_img = img.view(rect);
+                const view_img = if (use_full)
+                    img.view(zignal.Rectangle(usize).init(0, 0, img.cols, img.rows))
+                else
+                    img.view(rect);
                 const pnew = allocator.create(PyImage) catch {
                     c.Py_DECREF(py_obj);
                     c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate view");
@@ -3531,14 +3558,14 @@ pub const image_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&image_view),
         .flags = c.METH_VARARGS,
         .doc = image_view_doc,
-        .params = "self, rect: Rectangle",
+        .params = "self, rect: Rectangle | None = None",
         .returns = "Image",
     },
     .{
         .name = "is_view",
         .meth = @ptrCast(&image_is_view),
         .flags = c.METH_NOARGS,
-        .doc = "Check if this image is a view of another image.\n\nReturns True if this image references another image's memory,\nFalse if it owns its own memory.",
+        .doc = image_is_view_doc,
         .params = "self",
         .returns = "bool",
     },
