@@ -10,8 +10,11 @@ const detectJpegComponents = zignal.jpeg.detectComponents;
 
 const canvas = @import("canvas.zig");
 const color_bindings = @import("color.zig");
+const color_registry = @import("color_registry.zig");
 const color_utils = @import("color_utils.zig");
 const grayscale_format = @import("grayscale_format.zig");
+const makeRgbaProxy = @import("pixel_proxy.zig").makeRgbaProxy;
+const makeRgbProxy = @import("pixel_proxy.zig").makeRgbProxy;
 const pixel_iterator = @import("pixel_iterator.zig");
 const py_utils = @import("py_utils.zig");
 const allocator = py_utils.allocator;
@@ -20,7 +23,6 @@ const c = py_utils.c;
 const PyImageMod = @import("PyImage.zig");
 const PyImage = PyImageMod.PyImage;
 const stub_metadata = @import("stub_metadata.zig");
-const color_registry = @import("color_registry.zig");
 
 const image_class_doc =
     \\Image for processing and manipulation.
@@ -33,29 +35,12 @@ const image_class_doc =
 
 pub const ImageObject = extern struct {
     ob_base: c.PyObject,
-    // Store dynamic image for non-RGBA formats (or future migration)
+    /// Store dynamic image for non-RGBA formats (or future migration)
     py_image: ?*PyImage,
-    // Store reference to NumPy array if created from numpy (for zero-copy)
+    /// Store reference to NumPy array if created from numpy (for zero-copy)
     numpy_ref: ?*c.PyObject,
-    // Store reference to parent Image if this is a view (for memory management)
+    /// Store reference to parent Image if this is a view (for memory management)
     parent_ref: ?*c.PyObject,
-};
-
-// Pixel proxy objects that maintain a reference to the parent image
-// These allow field assignment like image[0, 0].g = 255 to work
-// These are internal implementation details, not exposed in the public API
-const RgbPixelProxy = extern struct {
-    ob_base: c.PyObject,
-    parent: ?*c.PyObject, // Reference to parent ImageObject
-    row: c.Py_ssize_t,
-    col: c.Py_ssize_t,
-};
-
-const RgbaPixelProxy = extern struct {
-    ob_base: c.PyObject,
-    parent: ?*c.PyObject, // Reference to parent ImageObject
-    row: c.Py_ssize_t,
-    col: c.Py_ssize_t,
 };
 
 fn image_new(type_obj: ?*c.PyTypeObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
@@ -3010,36 +2995,11 @@ fn image_getitem(self_obj: ?*c.PyObject, key: ?*c.PyObject) callconv(.c) ?*c.PyO
 
     // Variant-specific pixel return
     if (pimg_opt) |pimg| {
-        switch (pimg.data) {
-            .gray => |img| {
-                const gray = img.at(@intCast(row), @intCast(col)).*;
-                return c.PyLong_FromLong(@intCast(gray));
-            },
-            .rgb => |img| {
-                // Return a pixel proxy that references the image
-                _ = img;
-                const proxy_obj = c.PyType_GenericAlloc(@ptrCast(&RgbPixelProxyType), 0);
-                if (proxy_obj == null) return null;
-                const proxy = @as(*RgbPixelProxy, @ptrCast(proxy_obj));
-                proxy.parent = @ptrCast(self_obj);
-                proxy.row = @intCast(row);
-                proxy.col = @intCast(col);
-                c.Py_INCREF(@ptrCast(self_obj)); // Keep parent alive
-                return proxy_obj;
-            },
-            .rgba => |img| {
-                // Return a pixel proxy that references the image
-                _ = img;
-                const proxy_obj = c.PyType_GenericAlloc(@ptrCast(&RgbaPixelProxyType), 0);
-                if (proxy_obj == null) return null;
-                const proxy = @as(*RgbaPixelProxy, @ptrCast(proxy_obj));
-                proxy.parent = @ptrCast(self_obj);
-                proxy.row = @intCast(row);
-                proxy.col = @intCast(col);
-                c.Py_INCREF(@ptrCast(self_obj)); // Keep parent alive
-                return proxy_obj;
-            },
-        }
+        return switch (pimg.data) {
+            .gray => |img| return c.PyLong_FromLong(@intCast(img.at(@intCast(row), @intCast(col)).*)),
+            .rgb => return makeRgbProxy(@ptrCast(self_obj), @intCast(row), @intCast(col)),
+            .rgba => return makeRgbaProxy(@ptrCast(self_obj), @intCast(row), @intCast(col)),
+        };
     }
 
     // Unreachable; bounds check above should have returned
@@ -3475,238 +3435,4 @@ pub var ImageType = c.PyTypeObject{
     .tp_init = image_init,
     .tp_new = image_new,
     .tp_richcompare = @ptrCast(&image_richcompare),
-};
-
-// Generic, type-safe pixel proxy implementation using comptime reflection
-fn PixelProxyBinding(comptime ColorType: type, comptime ProxyObjectType: type) type {
-    const fields = @typeInfo(ColorType).@"struct".fields;
-
-    return struct {
-        const Self = @This();
-
-        fn parentFromObj(self_obj: ?*c.PyObject) ?*ImageObject {
-            const self = @as(*ProxyObjectType, @ptrCast(self_obj.?));
-            if (self.parent) |p| {
-                return @as(*ImageObject, @ptrCast(p));
-            }
-            return null;
-        }
-
-        fn repr(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-            const parent = Self.parentFromObj(self_obj) orelse {
-                return c.PyUnicode_FromString(comptime zignal.meta.getSimpleTypeName(ColorType) ++ "(invalid)");
-            };
-            if (parent.py_image) |pimg| {
-                const proxy = @as(*ProxyObjectType, @ptrCast(self_obj.?));
-                const rgba = pimg.getPixelRgba(@intCast(proxy.row), @intCast(proxy.col));
-                var buf: [256]u8 = undefined;
-                var fbs = std.io.fixedBufferStream(&buf);
-                const w = fbs.writer();
-                _ = w.print("{s}(", .{comptime zignal.meta.getSimpleTypeName(ColorType)}) catch return null;
-                inline for (fields, 0..) |f, i| {
-                    if (i != 0) _ = w.print(", ", .{}) catch return null;
-                    _ = w.print("{s}={}", .{ f.name, @field(rgba, f.name) }) catch return null;
-                }
-                _ = w.print(")", .{}) catch return null;
-                const s = fbs.getWritten();
-                return c.PyUnicode_FromStringAndSize(s.ptr, @intCast(s.len));
-            }
-            return c.PyUnicode_FromString(comptime zignal.meta.getSimpleTypeName(ColorType) ++ "(invalid)");
-        }
-
-        fn dealloc(self_obj: [*c]c.PyObject) callconv(.c) void {
-            const self = @as(*ProxyObjectType, @ptrCast(self_obj));
-            if (self.parent) |parent| {
-                c.Py_DECREF(parent);
-            }
-            c.PyObject_Free(@ptrCast(self));
-        }
-
-        fn richcompare(self_obj: [*c]c.PyObject, other_obj: [*c]c.PyObject, op: c_int) callconv(.c) [*c]c.PyObject {
-            // Only support == and !=
-            if (op != c.Py_EQ and op != c.Py_NE) {
-                const not_impl = c.Py_NotImplemented();
-                c.Py_INCREF(not_impl);
-                return not_impl;
-            }
-
-            const self_parent = Self.parentFromObj(@ptrCast(self_obj)) orelse {
-                return @ptrCast(py_utils.getPyBool(op != c.Py_EQ));
-            };
-            if (self_parent.py_image == null) {
-                return @ptrCast(py_utils.getPyBool(op != c.Py_EQ));
-            }
-
-            const proxy = @as(*ProxyObjectType, @ptrCast(self_obj));
-            const px = self_parent.py_image.?.getPixelRgba(@intCast(proxy.row), @intCast(proxy.col));
-
-            // Try to parse other as a color (prefer RGBA to preserve alpha if provided)
-            var equal = false;
-            const other: ?*c.PyObject = @ptrCast(other_obj);
-            const parsed = color_utils.parseColorTo(Rgba, other) catch null;
-            if (parsed) |rgba| {
-                if (std.meta.eql(ColorType, zignal.Rgb)) {
-                    // For RGB proxies, only equal to RGBA if alpha is 255
-                    equal = (px.r == rgba.r and px.g == rgba.g and px.b == rgba.b and rgba.a == 255);
-                } else if (std.meta.eql(ColorType, zignal.Rgba)) {
-                    equal = (px.r == rgba.r and px.g == rgba.g and px.b == rgba.b and px.a == rgba.a);
-                } else {
-                    // For other future proxy types, compare via to_rgba channels
-                    equal = (px == rgba);
-                }
-            } else {
-                // If not a parseable color, clear any error and fall back to NotImplemented
-                if (c.PyErr_Occurred() != null) {
-                    c.PyErr_Clear();
-                }
-                const not_impl = c.Py_NotImplemented();
-                c.Py_INCREF(not_impl);
-                return not_impl;
-            }
-
-            if (op == c.Py_EQ) {
-                return @ptrCast(py_utils.getPyBool(equal));
-            } else {
-                return @ptrCast(py_utils.getPyBool(!equal));
-            }
-        }
-
-        fn getField(comptime index: usize) fn (?*c.PyObject, ?*anyopaque) callconv(.c) ?*c.PyObject {
-            return struct {
-                fn getter(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-                    _ = closure;
-                    const parent = Self.parentFromObj(self_obj) orelse {
-                        c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
-                        return null;
-                    };
-                    if (parent.py_image) |pimg| {
-                        const proxy = @as(*ProxyObjectType, @ptrCast(self_obj.?));
-                        const rgba = pimg.getPixelRgba(@intCast(proxy.row), @intCast(proxy.col));
-                        const value = @field(rgba, fields[index].name);
-                        return py_utils.convertToPython(value);
-                    }
-                    c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
-                    return null;
-                }
-            }.getter;
-        }
-
-        fn setField(comptime index: usize) fn (?*c.PyObject, ?*c.PyObject, ?*anyopaque) callconv(.c) c_int {
-            return struct {
-                fn setter(self_obj: ?*c.PyObject, value: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) c_int {
-                    _ = closure;
-
-                    if (value == null) {
-                        c.PyErr_SetString(c.PyExc_TypeError, "Cannot delete attribute");
-                        return -1;
-                    }
-
-                    const T = fields[index].type;
-                    const field_name = fields[index].name;
-
-                    // Parse Python value to native type with clear error messages
-                    const parsed = py_utils.convertFromPython(T, value) catch |err| {
-                        switch (err) {
-                            py_utils.ConversionError.not_integer => {
-                                c.PyErr_SetString(c.PyExc_TypeError, "Expected integer value");
-                                return -1;
-                            },
-                            py_utils.ConversionError.not_float => {
-                                c.PyErr_SetString(c.PyExc_TypeError, "Expected float value");
-                                return -1;
-                            },
-                            py_utils.ConversionError.integer_out_of_range, py_utils.ConversionError.float_out_of_range => {
-                                // Harmonize message for RGB/A; use generic message for others
-                                if (std.meta.eql(ColorType, zignal.Rgb) or std.meta.eql(ColorType, zignal.Rgba)) {
-                                    c.PyErr_SetString(c.PyExc_ValueError, "Value must be between 0 and 255");
-                                } else {
-                                    const msg = color_registry.getValidationErrorMessage(ColorType);
-                                    c.PyErr_SetString(c.PyExc_ValueError, msg.ptr);
-                                }
-                                return -1;
-                            },
-                            else => {
-                                c.PyErr_SetString(c.PyExc_TypeError, "Unsupported value type");
-                                return -1;
-                            },
-                        }
-                    };
-
-                    // Domain validation (per color space)
-                    if (!color_registry.validateColorComponent(ColorType, field_name, parsed)) {
-                        if (std.meta.eql(ColorType, zignal.Rgb) or std.meta.eql(ColorType, zignal.Rgba)) {
-                            c.PyErr_SetString(c.PyExc_ValueError, "Value must be between 0 and 255");
-                        } else {
-                            const msg = color_registry.getValidationErrorMessage(ColorType);
-                            c.PyErr_SetString(c.PyExc_ValueError, msg.ptr);
-                        }
-                        return -1;
-                    }
-
-                    const parent = Self.parentFromObj(self_obj) orelse {
-                        c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
-                        return -1;
-                    };
-
-                    if (parent.py_image) |pimg| {
-                        const proxy = @as(*ProxyObjectType, @ptrCast(self_obj.?));
-                        var px = pimg.getPixelRgba(@intCast(proxy.row), @intCast(proxy.col));
-                        @field(px, field_name) = parsed;
-                        pimg.setPixelRgba(@intCast(proxy.row), @intCast(proxy.col), px);
-                        return 0;
-                    }
-
-                    c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
-                    return -1;
-                }
-            }.setter;
-        }
-
-        pub fn generateGetSet() [fields.len + 1]c.PyGetSetDef {
-            var arr: [fields.len + 1]c.PyGetSetDef = undefined;
-            inline for (fields, 0..) |f, i| {
-                arr[i] = c.PyGetSetDef{
-                    .name = f.name ++ "",
-                    .get = Self.getField(i),
-                    .set = Self.setField(i),
-                    .doc = f.name ++ " component",
-                    .closure = null,
-                };
-            }
-            arr[fields.len] = c.PyGetSetDef{ .name = null, .get = null, .set = null, .doc = null, .closure = null };
-            return arr;
-        }
-    };
-}
-
-// Instantiate bindings for RGB and RGBA proxies
-const RgbProxyBinding = PixelProxyBinding(zignal.Rgb, RgbPixelProxy);
-const RgbaProxyBinding = PixelProxyBinding(zignal.Rgba, RgbaPixelProxy);
-
-var rgb_proxy_getset = RgbProxyBinding.generateGetSet();
-var rgba_proxy_getset = RgbaProxyBinding.generateGetSet();
-
-// Internal types - registered but not exposed to Python users
-pub var RgbPixelProxyType = c.PyTypeObject{
-    .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
-    .tp_name = "zignal.RgbPixelProxy",
-    .tp_basicsize = @sizeOf(RgbPixelProxy),
-    .tp_dealloc = RgbProxyBinding.dealloc,
-    .tp_repr = RgbProxyBinding.repr,
-    .tp_flags = c.Py_TPFLAGS_DEFAULT,
-    .tp_doc = "Proxy object for RGB pixel access",
-    .tp_getset = @ptrCast(&rgb_proxy_getset),
-    .tp_richcompare = RgbProxyBinding.richcompare,
-};
-
-pub var RgbaPixelProxyType = c.PyTypeObject{
-    .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
-    .tp_name = "zignal.RgbaPixelProxy",
-    .tp_basicsize = @sizeOf(RgbaPixelProxy),
-    .tp_dealloc = RgbaProxyBinding.dealloc,
-    .tp_repr = RgbaProxyBinding.repr,
-    .tp_flags = c.Py_TPFLAGS_DEFAULT,
-    .tp_doc = "Proxy object for RGBA pixel access",
-    .tp_getset = @ptrCast(&rgba_proxy_getset),
-    .tp_richcompare = RgbaProxyBinding.richcompare,
 };
