@@ -50,6 +50,18 @@ pub export fn PyInit__zignal() ?*c.PyObject {
         return null;
     };
 
+    // Register RgbPixelProxy type (internal, not exposed in public API)
+    if (c.PyType_Ready(&image.RgbPixelProxyType) < 0) {
+        c.Py_DECREF(m);
+        return null;
+    }
+
+    // Register RgbaPixelProxy type (internal, not exposed in public API)
+    if (c.PyType_Ready(&image.RgbaPixelProxyType) < 0) {
+        c.Py_DECREF(m);
+        return null;
+    }
+
     // Register Matrix type
     py_utils.registerType(@ptrCast(m), "Matrix", @ptrCast(&matrix.MatrixType)) catch |err| {
         std.log.err("Failed to register Matrix: {}", .{err});
