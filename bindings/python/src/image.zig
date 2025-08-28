@@ -906,24 +906,27 @@ fn image_to_numpy(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.P
 const image_from_numpy_doc =
     \\Create Image from a NumPy array with dtype uint8.
     \\
-    \\Zero-copy is used for contiguous arrays with these shapes:
+    \\Zero-copy is used for arrays with these shapes:
     \\- Grayscale: (rows, cols, 1) → Image(Grayscale)
     \\- RGB: (rows, cols, 3) → Image(Rgb)
     \\- RGBA: (rows, cols, 4) → Image(Rgba)
     \\
-    \\Arrays must be C-contiguous. Non-contiguous inputs should be converted with `numpy.ascontiguousarray`.
+    \\The array can have row strides (e.g., from views or slicing) as long as pixels
+    \\within each row are contiguous. For arrays with incompatible strides (e.g., transposed),
+    \\use `numpy.ascontiguousarray()` first.
     \\
     \\## Parameters
     \\- `array` (NDArray[np.uint8]): NumPy array with shape (rows, cols, 1), (rows, cols, 3) or (rows, cols, 4) and dtype uint8.
-    \\  Must be C-contiguous.
+    \\  Pixels within rows must be contiguous.
     \\
     \\## Raises
     \\- `TypeError`: If array is None or has wrong dtype
-    \\- `ValueError`: If array has wrong shape or is not C-contiguous
+    \\- `ValueError`: If array has wrong shape or incompatible strides
     \\
     \\## Notes
-    \\The array must be C-contiguous. If your array is not C-contiguous
-    \\(e.g., from slicing or transposing), use np.ascontiguousarray() first:
+    \\The array can have row strides (padding between rows) but pixels within
+    \\each row must be contiguous. For incompatible layouts (e.g., transposed
+    \\arrays), use np.ascontiguousarray() first:
     \\
     \\```python
     \\arr = np.ascontiguousarray(arr)
@@ -987,16 +990,25 @@ fn image_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c
         return null;
     }
 
-    // Check if array is C-contiguous
+    // Check if array strides are compatible (pixels must be contiguous within rows)
     const strides = @as([*]c.Py_ssize_t, @ptrCast(buffer.strides));
     const item = buffer.itemsize; // 1 for uint8
-    const expected_stride_2 = item; // 1
-    const expected_stride_1 = expected_stride_2 * @as(c.Py_ssize_t, @intCast(channels));
-    const expected_stride_0 = expected_stride_1 * @as(c.Py_ssize_t, @intCast(cols));
-    if (strides[2] != expected_stride_2 or strides[1] != expected_stride_1 or strides[0] != expected_stride_0) {
-        c.PyErr_SetString(c.PyExc_ValueError, "Array is not C-contiguous. Use numpy.ascontiguousarray() first.");
+
+    // Check that pixels within a row are contiguous
+    const expected_pixel_stride = item * @as(c.Py_ssize_t, @intCast(channels));
+    if (strides[2] != item or strides[1] != expected_pixel_stride) {
+        c.PyErr_SetString(c.PyExc_ValueError, "Array pixels must be contiguous. Use numpy.ascontiguousarray() first.");
         return null;
     }
+
+    // Calculate row stride in pixels (not bytes)
+    const row_stride_bytes = strides[0];
+    const pixel_size: c.Py_ssize_t = @intCast(channels);
+    if (@rem(row_stride_bytes, pixel_size) != 0) {
+        c.PyErr_SetString(c.PyExc_ValueError, "Array row stride must be a multiple of pixel size.");
+        return null;
+    }
+    const row_stride_pixels = @divExact(row_stride_bytes, pixel_size);
 
     // Create new Python object
     const self = @as(?*ImageObject, @ptrCast(c.PyType_GenericAlloc(@ptrCast(type_obj), 0)));
@@ -1009,8 +1021,13 @@ fn image_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c
         const data_ptr = @as([*]u8, @ptrCast(buffer.buf));
         const data_slice = data_ptr[0..@intCast(buffer.len)];
 
-        // Use initFromBytes to reinterpret the data as grayscale pixels
-        const img = Image(u8).initFromBytes(rows, cols, data_slice);
+        // Create image with custom stride to handle non-contiguous arrays
+        const img = Image(u8){
+            .rows = rows,
+            .cols = cols,
+            .data = data_slice,
+            .stride = @intCast(row_stride_pixels),
+        };
 
         // Keep a reference to the NumPy array to prevent deallocation
         c.Py_INCREF(array_obj.?);
@@ -1027,10 +1044,16 @@ fn image_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c
     } else if (channels == 4) {
         // Zero-copy: create image that points to NumPy's data directly
         const data_ptr = @as([*]u8, @ptrCast(buffer.buf));
-        const data_slice = data_ptr[0..@intCast(buffer.len)];
+        const rgba_ptr = @as([*]Rgba, @ptrCast(@alignCast(data_ptr)));
+        const data_slice = rgba_ptr[0..@divExact(@as(usize, @intCast(buffer.len)), @sizeOf(Rgba))];
 
-        // Use initFromBytes to reinterpret the data as RGBA pixels
-        const img = Image(Rgba).initFromBytes(rows, cols, data_slice);
+        // Create image with custom stride to handle non-contiguous arrays
+        const img = Image(Rgba){
+            .rows = rows,
+            .cols = cols,
+            .data = data_slice,
+            .stride = @intCast(row_stride_pixels),
+        };
 
         // Keep a reference to the NumPy array to prevent deallocation
         c.Py_INCREF(array_obj.?);
@@ -1047,8 +1070,16 @@ fn image_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c
     } else if (channels == 3) {
         // Zero-copy RGB
         const data_ptr = @as([*]u8, @ptrCast(buffer.buf));
-        const data_slice = data_ptr[0..@intCast(buffer.len)];
-        const img = Image(Rgb).initFromBytes(rows, cols, data_slice);
+        const rgb_ptr = @as([*]Rgb, @ptrCast(@alignCast(data_ptr)));
+        const data_slice = rgb_ptr[0..@divExact(@as(usize, @intCast(buffer.len)), @sizeOf(Rgb))];
+
+        // Create image with custom stride to handle non-contiguous arrays
+        const img = Image(Rgb){
+            .rows = rows,
+            .cols = cols,
+            .data = data_slice,
+            .stride = @intCast(row_stride_pixels),
+        };
         c.Py_INCREF(array_obj.?);
         self.?.numpy_ref = array_obj;
         const pimg = PyImage.createFrom(allocator, img, .borrowed) orelse {
