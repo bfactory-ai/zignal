@@ -20,6 +20,7 @@ const c = py_utils.c;
 const PyImageMod = @import("PyImage.zig");
 const PyImage = PyImageMod.PyImage;
 const stub_metadata = @import("stub_metadata.zig");
+const color_registry = @import("color_registry.zig");
 
 const image_class_doc =
     \\Image for processing and manipulation.
@@ -3476,489 +3477,185 @@ pub var ImageType = c.PyTypeObject{
     .tp_richcompare = @ptrCast(&image_richcompare),
 };
 
-// RGB Pixel Proxy implementation
-fn rgb_pixel_proxy_dealloc(self_obj: [*c]c.PyObject) callconv(.c) void {
-    const self = @as(*RgbPixelProxy, @ptrCast(self_obj));
-    if (self.parent) |parent| {
-        c.Py_DECREF(parent);
-    }
-    c.PyObject_Free(@ptrCast(self));
-}
+// Generic, type-safe pixel proxy implementation using comptime reflection
+fn PixelProxyBinding(comptime ColorType: type, comptime ProxyObjectType: type) type {
+    const fields = @typeInfo(ColorType).@"struct".fields;
 
-fn rgb_pixel_proxy_repr(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-    const self = @as(*RgbPixelProxy, @ptrCast(self_obj.?));
-    if (self.parent) |parent_obj| {
-        const parent = @as(*ImageObject, @ptrCast(parent_obj));
-        if (parent.py_image) |pimg| {
-            switch (pimg.data) {
-                .rgb => |img| {
-                    const p = img.at(@intCast(self.row), @intCast(self.col)).*;
-                    var buffer: [256]u8 = undefined;
-                    const str = std.fmt.bufPrintZ(&buffer, "Rgb(r={}, g={}, b={})", .{ p.r, p.g, p.b }) catch return null;
-                    return c.PyUnicode_FromString(str.ptr);
-                },
-                else => {},
+    return struct {
+        const Self = @This();
+
+        fn parentFromObj(self_obj: ?*c.PyObject) ?*ImageObject {
+            const self = @as(*ProxyObjectType, @ptrCast(self_obj.?));
+            if (self.parent) |p| {
+                return @as(*ImageObject, @ptrCast(p));
             }
+            return null;
         }
-    }
-    return c.PyUnicode_FromString("Rgb(invalid)");
-}
 
-fn rgb_pixel_proxy_get_r(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-    _ = closure;
-    const self = @as(*RgbPixelProxy, @ptrCast(self_obj.?));
-    if (self.parent) |parent_obj| {
-        const parent = @as(*ImageObject, @ptrCast(parent_obj));
-        if (parent.py_image) |pimg| {
-            switch (pimg.data) {
-                .rgb => |img| {
-                    const p = img.at(@intCast(self.row), @intCast(self.col)).*;
-                    return c.PyLong_FromLong(@intCast(p.r));
-                },
-                else => {},
+        fn repr(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+            const parent = Self.parentFromObj(self_obj) orelse {
+                return c.PyUnicode_FromString(comptime zignal.meta.getSimpleTypeName(ColorType) ++ "(invalid)");
+            };
+            if (parent.py_image) |pimg| {
+                const proxy = @as(*ProxyObjectType, @ptrCast(self_obj.?));
+                const rgba = pimg.getPixelRgba(@intCast(proxy.row), @intCast(proxy.col));
+                var buf: [256]u8 = undefined;
+                var fbs = std.io.fixedBufferStream(&buf);
+                const w = fbs.writer();
+                _ = w.print("{s}(", .{comptime zignal.meta.getSimpleTypeName(ColorType)}) catch return null;
+                inline for (fields, 0..) |f, i| {
+                    if (i != 0) _ = w.print(", ", .{}) catch return null;
+                    _ = w.print("{s}={}", .{ f.name, @field(rgba, f.name) }) catch return null;
+                }
+                _ = w.print(")", .{}) catch return null;
+                const s = fbs.getWritten();
+                return c.PyUnicode_FromStringAndSize(s.ptr, @intCast(s.len));
             }
+            return c.PyUnicode_FromString(comptime zignal.meta.getSimpleTypeName(ColorType) ++ "(invalid)");
         }
-    }
-    c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
-    return null;
-}
 
-fn rgb_pixel_proxy_set_r(self_obj: ?*c.PyObject, value: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) c_int {
-    _ = closure;
-    const self = @as(*RgbPixelProxy, @ptrCast(self_obj.?));
-
-    if (value == null) {
-        c.PyErr_SetString(c.PyExc_TypeError, "Cannot delete attribute");
-        return -1;
-    }
-
-    const new_val = c.PyLong_AsLong(value);
-    if (new_val == -1 and c.PyErr_Occurred() != null) {
-        return -1;
-    }
-
-    if (new_val < 0 or new_val > 255) {
-        c.PyErr_SetString(c.PyExc_ValueError, "Value must be between 0 and 255");
-        return -1;
-    }
-
-    if (self.parent) |parent_obj| {
-        const parent = @as(*ImageObject, @ptrCast(parent_obj));
-        if (parent.py_image) |pimg| {
-            switch (pimg.data) {
-                .rgb => |*img| {
-                    const p = img.at(@intCast(self.row), @intCast(self.col));
-                    p.r = @intCast(new_val);
-                },
-                else => {},
+        fn dealloc(self_obj: [*c]c.PyObject) callconv(.c) void {
+            const self = @as(*ProxyObjectType, @ptrCast(self_obj));
+            if (self.parent) |parent| {
+                c.Py_DECREF(parent);
             }
-            return 0;
+            c.PyObject_Free(@ptrCast(self));
         }
-    }
 
-    c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
-    return -1;
-}
+        fn getField(comptime index: usize) fn (?*c.PyObject, ?*anyopaque) callconv(.c) ?*c.PyObject {
+            return struct {
+                fn getter(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
+                    _ = closure;
+                    const parent = Self.parentFromObj(self_obj) orelse {
+                        c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
+                        return null;
+                    };
+                    if (parent.py_image) |pimg| {
+                        const proxy = @as(*ProxyObjectType, @ptrCast(self_obj.?));
+                        const rgba = pimg.getPixelRgba(@intCast(proxy.row), @intCast(proxy.col));
+                        const value = @field(rgba, fields[index].name);
+                        return py_utils.convertToPython(value);
+                    }
+                    c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
+                    return null;
+                }
+            }.getter;
+        }
 
-fn rgb_pixel_proxy_get_g(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-    _ = closure;
-    const self = @as(*RgbPixelProxy, @ptrCast(self_obj.?));
-    if (self.parent) |parent_obj| {
-        const parent = @as(*ImageObject, @ptrCast(parent_obj));
-        if (parent.py_image) |pimg| {
-            switch (pimg.data) {
-                .rgb => |img| {
-                    const p = img.at(@intCast(self.row), @intCast(self.col)).*;
-                    return c.PyLong_FromLong(@intCast(p.g));
-                },
-                else => {},
+        fn setField(comptime index: usize) fn (?*c.PyObject, ?*c.PyObject, ?*anyopaque) callconv(.c) c_int {
+            return struct {
+                fn setter(self_obj: ?*c.PyObject, value: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) c_int {
+                    _ = closure;
+
+                    if (value == null) {
+                        c.PyErr_SetString(c.PyExc_TypeError, "Cannot delete attribute");
+                        return -1;
+                    }
+
+                    const T = fields[index].type;
+                    const field_name = fields[index].name;
+
+                    // Parse Python value to native type with clear error messages
+                    const parsed = py_utils.convertFromPython(T, value) catch |err| {
+                        switch (err) {
+                            py_utils.ConversionError.not_integer => {
+                                c.PyErr_SetString(c.PyExc_TypeError, "Expected integer value");
+                                return -1;
+                            },
+                            py_utils.ConversionError.not_float => {
+                                c.PyErr_SetString(c.PyExc_TypeError, "Expected float value");
+                                return -1;
+                            },
+                            py_utils.ConversionError.integer_out_of_range, py_utils.ConversionError.float_out_of_range => {
+                                // Harmonize message for RGB/A; use generic message for others
+                                if (std.meta.eql(ColorType, zignal.Rgb) or std.meta.eql(ColorType, zignal.Rgba)) {
+                                    c.PyErr_SetString(c.PyExc_ValueError, "Value must be between 0 and 255");
+                                } else {
+                                    const msg = color_registry.getValidationErrorMessage(ColorType);
+                                    c.PyErr_SetString(c.PyExc_ValueError, msg.ptr);
+                                }
+                                return -1;
+                            },
+                            else => {
+                                c.PyErr_SetString(c.PyExc_TypeError, "Unsupported value type");
+                                return -1;
+                            },
+                        }
+                    };
+
+                    // Domain validation (per color space)
+                    if (!color_registry.validateColorComponent(ColorType, field_name, parsed)) {
+                        if (std.meta.eql(ColorType, zignal.Rgb) or std.meta.eql(ColorType, zignal.Rgba)) {
+                            c.PyErr_SetString(c.PyExc_ValueError, "Value must be between 0 and 255");
+                        } else {
+                            const msg = color_registry.getValidationErrorMessage(ColorType);
+                            c.PyErr_SetString(c.PyExc_ValueError, msg.ptr);
+                        }
+                        return -1;
+                    }
+
+                    const parent = Self.parentFromObj(self_obj) orelse {
+                        c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
+                        return -1;
+                    };
+
+                    if (parent.py_image) |pimg| {
+                        const proxy = @as(*ProxyObjectType, @ptrCast(self_obj.?));
+                        var px = pimg.getPixelRgba(@intCast(proxy.row), @intCast(proxy.col));
+                        @field(px, field_name) = parsed;
+                        pimg.setPixelRgba(@intCast(proxy.row), @intCast(proxy.col), px);
+                        return 0;
+                    }
+
+                    c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
+                    return -1;
+                }
+            }.setter;
+        }
+
+        pub fn generateGetSet() [fields.len + 1]c.PyGetSetDef {
+            var arr: [fields.len + 1]c.PyGetSetDef = undefined;
+            inline for (fields, 0..) |f, i| {
+                arr[i] = c.PyGetSetDef{
+                    .name = f.name ++ "",
+                    .get = Self.getField(i),
+                    .set = Self.setField(i),
+                    .doc = f.name ++ " component",
+                    .closure = null,
+                };
             }
+            arr[fields.len] = c.PyGetSetDef{ .name = null, .get = null, .set = null, .doc = null, .closure = null };
+            return arr;
         }
-    }
-    c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
-    return null;
+    };
 }
 
-fn rgb_pixel_proxy_set_g(self_obj: ?*c.PyObject, value: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) c_int {
-    _ = closure;
-    const self = @as(*RgbPixelProxy, @ptrCast(self_obj.?));
+// Instantiate bindings for RGB and RGBA proxies
+const RgbProxyBinding = PixelProxyBinding(zignal.Rgb, RgbPixelProxy);
+const RgbaProxyBinding = PixelProxyBinding(zignal.Rgba, RgbaPixelProxy);
 
-    if (value == null) {
-        c.PyErr_SetString(c.PyExc_TypeError, "Cannot delete attribute");
-        return -1;
-    }
+var rgb_proxy_getset = RgbProxyBinding.generateGetSet();
+var rgba_proxy_getset = RgbaProxyBinding.generateGetSet();
 
-    const new_val = c.PyLong_AsLong(value);
-    if (new_val == -1 and c.PyErr_Occurred() != null) {
-        return -1;
-    }
-
-    if (new_val < 0 or new_val > 255) {
-        c.PyErr_SetString(c.PyExc_ValueError, "Value must be between 0 and 255");
-        return -1;
-    }
-
-    if (self.parent) |parent_obj| {
-        const parent = @as(*ImageObject, @ptrCast(parent_obj));
-        if (parent.py_image) |pimg| {
-            switch (pimg.data) {
-                .rgb => |*img| {
-                    const p = img.at(@intCast(self.row), @intCast(self.col));
-                    p.g = @intCast(new_val);
-                },
-                else => {},
-            }
-            return 0;
-        }
-    }
-
-    c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
-    return -1;
-}
-
-fn rgb_pixel_proxy_get_b(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-    _ = closure;
-    const self = @as(*RgbPixelProxy, @ptrCast(self_obj.?));
-    if (self.parent) |parent_obj| {
-        const parent = @as(*ImageObject, @ptrCast(parent_obj));
-        if (parent.py_image) |pimg| {
-            switch (pimg.data) {
-                .rgb => |img| {
-                    const p = img.at(@intCast(self.row), @intCast(self.col)).*;
-                    return c.PyLong_FromLong(@intCast(p.b));
-                },
-                else => {},
-            }
-        }
-    }
-    c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
-    return null;
-}
-
-fn rgb_pixel_proxy_set_b(self_obj: ?*c.PyObject, value: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) c_int {
-    _ = closure;
-    const self = @as(*RgbPixelProxy, @ptrCast(self_obj.?));
-
-    if (value == null) {
-        c.PyErr_SetString(c.PyExc_TypeError, "Cannot delete attribute");
-        return -1;
-    }
-
-    const new_val = c.PyLong_AsLong(value);
-    if (new_val == -1 and c.PyErr_Occurred() != null) {
-        return -1;
-    }
-
-    if (new_val < 0 or new_val > 255) {
-        c.PyErr_SetString(c.PyExc_ValueError, "Value must be between 0 and 255");
-        return -1;
-    }
-
-    if (self.parent) |parent_obj| {
-        const parent = @as(*ImageObject, @ptrCast(parent_obj));
-        if (parent.py_image) |pimg| {
-            switch (pimg.data) {
-                .rgb => |*img| {
-                    const p = img.at(@intCast(self.row), @intCast(self.col));
-                    p.b = @intCast(new_val);
-                },
-                else => {},
-            }
-            return 0;
-        }
-    }
-
-    c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
-    return -1;
-}
-
-var rgb_pixel_proxy_getset = [_]c.PyGetSetDef{
-    .{ .name = "r", .get = rgb_pixel_proxy_get_r, .set = rgb_pixel_proxy_set_r, .doc = "Red component", .closure = null },
-    .{ .name = "g", .get = rgb_pixel_proxy_get_g, .set = rgb_pixel_proxy_set_g, .doc = "Green component", .closure = null },
-    .{ .name = "b", .get = rgb_pixel_proxy_get_b, .set = rgb_pixel_proxy_set_b, .doc = "Blue component", .closure = null },
-    .{ .name = null, .get = null, .set = null, .doc = null, .closure = null },
-};
-
-// Internal type - registered but not exposed to Python users
+// Internal types - registered but not exposed to Python users
 pub var RgbPixelProxyType = c.PyTypeObject{
     .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
     .tp_name = "zignal.RgbPixelProxy",
     .tp_basicsize = @sizeOf(RgbPixelProxy),
-    .tp_dealloc = rgb_pixel_proxy_dealloc,
-    .tp_repr = rgb_pixel_proxy_repr,
+    .tp_dealloc = RgbProxyBinding.dealloc,
+    .tp_repr = RgbProxyBinding.repr,
     .tp_flags = c.Py_TPFLAGS_DEFAULT,
     .tp_doc = "Proxy object for RGB pixel access",
-    .tp_getset = @ptrCast(&rgb_pixel_proxy_getset),
+    .tp_getset = @ptrCast(&rgb_proxy_getset),
 };
 
-// RGBA Pixel Proxy implementation
-fn rgba_pixel_proxy_dealloc(self_obj: [*c]c.PyObject) callconv(.c) void {
-    const self = @as(*RgbaPixelProxy, @ptrCast(self_obj));
-    if (self.parent) |parent| {
-        c.Py_DECREF(parent);
-    }
-    c.PyObject_Free(@ptrCast(self));
-}
-
-fn rgba_pixel_proxy_repr(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-    const self = @as(*RgbaPixelProxy, @ptrCast(self_obj.?));
-    if (self.parent) |parent_obj| {
-        const parent = @as(*ImageObject, @ptrCast(parent_obj));
-        if (parent.py_image) |pimg| {
-            switch (pimg.data) {
-                .rgba => |img| {
-                    const p = img.at(@intCast(self.row), @intCast(self.col)).*;
-                    var buffer: [256]u8 = undefined;
-                    const str = std.fmt.bufPrintZ(&buffer, "Rgba(r={}, g={}, b={}, a={})", .{ p.r, p.g, p.b, p.a }) catch return null;
-                    return c.PyUnicode_FromString(str.ptr);
-                },
-                else => {},
-            }
-        }
-    }
-    return c.PyUnicode_FromString("Rgba(invalid)");
-}
-
-fn rgba_pixel_proxy_get_r(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-    _ = closure;
-    const self = @as(*RgbaPixelProxy, @ptrCast(self_obj.?));
-    if (self.parent) |parent_obj| {
-        const parent = @as(*ImageObject, @ptrCast(parent_obj));
-        if (parent.py_image) |pimg| {
-            switch (pimg.data) {
-                .rgba => |img| {
-                    const p = img.at(@intCast(self.row), @intCast(self.col)).*;
-                    return c.PyLong_FromLong(@intCast(p.r));
-                },
-                else => {},
-            }
-        }
-    }
-    c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
-    return null;
-}
-
-fn rgba_pixel_proxy_set_r(self_obj: ?*c.PyObject, value: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) c_int {
-    _ = closure;
-    const self = @as(*RgbaPixelProxy, @ptrCast(self_obj.?));
-
-    if (value == null) {
-        c.PyErr_SetString(c.PyExc_TypeError, "Cannot delete attribute");
-        return -1;
-    }
-
-    const new_val = c.PyLong_AsLong(value);
-    if (new_val == -1 and c.PyErr_Occurred() != null) {
-        return -1;
-    }
-
-    if (new_val < 0 or new_val > 255) {
-        c.PyErr_SetString(c.PyExc_ValueError, "Value must be between 0 and 255");
-        return -1;
-    }
-
-    if (self.parent) |parent_obj| {
-        const parent = @as(*ImageObject, @ptrCast(parent_obj));
-        if (parent.py_image) |pimg| {
-            switch (pimg.data) {
-                .rgba => |*img| {
-                    const p = img.at(@intCast(self.row), @intCast(self.col));
-                    p.r = @intCast(new_val);
-                },
-                else => {},
-            }
-            return 0;
-        }
-    }
-
-    c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
-    return -1;
-}
-
-fn rgba_pixel_proxy_get_g(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-    _ = closure;
-    const self = @as(*RgbaPixelProxy, @ptrCast(self_obj.?));
-    if (self.parent) |parent_obj| {
-        const parent = @as(*ImageObject, @ptrCast(parent_obj));
-        if (parent.py_image) |pimg| {
-            switch (pimg.data) {
-                .rgba => |img| {
-                    const p = img.at(@intCast(self.row), @intCast(self.col)).*;
-                    return c.PyLong_FromLong(@intCast(p.g));
-                },
-                else => {},
-            }
-        }
-    }
-    c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
-    return null;
-}
-
-fn rgba_pixel_proxy_set_g(self_obj: ?*c.PyObject, value: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) c_int {
-    _ = closure;
-    const self = @as(*RgbaPixelProxy, @ptrCast(self_obj.?));
-
-    if (value == null) {
-        c.PyErr_SetString(c.PyExc_TypeError, "Cannot delete attribute");
-        return -1;
-    }
-
-    const new_val = c.PyLong_AsLong(value);
-    if (new_val == -1 and c.PyErr_Occurred() != null) {
-        return -1;
-    }
-
-    if (new_val < 0 or new_val > 255) {
-        c.PyErr_SetString(c.PyExc_ValueError, "Value must be between 0 and 255");
-        return -1;
-    }
-
-    if (self.parent) |parent_obj| {
-        const parent = @as(*ImageObject, @ptrCast(parent_obj));
-        if (parent.py_image) |pimg| {
-            switch (pimg.data) {
-                .rgba => |*img| {
-                    const p = img.at(@intCast(self.row), @intCast(self.col));
-                    p.g = @intCast(new_val);
-                },
-                else => {},
-            }
-            return 0;
-        }
-    }
-
-    c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
-    return -1;
-}
-
-fn rgba_pixel_proxy_get_b(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-    _ = closure;
-    const self = @as(*RgbaPixelProxy, @ptrCast(self_obj.?));
-    if (self.parent) |parent_obj| {
-        const parent = @as(*ImageObject, @ptrCast(parent_obj));
-        if (parent.py_image) |pimg| {
-            switch (pimg.data) {
-                .rgba => |img| {
-                    const p = img.at(@intCast(self.row), @intCast(self.col)).*;
-                    return c.PyLong_FromLong(@intCast(p.b));
-                },
-                else => {},
-            }
-        }
-    }
-    c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
-    return null;
-}
-
-fn rgba_pixel_proxy_set_b(self_obj: ?*c.PyObject, value: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) c_int {
-    _ = closure;
-    const self = @as(*RgbaPixelProxy, @ptrCast(self_obj.?));
-
-    if (value == null) {
-        c.PyErr_SetString(c.PyExc_TypeError, "Cannot delete attribute");
-        return -1;
-    }
-
-    const new_val = c.PyLong_AsLong(value);
-    if (new_val == -1 and c.PyErr_Occurred() != null) {
-        return -1;
-    }
-
-    if (new_val < 0 or new_val > 255) {
-        c.PyErr_SetString(c.PyExc_ValueError, "Value must be between 0 and 255");
-        return -1;
-    }
-
-    if (self.parent) |parent_obj| {
-        const parent = @as(*ImageObject, @ptrCast(parent_obj));
-        if (parent.py_image) |pimg| {
-            switch (pimg.data) {
-                .rgba => |*img| {
-                    const p = img.at(@intCast(self.row), @intCast(self.col));
-                    p.b = @intCast(new_val);
-                },
-                else => {},
-            }
-            return 0;
-        }
-    }
-
-    c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
-    return -1;
-}
-
-fn rgba_pixel_proxy_get_a(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-    _ = closure;
-    const self = @as(*RgbaPixelProxy, @ptrCast(self_obj.?));
-    if (self.parent) |parent_obj| {
-        const parent = @as(*ImageObject, @ptrCast(parent_obj));
-        if (parent.py_image) |pimg| {
-            switch (pimg.data) {
-                .rgba => |img| {
-                    const p = img.at(@intCast(self.row), @intCast(self.col)).*;
-                    return c.PyLong_FromLong(@intCast(p.a));
-                },
-                else => {},
-            }
-        }
-    }
-    c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
-    return null;
-}
-
-fn rgba_pixel_proxy_set_a(self_obj: ?*c.PyObject, value: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) c_int {
-    _ = closure;
-    const self = @as(*RgbaPixelProxy, @ptrCast(self_obj.?));
-
-    if (value == null) {
-        c.PyErr_SetString(c.PyExc_TypeError, "Cannot delete attribute");
-        return -1;
-    }
-
-    const new_val = c.PyLong_AsLong(value);
-    if (new_val == -1 and c.PyErr_Occurred() != null) {
-        return -1;
-    }
-
-    if (new_val < 0 or new_val > 255) {
-        c.PyErr_SetString(c.PyExc_ValueError, "Value must be between 0 and 255");
-        return -1;
-    }
-
-    if (self.parent) |parent_obj| {
-        const parent = @as(*ImageObject, @ptrCast(parent_obj));
-        if (parent.py_image) |pimg| {
-            switch (pimg.data) {
-                .rgba => |*img| {
-                    const p = img.at(@intCast(self.row), @intCast(self.col));
-                    p.a = @intCast(new_val);
-                },
-                else => {},
-            }
-            return 0;
-        }
-    }
-
-    c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
-    return -1;
-}
-
-var rgba_pixel_proxy_getset = [_]c.PyGetSetDef{
-    .{ .name = "r", .get = rgba_pixel_proxy_get_r, .set = rgba_pixel_proxy_set_r, .doc = "Red component", .closure = null },
-    .{ .name = "g", .get = rgba_pixel_proxy_get_g, .set = rgba_pixel_proxy_set_g, .doc = "Green component", .closure = null },
-    .{ .name = "b", .get = rgba_pixel_proxy_get_b, .set = rgba_pixel_proxy_set_b, .doc = "Blue component", .closure = null },
-    .{ .name = "a", .get = rgba_pixel_proxy_get_a, .set = rgba_pixel_proxy_set_a, .doc = "Alpha component", .closure = null },
-    .{ .name = null, .get = null, .set = null, .doc = null, .closure = null },
-};
-
-// Internal type - registered but not exposed to Python users
 pub var RgbaPixelProxyType = c.PyTypeObject{
     .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
     .tp_name = "zignal.RgbaPixelProxy",
     .tp_basicsize = @sizeOf(RgbaPixelProxy),
-    .tp_dealloc = rgba_pixel_proxy_dealloc,
-    .tp_repr = rgba_pixel_proxy_repr,
+    .tp_dealloc = RgbaProxyBinding.dealloc,
+    .tp_repr = RgbaProxyBinding.repr,
     .tp_flags = c.Py_TPFLAGS_DEFAULT,
     .tp_doc = "Proxy object for RGBA pixel access",
-    .tp_getset = @ptrCast(&rgba_pixel_proxy_getset),
+    .tp_getset = @ptrCast(&rgba_proxy_getset),
 };
