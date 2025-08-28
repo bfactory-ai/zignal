@@ -3522,6 +3522,55 @@ fn PixelProxyBinding(comptime ColorType: type, comptime ProxyObjectType: type) t
             c.PyObject_Free(@ptrCast(self));
         }
 
+        fn richcompare(self_obj: [*c]c.PyObject, other_obj: [*c]c.PyObject, op: c_int) callconv(.c) [*c]c.PyObject {
+            // Only support == and !=
+            if (op != c.Py_EQ and op != c.Py_NE) {
+                const not_impl = c.Py_NotImplemented();
+                c.Py_INCREF(not_impl);
+                return not_impl;
+            }
+
+            const self_parent = Self.parentFromObj(@ptrCast(self_obj)) orelse {
+                return @ptrCast(py_utils.getPyBool(op != c.Py_EQ));
+            };
+            if (self_parent.py_image == null) {
+                return @ptrCast(py_utils.getPyBool(op != c.Py_EQ));
+            }
+
+            const proxy = @as(*ProxyObjectType, @ptrCast(self_obj));
+            const px = self_parent.py_image.?.getPixelRgba(@intCast(proxy.row), @intCast(proxy.col));
+
+            // Try to parse other as a color (prefer RGBA to preserve alpha if provided)
+            var equal = false;
+            const other: ?*c.PyObject = @ptrCast(other_obj);
+            const parsed = color_utils.parseColorTo(Rgba, other) catch null;
+            if (parsed) |rgba| {
+                if (std.meta.eql(ColorType, zignal.Rgb)) {
+                    // For RGB proxies, only equal to RGBA if alpha is 255
+                    equal = (px.r == rgba.r and px.g == rgba.g and px.b == rgba.b and rgba.a == 255);
+                } else if (std.meta.eql(ColorType, zignal.Rgba)) {
+                    equal = (px.r == rgba.r and px.g == rgba.g and px.b == rgba.b and px.a == rgba.a);
+                } else {
+                    // For other future proxy types, compare via to_rgba channels
+                    equal = (px == rgba);
+                }
+            } else {
+                // If not a parseable color, clear any error and fall back to NotImplemented
+                if (c.PyErr_Occurred() != null) {
+                    c.PyErr_Clear();
+                }
+                const not_impl = c.Py_NotImplemented();
+                c.Py_INCREF(not_impl);
+                return not_impl;
+            }
+
+            if (op == c.Py_EQ) {
+                return @ptrCast(py_utils.getPyBool(equal));
+            } else {
+                return @ptrCast(py_utils.getPyBool(!equal));
+            }
+        }
+
         fn getField(comptime index: usize) fn (?*c.PyObject, ?*anyopaque) callconv(.c) ?*c.PyObject {
             return struct {
                 fn getter(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
@@ -3647,6 +3696,7 @@ pub var RgbPixelProxyType = c.PyTypeObject{
     .tp_flags = c.Py_TPFLAGS_DEFAULT,
     .tp_doc = "Proxy object for RGB pixel access",
     .tp_getset = @ptrCast(&rgb_proxy_getset),
+    .tp_richcompare = RgbProxyBinding.richcompare,
 };
 
 pub var RgbaPixelProxyType = c.PyTypeObject{
@@ -3658,4 +3708,5 @@ pub var RgbaPixelProxyType = c.PyTypeObject{
     .tp_flags = c.Py_TPFLAGS_DEFAULT,
     .tp_doc = "Proxy object for RGBA pixel access",
     .tp_getset = @ptrCast(&rgba_proxy_getset),
+    .tp_richcompare = RgbaProxyBinding.richcompare,
 };
