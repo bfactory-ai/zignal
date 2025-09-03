@@ -934,7 +934,7 @@ test "Metric reading" {
     try writer.writeByte(0x90); // Ascent: 16 (0x90 - 0x80)
     try writer.writeByte(0x82); // Descent: 2 (0x82 - 0x80)
 
-    var reader: std.Io.Reader = .fixed(buffer[0..writer.seek]);
+    var reader: std.Io.Reader = .fixed(buffer[0..writer.end]);
 
     const metric = try readMetric(&reader, .little, true);
     try testing.expectEqual(@as(i16, 2), metric.left_sided_bearing);
@@ -976,11 +976,11 @@ test "Properties parsing" {
     const table = TableEntry{
         .type = @intFromEnum(TableType.properties),
         .format = 0,
-        .size = @intCast(writer.seek),
+        .size = @intCast(writer.end),
         .offset = 0,
     };
 
-    const props = try parseProperties(allocator, buffer[0..writer.seek], table);
+    const props = try parseProperties(allocator, buffer[0..writer.end], table);
     defer allocator.free(props.properties);
     defer allocator.free(props.string_pool);
 
