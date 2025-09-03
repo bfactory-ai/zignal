@@ -67,7 +67,7 @@ pub fn load(gpa: std.mem.Allocator, path: []const u8, filter: LoadFilter) !Bitma
     const is_compressed = std.ascii.endsWithIgnoreCase(path, ".gz");
 
     // Read entire file into memory
-    const raw_file_contents = try std.fs.cwd().readFileAlloc(gpa, path, max_file_size);
+    const raw_file_contents = try std.fs.cwd().readFileAlloc(path, gpa, .limited(max_file_size));
     defer gpa.free(raw_file_contents);
 
     // Decompress if needed
