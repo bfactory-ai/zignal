@@ -358,12 +358,6 @@ fn matrix_shape_getter(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c
     return null;
 }
 
-fn matrix_dtype_getter(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-    _ = closure;
-    _ = self_obj;
-    return c.PyUnicode_FromString("float64");
-}
-
 const matrix_to_numpy_doc =
     \\Convert the matrix to a NumPy array (zero-copy).
     \\
@@ -712,7 +706,7 @@ pub const matrix_properties_metadata = [_]stub_metadata.PropertyWithMetadata{
     },
     .{
         .name = "dtype",
-        .get = matrix_dtype_getter,
+        .get = @ptrCast(@alignCast(py_utils.getterStaticString("float64"))),
         .set = null,
         .doc = "Data type (always 'float64')",
         .type = "str",

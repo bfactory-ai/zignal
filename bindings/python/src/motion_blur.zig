@@ -232,7 +232,6 @@ fn motion_blur_radial_spin(type_obj: [*c]c.PyObject, args: [*c]c.PyObject, kwds:
 // ============================================================================
 // Property Getters
 // ============================================================================
-
 fn get_type(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
     _ = closure;
     const self = @as(*MotionBlurObject, @ptrCast(self_obj.?));
@@ -244,40 +243,12 @@ fn get_type(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObj
     return c.PyUnicode_FromString(type_str);
 }
 
-fn get_angle(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-    _ = closure;
-    const self = @as(*MotionBlurObject, @ptrCast(self_obj.?));
-    if (self.blur_type != .linear) {
-        return py_utils.getPyNone();
-    }
-    return c.PyFloat_FromDouble(self.angle);
+// Predicates for optional properties
+fn is_linear(self: *MotionBlurObject) bool {
+    return self.blur_type == .linear;
 }
-
-fn get_distance(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-    _ = closure;
-    const self = @as(*MotionBlurObject, @ptrCast(self_obj.?));
-    if (self.blur_type != .linear) {
-        return py_utils.getPyNone();
-    }
-    return c.PyLong_FromLong(self.distance);
-}
-
-fn get_center(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-    _ = closure;
-    const self = @as(*MotionBlurObject, @ptrCast(self_obj.?));
-    if (self.blur_type == .linear) {
-        return py_utils.getPyNone();
-    }
-    return c.Py_BuildValue("(dd)", self.center_x, self.center_y);
-}
-
-fn get_strength(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-    _ = closure;
-    const self = @as(*MotionBlurObject, @ptrCast(self_obj.?));
-    if (self.blur_type == .linear) {
-        return py_utils.getPyNone();
-    }
-    return c.PyFloat_FromDouble(self.strength);
+fn is_not_linear(self: *MotionBlurObject) bool {
+    return self.blur_type != .linear;
 }
 
 // ============================================================================
@@ -344,28 +315,28 @@ var motion_blur_getset = [_]c.PyGetSetDef{
     },
     .{
         .name = "angle",
-        .get = get_angle,
+        .get = @ptrCast(@alignCast(py_utils.getterOptionalFieldWhere(MotionBlurObject, "angle", is_linear))),
         .set = null,
         .doc = "Blur angle in radians (linear only)",
         .closure = null,
     },
     .{
         .name = "distance",
-        .get = get_distance,
+        .get = @ptrCast(@alignCast(py_utils.getterOptionalFieldWhere(MotionBlurObject, "distance", is_linear))),
         .set = null,
         .doc = "Blur distance in pixels (linear only)",
         .closure = null,
     },
     .{
         .name = "center",
-        .get = get_center,
+        .get = @ptrCast(@alignCast(py_utils.getterTuple2FieldsWhere(MotionBlurObject, "center_x", "center_y", is_not_linear))),
         .set = null,
         .doc = "Normalized center position (zoom/spin only)",
         .closure = null,
     },
     .{
         .name = "strength",
-        .get = get_strength,
+        .get = @ptrCast(@alignCast(py_utils.getterOptionalFieldWhere(MotionBlurObject, "strength", is_not_linear))),
         .set = null,
         .doc = "Blur strength 0.0-1.0 (zoom/spin only)",
         .closure = null,
@@ -401,28 +372,28 @@ pub const motion_blur_properties_metadata = [_]stub_metadata.PropertyWithMetadat
     },
     .{
         .name = "angle",
-        .get = get_angle,
+        .get = @ptrCast(@alignCast(py_utils.getterOptionalFieldWhere(MotionBlurObject, "angle", is_linear))),
         .set = null,
         .doc = "Blur angle in radians (linear only)",
         .type = "float | None",
     },
     .{
         .name = "distance",
-        .get = get_distance,
+        .get = @ptrCast(@alignCast(py_utils.getterOptionalFieldWhere(MotionBlurObject, "distance", is_linear))),
         .set = null,
         .doc = "Blur distance in pixels (linear only)",
         .type = "int | None",
     },
     .{
         .name = "center",
-        .get = get_center,
+        .get = @ptrCast(@alignCast(py_utils.getterTuple2FieldsWhere(MotionBlurObject, "center_x", "center_y", is_not_linear))),
         .set = null,
         .doc = "Normalized center position (zoom/spin only)",
         .type = "tuple[float, float] | None",
     },
     .{
         .name = "strength",
-        .get = get_strength,
+        .get = @ptrCast(@alignCast(py_utils.getterOptionalFieldWhere(MotionBlurObject, "strength", is_not_linear))),
         .set = null,
         .doc = "Blur strength 0.0-1.0 (zoom/spin only)",
         .type = "float | None",

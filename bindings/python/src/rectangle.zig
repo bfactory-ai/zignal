@@ -457,29 +457,6 @@ fn rectangle_overlaps(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwargs: ?*c.Py
 }
 
 // Property getters
-fn rectangle_get_left(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-    _ = closure;
-    const self = @as(*RectangleObject, @ptrCast(self_obj.?));
-    return c.PyFloat_FromDouble(@as(f64, self.left));
-}
-
-fn rectangle_get_top(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-    _ = closure;
-    const self = @as(*RectangleObject, @ptrCast(self_obj.?));
-    return c.PyFloat_FromDouble(@as(f64, self.top));
-}
-
-fn rectangle_get_right(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-    _ = closure;
-    const self = @as(*RectangleObject, @ptrCast(self_obj.?));
-    return c.PyFloat_FromDouble(@as(f64, self.right));
-}
-
-fn rectangle_get_bottom(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-    _ = closure;
-    const self = @as(*RectangleObject, @ptrCast(self_obj.?));
-    return c.PyFloat_FromDouble(@as(f64, self.bottom));
-}
 
 fn rectangle_get_width(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
     _ = closure;
@@ -575,28 +552,28 @@ var rectangle_methods = stub_metadata.toPyMethodDefArray(&rectangle_methods_meta
 pub const rectangle_properties_metadata = [_]stub_metadata.PropertyWithMetadata{
     .{
         .name = "left",
-        .get = @ptrCast(&rectangle_get_left),
+        .get = py_utils.getterForField(RectangleObject, "left"),
         .set = null,
         .doc = "Left coordinate of the rectangle",
         .type = "float",
     },
     .{
         .name = "top",
-        .get = @ptrCast(&rectangle_get_top),
+        .get = py_utils.getterForField(RectangleObject, "top"),
         .set = null,
         .doc = "Top coordinate of the rectangle",
         .type = "float",
     },
     .{
         .name = "right",
-        .get = @ptrCast(&rectangle_get_right),
+        .get = py_utils.getterForField(RectangleObject, "right"),
         .set = null,
         .doc = "Right coordinate of the rectangle",
         .type = "float",
     },
     .{
         .name = "bottom",
-        .get = @ptrCast(&rectangle_get_bottom),
+        .get = py_utils.getterForField(RectangleObject, "bottom"),
         .set = null,
         .doc = "Bottom coordinate of the rectangle",
         .type = "float",
@@ -617,7 +594,38 @@ pub const rectangle_properties_metadata = [_]stub_metadata.PropertyWithMetadata{
     },
 };
 
-var rectangle_getset = stub_metadata.toPyGetSetDefArray(&rectangle_properties_metadata);
+// Auto-generate getset for field-backed properties, then append derived ones
+fn make_rectangle_getset() [6 + 1]c.PyGetSetDef {
+    comptime {
+        const auto_defs = py_utils.autoGetSet(RectangleObject, &.{ "left", "top", "right", "bottom" });
+        var result: [6 + 1]c.PyGetSetDef = undefined;
+        // Copy auto-generated field-backed properties (without their sentinel)
+        result[0] = auto_defs[0];
+        result[1] = auto_defs[1];
+        result[2] = auto_defs[2];
+        result[3] = auto_defs[3];
+        // Append derived width/height getters
+        result[4] = .{
+            .name = "width".ptr,
+            .get = @ptrCast(@alignCast(&rectangle_get_width)),
+            .set = null,
+            .doc = "Width of the rectangle (right - left)".ptr,
+            .closure = null,
+        };
+        result[5] = .{
+            .name = "height".ptr,
+            .get = @ptrCast(@alignCast(&rectangle_get_height)),
+            .set = null,
+            .doc = "Height of the rectangle (bottom - top)".ptr,
+            .closure = null,
+        };
+        // Sentinel
+        result[6] = .{ .name = null, .get = null, .set = null, .doc = null, .closure = null };
+        return result;
+    }
+}
+
+var rectangle_getset = make_rectangle_getset();
 
 // Class documentation - keep it simple
 const rectangle_class_doc = "A rectangle defined by its left, top, right, and bottom coordinates.";
