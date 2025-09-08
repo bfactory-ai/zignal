@@ -332,16 +332,7 @@ fn makeDrawMethodWithWidth(
             const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
             // Build kwlist at comptime via helper
-            const kw = comptime blk: {
-                var names: [param_count + 3][]const u8 = undefined;
-                for (param_names, 0..) |pname, i| {
-                    names[i] = pname;
-                }
-                names[param_count] = "color";
-                names[param_count + 1] = "width";
-                names[param_count + 2] = "mode";
-                break :blk py_utils.kw(&names);
-            };
+            const kw = comptime py_utils.kw(param_names ++ &[_][]const u8{ "color", "width", "mode" });
 
             // Parse arguments - use generic vars array
             var param_objs: [param_count]?*c.PyObject = undefined;
@@ -445,15 +436,7 @@ fn makeFillMethod(
             const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
             // Build kwlist at comptime via helper
-            const kw = comptime blk: {
-                var names: [param_count + 2][]const u8 = undefined;
-                for (param_names, 0..) |pname, i| {
-                    names[i] = pname;
-                }
-                names[param_count] = "color";
-                names[param_count + 1] = "mode";
-                break :blk py_utils.kw(&names);
-            };
+            const kw = comptime py_utils.kw(param_names ++ &[_][]const u8{ "color", "mode" });
 
             // Parse arguments
             var param_objs: [param_count]?*c.PyObject = undefined;
