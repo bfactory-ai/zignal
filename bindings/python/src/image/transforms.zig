@@ -125,9 +125,9 @@ pub fn image_resize(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     var shape_or_scale: ?*c.PyObject = null;
     var method_value: c_long = 1; // Default to BILINEAR
 
-    var kwlist = [_:null]?[*:0]u8{ @constCast("size"), @constCast("method"), null };
+    const kw = comptime py_utils.kw(&.{ "size", "method" });
     const format = std.fmt.comptimePrint("O|l", .{});
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(&kwlist), &shape_or_scale, &method_value) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &shape_or_scale, &method_value) == 0) {
         return null;
     }
 
@@ -359,10 +359,10 @@ pub fn image_warp(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
     var shape_obj: ?*c.PyObject = null;
     var method_value: c_long = 1; // Default to BILINEAR
 
-    const keywords = [_:null]?[*:0]const u8{ "transform", "shape", "method", null };
+    const kw = comptime py_utils.kw(&.{ "transform", "shape", "method" });
     const format = std.fmt.comptimePrint("O|Ol", .{});
 
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&keywords)), &transform_obj, &shape_obj, &method_value) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &transform_obj, &shape_obj, &method_value) == 0) {
         return null;
     }
 
@@ -400,13 +400,8 @@ pub fn image_warp(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
         const rows_val = c.PyLong_AsLong(rows_obj);
         const cols_val = c.PyLong_AsLong(cols_obj);
 
-        if (rows_val <= 0 or cols_val <= 0) {
-            c.PyErr_SetString(c.PyExc_ValueError, "Output dimensions must be positive");
-            return null;
-        }
-
-        out_rows = @intCast(rows_val);
-        out_cols = @intCast(cols_val);
+        out_rows = py_utils.validatePositive(usize, rows_val, "rows") catch return null;
+        out_cols = py_utils.validatePositive(usize, cols_val, "cols") catch return null;
     }
 
     // Apply warp using inline else to handle all image formats generically
