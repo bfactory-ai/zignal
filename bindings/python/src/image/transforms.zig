@@ -236,7 +236,7 @@ pub fn image_letterbox(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyO
     } else if (c.PyTuple_Check(size) != 0) {
         // It's a tuple for dimensions
         if (c.PyTuple_Size(size) != 2) {
-            c.PyErr_SetString(c.PyExc_ValueError, "Dimensions must be a tuple of 2 integers (rows, cols)");
+            c.PyErr_SetString(c.PyExc_ValueError, "size must be a 2-tuple of (rows, cols)");
             return null;
         }
 
@@ -244,7 +244,7 @@ pub fn image_letterbox(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyO
         const cols_obj = c.PyTuple_GetItem(size, 1);
 
         if (c.PyLong_Check(rows_obj) == 0 or c.PyLong_Check(cols_obj) == 0) {
-            c.PyErr_SetString(c.PyExc_TypeError, "Dimensions must be integers");
+            c.PyErr_SetString(c.PyExc_TypeError, "size must be a 2-tuple of (rows, cols)");
             return null;
         }
 
@@ -385,12 +385,12 @@ pub fn image_warp(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
     if (shape_obj != null and shape_obj != c.Py_None()) {
         // Parse shape tuple
         if (c.PyTuple_Check(shape_obj) == 0) {
-            c.PyErr_SetString(c.PyExc_TypeError, "shape must be a tuple of (rows, cols)");
+            c.PyErr_SetString(c.PyExc_TypeError, "shape must be a 2-tuple of (rows, cols)");
             return null;
         }
 
         if (c.PyTuple_Size(shape_obj) != 2) {
-            c.PyErr_SetString(c.PyExc_ValueError, "shape must have exactly 2 elements");
+            c.PyErr_SetString(c.PyExc_ValueError, "shape must be a 2-tuple of (rows, cols)");
             return null;
         }
 
