@@ -213,10 +213,10 @@ pub fn image_letterbox(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyO
     // Parse arguments
     var size: ?*c.PyObject = null;
     var method_value: c_long = 1; // Default to BILINEAR
-    var kwlist = [_:null]?[*:0]u8{ @constCast("size"), @constCast("method"), null };
+    const kw = comptime py_utils.kw(&.{ "size", "method" });
     const format = std.fmt.comptimePrint("O|l", .{});
 
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(&kwlist), &size, &method_value) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &size, &method_value) == 0) {
         return null;
     }
 
@@ -310,10 +310,10 @@ pub fn image_rotate(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     // Parse arguments
     var angle: f64 = 0;
     var method_value: c_long = 1; // Default to BILINEAR
-    var kwlist = [_:null]?[*:0]u8{ @constCast("angle"), @constCast("method"), null };
+    const kw = comptime py_utils.kw(&.{ "angle", "method" });
     const format = std.fmt.comptimePrint("d|l", .{});
 
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(&kwlist), &angle, &method_value) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &angle, &method_value) == 0) {
         return null;
     }
 
@@ -641,9 +641,9 @@ pub fn image_extract(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
     var size_obj: ?*c.PyObject = null;
     var method_value: c_long = 1; // Default to BILINEAR
 
-    var kwlist = [_:null]?[*:0]u8{ @constCast("rect"), @constCast("angle"), @constCast("size"), @constCast("method"), null };
+    const kw = comptime py_utils.kw(&.{ "rect", "angle", "size", "method" });
     const format = std.fmt.comptimePrint("O|dOl", .{});
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(&kwlist), &rect_obj, &angle, &size_obj, &method_value) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &rect_obj, &angle, &size_obj, &method_value) == 0) {
         return null;
     }
 
@@ -762,9 +762,9 @@ pub fn image_insert(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     var angle: f64 = 0.0;
     var method_value: c_long = 1; // Default to BILINEAR
 
-    var kwlist = [_:null]?[*:0]u8{ @constCast("source"), @constCast("rect"), @constCast("angle"), @constCast("method"), null };
+    const kw = comptime py_utils.kw(&.{ "source", "rect", "angle", "method" });
     const format = std.fmt.comptimePrint("OO|dl", .{});
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(&kwlist), &source_obj, &rect_obj, &angle, &method_value) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &source_obj, &rect_obj, &angle, &method_value) == 0) {
         return null;
     }
 

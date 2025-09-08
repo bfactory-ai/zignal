@@ -672,10 +672,10 @@ fn canvas_draw_quadratic_bezier(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds
     var width: c_long = 1;
     var mode: c_long = 0;
 
-    const kwlist = [_][*c]const u8{ "p0", "p1", "p2", "color", "width", "mode", null };
+    const kw = comptime py_utils.kw(&.{ "p0", "p1", "p2", "color", "width", "mode" });
     const format = std.fmt.comptimePrint("OOOO|ll", .{});
 
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kwlist)), &p0_obj, &p1_obj, &p2_obj, &color_obj, &width, &mode) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &p0_obj, &p1_obj, &p2_obj, &color_obj, &width, &mode) == 0) {
         return null;
     }
 
@@ -707,10 +707,10 @@ fn canvas_draw_cubic_bezier(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*
     var width: c_long = 1;
     var mode: c_long = 0;
 
-    const kwlist = [_][*c]const u8{ "p0", "p1", "p2", "p3", "color", "width", "mode", null };
+    const kw = comptime py_utils.kw(&.{ "p0", "p1", "p2", "p3", "color", "width", "mode" });
     const format = std.fmt.comptimePrint("OOOOO|ll", .{});
 
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kwlist)), &p0_obj, &p1_obj, &p2_obj, &p3_obj, &color_obj, &width, &mode) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &p0_obj, &p1_obj, &p2_obj, &p3_obj, &color_obj, &width, &mode) == 0) {
         return null;
     }
 
@@ -741,10 +741,10 @@ fn canvas_draw_spline_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
     var tension: f64 = 0.5;
     var mode: c_long = 0;
 
-    const kwlist = [_][*c]const u8{ "points", "color", "width", "tension", "mode", null };
+    const kw = comptime py_utils.kw(&.{ "points", "color", "width", "tension", "mode" });
     const format = std.fmt.comptimePrint("OO|ldl", .{});
 
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kwlist)), &points_obj, &color_obj, &width, &tension, &mode) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &points_obj, &color_obj, &width, &tension, &mode) == 0) {
         return null;
     }
 
@@ -817,10 +817,10 @@ fn canvas_draw_arc(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
     var width: c_long = 1;
     var mode: c_long = 0;
 
-    const kwlist = [_][*c]const u8{ "center", "radius", "start_angle", "end_angle", "color", "width", "mode", null };
+    const kw = comptime py_utils.kw(&.{ "center", "radius", "start_angle", "end_angle", "color", "width", "mode" });
     const format = std.fmt.comptimePrint("OdddO|ll", .{});
 
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kwlist)), &center_obj, &radius, &start_angle, &end_angle, &color_obj, &width, &mode) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &center_obj, &radius, &start_angle, &end_angle, &color_obj, &width, &mode) == 0) {
         return null;
     }
 
@@ -861,10 +861,10 @@ fn canvas_fill_arc(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
     var color_obj: ?*c.PyObject = undefined;
     var mode: c_long = 0;
 
-    const kwlist = [_][*c]const u8{ "center", "radius", "start_angle", "end_angle", "color", "mode", null };
+    const kw = comptime py_utils.kw(&.{ "center", "radius", "start_angle", "end_angle", "color", "mode" });
     const format = std.fmt.comptimePrint("OdddO|l", .{});
 
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kwlist)), &center_obj, &radius, &start_angle, &end_angle, &color_obj, &mode) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &center_obj, &radius, &start_angle, &end_angle, &color_obj, &mode) == 0) {
         return null;
     }
 
@@ -906,10 +906,10 @@ fn canvas_draw_text(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     var scale: f64 = 1.0;
     var mode: c_long = 0;
 
-    const kwlist = [_][*c]const u8{ "text", "position", "color", "font", "scale", "mode", null };
+    const kw = comptime py_utils.kw(&.{ "text", "position", "color", "font", "scale", "mode" });
     const format = std.fmt.comptimePrint("OOO|Odl:draw_text", .{});
 
-    if (c.PyArg_ParseTupleAndKeywords(args, @constCast(kwds), format.ptr, @ptrCast(@constCast(&kwlist)), &text_obj, &position_obj, &color_obj, &font_obj, &scale, &mode) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, @constCast(kwds), format.ptr, @ptrCast(@constCast(&kw)), &text_obj, &position_obj, &color_obj, &font_obj, &scale, &mode) == 0) {
         return null;
     }
 

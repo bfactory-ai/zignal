@@ -714,9 +714,9 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
             var mode_obj: [*c]c.PyObject = null;
 
             // Define keyword names
-            var kwlist = [_:null]?[*:0]const u8{ "overlay", "mode", null };
+            const kw = comptime @import("py_utils.zig").kw(&.{ "overlay", "mode" });
 
-            if (c.PyArg_ParseTupleAndKeywords(args, kwds, "O|O", @ptrCast(&kwlist), &overlay_obj, &mode_obj) == 0) {
+            if (c.PyArg_ParseTupleAndKeywords(args, kwds, "O|O", @ptrCast(@constCast(&kw)), &overlay_obj, &mode_obj) == 0) {
                 return null;
             }
 

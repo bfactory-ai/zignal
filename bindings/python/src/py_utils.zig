@@ -644,3 +644,18 @@ pub fn validateNonNull(comptime T: type, ptr: ?T, name: []const u8) !T {
     }
     return ptr.?;
 }
+
+/// Build a Python kwlist for PyArg_ParseTupleAndKeywords from a comptime list of names.
+/// Usage: `const kw = py_utils.kw(&.{ "size", "method" });`
+/// Pass to CPython with: `@ptrCast(@constCast(&kw))`.
+pub fn kw(comptime names: []const []const u8) [names.len + 1]?[*:0]const u8 {
+    comptime {
+        var out: [names.len + 1]?[*:0]const u8 = undefined;
+        for (names, 0..) |nm, i| {
+            // Convert Zig string literal to C string pointer
+            out[i] = @ptrCast(@constCast(nm));
+        }
+        out[names.len] = null;
+        return out;
+    }
+}

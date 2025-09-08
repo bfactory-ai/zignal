@@ -41,8 +41,8 @@ fn similarity_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
     var from_points_obj: ?*c.PyObject = null;
     var to_points_obj: ?*c.PyObject = null;
 
-    var kwlist = [_:null]?[*:0]u8{ @constCast("from_points"), @constCast("to_points"), null };
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, "OO", @ptrCast(&kwlist), &from_points_obj, &to_points_obj) == 0) {
+    const kw = comptime py_utils.kw(&.{ "from_points", "to_points" });
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, "OO", @ptrCast(@constCast(&kw)), &from_points_obj, &to_points_obj) == 0) {
         return -1;
     }
 
