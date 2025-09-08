@@ -331,17 +331,16 @@ fn makeDrawMethodWithWidth(
         fn method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
             const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
-            // Build kwlist at comptime
-            const kwlist = comptime blk: {
-                var list: [param_count + 4][*c]const u8 = undefined;
+            // Build kwlist at comptime via helper
+            const kw = comptime blk: {
+                var names: [param_count + 3][]const u8 = undefined;
                 for (param_names, 0..) |pname, i| {
-                    list[i] = pname.ptr;
+                    names[i] = pname;
                 }
-                list[param_count] = "color";
-                list[param_count + 1] = "width";
-                list[param_count + 2] = "mode";
-                list[param_count + 3] = null;
-                break :blk list;
+                names[param_count] = "color";
+                names[param_count + 1] = "width";
+                names[param_count + 2] = "mode";
+                break :blk py_utils.kw(&names);
             };
 
             // Parse arguments - use generic vars array
@@ -364,17 +363,17 @@ fn makeDrawMethodWithWidth(
             // Call PyArg_ParseTupleAndKeywords with variable arguments
             switch (param_count) {
                 1 => {
-                    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kwlist)), parse_args[0], parse_args[1], parse_args[2], parse_args[3]) == 0) {
+                    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), parse_args[0], parse_args[1], parse_args[2], parse_args[3]) == 0) {
                         return null;
                     }
                 },
                 2 => {
-                    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kwlist)), parse_args[0], parse_args[1], parse_args[2], parse_args[3], parse_args[4]) == 0) {
+                    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), parse_args[0], parse_args[1], parse_args[2], parse_args[3], parse_args[4]) == 0) {
                         return null;
                     }
                 },
                 3 => {
-                    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kwlist)), parse_args[0], parse_args[1], parse_args[2], parse_args[3], parse_args[4], parse_args[5]) == 0) {
+                    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), parse_args[0], parse_args[1], parse_args[2], parse_args[3], parse_args[4], parse_args[5]) == 0) {
                         return null;
                     }
                 },
@@ -442,16 +441,15 @@ fn makeFillMethod(
         fn method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
             const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
-            // Build kwlist at comptime
-            const kwlist = comptime blk: {
-                var list: [param_count + 3][*c]const u8 = undefined;
+            // Build kwlist at comptime via helper
+            const kw = comptime blk: {
+                var names: [param_count + 2][]const u8 = undefined;
                 for (param_names, 0..) |pname, i| {
-                    list[i] = pname.ptr;
+                    names[i] = pname;
                 }
-                list[param_count] = "color";
-                list[param_count + 1] = "mode";
-                list[param_count + 2] = null;
-                break :blk list;
+                names[param_count] = "color";
+                names[param_count + 1] = "mode";
+                break :blk py_utils.kw(&names);
             };
 
             // Parse arguments
@@ -472,12 +470,12 @@ fn makeFillMethod(
             // Call PyArg_ParseTupleAndKeywords with variable arguments
             switch (param_count) {
                 1 => {
-                    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kwlist)), parse_args[0], parse_args[1], parse_args[2]) == 0) {
+                    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), parse_args[0], parse_args[1], parse_args[2]) == 0) {
                         return null;
                     }
                 },
                 2 => {
-                    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kwlist)), parse_args[0], parse_args[1], parse_args[2], parse_args[3]) == 0) {
+                    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), parse_args[0], parse_args[1], parse_args[2], parse_args[3]) == 0) {
                         return null;
                     }
                 },
