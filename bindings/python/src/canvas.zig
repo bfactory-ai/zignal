@@ -14,11 +14,7 @@ const c = py_utils.c;
 const color_utils = @import("color_utils.zig");
 const stub_metadata = @import("stub_metadata.zig");
 const enum_utils = @import("enum_utils.zig");
-const PyImageMod = @import("PyImage.zig");
-const PyImage = PyImageMod.PyImage;
-
-// Mirror of PyImage.Variant tags but with u8 backing for extern compatibility
-const ImageKind = enum(u8) { grayscale, rgb, rgba };
+const PyImage = @import("PyImage.zig").PyImage;
 
 // Documentation for the DrawMode enum (used at runtime and for stub generation)
 pub const draw_mode_doc =
@@ -54,11 +50,11 @@ pub const CanvasObject = extern struct {
     ob_base: c.PyObject,
     // Keep reference to parent Image to prevent garbage collection
     image_ref: ?*c.PyObject,
-    // Variant canvas pointers and kind
+    // Variant canvas pointers and dtype
     canvas_gray: ?*Canvas(u8),
     canvas_rgb: ?*Canvas(Rgb),
     canvas_rgba: ?*Canvas(Rgba),
-    kind: ImageKind,
+    dtype: PyImage.DType,
 };
 
 fn canvas_new(type_obj: ?*c.PyTypeObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
@@ -71,7 +67,7 @@ fn canvas_new(type_obj: ?*c.PyTypeObject, args: ?*c.PyObject, kwds: ?*c.PyObject
         obj.canvas_gray = null;
         obj.canvas_rgb = null;
         obj.canvas_rgba = null;
-        obj.kind = .rgba;
+        obj.dtype = .rgba;
     }
     return @as(?*c.PyObject, @ptrCast(self));
 }
@@ -114,7 +110,7 @@ fn canvas_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
                 self.canvas_gray = cptr;
                 self.canvas_rgb = null;
                 self.canvas_rgba = null;
-                self.kind = .grayscale;
+                self.dtype = .grayscale;
             },
             .rgb => |imgv| {
                 const cptr = allocator.create(Canvas(Rgb)) catch {
@@ -126,7 +122,7 @@ fn canvas_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
                 self.canvas_gray = null;
                 self.canvas_rgb = cptr;
                 self.canvas_rgba = null;
-                self.kind = .rgb;
+                self.dtype = .rgb;
             },
             .rgba => |imgv| {
                 const cptr = allocator.create(Canvas(Rgba)) catch {
@@ -138,7 +134,7 @@ fn canvas_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
                 self.canvas_gray = null;
                 self.canvas_rgb = null;
                 self.canvas_rgba = cptr;
-                self.kind = .rgba;
+                self.dtype = .rgba;
             },
         }
     } else {
@@ -154,7 +150,7 @@ fn canvas_dealloc(self_obj: ?*c.PyObject) callconv(.c) void {
     const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
     // Free the Canvas struct
-    switch (self.kind) {
+    switch (self.dtype) {
         .grayscale => if (self.canvas_gray) |ptr| allocator.destroy(ptr),
         .rgb => if (self.canvas_rgb) |ptr| allocator.destroy(ptr),
         .rgba => if (self.canvas_rgba) |ptr| allocator.destroy(ptr),
@@ -171,17 +167,17 @@ fn canvas_dealloc(self_obj: ?*c.PyObject) callconv(.c) void {
 fn canvas_repr(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
-    if (self.kind == .grayscale and self.canvas_gray != null) {
+    if (self.dtype == .grayscale and self.canvas_gray != null) {
         var buffer: [64]u8 = undefined;
-        const formatted = std.fmt.bufPrintZ(&buffer, "Canvas({d}x{d}, fmt=Grayscale)", .{ self.canvas_gray.?.image.rows, self.canvas_gray.?.image.cols }) catch return null;
+        const formatted = std.fmt.bufPrintZ(&buffer, "Canvas({d}x{d}, dtype=Grayscale)", .{ self.canvas_gray.?.image.rows, self.canvas_gray.?.image.cols }) catch return null;
         return c.PyUnicode_FromString(formatted.ptr);
-    } else if (self.kind == .rgb and self.canvas_rgb != null) {
+    } else if (self.dtype == .rgb and self.canvas_rgb != null) {
         var buffer: [64]u8 = undefined;
-        const formatted = std.fmt.bufPrintZ(&buffer, "Canvas({d}x{d}, fmt=Rgb)", .{ self.canvas_rgb.?.image.rows, self.canvas_rgb.?.image.cols }) catch return null;
+        const formatted = std.fmt.bufPrintZ(&buffer, "Canvas({d}x{d}, dtype=Rgb)", .{ self.canvas_rgb.?.image.rows, self.canvas_rgb.?.image.cols }) catch return null;
         return c.PyUnicode_FromString(formatted.ptr);
-    } else if (self.kind == .rgba and self.canvas_rgba != null) {
+    } else if (self.dtype == .rgba and self.canvas_rgba != null) {
         var buffer: [64]u8 = undefined;
-        const formatted = std.fmt.bufPrintZ(&buffer, "Canvas({d}x{d}, fmt=Rgba)", .{ self.canvas_rgba.?.image.rows, self.canvas_rgba.?.image.cols }) catch return null;
+        const formatted = std.fmt.bufPrintZ(&buffer, "Canvas({d}x{d}, dtype=Rgba)", .{ self.canvas_rgba.?.image.rows, self.canvas_rgba.?.image.cols }) catch return null;
         return c.PyUnicode_FromString(formatted.ptr);
     } else {
         return c.PyUnicode_FromString("Canvas(uninitialized)");
@@ -190,7 +186,7 @@ fn canvas_repr(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
 
 // Common parsing structure for draw methods
 const DrawArgs = struct {
-    kind: ImageKind,
+    dtype: PyImage.DType,
     canvas_gray: ?*Canvas(u8) = null,
     canvas_rgb: ?*Canvas(Rgb) = null,
     canvas_rgba: ?*Canvas(Rgba) = null,
@@ -203,7 +199,7 @@ const DrawArgs = struct {
 
 // Common parsing structure for fill methods
 const FillArgs = struct {
-    kind: ImageKind,
+    dtype: PyImage.DType,
     canvas_gray: ?*Canvas(u8) = null,
     canvas_rgb: ?*Canvas(Rgb) = null,
     canvas_rgba: ?*Canvas(Rgba) = null,
@@ -217,11 +213,11 @@ const FillArgs = struct {
 fn parseDrawArgs(self: *CanvasObject, color_obj: ?*c.PyObject, width: c_long, mode: c_long) !DrawArgs {
     const rgba = try color_utils.parseColorTo(Rgba, @ptrCast(color_obj));
     var args = DrawArgs{
-        .kind = self.kind,
+        .dtype = self.dtype,
         .width = try py_utils.validateNonNegative(u32, width, "Width"),
         .mode = if (try py_utils.validateRange(u32, mode, 0, 1, "Mode") == 0) .fast else .soft,
     };
-    switch (self.kind) {
+    switch (self.dtype) {
         .grayscale => {
             if (self.canvas_gray) |cptr| {
                 args.canvas_gray = cptr;
@@ -248,10 +244,10 @@ fn parseDrawArgs(self: *CanvasObject, color_obj: ?*c.PyObject, width: c_long, mo
 fn parseFillArgs(self: *CanvasObject, color_obj: ?*c.PyObject, mode: c_long) !FillArgs {
     const rgba = try color_utils.parseColorTo(Rgba, @ptrCast(color_obj));
     var args = FillArgs{
-        .kind = self.kind,
+        .dtype = self.dtype,
         .mode = if (try py_utils.validateRange(u32, mode, 0, 1, "Mode") == 0) .fast else .soft,
     };
-    switch (self.kind) {
+    switch (self.dtype) {
         .grayscale => {
             if (self.canvas_gray) |cptr| {
                 args.canvas_gray = cptr;
@@ -306,9 +302,9 @@ fn canvas_fill(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
         return null;
     }
 
-    // Parse and fill according to canvas kind
+    // Parse and fill according to canvas dtype
     const rgba = color_utils.parseColorTo(Rgba, @ptrCast(color_obj)) catch return null;
-    switch (self.kind) {
+    switch (self.dtype) {
         .grayscale => if (self.canvas_gray) |cptr| cptr.fill(rgba.toGray()) else return null,
         .rgb => if (self.canvas_rgb) |cptr| cptr.fill(rgba.toRgb()) else return null,
         .rgba => if (self.canvas_rgba) |cptr| cptr.fill(rgba) else return null,
@@ -383,14 +379,14 @@ fn makeDrawMethodWithWidth(
             if (comptime std.mem.eql(u8, name, "draw_line")) {
                 const p1 = py_utils.parsePointTuple(f32, @ptrCast(param_objs[0])) catch return null;
                 const p2 = py_utils.parsePointTuple(f32, @ptrCast(param_objs[1])) catch return null;
-                switch (common.kind) {
+                switch (common.dtype) {
                     .grayscale => common.canvas_gray.?.drawLine(p1, p2, common.color_gray, common.width, common.mode),
                     .rgb => common.canvas_rgb.?.drawLine(p1, p2, common.color_rgb, common.width, common.mode),
                     .rgba => common.canvas_rgba.?.drawLine(p1, p2, common.color_rgba, common.width, common.mode),
                 }
             } else if (comptime std.mem.eql(u8, name, "draw_rectangle")) {
                 const rect = py_utils.parseRectangle(f32, @ptrCast(param_objs[0])) catch return null;
-                switch (common.kind) {
+                switch (common.dtype) {
                     .grayscale => common.canvas_gray.?.drawRectangle(rect, common.color_gray, common.width, common.mode),
                     .rgb => common.canvas_rgb.?.drawRectangle(rect, common.color_rgb, common.width, common.mode),
                     .rgba => common.canvas_rgba.?.drawRectangle(rect, common.color_rgba, common.width, common.mode),
@@ -398,7 +394,7 @@ fn makeDrawMethodWithWidth(
             } else if (comptime std.mem.eql(u8, name, "draw_polygon")) {
                 const points = py_utils.parsePointList(f32, @ptrCast(param_objs[0])) catch return null;
                 defer allocator.free(points);
-                switch (common.kind) {
+                switch (common.dtype) {
                     .grayscale => common.canvas_gray.?.drawPolygon(points, common.color_gray, common.width, common.mode),
                     .rgb => common.canvas_rgb.?.drawPolygon(points, common.color_rgb, common.width, common.mode),
                     .rgba => common.canvas_rgba.?.drawPolygon(points, common.color_rgba, common.width, common.mode),
@@ -406,7 +402,7 @@ fn makeDrawMethodWithWidth(
             } else if (comptime std.mem.eql(u8, name, "draw_circle")) {
                 const center = py_utils.parsePointTuple(f32, @ptrCast(param_objs[0])) catch return null;
                 const radius = py_utils.validateNonNegative(f32, @as(*f64, @ptrCast(@alignCast(parse_args[1]))).*, "Radius") catch return null;
-                switch (common.kind) {
+                switch (common.dtype) {
                     .grayscale => common.canvas_gray.?.drawCircle(center, radius, common.color_gray, common.width, common.mode),
                     .rgb => common.canvas_rgb.?.drawCircle(center, radius, common.color_rgb, common.width, common.mode),
                     .rgba => common.canvas_rgba.?.drawCircle(center, radius, common.color_rgba, common.width, common.mode),
@@ -478,7 +474,7 @@ fn makeFillMethod(
             // Call the appropriate method based on parameter types
             if (comptime std.mem.eql(u8, name, "fill_rectangle")) {
                 const rect = py_utils.parseRectangle(f32, @ptrCast(param_objs[0])) catch return null;
-                switch (common.kind) {
+                switch (common.dtype) {
                     .grayscale => common.canvas_gray.?.fillRectangle(rect, common.color_gray, common.mode),
                     .rgb => common.canvas_rgb.?.fillRectangle(rect, common.color_rgb, common.mode),
                     .rgba => common.canvas_rgba.?.fillRectangle(rect, common.color_rgba, common.mode),
@@ -487,7 +483,7 @@ fn makeFillMethod(
                 const points = py_utils.parsePointList(f32, @ptrCast(param_objs[0])) catch return null;
                 defer allocator.free(points);
                 if (has_error_handling) {
-                    switch (common.kind) {
+                    switch (common.dtype) {
                         .grayscale => common.canvas_gray.?.fillPolygon(points, common.color_gray, common.mode) catch {
                             c.PyErr_SetString(c.PyExc_RuntimeError, "Failed to fill polygon");
                             return null;
@@ -502,7 +498,7 @@ fn makeFillMethod(
                         },
                     }
                 } else {
-                    switch (common.kind) {
+                    switch (common.dtype) {
                         .grayscale => common.canvas_gray.?.fillPolygon(points, common.color_gray, common.mode) catch unreachable,
                         .rgb => common.canvas_rgb.?.fillPolygon(points, common.color_rgb, common.mode) catch unreachable,
                         .rgba => common.canvas_rgba.?.fillPolygon(points, common.color_rgba, common.mode) catch unreachable,
@@ -511,7 +507,7 @@ fn makeFillMethod(
             } else if (comptime std.mem.eql(u8, name, "fill_circle")) {
                 const center = py_utils.parsePointTuple(f32, @ptrCast(param_objs[0])) catch return null;
                 const radius = py_utils.validateNonNegative(f32, @as(*f64, @ptrCast(@alignCast(parse_args[1]))).*, "Radius") catch return null;
-                switch (common.kind) {
+                switch (common.dtype) {
                     .grayscale => common.canvas_gray.?.fillCircle(center, radius, common.color_gray, common.mode),
                     .rgb => common.canvas_rgb.?.fillCircle(center, radius, common.color_rgb, common.mode),
                     .rgba => common.canvas_rgba.?.fillCircle(center, radius, common.color_rgba, common.mode),
@@ -675,7 +671,7 @@ fn canvas_draw_quadratic_bezier(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds
     const p1 = py_utils.parsePointTuple(f32, @ptrCast(p1_obj)) catch return null;
     const p2 = py_utils.parsePointTuple(f32, @ptrCast(p2_obj)) catch return null;
 
-    switch (common.kind) {
+    switch (common.dtype) {
         .grayscale => common.canvas_gray.?.drawQuadraticBezier(p0, p1, p2, common.color_gray, common.width, common.mode),
         .rgb => common.canvas_rgb.?.drawQuadraticBezier(p0, p1, p2, common.color_rgb, common.width, common.mode),
         .rgba => common.canvas_rgba.?.drawQuadraticBezier(p0, p1, p2, common.color_rgba, common.width, common.mode),
@@ -712,7 +708,7 @@ fn canvas_draw_cubic_bezier(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*
     const p2 = py_utils.parsePointTuple(f32, @ptrCast(p2_obj)) catch return null;
     const p3 = py_utils.parsePointTuple(f32, @ptrCast(p3_obj)) catch return null;
 
-    switch (common.kind) {
+    switch (common.dtype) {
         .grayscale => common.canvas_gray.?.drawCubicBezier(p0, p1, p2, p3, common.color_gray, common.width, common.mode),
         .rgb => common.canvas_rgb.?.drawCubicBezier(p0, p1, p2, p3, common.color_rgb, common.width, common.mode),
         .rgba => common.canvas_rgba.?.drawCubicBezier(p0, p1, p2, p3, common.color_rgba, common.width, common.mode),
@@ -746,7 +742,7 @@ fn canvas_draw_spline_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
     const points = py_utils.parsePointList(f32, @ptrCast(points_obj)) catch return null;
     defer allocator.free(points);
 
-    switch (common.kind) {
+    switch (common.dtype) {
         .grayscale => common.canvas_gray.?.drawSplinePolygon(points, common.color_gray, common.width, tension_val, common.mode),
         .rgb => common.canvas_rgb.?.drawSplinePolygon(points, common.color_rgb, common.width, tension_val, common.mode),
         .rgba => common.canvas_rgba.?.drawSplinePolygon(points, common.color_rgba, common.width, tension_val, common.mode),
@@ -779,7 +775,7 @@ fn canvas_fill_spline_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
     const points = py_utils.parsePointList(f32, @ptrCast(points_obj)) catch return null;
     defer allocator.free(points);
 
-    switch (common.kind) {
+    switch (common.dtype) {
         .grayscale => common.canvas_gray.?.fillSplinePolygon(points, common.color_gray, tension_val, common.mode) catch {
             c.PyErr_SetString(c.PyExc_RuntimeError, "Failed to fill spline polygon");
             return null;
@@ -825,7 +821,7 @@ fn canvas_draw_arc(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
     const start_angle_val = @as(f32, @floatCast(start_angle));
     const end_angle_val = @as(f32, @floatCast(end_angle));
 
-    switch (common.kind) {
+    switch (common.dtype) {
         .grayscale => common.canvas_gray.?.drawArc(center, radius_val, start_angle_val, end_angle_val, common.color_gray, common.width, common.mode) catch {
             c.PyErr_SetString(c.PyExc_RuntimeError, "Failed to draw arc");
             return null;
@@ -871,7 +867,7 @@ fn canvas_fill_arc(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
     const start_angle_val = @as(f32, @floatCast(start_angle));
     const end_angle_val = @as(f32, @floatCast(end_angle));
 
-    switch (common.kind) {
+    switch (common.dtype) {
         .grayscale => common.canvas_gray.?.fillArc(center, radius_val, start_angle_val, end_angle_val, common.color_gray, common.mode) catch {
             c.PyErr_SetString(c.PyExc_RuntimeError, "Failed to fill arc");
             return null;
@@ -932,7 +928,7 @@ fn canvas_draw_text(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
 
         const font_wrapper = @as(*bitmap_font_module.BitmapFontObject, @ptrCast(font));
         const font_ptr = py_utils.validateNonNull(*BitmapFont, font_wrapper.font, "BitmapFont") catch return null;
-        switch (self.kind) {
+        switch (self.dtype) {
             .grayscale => if (self.canvas_gray) |cptr| cptr.drawText(text, position, rgba.toGray(), font_ptr.*, @as(f32, @floatCast(scale)), draw_mode) else return null,
             .rgb => if (self.canvas_rgb) |cptr| cptr.drawText(text, position, rgba.toRgb(), font_ptr.*, @as(f32, @floatCast(scale)), draw_mode) else return null,
             .rgba => if (self.canvas_rgba) |cptr| cptr.drawText(text, position, rgba, font_ptr.*, @as(f32, @floatCast(scale)), draw_mode) else return null,
@@ -942,7 +938,7 @@ fn canvas_draw_text(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
             c.PyErr_SetString(c.PyExc_RuntimeError, "Failed to initialize default font");
             return null;
         };
-        switch (self.kind) {
+        switch (self.dtype) {
             .grayscale => if (self.canvas_gray) |cptr| cptr.drawText(text, position, rgba.toGray(), font, @floatCast(scale), draw_mode) else return null,
             .rgb => if (self.canvas_rgb) |cptr| cptr.drawText(text, position, rgba.toRgb(), font, @floatCast(scale), draw_mode) else return null,
             .rgba => if (self.canvas_rgba) |cptr| cptr.drawText(text, position, rgba, font, @floatCast(scale), draw_mode) else return null,
@@ -957,7 +953,7 @@ fn canvas_get_rows(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*
     _ = closure;
     const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
-    switch (self.kind) {
+    switch (self.dtype) {
         .grayscale => if (self.canvas_gray) |cptr| return c.PyLong_FromLong(@intCast(cptr.image.rows)) else {},
         .rgb => if (self.canvas_rgb) |cptr| return c.PyLong_FromLong(@intCast(cptr.image.rows)) else {},
         .rgba => if (self.canvas_rgba) |cptr| return c.PyLong_FromLong(@intCast(cptr.image.rows)) else {},
@@ -970,7 +966,7 @@ fn canvas_get_cols(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*
     _ = closure;
     const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
-    switch (self.kind) {
+    switch (self.dtype) {
         .grayscale => if (self.canvas_gray) |cptr| return c.PyLong_FromLong(@intCast(cptr.image.cols)) else {},
         .rgb => if (self.canvas_rgb) |cptr| return c.PyLong_FromLong(@intCast(cptr.image.cols)) else {},
         .rgba => if (self.canvas_rgba) |cptr| return c.PyLong_FromLong(@intCast(cptr.image.cols)) else {},
