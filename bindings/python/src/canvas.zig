@@ -78,34 +78,33 @@ fn canvas_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
     const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
     // Parse arguments - expect an Image object
-    var image_obj: ?*c.PyObject = undefined;
-    const kw = comptime py_utils.kw(&.{"image"});
-    const format = std.fmt.comptimePrint("O", .{});
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &image_obj) == 0) {
-        return -1;
-    }
+    const Params = struct {
+        image: ?*c.PyObject,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return -1;
 
     // Import the image module to get the ImageType
     const image_module = @import("image.zig");
 
     // Check if it's an Image instance
-    if (c.PyObject_IsInstance(image_obj, @ptrCast(&image_module.ImageType)) <= 0) {
+    if (c.PyObject_IsInstance(params.image, @ptrCast(&image_module.ImageType)) <= 0) {
         c.PyErr_SetString(c.PyExc_TypeError, "Argument must be an Image instance");
         return -1;
     }
 
-    const image = @as(*image_module.ImageObject, @ptrCast(image_obj.?));
+    const image = @as(*image_module.ImageObject, @ptrCast(params.image.?));
 
     // Keep reference to parent Image to prevent garbage collection
-    c.Py_INCREF(image_obj.?);
-    self.image_ref = image_obj;
+    c.Py_INCREF(params.image.?);
+    self.image_ref = params.image;
 
     // Initialize based on image format
     if (image.py_image) |pimg| {
         switch (pimg.data) {
             .grayscale => |imgv| {
                 const cptr = allocator.create(Canvas(u8)) catch {
-                    c.Py_DECREF(image_obj.?);
+                    c.Py_DECREF(params.image.?);
                     c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate Canvas");
                     return -1;
                 };
@@ -117,7 +116,7 @@ fn canvas_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
             },
             .rgb => |imgv| {
                 const cptr = allocator.create(Canvas(Rgb)) catch {
-                    c.Py_DECREF(image_obj.?);
+                    c.Py_DECREF(params.image.?);
                     c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate Canvas");
                     return -1;
                 };
@@ -129,7 +128,7 @@ fn canvas_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
             },
             .rgba => |imgv| {
                 const cptr = allocator.create(Canvas(Rgba)) catch {
-                    c.Py_DECREF(image_obj.?);
+                    c.Py_DECREF(params.image.?);
                     c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate Canvas");
                     return -1;
                 };
@@ -141,7 +140,7 @@ fn canvas_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
             },
         }
     } else {
-        c.Py_DECREF(image_obj.?);
+        c.Py_DECREF(params.image.?);
         c.PyErr_SetString(c.PyExc_ValueError, "Image not initialized");
         return -1;
     }

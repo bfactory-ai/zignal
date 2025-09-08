@@ -143,13 +143,10 @@ fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) ca
     var color_obj: ?*c.PyObject = null;
     var dtype_obj: ?*c.PyObject = null;
 
-    const kw = comptime py_utils.kw(&.{ "rows", "cols", "color", "dtype" });
-    const fmt = std.fmt.comptimePrint("ii|O$O", .{});
-    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, fmt.ptr, @ptrCast(@constCast(&kw)), &rows, &cols, &color_obj, &dtype_obj) == 0) {
+    py_utils.parseArgsManual(args, kwds, "ii|O$O", &.{ "rows", "cols", "color", "dtype" }, .{ &rows, &cols, &color_obj, &dtype_obj }) catch {
         c.PyErr_SetString(c.PyExc_TypeError, "Image() requires (rows, cols, color=None, *, dtype=...) arguments");
         return -1;
-    }
+    };
 
     // Validate dimensions - validateRange now properly handles negative values when converting to usize
     const validated_rows = py_utils.validateRange(usize, rows, 1, std.math.maxInt(usize), "Rows") catch return -1;
@@ -684,15 +681,14 @@ fn image_format(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) 
     const self = @as(*ImageObject, @ptrCast(self_obj.?));
 
     // Parse format_spec argument
-    var format_spec: [*c]const u8 = undefined;
-    const kw = comptime py_utils.kw(&.{"format_spec"});
-    const format = std.fmt.comptimePrint("s", .{});
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &format_spec) == 0) {
-        return null;
-    }
+    const Params = struct {
+        format_spec: [*c]const u8,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
     // Convert C string to Zig slice
-    const spec_slice = std.mem.span(format_spec);
+    const spec_slice = std.mem.span(params.format_spec);
 
     // If empty format spec, return default repr
     if (spec_slice.len == 0) {
@@ -995,7 +991,7 @@ pub const image_methods_metadata = blk: {
         .{
             .name = "crop",
             .meth = @ptrCast(&transforms.image_crop),
-            .flags = c.METH_VARARGS,
+            .flags = c.METH_VARARGS | c.METH_KEYWORDS,
             .doc = transforms.image_crop_doc,
             .params = "self, rect: Rectangle",
             .returns = "Image",

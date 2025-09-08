@@ -34,30 +34,29 @@ fn rectangle_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
     const self = @as(*RectangleObject, @ptrCast(self_obj.?));
 
     // Parse arguments - expect left, top, right, bottom
-    var left: f64 = undefined;
-    var top: f64 = undefined;
-    var right: f64 = undefined;
-    var bottom: f64 = undefined;
-    const kw = comptime py_utils.kw(&.{ "left", "top", "right", "bottom" });
-    const format = std.fmt.comptimePrint("dddd", .{});
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &left, &top, &right, &bottom) == 0) {
-        return -1;
-    }
+    const Params = struct {
+        left: f64,
+        top: f64,
+        right: f64,
+        bottom: f64,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return -1;
 
     // Validate rectangle
-    if (right < left) {
+    if (params.right < params.left) {
         c.PyErr_SetString(c.PyExc_ValueError, "Right must be greater than or equal to left");
         return -1;
     }
-    if (bottom < top) {
+    if (params.bottom < params.top) {
         c.PyErr_SetString(c.PyExc_ValueError, "Bottom must be greater than or equal to top");
         return -1;
     }
 
-    self.left = left;
-    self.top = top;
-    self.right = right;
-    self.bottom = bottom;
+    self.left = params.left;
+    self.top = params.top;
+    self.right = params.right;
+    self.bottom = params.bottom;
 
     return 0;
 }
@@ -93,26 +92,24 @@ const rectangle_init_center_doc =
 ;
 
 fn rectangle_init_center(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-    var x: f64 = undefined;
-    var y: f64 = undefined;
-    var width: f64 = undefined;
-    var height: f64 = undefined;
-
-    const kw = comptime py_utils.kw(&.{ "x", "y", "width", "height" });
-    const format = std.fmt.comptimePrint("dddd", .{});
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &x, &y, &width, &height) == 0) {
-        return null;
-    }
+    const Params = struct {
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
     // Validate dimensions
-    _ = py_utils.validatePositive(f64, width, "Width") catch return null;
-    _ = py_utils.validatePositive(f64, height, "Height") catch return null;
+    _ = py_utils.validatePositive(f64, params.width, "Width") catch return null;
+    _ = py_utils.validatePositive(f64, params.height, "Height") catch return null;
 
     // Calculate bounds
-    const left = x - width / 2;
-    const top = y - height / 2;
-    const right = left + width;
-    const bottom = top + height;
+    const left = params.x - params.width / 2;
+    const top = params.y - params.height / 2;
+    const right = left + params.width;
+    const bottom = top + params.height;
 
     // Create new Rectangle instance
     const rect_args = c.Py_BuildValue("(dddd)", left, top, right, bottom) orelse return null;
@@ -190,17 +187,15 @@ const rectangle_contains_doc =
 fn rectangle_contains(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*RectangleObject, @ptrCast(self_obj.?));
 
-    var x: f64 = undefined;
-    var y: f64 = undefined;
+    const Params = struct {
+        x: f64,
+        y: f64,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const kw = comptime py_utils.kw(&.{ "x", "y" });
-    const format = std.fmt.comptimePrint("dd", .{});
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &x, &y) == 0) {
-        return null;
-    }
-
-    const x_f32 = @as(f32, @floatCast(x));
-    const y_f32 = @as(f32, @floatCast(y));
+    const x_f32 = @as(f32, @floatCast(params.x));
+    const y_f32 = @as(f32, @floatCast(params.y));
 
     const contains = x_f32 >= self.left and x_f32 < self.right and
         y_f32 >= self.top and y_f32 < self.bottom;
@@ -225,15 +220,13 @@ const rectangle_grow_doc =
 fn rectangle_grow(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*RectangleObject, @ptrCast(self_obj.?));
 
-    var amount: f64 = undefined;
+    const Params = struct {
+        amount: f64,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const kw = comptime py_utils.kw(&.{"amount"});
-    const format = std.fmt.comptimePrint("d", .{});
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &amount) == 0) {
-        return null;
-    }
-
-    const amount_f32 = @as(f32, @floatCast(amount));
+    const amount_f32 = @as(f32, @floatCast(params.amount));
 
     // Create new rectangle with grown bounds
     const new_args = c.Py_BuildValue("(dddd)", @as(f64, self.left - amount_f32), @as(f64, self.top - amount_f32), @as(f64, self.right + amount_f32), @as(f64, self.bottom + amount_f32)) orelse return null;
@@ -260,15 +253,13 @@ const rectangle_shrink_doc =
 fn rectangle_shrink(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*RectangleObject, @ptrCast(self_obj.?));
 
-    var amount: f64 = undefined;
+    const Params = struct {
+        amount: f64,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const kw = comptime py_utils.kw(&.{"amount"});
-    const format = std.fmt.comptimePrint("d", .{});
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &amount) == 0) {
-        return null;
-    }
-
-    const amount_f32 = @as(f32, @floatCast(amount));
+    const amount_f32 = @as(f32, @floatCast(params.amount));
 
     // Create new rectangle with shrunk bounds
     const new_args = c.Py_BuildValue("(dddd)", @as(f64, self.left + amount_f32), @as(f64, self.top + amount_f32), @as(f64, self.right - amount_f32), @as(f64, self.bottom - amount_f32)) orelse return null;
@@ -303,16 +294,14 @@ const rectangle_intersect_doc =
 fn rectangle_intersect(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*RectangleObject, @ptrCast(self_obj.?));
 
-    var other_obj: ?*c.PyObject = undefined;
-
-    const kw = comptime py_utils.kw(&.{"other"});
-    const format = std.fmt.comptimePrint("O", .{});
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &other_obj) == 0) {
-        return null;
-    }
+    const Params = struct {
+        other: ?*c.PyObject,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
     // Parse the other rectangle (can be Rectangle or tuple)
-    const other_rect = py_utils.parseRectangle(f64, other_obj) catch return null;
+    const other_rect = py_utils.parseRectangle(f64, params.other) catch return null;
 
     // Calculate intersection bounds
     const left = @max(self.left, other_rect.l);
@@ -360,18 +349,17 @@ const rectangle_iou_doc =
     \\```
 ;
 
-fn rectangle_iou(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+fn rectangle_iou(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*RectangleObject, @ptrCast(self_obj.?));
 
-    var other_obj: ?*c.PyObject = undefined;
-
-    const format = std.fmt.comptimePrint("O", .{});
-    if (c.PyArg_ParseTuple(args, format.ptr, &other_obj) == 0) {
-        return null;
-    }
+    const Params = struct {
+        other: ?*c.PyObject,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
     // Parse the other rectangle (can be Rectangle or tuple)
-    const other_rect = py_utils.parseRectangle(f64, other_obj) catch return null;
+    const other_rect = py_utils.parseRectangle(f64, params.other) catch return null;
 
     // Convert self to Rectangle(f64)
     const self_rect = Rectangle(f64).init(self.left, self.top, self.right, self.bottom);
@@ -427,12 +415,7 @@ fn rectangle_overlaps(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwargs: ?*c.Py
     var coverage_thresh: f64 = 1.0;
 
     // Parse arguments with keywords
-    const kw = comptime py_utils.kw(&.{ "other", "iou_thresh", "coverage_thresh" });
-    const format = std.fmt.comptimePrint("O|dd", .{});
-    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
-    if (c.PyArg_ParseTupleAndKeywords(args, kwargs, format.ptr, @ptrCast(@constCast(&kw)), &other_obj, &iou_thresh, &coverage_thresh) == 0) {
-        return null;
-    }
+    py_utils.parseArgsManual(args, kwargs, "O|dd", &.{ "other", "iou_thresh", "coverage_thresh" }, .{ &other_obj, &iou_thresh, &coverage_thresh }) catch return null;
 
     // Validate thresholds
     _ = py_utils.validateRange(f64, iou_thresh, 0.0, 1.0, "iou_thresh") catch return null;
@@ -526,7 +509,7 @@ pub const rectangle_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     .{
         .name = "iou",
         .meth = @ptrCast(&rectangle_iou),
-        .flags = c.METH_VARARGS,
+        .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = rectangle_iou_doc,
         .params = "self, other: Rectangle | tuple[float, float, float, float]",
         .returns = "float",

@@ -671,3 +671,117 @@ pub fn kw(comptime names: []const []const u8) [names.len + 1]?[*:0]const u8 {
         return out;
     }
 }
+
+/// Parse Python arguments with manual format string (for complex cases with optional/keyword-only params).
+/// This is a helper for cases where the struct-based approach doesn't work yet.
+pub fn parseArgsManual(
+    args: ?*c.PyObject,
+    kwds: ?*c.PyObject,
+    comptime format: []const u8,
+    comptime param_names: []const []const u8,
+    out_values: anytype,
+) !void {
+    const keywords = comptime kw(param_names);
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
+    const result = @call(.auto, c.PyArg_ParseTupleAndKeywords, .{
+        args,
+        kwds,
+        format.ptr,
+        @as([*c][*c]u8, @ptrCast(@constCast(&keywords))),
+    } ++ out_values);
+    if (result == 0) {
+        return error.ArgumentParseError;
+    }
+}
+
+/// Parse Python arguments into a struct using automatic type detection.
+/// The struct fields define both the parameter names and types.
+///
+/// Usage:
+/// ```zig
+/// const Params = struct {
+///     x: f64,
+///     y: f64,
+///     width: f64,
+///     height: f64,
+/// };
+/// var params: Params = undefined;
+/// py_utils.parseArgs(Params, args, kwds, &params) catch return null;
+/// ```
+pub fn parseArgs(comptime T: type, args: ?*c.PyObject, kwds: ?*c.PyObject, out: *T) !void {
+    const type_info = @typeInfo(T);
+    const fields = switch (type_info) {
+        .@"struct" => |s| s.fields,
+        else => @compileError("parseArgs expects a struct type, got: " ++ @typeName(T)),
+    };
+
+    // Build format string at comptime
+    const format = comptime blk: {
+        var format_buf: [fields.len * 2 + 1]u8 = undefined;
+        var format_len: usize = 0;
+        for (fields) |field| {
+            const type_chars = switch (@typeInfo(field.type)) {
+                .float => "d",
+                .int => |info| blk2: {
+                    if (info.signedness == .signed) {
+                        if (info.bits <= 32) break :blk2 "i";
+                        break :blk2 "l";
+                    } else {
+                        if (info.bits <= 32) break :blk2 "I";
+                        break :blk2 "k";
+                    }
+                },
+                .pointer => |ptr| blk2: {
+                    if (ptr.child == c.PyObject) break :blk2 "O";
+                    if (ptr.child == u8 and ptr.size == .c) break :blk2 "s";
+                    @compileError("Unsupported pointer type: " ++ @typeName(field.type));
+                },
+                .optional => |opt| blk2: {
+                    if (@typeInfo(opt.child) == .pointer) {
+                        const ptr = @typeInfo(opt.child).pointer;
+                        if (ptr.child == c.PyObject) break :blk2 "O";
+                    }
+                    @compileError("Unsupported optional type: " ++ @typeName(field.type));
+                },
+                else => @compileError("Unsupported type: " ++ @typeName(field.type)),
+            };
+            for (type_chars) |ch| {
+                format_buf[format_len] = ch;
+                format_len += 1;
+            }
+        }
+        format_buf[format_len] = 0; // null terminate
+        const final = format_buf[0..format_len :0].*;
+        break :blk final;
+    };
+
+    // Build names array at comptime
+    const names = comptime blk: {
+        var result: [fields.len][]const u8 = undefined;
+        for (fields, 0..) |field, i| {
+            result[i] = field.name;
+        }
+        break :blk result;
+    };
+
+    // Build keywords list
+    const keywords = comptime kw(&names);
+
+    // Build argument tuple
+    var arg_tuple: std.meta.Tuple(&[_]type{*anyopaque} ** fields.len) = undefined;
+    inline for (fields, 0..) |field, i| {
+        arg_tuple[i] = @ptrCast(&@field(out.*, field.name));
+    }
+
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
+    const result = @call(.auto, c.PyArg_ParseTupleAndKeywords, .{
+        args,
+        kwds,
+        &format,
+        @as([*c][*c]u8, @ptrCast(@constCast(&keywords))),
+    } ++ arg_tuple);
+
+    if (result == 0) {
+        return error.ArgumentParseError;
+    }
+}
