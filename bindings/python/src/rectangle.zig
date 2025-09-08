@@ -410,19 +410,24 @@ const rectangle_overlaps_doc =
 fn rectangle_overlaps(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwargs: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*RectangleObject, @ptrCast(self_obj.?));
 
-    var other_obj: ?*c.PyObject = undefined;
-    var iou_thresh: f64 = 0.5;
-    var coverage_thresh: f64 = 1.0;
+    const Params = struct {
+        other: ?*c.PyObject,
+        iou_thresh: f64 = 0.5, // Optional with default (not ?f64)
+        coverage_thresh: f64 = 1.0, // Optional with default (not ?f64)
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwargs, &params) catch return null;
 
-    // Parse arguments with keywords
-    py_utils.parseArgsManual(args, kwargs, "O|dd", &.{ "other", "iou_thresh", "coverage_thresh" }, .{ &other_obj, &iou_thresh, &coverage_thresh }) catch return null;
+    // Use the values directly - they have either the provided value or the default
+    const iou_thresh = params.iou_thresh;
+    const coverage_thresh = params.coverage_thresh;
 
     // Validate thresholds
     _ = py_utils.validateRange(f64, iou_thresh, 0.0, 1.0, "iou_thresh") catch return null;
     _ = py_utils.validateRange(f64, coverage_thresh, 0.0, 1.0, "coverage_thresh") catch return null;
 
     // Parse the other rectangle (can be Rectangle or tuple)
-    const other_rect = py_utils.parseRectangle(f64, other_obj) catch return null;
+    const other_rect = py_utils.parseRectangle(f64, params.other) catch return null;
 
     // Convert self to Rectangle(f64)
     const self_rect = Rectangle(f64).init(self.left, self.top, self.right, self.bottom);

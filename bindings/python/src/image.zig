@@ -90,7 +90,7 @@ const image_init_doc =
     \\  - RGBA tuple (r, g, b, a) with values 0-255
     \\  - Any color object (Rgb, Hsl, Hsv, etc.)
     \\  - Defaults to transparent (0, 0, 0, 0)
-    \\- `dtype` (type, keyword-only): Pixel data type specifying storage type.
+    \\- `dtype` (type, optional): Pixel data type specifying storage type.
     \\  - `zignal.Grayscale` → single-channel u8 (NumPy shape (H, W, 1))
     \\  - `zignal.Rgb` (default) → 3-channel RGB (NumPy shape (H, W, 3))
     \\  - `zignal.Rgba` → 4-channel RGBA (NumPy shape (H, W, 4))
@@ -137,28 +137,30 @@ fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) ca
         other, // Other color object
     };
 
-    // Parse arguments: rows, cols, optional color, keyword-only dtype
-    var rows: c_int = 0;
-    var cols: c_int = 0;
-    var color_obj: ?*c.PyObject = null;
-    var dtype_obj: ?*c.PyObject = null;
-
-    py_utils.parseArgsManual(args, kwds, "ii|O$O", &.{ "rows", "cols", "color", "dtype" }, .{ &rows, &cols, &color_obj, &dtype_obj }) catch {
-        c.PyErr_SetString(c.PyExc_TypeError, "Image() requires (rows, cols, color=None, *, dtype=...) arguments");
+    // Parse arguments: rows, cols, optional color, optional dtype
+    const Params = struct {
+        rows: c_int,
+        cols: c_int,
+        color: ?*c.PyObject = null, // Optional with default
+        dtype: ?*c.PyObject = null, // Optional with default (was keyword-only, now regular optional)
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch {
+        c.PyErr_SetString(c.PyExc_TypeError, "Image() requires (rows, cols, color=None, dtype=None) arguments");
         return -1;
     };
 
     // Validate dimensions - validateRange now properly handles negative values when converting to usize
-    const validated_rows = py_utils.validateRange(usize, rows, 1, std.math.maxInt(usize), "Rows") catch return -1;
-    const validated_cols = py_utils.validateRange(usize, cols, 1, std.math.maxInt(usize), "Cols") catch return -1;
+    const validated_rows = py_utils.validateRange(usize, params.rows, 1, std.math.maxInt(usize), "Rows") catch return -1;
+    const validated_cols = py_utils.validateRange(usize, params.cols, 1, std.math.maxInt(usize), "Cols") catch return -1;
 
     // Detect color input type
     var color_type = ColorInputType.none;
-    if (color_obj != null and color_obj != c.Py_None()) {
-        if (c.PyLong_Check(color_obj) != 0) {
+    if (params.color != null and params.color != c.Py_None()) {
+        if (c.PyLong_Check(params.color) != 0) {
             color_type = .grayscale;
-        } else if (c.PyTuple_Check(color_obj) != 0) {
-            const tuple_size = c.PyTuple_Size(color_obj);
+        } else if (c.PyTuple_Check(params.color) != 0) {
+            const tuple_size = c.PyTuple_Size(params.color);
             if (tuple_size == 3) {
                 color_type = .rgb_tuple;
             } else if (tuple_size == 4) {
@@ -167,9 +169,9 @@ fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) ca
                 c.PyErr_SetString(c.PyExc_ValueError, "Color tuple must have 3 or 4 elements");
                 return -1;
             }
-        } else if (c.PyObject_IsInstance(color_obj, @ptrCast(&color_bindings.RgbaType)) == 1) {
+        } else if (c.PyObject_IsInstance(params.color, @ptrCast(&color_bindings.RgbaType)) == 1) {
             color_type = .rgba_object;
-        } else if (c.PyObject_IsInstance(color_obj, @ptrCast(&color_bindings.RgbType)) == 1) {
+        } else if (c.PyObject_IsInstance(params.color, @ptrCast(&color_bindings.RgbType)) == 1) {
             color_type = .rgb_object;
         } else {
             color_type = .other;
@@ -180,7 +182,7 @@ fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) ca
     const ImageFormat = enum { grayscale, rgb, rgba };
     var target_format: ImageFormat = undefined;
 
-    if (dtype_obj) |fmt_obj| {
+    if (params.dtype) |fmt_obj| {
         // Explicit dtype specified
         // TODO: Remove explicit cast after Python 3.10 is dropped
         const is_type_obj = c.PyObject_TypeCheck(fmt_obj, @as([*c]c.PyTypeObject, @ptrCast(&c.PyType_Type))) != 0;
@@ -230,8 +232,8 @@ fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) ca
             };
 
             // Parse color to grayscale if provided
-            if (color_obj != null and color_obj != c.Py_None()) {
-                const gray = color_utils.parseColorTo(u8, color_obj) catch {
+            if (params.color != null and params.color != c.Py_None()) {
+                const gray = color_utils.parseColorTo(u8, params.color) catch {
                     gimg.deinit(allocator);
                     // Error already set by parseColorTo
                     return -1;
@@ -258,8 +260,8 @@ fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) ca
             };
 
             // Parse color to RGB if provided
-            if (color_obj != null and color_obj != c.Py_None()) {
-                const rgb_color = color_utils.parseColorTo(Rgb, color_obj) catch {
+            if (params.color != null and params.color != c.Py_None()) {
+                const rgb_color = color_utils.parseColorTo(Rgb, params.color) catch {
                     rimg.deinit(allocator);
                     // Error already set by parseColorTo
                     return -1;
@@ -286,8 +288,8 @@ fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) ca
             };
 
             // Parse color to RGBA if provided
-            if (color_obj != null and color_obj != c.Py_None()) {
-                const rgba_color = color_utils.parseColorTo(Rgba, color_obj) catch {
+            if (params.color != null and params.color != c.Py_None()) {
+                const rgba_color = color_utils.parseColorTo(Rgba, params.color) catch {
                     image.deinit(allocator);
                     // Error already set by parseColorTo
                     return -1;
