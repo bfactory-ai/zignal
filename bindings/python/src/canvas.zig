@@ -336,201 +336,34 @@ fn canvas_fill(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
     return py_utils.getPyNone();
 }
 
-// Macro-like function to generate draw methods with width parameter
-fn makeDrawMethodWithWidth(
-    comptime name: []const u8,
-    comptime canvas_method: []const u8,
-    comptime param_count: usize,
-    comptime param_names: [param_count][]const u8,
-    comptime param_types: [param_count][]const u8,
-    comptime parse_format: []const u8,
-    comptime doc: []const u8,
-) type {
-    _ = canvas_method;
-    _ = param_types;
-    return struct {
-        fn method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-            const self = @as(*CanvasObject, @ptrCast(self_obj.?));
+// Draw methods
+fn canvas_draw_line(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
-            // Build kwlist at comptime via helper
-            const kw = comptime py_utils.kw(param_names ++ &[_][]const u8{ "color", "width", "mode" });
-
-            // Parse arguments - use generic vars array
-            var param_objs: [param_count]?*c.PyObject = undefined;
-            var color_obj: ?*c.PyObject = undefined;
-            var width: c_long = 1;
-            var mode: c_long = 0;
-
-            const format = std.fmt.comptimePrint(parse_format ++ "O|ll", .{});
-
-            // Build argument list for parsing
-            var parse_args: [param_count + 3]?*anyopaque = undefined;
-            inline for (0..param_count) |i| {
-                parse_args[i] = @ptrCast(&param_objs[i]);
-            }
-            parse_args[param_count] = @ptrCast(&color_obj);
-            parse_args[param_count + 1] = @ptrCast(&width);
-            parse_args[param_count + 2] = @ptrCast(&mode);
-
-            // Call PyArg_ParseTupleAndKeywords with variable arguments
-            switch (param_count) {
-                1 => {
-                    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
-                    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), parse_args[0], parse_args[1], parse_args[2], parse_args[3]) == 0) {
-                        return null;
-                    }
-                },
-                2 => {
-                    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
-                    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), parse_args[0], parse_args[1], parse_args[2], parse_args[3], parse_args[4]) == 0) {
-                        return null;
-                    }
-                },
-                3 => {
-                    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
-                    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), parse_args[0], parse_args[1], parse_args[2], parse_args[3], parse_args[4], parse_args[5]) == 0) {
-                        return null;
-                    }
-                },
-                else => @compileError("Unsupported param count"),
-            }
-
-            // Parse common arguments
-            const rgba = color_utils.parseColorTo(Rgba, @ptrCast(color_obj)) catch return null;
-            const width_val = py_utils.validateNonNegative(u32, width, "Width") catch return null;
-            const mode_val = py_utils.validateRange(u32, mode, 0, 1, "Mode") catch return null;
-            const draw_mode: DrawMode = if (mode_val == 0) .fast else .soft;
-
-            // Get canvas or return error
-            const canvas = self.py_canvas orelse {
-                c.PyErr_SetString(c.PyExc_ValueError, "Canvas not initialized");
-                return null;
-            };
-
-            // Call the appropriate method based on parameter types
-            if (comptime std.mem.eql(u8, name, "draw_line")) {
-                const p1 = py_utils.parsePointTuple(f32, @ptrCast(param_objs[0])) catch return null;
-                const p2 = py_utils.parsePointTuple(f32, @ptrCast(param_objs[1])) catch return null;
-                canvas.drawLine(p1, p2, rgba, width_val, draw_mode);
-            } else if (comptime std.mem.eql(u8, name, "draw_rectangle")) {
-                const rect = py_utils.parseRectangle(f32, @ptrCast(param_objs[0])) catch return null;
-                canvas.drawRectangle(rect, rgba, width_val, draw_mode);
-            } else if (comptime std.mem.eql(u8, name, "draw_polygon")) {
-                const points = py_utils.parsePointList(f32, @ptrCast(param_objs[0])) catch return null;
-                defer allocator.free(points);
-                canvas.drawPolygon(points, rgba, width_val, draw_mode);
-            } else if (comptime std.mem.eql(u8, name, "draw_circle")) {
-                const center = py_utils.parsePointTuple(f32, @ptrCast(param_objs[0])) catch return null;
-                const radius = py_utils.validateNonNegative(f32, @as(*f64, @ptrCast(@alignCast(parse_args[1]))).*, "Radius") catch return null;
-                canvas.drawCircle(center, radius, rgba, width_val, draw_mode);
-            }
-
-            return py_utils.getPyNone();
-        }
-
-        const doc_string = doc;
+    const Params = struct {
+        p1: ?*c.PyObject,
+        p2: ?*c.PyObject,
+        color: ?*c.PyObject,
+        width: c_long = 1,
+        mode: c_long = 0,
     };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
+
+    const p1 = py_utils.parsePointTuple(f32, params.p1) catch return null;
+    const p2 = py_utils.parsePointTuple(f32, params.p2) catch return null;
+    const rgba = color_utils.parseColorTo(Rgba, params.color) catch return null;
+    const width_val = py_utils.validateNonNegative(u32, params.width, "Width") catch return null;
+    const mode_val = py_utils.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
+    const draw_mode: DrawMode = @enumFromInt(mode_val);
+
+    const canvas = py_utils.validateNonNull(*PyCanvas, self.py_canvas, "Canvas") catch return null;
+    canvas.drawLine(p1, p2, rgba, width_val, draw_mode);
+
+    return py_utils.getPyNone();
 }
 
-// Macro-like function to generate fill methods
-fn makeFillMethod(
-    comptime name: []const u8,
-    comptime canvas_method: []const u8,
-    comptime param_count: usize,
-    comptime param_names: [param_count][]const u8,
-    comptime param_types: [param_count][]const u8,
-    comptime parse_format: []const u8,
-    comptime doc: []const u8,
-    comptime has_error_handling: bool,
-) type {
-    _ = canvas_method;
-    _ = param_types;
-    return struct {
-        fn method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-            const self = @as(*CanvasObject, @ptrCast(self_obj.?));
-
-            // Build kwlist at comptime via helper
-            const kw = comptime py_utils.kw(param_names ++ &[_][]const u8{ "color", "mode" });
-
-            // Parse arguments
-            var param_objs: [param_count]?*c.PyObject = undefined;
-            var color_obj: ?*c.PyObject = undefined;
-            var mode: c_long = 0;
-
-            const format = std.fmt.comptimePrint(parse_format ++ "O|l", .{});
-
-            // Build argument list for parsing
-            var parse_args: [param_count + 2]?*anyopaque = undefined;
-            inline for (0..param_count) |i| {
-                parse_args[i] = @ptrCast(&param_objs[i]);
-            }
-            parse_args[param_count] = @ptrCast(&color_obj);
-            parse_args[param_count + 1] = @ptrCast(&mode);
-
-            // Call PyArg_ParseTupleAndKeywords with variable arguments
-            switch (param_count) {
-                1 => {
-                    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
-                    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), parse_args[0], parse_args[1], parse_args[2]) == 0) {
-                        return null;
-                    }
-                },
-                2 => {
-                    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
-                    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), parse_args[0], parse_args[1], parse_args[2], parse_args[3]) == 0) {
-                        return null;
-                    }
-                },
-                else => @compileError("Unsupported param count"),
-            }
-
-            // Parse common arguments
-            const rgba = color_utils.parseColorTo(Rgba, @ptrCast(color_obj)) catch return null;
-            const mode_val = py_utils.validateRange(u32, mode, 0, 1, "Mode") catch return null;
-            const draw_mode: DrawMode = if (mode_val == 0) .fast else .soft;
-
-            // Get canvas or return error
-            const canvas = self.py_canvas orelse {
-                c.PyErr_SetString(c.PyExc_ValueError, "Canvas not initialized");
-                return null;
-            };
-
-            // Call the appropriate method based on parameter types
-            if (comptime std.mem.eql(u8, name, "fill_rectangle")) {
-                const rect = py_utils.parseRectangle(f32, @ptrCast(param_objs[0])) catch return null;
-                canvas.fillRectangle(rect, rgba, draw_mode);
-            } else if (comptime std.mem.eql(u8, name, "fill_polygon")) {
-                const points = py_utils.parsePointList(f32, @ptrCast(param_objs[0])) catch return null;
-                defer allocator.free(points);
-                if (has_error_handling) {
-                    canvas.fillPolygon(points, rgba, draw_mode) catch {
-                        c.PyErr_SetString(c.PyExc_RuntimeError, "Failed to fill polygon");
-                        return null;
-                    };
-                } else {
-                    canvas.fillPolygon(points, rgba, draw_mode) catch unreachable;
-                }
-            } else if (comptime std.mem.eql(u8, name, "fill_circle")) {
-                const center = py_utils.parsePointTuple(f32, @ptrCast(param_objs[0])) catch return null;
-                const radius = py_utils.validateNonNegative(f32, @as(*f64, @ptrCast(@alignCast(parse_args[1]))).*, "Radius") catch return null;
-                canvas.fillCircle(center, radius, rgba, draw_mode);
-            }
-
-            return py_utils.getPyNone();
-        }
-
-        const doc_string = doc;
-    };
-}
-
-// Generate method instances
-const DrawLine = makeDrawMethodWithWidth(
-    "draw_line",
-    "drawLine",
-    2,
-    [_][]const u8{ "p1", "p2" },
-    [_][]const u8{ "tuple", "tuple" },
-    "OO",
+const canvas_draw_line_doc =
     \\Draw a line between two points.
     \\
     \\## Parameters
@@ -539,16 +372,33 @@ const DrawLine = makeDrawMethodWithWidth(
     \\- `color` (int, tuple or color object): Color of the line.
     \\- `width` (int, optional): Line width in pixels (default: 1)
     \\- `mode` (`DrawMode`, optional): Drawing mode (default: `DrawMode.FAST`)
-    ,
-);
+;
 
-const DrawRectangle = makeDrawMethodWithWidth(
-    "draw_rectangle",
-    "drawRectangle",
-    1,
-    [_][]const u8{"rect"},
-    [_][]const u8{"Rectangle"},
-    "O",
+fn canvas_draw_rectangle(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    const self = @as(*CanvasObject, @ptrCast(self_obj.?));
+
+    const Params = struct {
+        rect: ?*c.PyObject,
+        color: ?*c.PyObject,
+        width: c_long = 1,
+        mode: c_long = 0,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
+
+    const rect = py_utils.parseRectangle(f32, params.rect) catch return null;
+    const rgba = color_utils.parseColorTo(Rgba, params.color) catch return null;
+    const width_val = py_utils.validateNonNegative(u32, params.width, "Width") catch return null;
+    const mode_val = py_utils.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
+    const draw_mode: DrawMode = @enumFromInt(mode_val);
+
+    const canvas = py_utils.validateNonNull(*PyCanvas, self.py_canvas, "Canvas") catch return null;
+    canvas.drawRectangle(rect, rgba, width_val, draw_mode);
+
+    return py_utils.getPyNone();
+}
+
+const canvas_draw_rectangle_doc =
     \\Draw a rectangle outline.
     \\
     \\## Parameters
@@ -556,16 +406,34 @@ const DrawRectangle = makeDrawMethodWithWidth(
     \\- `color` (int, tuple or color object): Color of the rectangle.
     \\- `width` (int, optional): Line width in pixels (default: 1)
     \\- `mode` (`DrawMode`, optional): Drawing mode (default: `DrawMode.FAST`)
-    ,
-);
+;
 
-const DrawPolygon = makeDrawMethodWithWidth(
-    "draw_polygon",
-    "drawPolygon",
-    1,
-    [_][]const u8{"points"},
-    [_][]const u8{"list"},
-    "O",
+fn canvas_draw_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    const self = @as(*CanvasObject, @ptrCast(self_obj.?));
+
+    const Params = struct {
+        points: ?*c.PyObject,
+        color: ?*c.PyObject,
+        width: c_long = 1,
+        mode: c_long = 0,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
+
+    const points = py_utils.parsePointList(f32, params.points) catch return null;
+    defer allocator.free(points);
+    const rgba = color_utils.parseColorTo(Rgba, params.color) catch return null;
+    const width_val = py_utils.validateNonNegative(u32, params.width, "Width") catch return null;
+    const mode_val = py_utils.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
+    const draw_mode: DrawMode = @enumFromInt(mode_val);
+
+    const canvas = py_utils.validateNonNull(*PyCanvas, self.py_canvas, "Canvas") catch return null;
+    canvas.drawPolygon(points, rgba, width_val, draw_mode);
+
+    return py_utils.getPyNone();
+}
+
+const canvas_draw_polygon_doc =
     \\Draw a polygon outline.
     \\
     \\## Parameters
@@ -573,16 +441,35 @@ const DrawPolygon = makeDrawMethodWithWidth(
     \\- `color` (int, tuple or color object): Color of the polygon.
     \\- `width` (int, optional): Line width in pixels (default: 1)
     \\- `mode` (`DrawMode`, optional): Drawing mode (default: `DrawMode.FAST`)
-    ,
-);
+;
 
-const DrawCircle = makeDrawMethodWithWidth(
-    "draw_circle",
-    "drawCircle",
-    2,
-    [_][]const u8{ "center", "radius" },
-    [_][]const u8{ "tuple", "float" },
-    "Od",
+fn canvas_draw_circle(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    const self = @as(*CanvasObject, @ptrCast(self_obj.?));
+
+    const Params = struct {
+        center: ?*c.PyObject,
+        radius: f64,
+        color: ?*c.PyObject,
+        width: c_long = 1,
+        mode: c_long = 0,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
+
+    const center = py_utils.parsePointTuple(f32, params.center) catch return null;
+    const radius = py_utils.validateNonNegative(f32, params.radius, "Radius") catch return null;
+    const rgba = color_utils.parseColorTo(Rgba, params.color) catch return null;
+    const width_val = py_utils.validateNonNegative(u32, params.width, "Width") catch return null;
+    const mode_val = py_utils.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
+    const draw_mode: DrawMode = @enumFromInt(mode_val);
+
+    const canvas = py_utils.validateNonNull(*PyCanvas, self.py_canvas, "Canvas") catch return null;
+    canvas.drawCircle(center, radius, rgba, width_val, draw_mode);
+
+    return py_utils.getPyNone();
+}
+
+const canvas_draw_circle_doc =
     \\Draw a circle outline.
     \\
     \\## Parameters
@@ -591,50 +478,100 @@ const DrawCircle = makeDrawMethodWithWidth(
     \\- `color` (int, tuple or color object): Color of the circle.
     \\- `width` (int, optional): Line width in pixels (default: 1)
     \\- `mode` (`DrawMode`, optional): Drawing mode (default: `DrawMode.FAST`)
-    ,
-);
+;
 
-const FillRectangle = makeFillMethod(
-    "fill_rectangle",
-    "fillRectangle",
-    1,
-    [_][]const u8{"rect"},
-    [_][]const u8{"Rectangle"},
-    "O",
+// Fill methods
+fn canvas_fill_rectangle(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    const self = @as(*CanvasObject, @ptrCast(self_obj.?));
+
+    const Params = struct {
+        rect: ?*c.PyObject,
+        color: ?*c.PyObject,
+        mode: c_long = 0,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
+
+    const rect = py_utils.parseRectangle(f32, params.rect) catch return null;
+    const rgba = color_utils.parseColorTo(Rgba, params.color) catch return null;
+    const mode_val = py_utils.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
+    const draw_mode: DrawMode = @enumFromInt(mode_val);
+
+    const canvas = py_utils.validateNonNull(*PyCanvas, self.py_canvas, "Canvas") catch return null;
+    canvas.fillRectangle(rect, rgba, draw_mode);
+
+    return py_utils.getPyNone();
+}
+
+const canvas_fill_rectangle_doc =
     \\Fill a rectangle area.
     \\
     \\## Parameters
     \\- `rect` (Rectangle): Rectangle object defining the bounds
     \\- `color` (int, tuple or color object): Fill color.
     \\- `mode` (`DrawMode`, optional): Drawing mode (default: `DrawMode.FAST`)
-,
-    false,
-);
+;
 
-const FillPolygon = makeFillMethod(
-    "fill_polygon",
-    "fillPolygon",
-    1,
-    [_][]const u8{"points"},
-    [_][]const u8{"list"},
-    "O",
+fn canvas_fill_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    const self = @as(*CanvasObject, @ptrCast(self_obj.?));
+
+    const Params = struct {
+        points: ?*c.PyObject,
+        color: ?*c.PyObject,
+        mode: c_long = 0,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
+
+    const points = py_utils.parsePointList(f32, params.points) catch return null;
+    defer allocator.free(points);
+    const rgba = color_utils.parseColorTo(Rgba, params.color) catch return null;
+    const mode_val = py_utils.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
+    const draw_mode: DrawMode = @enumFromInt(mode_val);
+
+    const canvas = py_utils.validateNonNull(*PyCanvas, self.py_canvas, "Canvas") catch return null;
+    canvas.fillPolygon(points, rgba, draw_mode) catch {
+        c.PyErr_SetString(c.PyExc_RuntimeError, "Failed to fill polygon");
+        return null;
+    };
+
+    return py_utils.getPyNone();
+}
+
+const canvas_fill_polygon_doc =
     \\Fill a polygon area.
     \\
     \\## Parameters
     \\- `points` (list[tuple[float, float]]): List of (x, y) coordinates forming the polygon
     \\- `color` (int, tuple or color object): Fill color.
     \\- `mode` (`DrawMode`, optional): Drawing mode (default: `DrawMode.FAST`)
-,
-    true,
-);
+;
 
-const FillCircle = makeFillMethod(
-    "fill_circle",
-    "fillCircle",
-    2,
-    [_][]const u8{ "center", "radius" },
-    [_][]const u8{ "tuple", "float" },
-    "Od",
+fn canvas_fill_circle(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    const self = @as(*CanvasObject, @ptrCast(self_obj.?));
+
+    const Params = struct {
+        center: ?*c.PyObject,
+        radius: f64,
+        color: ?*c.PyObject,
+        mode: c_long = 0,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
+
+    const center = py_utils.parsePointTuple(f32, params.center) catch return null;
+    const radius = py_utils.validateNonNegative(f32, params.radius, "Radius") catch return null;
+    const rgba = color_utils.parseColorTo(Rgba, params.color) catch return null;
+    const mode_val = py_utils.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
+    const draw_mode: DrawMode = @enumFromInt(mode_val);
+
+    const canvas = py_utils.validateNonNull(*PyCanvas, self.py_canvas, "Canvas") catch return null;
+    canvas.fillCircle(center, radius, rgba, draw_mode);
+
+    return py_utils.getPyNone();
+}
+
+const canvas_fill_circle_doc =
     \\Fill a circle area.
     \\
     \\## Parameters
@@ -642,46 +579,33 @@ const FillCircle = makeFillMethod(
     \\- `radius` (float): Circle radius
     \\- `color` (int, tuple or color object): Fill color.
     \\- `mode` (`DrawMode`, optional): Drawing mode (default: `DrawMode.FAST`)
-,
-    false,
-);
+;
 
 // Special methods that need custom handling
 fn canvas_draw_quadratic_bezier(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
-    // Parse arguments
-    var p0_obj: ?*c.PyObject = undefined;
-    var p1_obj: ?*c.PyObject = undefined;
-    var p2_obj: ?*c.PyObject = undefined;
-    var color_obj: ?*c.PyObject = undefined;
-    var width: c_long = 1;
-    var mode: c_long = 0;
+    const Params = struct {
+        p0: ?*c.PyObject,
+        p1: ?*c.PyObject,
+        p2: ?*c.PyObject,
+        color: ?*c.PyObject,
+        width: c_long = 1,
+        mode: c_long = 0,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const kw = comptime py_utils.kw(&.{ "p0", "p1", "p2", "color", "width", "mode" });
-    const format = std.fmt.comptimePrint("OOOO|ll", .{});
+    const p0 = py_utils.parsePointTuple(f32, params.p0) catch return null;
+    const p1 = py_utils.parsePointTuple(f32, params.p1) catch return null;
+    const p2 = py_utils.parsePointTuple(f32, params.p2) catch return null;
+    const rgba = color_utils.parseColorTo(Rgba, params.color) catch return null;
+    const width_val = py_utils.validateNonNegative(u32, params.width, "Width") catch return null;
+    const mode_val = py_utils.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
+    const draw_mode: DrawMode = @enumFromInt(mode_val);
 
-    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &p0_obj, &p1_obj, &p2_obj, &color_obj, &width, &mode) == 0) {
-        return null;
-    }
-
-    // Parse arguments
-    const p0 = py_utils.parsePointTuple(f32, @ptrCast(p0_obj)) catch return null;
-    const p1 = py_utils.parsePointTuple(f32, @ptrCast(p1_obj)) catch return null;
-    const p2 = py_utils.parsePointTuple(f32, @ptrCast(p2_obj)) catch return null;
-    const rgba = color_utils.parseColorTo(Rgba, @ptrCast(color_obj)) catch return null;
-    const width_val = py_utils.validateNonNegative(u32, width, "Width") catch return null;
-    const mode_val = py_utils.validateRange(u32, mode, 0, 1, "Mode") catch return null;
-    const draw_mode: DrawMode = if (mode_val == 0) .fast else .soft;
-
-    // Draw
-    if (self.py_canvas) |canvas| {
-        canvas.drawQuadraticBezier(p0, p1, p2, rgba, width_val, draw_mode);
-    } else {
-        c.PyErr_SetString(c.PyExc_ValueError, "Canvas not initialized");
-        return null;
-    }
+    const canvas = py_utils.validateNonNull(*PyCanvas, self.py_canvas, "Canvas") catch return null;
+    canvas.drawQuadraticBezier(p0, p1, p2, rgba, width_val, draw_mode);
 
     return py_utils.getPyNone();
 }
@@ -689,40 +613,29 @@ fn canvas_draw_quadratic_bezier(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds
 fn canvas_draw_cubic_bezier(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
-    // Parse arguments
-    var p0_obj: ?*c.PyObject = undefined;
-    var p1_obj: ?*c.PyObject = undefined;
-    var p2_obj: ?*c.PyObject = undefined;
-    var p3_obj: ?*c.PyObject = undefined;
-    var color_obj: ?*c.PyObject = undefined;
-    var width: c_long = 1;
-    var mode: c_long = 0;
+    const Params = struct {
+        p0: ?*c.PyObject,
+        p1: ?*c.PyObject,
+        p2: ?*c.PyObject,
+        p3: ?*c.PyObject,
+        color: ?*c.PyObject,
+        width: c_long = 1,
+        mode: c_long = 0,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const kw = comptime py_utils.kw(&.{ "p0", "p1", "p2", "p3", "color", "width", "mode" });
-    const format = std.fmt.comptimePrint("OOOOO|ll", .{});
+    const p0 = py_utils.parsePointTuple(f32, params.p0) catch return null;
+    const p1 = py_utils.parsePointTuple(f32, params.p1) catch return null;
+    const p2 = py_utils.parsePointTuple(f32, params.p2) catch return null;
+    const p3 = py_utils.parsePointTuple(f32, params.p3) catch return null;
+    const rgba = color_utils.parseColorTo(Rgba, params.color) catch return null;
+    const width_val = py_utils.validateNonNegative(u32, params.width, "Width") catch return null;
+    const mode_val = py_utils.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
+    const draw_mode: DrawMode = @enumFromInt(mode_val);
 
-    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &p0_obj, &p1_obj, &p2_obj, &p3_obj, &color_obj, &width, &mode) == 0) {
-        return null;
-    }
-
-    // Parse arguments
-    const p0 = py_utils.parsePointTuple(f32, @ptrCast(p0_obj)) catch return null;
-    const p1 = py_utils.parsePointTuple(f32, @ptrCast(p1_obj)) catch return null;
-    const p2 = py_utils.parsePointTuple(f32, @ptrCast(p2_obj)) catch return null;
-    const p3 = py_utils.parsePointTuple(f32, @ptrCast(p3_obj)) catch return null;
-    const rgba = color_utils.parseColorTo(Rgba, @ptrCast(color_obj)) catch return null;
-    const width_val = py_utils.validateNonNegative(u32, width, "Width") catch return null;
-    const mode_val = py_utils.validateRange(u32, mode, 0, 1, "Mode") catch return null;
-    const draw_mode: DrawMode = if (mode_val == 0) .fast else .soft;
-
-    // Draw
-    if (self.py_canvas) |canvas| {
-        canvas.drawCubicBezier(p0, p1, p2, p3, rgba, width_val, draw_mode);
-    } else {
-        c.PyErr_SetString(c.PyExc_ValueError, "Canvas not initialized");
-        return null;
-    }
+    const canvas = py_utils.validateNonNull(*PyCanvas, self.py_canvas, "Canvas") catch return null;
+    canvas.drawCubicBezier(p0, p1, p2, p3, rgba, width_val, draw_mode);
 
     return py_utils.getPyNone();
 }
@@ -730,37 +643,26 @@ fn canvas_draw_cubic_bezier(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*
 fn canvas_draw_spline_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
-    // Parse arguments
-    var points_obj: ?*c.PyObject = undefined;
-    var color_obj: ?*c.PyObject = undefined;
-    var width: c_long = 1;
-    var tension: f64 = 0.5;
-    var mode: c_long = 0;
+    const Params = struct {
+        points: ?*c.PyObject,
+        color: ?*c.PyObject,
+        width: c_long = 1,
+        tension: f64 = 0.5,
+        mode: c_long = 0,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const kw = comptime py_utils.kw(&.{ "points", "color", "width", "tension", "mode" });
-    const format = std.fmt.comptimePrint("OO|ldl", .{});
-
-    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &points_obj, &color_obj, &width, &tension, &mode) == 0) {
-        return null;
-    }
-
-    // Parse arguments
-    const points = py_utils.parsePointList(f32, @ptrCast(points_obj)) catch return null;
+    const points = py_utils.parsePointList(f32, params.points) catch return null;
     defer allocator.free(points);
-    const rgba = color_utils.parseColorTo(Rgba, @ptrCast(color_obj)) catch return null;
-    const width_val = py_utils.validateNonNegative(u32, width, "Width") catch return null;
-    const tension_val = py_utils.validateRange(f32, tension, 0.0, 1.0, "Tension") catch return null;
-    const mode_val = py_utils.validateRange(u32, mode, 0, 1, "Mode") catch return null;
-    const draw_mode: DrawMode = if (mode_val == 0) .fast else .soft;
+    const rgba = color_utils.parseColorTo(Rgba, params.color) catch return null;
+    const width_val = py_utils.validateNonNegative(u32, params.width, "Width") catch return null;
+    const tension_val = py_utils.validateRange(f32, params.tension, 0.0, 1.0, "Tension") catch return null;
+    const mode_val = py_utils.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
+    const draw_mode: DrawMode = @enumFromInt(mode_val);
 
-    // Draw
-    if (self.py_canvas) |canvas| {
-        canvas.drawSplinePolygon(points, rgba, width_val, tension_val, draw_mode);
-    } else {
-        c.PyErr_SetString(c.PyExc_ValueError, "Canvas not initialized");
-        return null;
-    }
+    const canvas = py_utils.validateNonNull(*PyCanvas, self.py_canvas, "Canvas") catch return null;
+    canvas.drawSplinePolygon(points, rgba, width_val, tension_val, draw_mode);
 
     return py_utils.getPyNone();
 }
@@ -768,38 +670,27 @@ fn canvas_draw_spline_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
 fn canvas_fill_spline_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
-    // Parse arguments
-    var points_obj: ?*c.PyObject = undefined;
-    var color_obj: ?*c.PyObject = undefined;
-    var tension: f64 = 0.5;
-    var mode: c_long = 0;
+    const Params = struct {
+        points: ?*c.PyObject,
+        color: ?*c.PyObject,
+        tension: f64 = 0.5,
+        mode: c_long = 0,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const kw = comptime py_utils.kw(&.{ "points", "color", "tension", "mode" });
-    const format = std.fmt.comptimePrint("OO|dl", .{});
-
-    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &points_obj, &color_obj, &tension, &mode) == 0) {
-        return null;
-    }
-
-    // Parse arguments
-    const points = py_utils.parsePointList(f32, @ptrCast(points_obj)) catch return null;
+    const points = py_utils.parsePointList(f32, params.points) catch return null;
     defer allocator.free(points);
-    const rgba = color_utils.parseColorTo(Rgba, @ptrCast(color_obj)) catch return null;
-    const tension_val = py_utils.validateRange(f32, tension, 0.0, 1.0, "Tension") catch return null;
-    const mode_val = py_utils.validateRange(u32, mode, 0, 1, "Mode") catch return null;
-    const draw_mode: DrawMode = if (mode_val == 0) .fast else .soft;
+    const rgba = color_utils.parseColorTo(Rgba, params.color) catch return null;
+    const tension_val = py_utils.validateRange(f32, params.tension, 0.0, 1.0, "Tension") catch return null;
+    const mode_val = py_utils.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
+    const draw_mode: DrawMode = @enumFromInt(mode_val);
 
-    // Fill
-    if (self.py_canvas) |canvas| {
-        canvas.fillSplinePolygon(points, rgba, tension_val, draw_mode) catch {
-            c.PyErr_SetString(c.PyExc_RuntimeError, "Failed to fill spline polygon");
-            return null;
-        };
-    } else {
-        c.PyErr_SetString(c.PyExc_ValueError, "Canvas not initialized");
+    const canvas = py_utils.validateNonNull(*PyCanvas, self.py_canvas, "Canvas") catch return null;
+    canvas.fillSplinePolygon(points, rgba, tension_val, draw_mode) catch {
+        c.PyErr_SetString(c.PyExc_RuntimeError, "Failed to fill spline polygon");
         return null;
-    }
+    };
 
     return py_utils.getPyNone();
 }
@@ -807,43 +698,32 @@ fn canvas_fill_spline_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
 fn canvas_draw_arc(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
-    // Parse arguments
-    var center_obj: ?*c.PyObject = undefined;
-    var radius: f64 = undefined;
-    var start_angle: f64 = undefined;
-    var end_angle: f64 = undefined;
-    var color_obj: ?*c.PyObject = undefined;
-    var width: c_long = 1;
-    var mode: c_long = 0;
+    const Params = struct {
+        center: ?*c.PyObject,
+        radius: f64,
+        start_angle: f64,
+        end_angle: f64,
+        color: ?*c.PyObject,
+        width: c_long = 1,
+        mode: c_long = 0,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const kw = comptime py_utils.kw(&.{ "center", "radius", "start_angle", "end_angle", "color", "width", "mode" });
-    const format = std.fmt.comptimePrint("OdddO|ll", .{});
+    const center = py_utils.parsePointTuple(f32, params.center) catch return null;
+    const radius_val = @as(f32, @floatCast(params.radius));
+    const start_angle_val = @as(f32, @floatCast(params.start_angle));
+    const end_angle_val = @as(f32, @floatCast(params.end_angle));
+    const rgba = color_utils.parseColorTo(Rgba, params.color) catch return null;
+    const width_val = py_utils.validateNonNegative(u32, params.width, "Width") catch return null;
+    const mode_val = py_utils.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
+    const draw_mode: DrawMode = @enumFromInt(mode_val);
 
-    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &center_obj, &radius, &start_angle, &end_angle, &color_obj, &width, &mode) == 0) {
+    const canvas = py_utils.validateNonNull(*PyCanvas, self.py_canvas, "Canvas") catch return null;
+    canvas.drawArc(center, radius_val, start_angle_val, end_angle_val, rgba, width_val, draw_mode) catch {
+        c.PyErr_SetString(c.PyExc_RuntimeError, "Failed to draw arc");
         return null;
-    }
-
-    // Parse arguments
-    const center = py_utils.parsePointTuple(f32, @ptrCast(center_obj)) catch return null;
-    const radius_val = @as(f32, @floatCast(radius));
-    const start_angle_val = @as(f32, @floatCast(start_angle));
-    const end_angle_val = @as(f32, @floatCast(end_angle));
-    const rgba = color_utils.parseColorTo(Rgba, @ptrCast(color_obj)) catch return null;
-    const width_val = py_utils.validateNonNegative(u32, width, "Width") catch return null;
-    const mode_val = py_utils.validateRange(u32, mode, 0, 1, "Mode") catch return null;
-    const draw_mode: DrawMode = if (mode_val == 0) .fast else .soft;
-
-    // Draw
-    if (self.py_canvas) |canvas| {
-        canvas.drawArc(center, radius_val, start_angle_val, end_angle_val, rgba, width_val, draw_mode) catch {
-            c.PyErr_SetString(c.PyExc_RuntimeError, "Failed to draw arc");
-            return null;
-        };
-    } else {
-        c.PyErr_SetString(c.PyExc_ValueError, "Canvas not initialized");
-        return null;
-    }
+    };
 
     return py_utils.getPyNone();
 }
@@ -851,42 +731,31 @@ fn canvas_draw_arc(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
 fn canvas_fill_arc(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
-    // Parse arguments
-    var center_obj: ?*c.PyObject = undefined;
-    var radius: f64 = undefined;
-    var start_angle: f64 = undefined;
-    var end_angle: f64 = undefined;
-    var color_obj: ?*c.PyObject = undefined;
-    var mode: c_long = 0;
+    const Params = struct {
+        center: ?*c.PyObject,
+        radius: f64,
+        start_angle: f64,
+        end_angle: f64,
+        color: ?*c.PyObject,
+        mode: c_long = 0,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const kw = comptime py_utils.kw(&.{ "center", "radius", "start_angle", "end_angle", "color", "mode" });
-    const format = std.fmt.comptimePrint("OdddO|l", .{});
-
-    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &center_obj, &radius, &start_angle, &end_angle, &color_obj, &mode) == 0) {
-        return null;
-    }
-
-    // Parse arguments
-    const center = py_utils.parsePointTuple(f32, @ptrCast(center_obj)) catch return null;
+    const center = py_utils.parsePointTuple(f32, params.center) catch return null;
     // Allow negative radius - the Zig library will handle it gracefully (no-op)
-    const radius_val = @as(f32, @floatCast(radius));
-    const start_angle_val = @as(f32, @floatCast(start_angle));
-    const end_angle_val = @as(f32, @floatCast(end_angle));
-    const rgba = color_utils.parseColorTo(Rgba, @ptrCast(color_obj)) catch return null;
-    const mode_val = py_utils.validateRange(u32, mode, 0, 1, "Mode") catch return null;
-    const draw_mode: DrawMode = if (mode_val == 0) .fast else .soft;
+    const radius_val = @as(f32, @floatCast(params.radius));
+    const start_angle_val = @as(f32, @floatCast(params.start_angle));
+    const end_angle_val = @as(f32, @floatCast(params.end_angle));
+    const rgba = color_utils.parseColorTo(Rgba, params.color) catch return null;
+    const mode_val = py_utils.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
+    const draw_mode: DrawMode = @enumFromInt(mode_val);
 
-    // Fill
-    if (self.py_canvas) |canvas| {
-        canvas.fillArc(center, radius_val, start_angle_val, end_angle_val, rgba, draw_mode) catch {
-            c.PyErr_SetString(c.PyExc_RuntimeError, "Failed to fill arc");
-            return null;
-        };
-    } else {
-        c.PyErr_SetString(c.PyExc_ValueError, "Canvas not initialized");
+    const canvas = py_utils.validateNonNull(*PyCanvas, self.py_canvas, "Canvas") catch return null;
+    canvas.fillArc(center, radius_val, start_angle_val, end_angle_val, rgba, draw_mode) catch {
+        c.PyErr_SetString(c.PyExc_RuntimeError, "Failed to fill arc");
         return null;
-    }
+    };
 
     return py_utils.getPyNone();
 }
@@ -1084,57 +953,57 @@ pub const canvas_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     },
     .{
         .name = "draw_line",
-        .meth = @ptrCast(&DrawLine.method),
+        .meth = @ptrCast(&canvas_draw_line),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
-        .doc = DrawLine.doc_string,
+        .doc = canvas_draw_line_doc,
         .params = "self, p1: tuple[float, float], p2: tuple[float, float], color: " ++ stub_metadata.COLOR ++ ", width: int = 1, mode: DrawMode = DrawMode.FAST",
         .returns = "None",
     },
     .{
         .name = "draw_rectangle",
-        .meth = @ptrCast(&DrawRectangle.method),
+        .meth = @ptrCast(&canvas_draw_rectangle),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
-        .doc = DrawRectangle.doc_string,
+        .doc = canvas_draw_rectangle_doc,
         .params = "self, rect: Rectangle, color: " ++ stub_metadata.COLOR ++ ", width: int = 1, mode: DrawMode = DrawMode.FAST",
         .returns = "None",
     },
     .{
         .name = "fill_rectangle",
-        .meth = @ptrCast(&FillRectangle.method),
+        .meth = @ptrCast(&canvas_fill_rectangle),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
-        .doc = FillRectangle.doc_string,
+        .doc = canvas_fill_rectangle_doc,
         .params = "self, rect: Rectangle, color: " ++ stub_metadata.COLOR ++ ", mode: DrawMode = DrawMode.FAST",
         .returns = "None",
     },
     .{
         .name = "draw_polygon",
-        .meth = @ptrCast(&DrawPolygon.method),
+        .meth = @ptrCast(&canvas_draw_polygon),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
-        .doc = DrawPolygon.doc_string,
+        .doc = canvas_draw_polygon_doc,
         .params = "self, points: list[tuple[float, float]], color: " ++ stub_metadata.COLOR ++ ", width: int = 1, mode: DrawMode = DrawMode.FAST",
         .returns = "None",
     },
     .{
         .name = "fill_polygon",
-        .meth = @ptrCast(&FillPolygon.method),
+        .meth = @ptrCast(&canvas_fill_polygon),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
-        .doc = FillPolygon.doc_string,
+        .doc = canvas_fill_polygon_doc,
         .params = "self, points: list[tuple[float, float]], color: " ++ stub_metadata.COLOR ++ ", mode: DrawMode = DrawMode.FAST",
         .returns = "None",
     },
     .{
         .name = "draw_circle",
-        .meth = @ptrCast(&DrawCircle.method),
+        .meth = @ptrCast(&canvas_draw_circle),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
-        .doc = DrawCircle.doc_string,
+        .doc = canvas_draw_circle_doc,
         .params = "self, center: tuple[float, float], radius: float, color: " ++ stub_metadata.COLOR ++ ", width: int = 1, mode: DrawMode = DrawMode.FAST",
         .returns = "None",
     },
     .{
         .name = "fill_circle",
-        .meth = @ptrCast(&FillCircle.method),
+        .meth = @ptrCast(&canvas_fill_circle),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
-        .doc = FillCircle.doc_string,
+        .doc = canvas_fill_circle_doc,
         .params = "self, center: tuple[float, float], radius: float, color: " ++ stub_metadata.COLOR ++ ", mode: DrawMode = DrawMode.FAST",
         .returns = "None",
     },
@@ -1281,5 +1150,3 @@ pub var CanvasType = c.PyTypeObject{
     .tp_init = canvas_init,
     .tp_new = canvas_new,
 };
-
-// No runtime wrapper; DrawMode is registered via enum_utils.registerEnum in main
