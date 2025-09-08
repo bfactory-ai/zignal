@@ -149,12 +149,9 @@ pub fn image_resize(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
         if (scale == -1.0 and c.PyErr_Occurred() != null) {
             return null;
         }
-        if (scale <= 0) {
-            c.PyErr_SetString(c.PyExc_ValueError, "Scale factor must be positive");
-            return null;
-        }
+        const scale_pos = py_utils.validatePositive(f64, scale, "Scale factor") catch return null;
 
-        const result = image_scale(self, @floatCast(scale), method) catch return null;
+        const result = image_scale(self, @floatCast(scale_pos), method) catch return null;
         return @ptrCast(result);
     } else if (c.PyTuple_Check(shape_or_scale) != 0) {
         // It's a tuple of dimensions
@@ -171,22 +168,17 @@ pub fn image_resize(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
             c.PyErr_SetString(c.PyExc_TypeError, "Rows must be an integer");
             return null;
         }
-        if (rows <= 0) {
-            c.PyErr_SetString(c.PyExc_ValueError, "Rows must be positive");
-            return null;
-        }
 
         const cols = c.PyLong_AsLong(cols_obj);
         if (cols == -1 and c.PyErr_Occurred() != null) {
             c.PyErr_SetString(c.PyExc_TypeError, "Cols must be an integer");
             return null;
         }
-        if (cols <= 0) {
-            c.PyErr_SetString(c.PyExc_ValueError, "Cols must be positive");
-            return null;
-        }
 
-        const result = image_reshape(self, @intCast(rows), @intCast(cols), method) catch return null;
+        const rows_pos = py_utils.validatePositive(usize, rows, "Rows") catch return null;
+        const cols_pos = py_utils.validatePositive(usize, cols, "Cols") catch return null;
+
+        const result = image_reshape(self, rows_pos, cols_pos, method) catch return null;
         return @ptrCast(result);
     } else {
         c.PyErr_SetString(c.PyExc_TypeError, "resize() argument must be a number (scale) or tuple (rows, cols)");
@@ -238,11 +230,8 @@ pub fn image_letterbox(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyO
         if (square_size == -1 and c.PyErr_Occurred() != null) {
             return null;
         }
-        if (square_size <= 0) {
-            c.PyErr_SetString(c.PyExc_ValueError, "Size must be positive");
-            return null;
-        }
-        const result = image_letterbox_square(self, @intCast(square_size), method) catch return null;
+        const size_pos = py_utils.validatePositive(usize, square_size, "Size") catch return null;
+        const result = image_letterbox_square(self, size_pos, method) catch return null;
         return @ptrCast(result);
     } else if (c.PyTuple_Check(size) != 0) {
         // It's a tuple for dimensions
@@ -266,12 +255,10 @@ pub fn image_letterbox(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyO
             return null;
         }
 
-        if (rows <= 0 or cols <= 0) {
-            c.PyErr_SetString(c.PyExc_ValueError, "Dimensions must be positive");
-            return null;
-        }
+        const rows_pos = py_utils.validatePositive(usize, rows, "Rows") catch return null;
+        const cols_pos = py_utils.validatePositive(usize, cols, "Cols") catch return null;
 
-        const result = image_letterbox_shape(self, @intCast(rows), @intCast(cols), method) catch return null;
+        const result = image_letterbox_shape(self, rows_pos, cols_pos, method) catch return null;
         return @ptrCast(result);
     } else {
         c.PyErr_SetString(c.PyExc_TypeError, "letterbox() argument must be an integer (square) or tuple (rows, cols)");
@@ -667,12 +654,9 @@ pub fn image_extract(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
             if (square == -1 and c.PyErr_Occurred() != null) {
                 return null;
             }
-            if (square <= 0) {
-                c.PyErr_SetString(c.PyExc_ValueError, "size must be positive");
-                return null;
-            }
-            out_rows = @intCast(square);
-            out_cols = @intCast(square);
+            const sq = py_utils.validatePositive(usize, square, "size") catch return null;
+            out_rows = sq;
+            out_cols = sq;
         } else if (c.PyTuple_Check(size_obj) != 0) {
             if (c.PyTuple_Size(size_obj) != 2) {
                 c.PyErr_SetString(c.PyExc_ValueError, "size must be a 2-tuple of (rows, cols)");
@@ -687,23 +671,15 @@ pub fn image_extract(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
                 c.PyErr_SetString(c.PyExc_TypeError, "Rows must be an integer");
                 return null;
             }
-            if (rows <= 0) {
-                c.PyErr_SetString(c.PyExc_ValueError, "Rows must be positive");
-                return null;
-            }
 
             const cols = c.PyLong_AsLong(cols_obj);
             if (cols == -1 and c.PyErr_Occurred() != null) {
                 c.PyErr_SetString(c.PyExc_TypeError, "Cols must be an integer");
                 return null;
             }
-            if (cols <= 0) {
-                c.PyErr_SetString(c.PyExc_ValueError, "Cols must be positive");
-                return null;
-            }
 
-            out_rows = @intCast(rows);
-            out_cols = @intCast(cols);
+            out_rows = py_utils.validatePositive(usize, rows, "Rows") catch return null;
+            out_cols = py_utils.validatePositive(usize, cols, "Cols") catch return null;
         } else {
             c.PyErr_SetString(c.PyExc_TypeError, "size must be an int (square) or a tuple (rows, cols)");
             return null;
