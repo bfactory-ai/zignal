@@ -771,10 +771,10 @@ fn canvas_fill_spline_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
     var tension: f64 = 0.5;
     var mode: c_long = 0;
 
-    const kwlist = [_][*c]const u8{ "points", "color", "tension", "mode", null };
+    const kw = comptime py_utils.kw(&.{ "points", "color", "tension", "mode" });
     const format = std.fmt.comptimePrint("OO|dl", .{});
 
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kwlist)), &points_obj, &color_obj, &tension, &mode) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &points_obj, &color_obj, &tension, &mode) == 0) {
         return null;
     }
 

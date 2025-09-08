@@ -104,14 +104,8 @@ fn rectangle_init_center(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c
     }
 
     // Validate dimensions
-    if (width <= 0) {
-        c.PyErr_SetString(c.PyExc_ValueError, "Width must be positive");
-        return null;
-    }
-    if (height <= 0) {
-        c.PyErr_SetString(c.PyExc_ValueError, "Height must be positive");
-        return null;
-    }
+    _ = py_utils.validatePositive(f64, width, "Width") catch return null;
+    _ = py_utils.validatePositive(f64, height, "Height") catch return null;
 
     // Calculate bounds
     const left = x - width / 2;
@@ -428,21 +422,15 @@ fn rectangle_overlaps(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwargs: ?*c.Py
     var coverage_thresh: f64 = 1.0;
 
     // Parse arguments with keywords
-    var kwlist = [_:null]?[*:0]const u8{ "other", "iou_thresh", "coverage_thresh" };
+    const kw = comptime py_utils.kw(&.{ "other", "iou_thresh", "coverage_thresh" });
     const format = std.fmt.comptimePrint("O|dd", .{});
-    if (c.PyArg_ParseTupleAndKeywords(args, kwargs, format.ptr, @ptrCast(&kwlist), &other_obj, &iou_thresh, &coverage_thresh) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwargs, format.ptr, @ptrCast(@constCast(&kw)), &other_obj, &iou_thresh, &coverage_thresh) == 0) {
         return null;
     }
 
     // Validate thresholds
-    if (iou_thresh < 0 or iou_thresh > 1) {
-        c.PyErr_SetString(c.PyExc_ValueError, "iou_thresh must be between 0 and 1");
-        return null;
-    }
-    if (coverage_thresh < 0 or coverage_thresh > 1) {
-        c.PyErr_SetString(c.PyExc_ValueError, "coverage_thresh must be between 0 and 1");
-        return null;
-    }
+    _ = py_utils.validateRange(f64, iou_thresh, 0.0, 1.0, "iou_thresh") catch return null;
+    _ = py_utils.validateRange(f64, coverage_thresh, 0.0, 1.0, "coverage_thresh") catch return null;
 
     // Parse the other rectangle (can be Rectangle or tuple)
     const other_rect = py_utils.parseRectangle(f64, other_obj) catch return null;

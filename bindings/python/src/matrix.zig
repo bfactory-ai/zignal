@@ -123,19 +123,17 @@ fn matrix_full(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
     var cols: c_int = 0;
     var fill_value: f64 = 0.0;
 
-    const kwlist = [_:null]?[*:0]const u8{ "rows", "cols", "fill_value", null };
+    const kw = comptime py_utils.kw(&.{ "rows", "cols", "fill_value" });
     const format = std.fmt.comptimePrint("ii|d:full", .{});
 
     // TODO: remove @constCast when we don't use Python < 3.13
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kwlist)), &rows, &cols, &fill_value) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &rows, &cols, &fill_value) == 0) {
         return null;
     }
 
     // Validate dimensions
-    if (rows <= 0 or cols <= 0) {
-        c.PyErr_SetString(c.PyExc_ValueError, "Matrix dimensions must be positive");
-        return null;
-    }
+    const rows_pos = py_utils.validatePositive(usize, rows, "rows") catch return null;
+    const cols_pos = py_utils.validatePositive(usize, cols, "cols") catch return null;
 
     // Create new Matrix object
     const self = @as(?*MatrixObject, @ptrCast(c.PyType_GenericAlloc(@ptrCast(type_obj), 0)));
@@ -149,7 +147,7 @@ fn matrix_full(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
         return null;
     };
 
-    matrix_ptr.* = Matrix(f64).init(allocator, @intCast(rows), @intCast(cols)) catch {
+    matrix_ptr.* = Matrix(f64).init(allocator, rows_pos, cols_pos) catch {
         allocator.destroy(matrix_ptr);
         // TODO: Remove explicit cast after Python 3.10 is dropped
         c.Py_DECREF(@as(?*c.PyObject, @ptrCast(self)));
