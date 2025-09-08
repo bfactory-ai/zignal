@@ -220,14 +220,14 @@ fn fdm_match(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) cal
 
     const fdm_ptr = py_utils.validateNonNull(*FeatureDistributionMatching(Rgb), self.fdm_ptr, "FeatureDistributionMatching") catch return null;
 
-    var source_obj: ?*c.PyObject = undefined;
-    var target_obj: ?*c.PyObject = undefined;
-
-    const kw = comptime py_utils.kw(&.{ "source", "target" });
-    const format = std.fmt.comptimePrint("OO", .{});
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &source_obj, &target_obj) == 0) {
-        return null;
-    }
+    const Params = struct {
+        source: ?*c.PyObject,
+        target: ?*c.PyObject,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
+    const source_obj = params.source;
+    const target_obj = params.target;
 
     // Check if both arguments are Image objects
     if (c.PyObject_IsInstance(source_obj, @ptrCast(&image.ImageType)) != 1) {

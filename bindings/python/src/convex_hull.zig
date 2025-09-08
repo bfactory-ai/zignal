@@ -86,12 +86,12 @@ fn convex_hull_find(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     }
 
     // Parse points argument
-    var points_obj: ?*c.PyObject = undefined;
-    const kw = comptime py_utils.kw(&.{"points"});
-    const format = std.fmt.comptimePrint("O", .{});
-    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &points_obj) == 0) {
-        return null;
-    }
+    const Params = struct {
+        points: ?*c.PyObject,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
+    const points_obj = params.points;
 
     // Parse the point list
     const points = py_utils.parsePointList(f32, points_obj) catch {
