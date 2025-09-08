@@ -711,9 +711,9 @@ fn canvas_draw_arc(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
     py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
     const center = py_utils.parsePointTuple(f32, params.center) catch return null;
-    const radius_val = @as(f32, @floatCast(params.radius));
-    const start_angle_val = @as(f32, @floatCast(params.start_angle));
-    const end_angle_val = @as(f32, @floatCast(params.end_angle));
+    const radius_val: f32 = @floatCast(params.radius);
+    const start_angle_val: f32 = @floatCast(params.start_angle);
+    const end_angle_val: f32 = @floatCast(params.end_angle);
     const rgba = color_utils.parseColorTo(Rgba, params.color) catch return null;
     const width_val = py_utils.validateNonNegative(u32, params.width, "Width") catch return null;
     const mode_val = py_utils.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
@@ -744,9 +744,9 @@ fn canvas_fill_arc(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
 
     const center = py_utils.parsePointTuple(f32, params.center) catch return null;
     // Allow negative radius - the Zig library will handle it gracefully (no-op)
-    const radius_val = @as(f32, @floatCast(params.radius));
-    const start_angle_val = @as(f32, @floatCast(params.start_angle));
-    const end_angle_val = @as(f32, @floatCast(params.end_angle));
+    const radius_val: f32 = @floatCast(params.radius);
+    const start_angle_val: f32 = @floatCast(params.start_angle);
+    const end_angle_val: f32 = @floatCast(params.end_angle);
     const rgba = color_utils.parseColorTo(Rgba, params.color) catch return null;
     const mode_val = py_utils.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
     const draw_mode: DrawMode = @enumFromInt(mode_val);
@@ -800,7 +800,7 @@ fn canvas_draw_text(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
 
         const font_wrapper = @as(*bitmap_font_module.BitmapFontObject, @ptrCast(font));
         const font_ptr = py_utils.validateNonNull(*BitmapFont, font_wrapper.font, "BitmapFont") catch return null;
-        py_canvas.drawText(text, position, rgba, font_ptr.*, @as(f32, @floatCast(params.scale)), draw_mode);
+        py_canvas.drawText(text, position, rgba, font_ptr.*, @floatCast(params.scale), draw_mode);
     } else {
         const font = getFont8x8() catch {
             c.PyErr_SetString(c.PyExc_RuntimeError, "Failed to initialize default font");
@@ -948,7 +948,7 @@ pub const canvas_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&canvas_fill),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = canvas_fill_doc,
-        .params = "self, color: " ++ stub_metadata.COLOR,
+        .params = "self, color: Color",
         .returns = "None",
     },
     .{
@@ -956,7 +956,7 @@ pub const canvas_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&canvas_draw_line),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = canvas_draw_line_doc,
-        .params = "self, p1: tuple[float, float], p2: tuple[float, float], color: " ++ stub_metadata.COLOR ++ ", width: int = 1, mode: DrawMode = DrawMode.FAST",
+        .params = "self, p1: tuple[float, float], p2: tuple[float, float], color: Color, width: int = 1, mode: DrawMode = DrawMode.FAST",
         .returns = "None",
     },
     .{
@@ -964,7 +964,7 @@ pub const canvas_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&canvas_draw_rectangle),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = canvas_draw_rectangle_doc,
-        .params = "self, rect: Rectangle, color: " ++ stub_metadata.COLOR ++ ", width: int = 1, mode: DrawMode = DrawMode.FAST",
+        .params = "self, rect: Rectangle, color: Color, width: int = 1, mode: DrawMode = DrawMode.FAST",
         .returns = "None",
     },
     .{
@@ -972,7 +972,7 @@ pub const canvas_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&canvas_fill_rectangle),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = canvas_fill_rectangle_doc,
-        .params = "self, rect: Rectangle, color: " ++ stub_metadata.COLOR ++ ", mode: DrawMode = DrawMode.FAST",
+        .params = "self, rect: Rectangle, color: Color, mode: DrawMode = DrawMode.FAST",
         .returns = "None",
     },
     .{
@@ -980,7 +980,7 @@ pub const canvas_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&canvas_draw_polygon),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = canvas_draw_polygon_doc,
-        .params = "self, points: list[tuple[float, float]], color: " ++ stub_metadata.COLOR ++ ", width: int = 1, mode: DrawMode = DrawMode.FAST",
+        .params = "self, points: list[tuple[float, float]], color: Color, width: int = 1, mode: DrawMode = DrawMode.FAST",
         .returns = "None",
     },
     .{
@@ -988,7 +988,7 @@ pub const canvas_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&canvas_fill_polygon),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = canvas_fill_polygon_doc,
-        .params = "self, points: list[tuple[float, float]], color: " ++ stub_metadata.COLOR ++ ", mode: DrawMode = DrawMode.FAST",
+        .params = "self, points: list[tuple[float, float]], color: Color, mode: DrawMode = DrawMode.FAST",
         .returns = "None",
     },
     .{
@@ -996,7 +996,7 @@ pub const canvas_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&canvas_draw_circle),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = canvas_draw_circle_doc,
-        .params = "self, center: tuple[float, float], radius: float, color: " ++ stub_metadata.COLOR ++ ", width: int = 1, mode: DrawMode = DrawMode.FAST",
+        .params = "self, center: tuple[float, float], radius: float, color: Color, width: int = 1, mode: DrawMode = DrawMode.FAST",
         .returns = "None",
     },
     .{
@@ -1004,7 +1004,7 @@ pub const canvas_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&canvas_fill_circle),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = canvas_fill_circle_doc,
-        .params = "self, center: tuple[float, float], radius: float, color: " ++ stub_metadata.COLOR ++ ", mode: DrawMode = DrawMode.FAST",
+        .params = "self, center: tuple[float, float], radius: float, color: Color, mode: DrawMode = DrawMode.FAST",
         .returns = "None",
     },
     .{
@@ -1012,7 +1012,7 @@ pub const canvas_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&canvas_draw_arc),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = canvas_draw_arc_doc,
-        .params = "self, center: tuple[float, float], radius: float, start_angle: float, end_angle: float, color: " ++ stub_metadata.COLOR ++ ", width: int = 1, mode: DrawMode = DrawMode.FAST",
+        .params = "self, center: tuple[float, float], radius: float, start_angle: float, end_angle: float, color: Color, width: int = 1, mode: DrawMode = DrawMode.FAST",
         .returns = "None",
     },
     .{
@@ -1020,7 +1020,7 @@ pub const canvas_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&canvas_fill_arc),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = canvas_fill_arc_doc,
-        .params = "self, center: tuple[float, float], radius: float, start_angle: float, end_angle: float, color: " ++ stub_metadata.COLOR ++ ", mode: DrawMode = DrawMode.FAST",
+        .params = "self, center: tuple[float, float], radius: float, start_angle: float, end_angle: float, color: Color, mode: DrawMode = DrawMode.FAST",
         .returns = "None",
     },
     .{
@@ -1028,7 +1028,7 @@ pub const canvas_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&canvas_draw_quadratic_bezier),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = canvas_draw_quadratic_bezier_doc,
-        .params = "self, p0: tuple[float, float], p1: tuple[float, float], p2: tuple[float, float], color: " ++ stub_metadata.COLOR ++ ", width: int = 1, mode: DrawMode = DrawMode.FAST",
+        .params = "self, p0: tuple[float, float], p1: tuple[float, float], p2: tuple[float, float], color: Color, width: int = 1, mode: DrawMode = DrawMode.FAST",
         .returns = "None",
     },
     .{
@@ -1036,7 +1036,7 @@ pub const canvas_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&canvas_draw_cubic_bezier),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = canvas_draw_cubic_bezier_doc,
-        .params = "self, p0: tuple[float, float], p1: tuple[float, float], p2: tuple[float, float], p3: tuple[float, float], color: " ++ stub_metadata.COLOR ++ ", width: int = 1, mode: DrawMode = DrawMode.FAST",
+        .params = "self, p0: tuple[float, float], p1: tuple[float, float], p2: tuple[float, float], p3: tuple[float, float], color: Color, width: int = 1, mode: DrawMode = DrawMode.FAST",
         .returns = "None",
     },
     .{
@@ -1044,7 +1044,7 @@ pub const canvas_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&canvas_draw_spline_polygon),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = canvas_draw_spline_polygon_doc,
-        .params = "self, points: list[tuple[float, float]], color: " ++ stub_metadata.COLOR ++ ", width: int = 1, tension: float = 0.5, mode: DrawMode = DrawMode.FAST",
+        .params = "self, points: list[tuple[float, float]], color: Color, width: int = 1, tension: float = 0.5, mode: DrawMode = DrawMode.FAST",
         .returns = "None",
     },
     .{
@@ -1052,7 +1052,7 @@ pub const canvas_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&canvas_fill_spline_polygon),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = canvas_fill_spline_polygon_doc,
-        .params = "self, points: list[tuple[float, float]], color: " ++ stub_metadata.COLOR ++ ", tension: float = 0.5, mode: DrawMode = DrawMode.FAST",
+        .params = "self, points: list[tuple[float, float]], color: Color, tension: float = 0.5, mode: DrawMode = DrawMode.FAST",
         .returns = "None",
     },
     .{
@@ -1060,7 +1060,7 @@ pub const canvas_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&canvas_draw_text),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = canvas_draw_text_doc,
-        .params = "self, text: str, position: tuple[float, float], color: " ++ stub_metadata.COLOR ++ ", font: BitmapFont = BitmapFont.font8x8(), scale: float = 1.0, mode: DrawMode = DrawMode.FAST",
+        .params = "self, text: str, position: tuple[float, float], color: Color, font: BitmapFont = BitmapFont.font8x8(), scale: float = 1.0, mode: DrawMode = DrawMode.FAST",
         .returns = "None",
     },
 };
