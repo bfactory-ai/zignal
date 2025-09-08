@@ -75,13 +75,13 @@ fn canvas_new(type_obj: ?*c.PyTypeObject, args: ?*c.PyObject, kwds: ?*c.PyObject
 }
 
 fn canvas_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) c_int {
-    _ = kwds;
     const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
     // Parse arguments - expect an Image object
     var image_obj: ?*c.PyObject = undefined;
+    const kw = comptime py_utils.kw(&.{"image"});
     const format = std.fmt.comptimePrint("O", .{});
-    if (c.PyArg_ParseTuple(args, format.ptr, &image_obj) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &image_obj) == 0) {
         return -1;
     }
 
@@ -294,13 +294,14 @@ const canvas_fill_doc =
     \\```
 ;
 
-fn canvas_fill(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+fn canvas_fill(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*CanvasObject, @ptrCast(self_obj.?));
 
     // Parse color argument
     var color_obj: ?*c.PyObject = undefined;
+    const kw = comptime py_utils.kw(&.{"color"});
     const format = std.fmt.comptimePrint("O", .{});
-    if (c.PyArg_ParseTuple(args, format.ptr, &color_obj) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &color_obj) == 0) {
         return null;
     }
 
@@ -1105,7 +1106,7 @@ pub const canvas_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     .{
         .name = "fill",
         .meth = @ptrCast(&canvas_fill),
-        .flags = c.METH_VARARGS,
+        .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = canvas_fill_doc,
         .params = "self, color: " ++ stub_metadata.COLOR,
         .returns = "None",

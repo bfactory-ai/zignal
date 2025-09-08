@@ -88,14 +88,15 @@ const set_target_doc =
     \\```
 ;
 
-fn fdm_set_target(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+fn fdm_set_target(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*FeatureDistributionMatchingObject, @ptrCast(self_obj.?));
 
     const fdm_ptr = py_utils.validateNonNull(*FeatureDistributionMatching(Rgb), self.fdm_ptr, "FeatureDistributionMatching") catch return null;
 
     var target_obj: ?*c.PyObject = undefined;
+    const kw = comptime py_utils.kw(&.{"image"});
     const format = std.fmt.comptimePrint("O", .{});
-    if (c.PyArg_ParseTuple(args, format.ptr, &target_obj) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &target_obj) == 0) {
         return null;
     }
 
@@ -149,14 +150,15 @@ const set_source_doc =
     \\```
 ;
 
-fn fdm_set_source(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+fn fdm_set_source(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*FeatureDistributionMatchingObject, @ptrCast(self_obj.?));
 
     const fdm_ptr = py_utils.validateNonNull(*FeatureDistributionMatching(Rgb), self.fdm_ptr, "FeatureDistributionMatching") catch return null;
 
     var source_obj: ?*c.PyObject = undefined;
+    const kw = comptime py_utils.kw(&.{"image"});
     const format = std.fmt.comptimePrint("O", .{});
-    if (c.PyArg_ParseTuple(args, format.ptr, &source_obj) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &source_obj) == 0) {
         return null;
     }
 
@@ -213,7 +215,7 @@ const match_doc =
     \\```
 ;
 
-fn fdm_match(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+fn fdm_match(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*FeatureDistributionMatchingObject, @ptrCast(self_obj.?));
 
     const fdm_ptr = py_utils.validateNonNull(*FeatureDistributionMatching(Rgb), self.fdm_ptr, "FeatureDistributionMatching") catch return null;
@@ -221,8 +223,9 @@ fn fdm_match(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObje
     var source_obj: ?*c.PyObject = undefined;
     var target_obj: ?*c.PyObject = undefined;
 
+    const kw = comptime py_utils.kw(&.{ "source", "target" });
     const format = std.fmt.comptimePrint("OO", .{});
-    if (c.PyArg_ParseTuple(args, format.ptr, &source_obj, &target_obj) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &source_obj, &target_obj) == 0) {
         return null;
     }
 
@@ -332,7 +335,7 @@ pub const fdm_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     .{
         .name = "set_target",
         .meth = @ptrCast(&fdm_set_target),
-        .flags = c.METH_VARARGS,
+        .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = set_target_doc,
         .params = "self, image: Image",
         .returns = "None",
@@ -340,7 +343,7 @@ pub const fdm_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     .{
         .name = "set_source",
         .meth = @ptrCast(&fdm_set_source),
-        .flags = c.METH_VARARGS,
+        .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = set_source_doc,
         .params = "self, image: Image",
         .returns = "None",
@@ -348,7 +351,7 @@ pub const fdm_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     .{
         .name = "match",
         .meth = @ptrCast(&fdm_match),
-        .flags = c.METH_VARARGS,
+        .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = match_doc,
         .params = "self, source: Image, target: Image",
         .returns = "None",

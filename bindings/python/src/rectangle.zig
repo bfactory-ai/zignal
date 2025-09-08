@@ -31,7 +31,6 @@ fn rectangle_new(type_obj: ?*c.PyTypeObject, args: ?*c.PyObject, kwds: ?*c.PyObj
 }
 
 fn rectangle_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) c_int {
-    _ = kwds;
     const self = @as(*RectangleObject, @ptrCast(self_obj.?));
 
     // Parse arguments - expect left, top, right, bottom
@@ -39,8 +38,9 @@ fn rectangle_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
     var top: f64 = undefined;
     var right: f64 = undefined;
     var bottom: f64 = undefined;
+    const kw = comptime py_utils.kw(&.{ "left", "top", "right", "bottom" });
     const format = std.fmt.comptimePrint("dddd", .{});
-    if (c.PyArg_ParseTuple(args, format.ptr, &left, &top, &right, &bottom) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &left, &top, &right, &bottom) == 0) {
         return -1;
     }
 
@@ -92,14 +92,15 @@ const rectangle_init_center_doc =
     \\```
 ;
 
-fn rectangle_init_center(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+fn rectangle_init_center(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     var x: f64 = undefined;
     var y: f64 = undefined;
     var width: f64 = undefined;
     var height: f64 = undefined;
 
+    const kw = comptime py_utils.kw(&.{ "x", "y", "width", "height" });
     const format = std.fmt.comptimePrint("dddd", .{});
-    if (c.PyArg_ParseTuple(args, format.ptr, &x, &y, &width, &height) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &x, &y, &width, &height) == 0) {
         return null;
     }
 
@@ -186,14 +187,15 @@ const rectangle_contains_doc =
     \\```
 ;
 
-fn rectangle_contains(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+fn rectangle_contains(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*RectangleObject, @ptrCast(self_obj.?));
 
     var x: f64 = undefined;
     var y: f64 = undefined;
 
+    const kw = comptime py_utils.kw(&.{ "x", "y" });
     const format = std.fmt.comptimePrint("dd", .{});
-    if (c.PyArg_ParseTuple(args, format.ptr, &x, &y) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &x, &y) == 0) {
         return null;
     }
 
@@ -220,13 +222,14 @@ const rectangle_grow_doc =
     \\```
 ;
 
-fn rectangle_grow(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+fn rectangle_grow(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*RectangleObject, @ptrCast(self_obj.?));
 
     var amount: f64 = undefined;
 
+    const kw = comptime py_utils.kw(&.{"amount"});
     const format = std.fmt.comptimePrint("d", .{});
-    if (c.PyArg_ParseTuple(args, format.ptr, &amount) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &amount) == 0) {
         return null;
     }
 
@@ -254,13 +257,14 @@ const rectangle_shrink_doc =
     \\```
 ;
 
-fn rectangle_shrink(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+fn rectangle_shrink(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*RectangleObject, @ptrCast(self_obj.?));
 
     var amount: f64 = undefined;
 
+    const kw = comptime py_utils.kw(&.{"amount"});
     const format = std.fmt.comptimePrint("d", .{});
-    if (c.PyArg_ParseTuple(args, format.ptr, &amount) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &amount) == 0) {
         return null;
     }
 
@@ -296,13 +300,14 @@ const rectangle_intersect_doc =
     \\```
 ;
 
-fn rectangle_intersect(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+fn rectangle_intersect(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*RectangleObject, @ptrCast(self_obj.?));
 
     var other_obj: ?*c.PyObject = undefined;
 
+    const kw = comptime py_utils.kw(&.{"other"});
     const format = std.fmt.comptimePrint("O", .{});
-    if (c.PyArg_ParseTuple(args, format.ptr, &other_obj) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &other_obj) == 0) {
         return null;
     }
 
@@ -465,7 +470,7 @@ pub const rectangle_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     .{
         .name = "init_center",
         .meth = @ptrCast(&rectangle_init_center),
-        .flags = c.METH_VARARGS | c.METH_CLASS,
+        .flags = c.METH_VARARGS | c.METH_KEYWORDS | c.METH_CLASS,
         .doc = rectangle_init_center_doc,
         .params = "cls, x: float, y: float, width: float, height: float",
         .returns = "Rectangle",
@@ -489,7 +494,7 @@ pub const rectangle_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     .{
         .name = "contains",
         .meth = @ptrCast(&rectangle_contains),
-        .flags = c.METH_VARARGS,
+        .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = rectangle_contains_doc,
         .params = "self, x: float, y: float",
         .returns = "bool",
@@ -497,7 +502,7 @@ pub const rectangle_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     .{
         .name = "grow",
         .meth = @ptrCast(&rectangle_grow),
-        .flags = c.METH_VARARGS,
+        .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = rectangle_grow_doc,
         .params = "self, amount: float",
         .returns = "Rectangle",
@@ -505,7 +510,7 @@ pub const rectangle_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     .{
         .name = "shrink",
         .meth = @ptrCast(&rectangle_shrink),
-        .flags = c.METH_VARARGS,
+        .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = rectangle_shrink_doc,
         .params = "self, amount: float",
         .returns = "Rectangle",
@@ -513,7 +518,7 @@ pub const rectangle_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     .{
         .name = "intersect",
         .meth = @ptrCast(&rectangle_intersect),
-        .flags = c.METH_VARARGS,
+        .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = rectangle_intersect_doc,
         .params = "self, other: Rectangle | tuple[float, float, float, float]",
         .returns = "Rectangle | None",

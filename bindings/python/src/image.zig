@@ -680,13 +680,14 @@ const image_format_doc =
     \\```
 ;
 
-fn image_format(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+fn image_format(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const self = @as(*ImageObject, @ptrCast(self_obj.?));
 
     // Parse format_spec argument
     var format_spec: [*c]const u8 = undefined;
+    const kw = comptime py_utils.kw(&.{"format_spec"});
     const format = std.fmt.comptimePrint("s", .{});
-    if (c.PyArg_ParseTuple(args, format.ptr, &format_spec) == 0) {
+    if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &format_spec) == 0) {
         return null;
     }
 
@@ -830,7 +831,7 @@ pub const image_methods_metadata = blk: {
         .{
             .name = "load",
             .meth = @ptrCast(&core.image_load),
-            .flags = c.METH_VARARGS | c.METH_CLASS,
+            .flags = c.METH_VARARGS | c.METH_KEYWORDS | c.METH_CLASS,
             .doc = core.image_load_doc,
             .params = "cls, path: str",
             .returns = "Image",
@@ -838,7 +839,7 @@ pub const image_methods_metadata = blk: {
         .{
             .name = "save",
             .meth = @ptrCast(&core.image_save),
-            .flags = c.METH_VARARGS,
+            .flags = c.METH_VARARGS | c.METH_KEYWORDS,
             .doc = core.image_save_doc,
             .params = "self, path: str",
             .returns = "None",
@@ -854,7 +855,7 @@ pub const image_methods_metadata = blk: {
         .{
             .name = "fill",
             .meth = @ptrCast(&core.image_fill),
-            .flags = c.METH_VARARGS,
+            .flags = c.METH_VARARGS | c.METH_KEYWORDS,
             .doc = core.image_fill_doc,
             .params = "self, color: " ++ stub_metadata.COLOR,
             .returns = "None",
@@ -862,7 +863,7 @@ pub const image_methods_metadata = blk: {
         .{
             .name = "view",
             .meth = @ptrCast(&core.image_view),
-            .flags = c.METH_VARARGS,
+            .flags = c.METH_VARARGS | c.METH_KEYWORDS,
             .doc = core.image_view_doc,
             .params = "self, rect: Rectangle | tuple[float, float, float, float] | None = None",
             .returns = "Image",
@@ -870,7 +871,7 @@ pub const image_methods_metadata = blk: {
         .{
             .name = "set_border",
             .meth = @ptrCast(&core.image_set_border),
-            .flags = c.METH_VARARGS,
+            .flags = c.METH_VARARGS | c.METH_KEYWORDS,
             .doc = core.image_set_border_doc,
             .params = "self, rect: Rectangle | tuple[float, float, float, float], color: " ++ stub_metadata.COLOR ++ " | None = None",
             .returns = "None",
@@ -894,7 +895,7 @@ pub const image_methods_metadata = blk: {
         .{
             .name = "convert",
             .meth = @ptrCast(&core.image_convert),
-            .flags = c.METH_VARARGS,
+            .flags = c.METH_VARARGS | c.METH_KEYWORDS,
             .doc = core.image_convert_doc,
             .params = "self, dtype: Grayscale | Rgb | Rgba",
             .returns = "Image",
@@ -910,7 +911,7 @@ pub const image_methods_metadata = blk: {
         .{
             .name = "psnr",
             .meth = @ptrCast(&core.image_psnr),
-            .flags = c.METH_VARARGS,
+            .flags = c.METH_VARARGS | c.METH_KEYWORDS,
             .doc = core.image_psnr_doc,
             .params = "self, other: Image",
             .returns = "float",
@@ -924,7 +925,7 @@ pub const image_methods_metadata = blk: {
         .{
             .name = "from_numpy",
             .meth = @ptrCast(&numpy_interop.image_from_numpy),
-            .flags = c.METH_VARARGS | c.METH_CLASS,
+            .flags = c.METH_VARARGS | c.METH_KEYWORDS | c.METH_CLASS,
             .doc = numpy_interop.image_from_numpy_doc,
             .params = "cls, array: NDArray[np.uint8]",
             .returns = "Image",
@@ -1056,7 +1057,7 @@ pub const image_methods_metadata = blk: {
         .{
             .name = "motion_blur",
             .meth = @ptrCast(&filtering.image_motion_blur),
-            .flags = c.METH_VARARGS,
+            .flags = c.METH_VARARGS | c.METH_KEYWORDS,
             .doc = filtering.image_motion_blur_doc,
             .params = "self, config: MotionBlur",
             .returns = "Image",
@@ -1094,7 +1095,7 @@ pub const image_methods_metadata = blk: {
         .{
             .name = "__format__",
             .meth = @ptrCast(&image_format),
-            .flags = c.METH_VARARGS,
+            .flags = c.METH_VARARGS | c.METH_KEYWORDS,
             .doc = "Format image for display",
             .params = "self, format_spec: str",
             .returns = "str",
