@@ -103,6 +103,7 @@ fn motion_blur_linear(type_obj: [*c]c.PyObject, args: [*c]c.PyObject, kwds: [*c]
     var distance: c_long = 0;
 
     const kw = comptime py_utils.kw(&.{ "angle", "distance" });
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
     if (c.PyArg_ParseTupleAndKeywords(args, kwds, "dl", @ptrCast(@constCast(&kw)), &angle, &distance) == 0) {
         return null;
     }
@@ -131,6 +132,7 @@ fn motion_blur_radial_zoom(type_obj: [*c]c.PyObject, args: [*c]c.PyObject, kwds:
     var strength: f64 = 0.5;
 
     const kw = comptime py_utils.kw(&.{ "center", "strength" });
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
     if (c.PyArg_ParseTupleAndKeywords(args, kwds, "|Od", @ptrCast(@constCast(&kw)), &center_tuple, &strength) == 0) {
         return null;
     }
@@ -173,6 +175,7 @@ fn motion_blur_radial_spin(type_obj: [*c]c.PyObject, args: [*c]c.PyObject, kwds:
     var strength: f64 = 0.5;
 
     const kw = comptime py_utils.kw(&.{ "center", "strength" });
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
     if (c.PyArg_ParseTupleAndKeywords(args, kwds, "|Od", @ptrCast(@constCast(&kw)), &center_tuple, &strength) == 0) {
         return null;
     }

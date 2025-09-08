@@ -126,7 +126,7 @@ fn matrix_full(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
     const kw = comptime py_utils.kw(&.{ "rows", "cols", "fill_value" });
     const format = std.fmt.comptimePrint("ii|d:full", .{});
 
-    // TODO: remove @constCast when we don't use Python < 3.13
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
     if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &rows, &cols, &fill_value) == 0) {
         return null;
     }
@@ -141,7 +141,7 @@ fn matrix_full(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
 
     // Create the matrix
     const matrix_ptr = allocator.create(Matrix(f64)) catch {
-        // TODO: Remove explicit cast after Python 3.10 is dropped
+        // TODO(py3.10): remove explicit cast once Python 3.10 support is dropped
         c.Py_DECREF(@as(?*c.PyObject, @ptrCast(self)));
         c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate Matrix");
         return null;
@@ -149,7 +149,7 @@ fn matrix_full(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
 
     matrix_ptr.* = Matrix(f64).init(allocator, rows_pos, cols_pos) catch {
         allocator.destroy(matrix_ptr);
-        // TODO: Remove explicit cast after Python 3.10 is dropped
+        // TODO(py3.10): remove explicit cast once Python 3.10 support is dropped
         c.Py_DECREF(@as(?*c.PyObject, @ptrCast(self)));
         c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate matrix data");
         return null;

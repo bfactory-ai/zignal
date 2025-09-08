@@ -42,6 +42,7 @@ fn similarity_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
     var to_points_obj: ?*c.PyObject = null;
 
     const kw = comptime py_utils.kw(&.{ "from_points", "to_points" });
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
     if (c.PyArg_ParseTupleAndKeywords(args, kwds, "OO", @ptrCast(@constCast(&kw)), &from_points_obj, &to_points_obj) == 0) {
         return -1;
     }
@@ -202,6 +203,7 @@ fn affine_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
     var to_points_obj: ?*c.PyObject = null;
 
     const kw = comptime py_utils.kw(&.{ "from_points", "to_points" });
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
     if (c.PyArg_ParseTupleAndKeywords(args, kwds, "OO", @ptrCast(@constCast(&kw)), &from_points_obj, &to_points_obj) == 0) {
         return -1;
     }
@@ -366,6 +368,7 @@ fn projective_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
     var to_points_obj: ?*c.PyObject = null;
 
     const kw = comptime py_utils.kw(&.{ "from_points", "to_points" });
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
     if (c.PyArg_ParseTupleAndKeywords(args, kwds, "OO", @ptrCast(@constCast(&kw)), &from_points_obj, &to_points_obj) == 0) {
         return -1;
     }

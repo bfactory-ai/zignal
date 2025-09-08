@@ -655,6 +655,11 @@ pub fn validatePositive(comptime T: type, value: anytype, name: []const u8) !T {
 /// Build a Python kwlist for PyArg_ParseTupleAndKeywords from a comptime list of names.
 /// Usage: `const kw = py_utils.kw(&.{ "size", "method" });`
 /// Pass to CPython with: `@ptrCast(@constCast(&kw))`.
+///
+/// Notes on Python versions:
+/// - CPython < 3.13 expects a non-const kwlist pointer; we use `@constCast(&kw)` for compatibility.
+/// - Once the minimum supported Python is >= 3.13, we can drop the `@constCast` at call sites
+///   and pass `&kw` directly.
 pub fn kw(comptime names: []const []const u8) [names.len + 1]?[*:0]const u8 {
     comptime {
         var out: [names.len + 1]?[*:0]const u8 = undefined;

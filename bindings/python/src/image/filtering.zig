@@ -42,6 +42,7 @@ pub fn image_box_blur(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyOb
     var radius_long: c_long = 0;
     const kw = comptime py_utils.kw(&.{"radius"});
     const format = std.fmt.comptimePrint("l", .{});
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
     if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &radius_long) == 0) {
         return null;
     }
@@ -86,6 +87,7 @@ pub fn image_gaussian_blur(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c
     var sigma: f64 = 0;
     const kw = comptime py_utils.kw(&.{"sigma"});
     const format = std.fmt.comptimePrint("d", .{});
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
     if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &sigma) == 0) {
         return null;
     }
@@ -180,6 +182,7 @@ pub fn image_sharpen(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
     var radius_long: c_long = 0;
     const kw = comptime py_utils.kw(&.{"radius"});
     const format = std.fmt.comptimePrint("l", .{});
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
     if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &radius_long) == 0) {
         return null;
     }
@@ -390,6 +393,7 @@ pub fn image_shen_castan(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.P
 
     const kw = comptime py_utils.kw(&.{ "smooth", "window_size", "high_ratio", "low_rel", "hysteresis", "use_nms" });
     const format = std.fmt.comptimePrint("|dlddpp", .{});
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
     if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &smooth, &window_size, &high_ratio, &low_rel, &hysteresis, &use_nms) == 0) {
         return null;
     }
@@ -507,6 +511,7 @@ pub fn image_blend(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
 
     const kw = comptime py_utils.kw(&.{ "overlay", "mode" });
     const fmt = std.fmt.comptimePrint("O|O", .{});
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
     if (c.PyArg_ParseTupleAndKeywords(args, kwds, fmt.ptr, @ptrCast(@constCast(&kw)), &overlay_obj, &mode_obj) == 0) {
         return null;
     }

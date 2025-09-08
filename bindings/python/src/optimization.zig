@@ -206,7 +206,7 @@ fn solve_assignment_problem(self: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.Py
     const kw = comptime py_utils.kw(&.{ "cost_matrix", "policy" });
     const format = std.fmt.comptimePrint("O|O:solve_assignment_problem", .{});
 
-    // TODO: remove @constCast when we don't use Python < 3.13
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
     if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &matrix_obj, &policy_obj) == 0) {
         return null;
     }

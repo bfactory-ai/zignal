@@ -424,6 +424,7 @@ fn rectangle_overlaps(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwargs: ?*c.Py
     // Parse arguments with keywords
     const kw = comptime py_utils.kw(&.{ "other", "iou_thresh", "coverage_thresh" });
     const format = std.fmt.comptimePrint("O|dd", .{});
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
     if (c.PyArg_ParseTupleAndKeywords(args, kwargs, format.ptr, @ptrCast(@constCast(&kw)), &other_obj, &iou_thresh, &coverage_thresh) == 0) {
         return null;
     }

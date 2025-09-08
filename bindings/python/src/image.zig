@@ -145,6 +145,7 @@ fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) ca
 
     const kw = comptime py_utils.kw(&.{ "rows", "cols", "color", "dtype" });
     const fmt = std.fmt.comptimePrint("ii|O$O", .{});
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
     if (c.PyArg_ParseTupleAndKeywords(args, kwds, fmt.ptr, @ptrCast(@constCast(&kw)), &rows, &cols, &color_obj, &dtype_obj) == 0) {
         c.PyErr_SetString(c.PyExc_TypeError, "Image() requires (rows, cols, color=None, *, dtype=...) arguments");
         return -1;

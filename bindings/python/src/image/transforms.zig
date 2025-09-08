@@ -127,6 +127,7 @@ pub fn image_resize(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
 
     const kw = comptime py_utils.kw(&.{ "size", "method" });
     const format = std.fmt.comptimePrint("O|l", .{});
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
     if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &shape_or_scale, &method_value) == 0) {
         return null;
     }
@@ -208,6 +209,7 @@ pub fn image_letterbox(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyO
     const kw = comptime py_utils.kw(&.{ "size", "method" });
     const format = std.fmt.comptimePrint("O|l", .{});
 
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
     if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &size, &method_value) == 0) {
         return null;
     }
@@ -300,6 +302,7 @@ pub fn image_rotate(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     const kw = comptime py_utils.kw(&.{ "angle", "method" });
     const format = std.fmt.comptimePrint("d|l", .{});
 
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
     if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &angle, &method_value) == 0) {
         return null;
     }
@@ -362,6 +365,7 @@ pub fn image_warp(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
     const kw = comptime py_utils.kw(&.{ "transform", "shape", "method" });
     const format = std.fmt.comptimePrint("O|Ol", .{});
 
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
     if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &transform_obj, &shape_obj, &method_value) == 0) {
         return null;
     }
@@ -625,6 +629,7 @@ pub fn image_extract(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
 
     const kw = comptime py_utils.kw(&.{ "rect", "angle", "size", "method" });
     const format = std.fmt.comptimePrint("O|dOl", .{});
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
     if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &rect_obj, &angle, &size_obj, &method_value) == 0) {
         return null;
     }
@@ -735,6 +740,7 @@ pub fn image_insert(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
 
     const kw = comptime py_utils.kw(&.{ "source", "rect", "angle", "method" });
     const format = std.fmt.comptimePrint("OO|dl", .{});
+    // TODO(py3.13): drop @constCast once minimum Python >= 3.13
     if (c.PyArg_ParseTupleAndKeywords(args, kwds, format.ptr, @ptrCast(@constCast(&kw)), &source_obj, &rect_obj, &angle, &method_value) == 0) {
         return null;
     }
