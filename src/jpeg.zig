@@ -41,7 +41,13 @@ pub const EncodeOptions = struct {
     subsampling: JpegSubsampling = .yuv444,
     density_dpi: u16 = 72,
     comment: ?[]const u8 = null,
+    dct: DctImpl = .aan,
     pub const default: EncodeOptions = .{};
+};
+
+pub const DctImpl = enum {
+    reference, // cosine-sum reference FDCT
+    aan, // AAN/LLM fixed-point FDCT with folded scaling
 };
 
 /// Save Image to JPEG file with baseline encoding.
@@ -202,6 +208,8 @@ const EntropyWriter = struct {
     }
 };
 
+var __aan_debug_once: bool = true; // debug aid: prints once if enabled
+
 fn writeMarker(dst: *std.ArrayList(u8), gpa: Allocator, marker: u16) !void {
     try dst.append(gpa, 0xFF);
     try dst.append(gpa, @intCast(marker & 0xFF));
@@ -356,7 +364,40 @@ fn magnitudeBits(value: i32, mag: u5) u32 {
     return @intCast(base + value);
 }
 
-// Generate DCT cosine table at compile time (12-bit fixed point)
+// -----------------------------
+// Forward DCT (reference cos-sum) and AAN (fixed-point)
+// -----------------------------
+
+// AAN constants in 13-bit fixed point (CONST_BITS = 13)
+inline fn FIX(comptime x: f32) i32 {
+    return @as(i32, @intFromFloat(x * (1 << 13) + 0.5));
+}
+
+const FIX_0_298631336: i32 = FIX(0.298631336);
+const FIX_0_390180644: i32 = FIX(0.390180644);
+const FIX_0_541196100: i32 = FIX(0.541196100);
+const FIX_0_765366865: i32 = FIX(0.765366865);
+const FIX_0_899976223: i32 = FIX(0.899976223);
+const FIX_1_175875602: i32 = FIX(1.175875602);
+const FIX_1_501321110: i32 = FIX(1.501321110);
+const FIX_1_847759065: i32 = FIX(1.847759065);
+const FIX_1_961570560: i32 = FIX(1.961570560);
+const FIX_2_053119869: i32 = FIX(2.053119869);
+const FIX_2_562915447: i32 = FIX(2.562915447);
+const FIX_3_072711026: i32 = FIX(3.072711026);
+const FIX_0_707106781: i32 = FIX(0.707106781);
+const FIX_1_306562965: i32 = FIX(1.306562965);
+const FIX_0_382683433: i32 = FIX(0.382683433);
+
+inline fn DESCALE(x: i64, n: u5) i32 {
+    const add: i64 = @as(i64, 1) << (n - 1);
+    return @intCast((x + add) >> n);
+}
+
+// AAN forward DCT (scaled). Output coefficients are scaled per AAN factors.
+// The per-coefficient scaling S[u]*S[v] is folded into quantization.
+// Reference FDCT using cosine table (kept for correctness baseline).
+// Normalization is folded into quantization for better performance.
 const dct_cos_table = blk: {
     @setEvalBranchQuota(10000);
     var table: [64]i32 = undefined;
@@ -371,8 +412,6 @@ const dct_cos_table = blk: {
     break :blk table;
 };
 
-// Forward DCT using fixed-point arithmetic (cosine table), without JPEG normalization.
-// Normalization is folded into quantization for better performance.
 fn fdct8x8(src: *const [64]i32, dst: *[64]i32) void {
     var tmp: [64]i32 = undefined;
     // Row pass
@@ -401,10 +440,132 @@ fn fdct8x8(src: *const [64]i32, dst: *[64]i32) void {
     }
 }
 
-// Reciprocal-based quantization with DCT normalization baked into the divisor.
-const RECIP_SHIFT: u5 = 24; // higher precision for reciprocals to reduce quantization error
+// AAN forward DCT (scaled). Output coefficients are scaled per AAN factors.
+// The per-coefficient scaling S[u]*S[v] is folded into quantization.
+fn fdct8x8_aan(src: *const [64]i32, dst: *[64]i32) void {
+    const CONST_BITS: u5 = 13;
+    const PASS1_BITS: u5 = 2;
 
-fn buildQuantRecip(divisors_out: *[64]u32, qtbl: *const [64]u8) void {
+    var data: [64]i32 = undefined;
+
+    // Pass 1: rows
+    for (0..8) |y| {
+        const d0 = src[y * 8 + 0];
+        const d1 = src[y * 8 + 1];
+        const d2 = src[y * 8 + 2];
+        const d3 = src[y * 8 + 3];
+        const d4 = src[y * 8 + 4];
+        const d5 = src[y * 8 + 5];
+        const d6 = src[y * 8 + 6];
+        const d7 = src[y * 8 + 7];
+
+        const tmp0 = d0 + d7;
+        const tmp7 = d0 - d7;
+        const tmp1 = d1 + d6;
+        const tmp6 = d1 - d6;
+        const tmp2 = d2 + d5;
+        const tmp5 = d2 - d5;
+        const tmp3 = d3 + d4;
+        const tmp4 = d3 - d4;
+
+        // Even part
+        const tmp10 = tmp0 + tmp3;
+        const tmp13 = tmp0 - tmp3;
+        const tmp11 = tmp1 + tmp2;
+        const tmp12 = tmp1 - tmp2;
+
+        data[y * 8 + 0] = (tmp10 + tmp11) << PASS1_BITS;
+        data[y * 8 + 4] = (tmp10 - tmp11) << PASS1_BITS;
+
+        // AAN even part (jfdctint form)
+        const z1_row = (@as(i64, @intCast(tmp12 + tmp13)) * @as(i64, FIX_0_541196100));
+        data[y * 8 + 2] = DESCALE(z1_row + (@as(i64, @intCast(tmp13)) * @as(i64, FIX_0_765366865)), CONST_BITS - PASS1_BITS);
+        data[y * 8 + 6] = DESCALE(z1_row + (@as(i64, @intCast(tmp12)) * @as(i64, -FIX_1_847759065)), CONST_BITS - PASS1_BITS);
+
+        // Odd part
+        var z1: i64 = @as(i64, tmp4 + tmp7);
+        var z2: i64 = @as(i64, tmp5 + tmp6);
+        var z3: i64 = @as(i64, tmp4 + tmp6);
+        var z4: i64 = @as(i64, tmp5 + tmp7);
+        const z5 = (@as(i64, @intCast((tmp4 + tmp6) + (tmp5 + tmp7))) * @as(i64, FIX_1_175875602));
+
+        const t4 = @as(i64, d4) * @as(i64, FIX_0_298631336);
+        const t5 = @as(i64, d5) * @as(i64, FIX_2_053119869);
+        const t6 = @as(i64, d6) * @as(i64, FIX_3_072711026);
+        const t7 = @as(i64, d7) * @as(i64, FIX_1_501321110);
+
+        z1 = z1 * @as(i64, -FIX_0_899976223);
+        z2 = z2 * @as(i64, -FIX_2_562915447);
+        z3 = z3 * @as(i64, -FIX_1_961570560) + z5;
+        z4 = z4 * @as(i64, -FIX_0_390180644) + z5;
+
+        data[y * 8 + 7] = DESCALE(t4 + z1 + z3, CONST_BITS - PASS1_BITS);
+        data[y * 8 + 5] = DESCALE(t5 + z2 + z4, CONST_BITS - PASS1_BITS);
+        data[y * 8 + 3] = DESCALE(t6 + z2 + z3, CONST_BITS - PASS1_BITS);
+        data[y * 8 + 1] = DESCALE(t7 + z1 + z4, CONST_BITS - PASS1_BITS);
+    }
+
+    // Pass 2: columns
+    for (0..8) |x| {
+        const d0 = data[0 * 8 + x];
+        const d1 = data[1 * 8 + x];
+        const d2 = data[2 * 8 + x];
+        const d3 = data[3 * 8 + x];
+        const d4 = data[4 * 8 + x];
+        const d5 = data[5 * 8 + x];
+        const d6 = data[6 * 8 + x];
+        const d7 = data[7 * 8 + x];
+
+        const tmp0 = d0 + d7;
+        const tmp7 = d0 - d7;
+        const tmp1 = d1 + d6;
+        const tmp6 = d1 - d6;
+        const tmp2 = d2 + d5;
+        const tmp5 = d2 - d5;
+        const tmp3 = d3 + d4;
+        const tmp4 = d3 - d4;
+
+        // Even part
+        const tmp10 = tmp0 + tmp3;
+        const tmp13 = tmp0 - tmp3;
+        const tmp11 = tmp1 + tmp2;
+        const tmp12 = tmp1 - tmp2;
+
+        dst[0 * 8 + x] = DESCALE((@as(i64, tmp10 + tmp11)) << PASS1_BITS, PASS1_BITS + 2);
+        dst[4 * 8 + x] = DESCALE((@as(i64, tmp10 - tmp11)) << PASS1_BITS, PASS1_BITS + 2);
+
+        const z1_col = (@as(i64, @intCast(tmp12 + tmp13)) * @as(i64, FIX_0_541196100));
+        dst[2 * 8 + x] = DESCALE(z1_col + (@as(i64, @intCast(tmp13)) * @as(i64, FIX_0_765366865)), CONST_BITS + PASS1_BITS + 2);
+        dst[6 * 8 + x] = DESCALE(z1_col + (@as(i64, @intCast(tmp12)) * @as(i64, -FIX_1_847759065)), CONST_BITS + PASS1_BITS + 2);
+
+        // Odd part
+        var z1: i64 = @as(i64, tmp4 + tmp7);
+        var z2: i64 = @as(i64, tmp5 + tmp6);
+        var z3: i64 = @as(i64, tmp4 + tmp6);
+        var z4: i64 = @as(i64, tmp5 + tmp7);
+        const z5 = (@as(i64, @intCast((tmp4 + tmp6) + (tmp5 + tmp7))) * @as(i64, FIX_1_175875602));
+
+        const t4 = @as(i64, d4) * @as(i64, FIX_0_298631336);
+        const t5 = @as(i64, d5) * @as(i64, FIX_2_053119869);
+        const t6 = @as(i64, d6) * @as(i64, FIX_3_072711026);
+        const t7 = @as(i64, d7) * @as(i64, FIX_1_501321110);
+
+        z1 = z1 * @as(i64, -FIX_0_899976223);
+        z2 = z2 * @as(i64, -FIX_2_562915447);
+        z3 = z3 * @as(i64, -FIX_1_961570560) + z5;
+        z4 = z4 * @as(i64, -FIX_0_390180644) + z5;
+
+        dst[7 * 8 + x] = DESCALE(t4 + z1 + z3, CONST_BITS + PASS1_BITS + 2);
+        dst[5 * 8 + x] = DESCALE(t5 + z2 + z4, CONST_BITS + PASS1_BITS + 2);
+        dst[3 * 8 + x] = DESCALE(t6 + z2 + z3, CONST_BITS + PASS1_BITS + 2);
+        dst[1 * 8 + x] = DESCALE(t7 + z1 + z4, CONST_BITS + PASS1_BITS + 2);
+    }
+}
+
+// Reciprocal-based quantization (fold normalization/scaling into the divisor).
+const RECIP_SHIFT: u5 = 24; // high precision for reciprocals
+
+fn buildQuantRecipRef(divisors_out: *[64]u32, qtbl: *const [64]u8) void {
     // JPEG normalization factors: alpha(u)alpha(v)/4 (where alpha(0)=1/sqrt(2), else 1)
     const sqrt2: f64 = 1.4142135623730951;
     const alpha = [_]f64{ 1.0 / sqrt2, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
@@ -413,8 +574,31 @@ fn buildQuantRecip(divisors_out: *[64]u32, qtbl: *const [64]u8) void {
             const idx = u * 8 + v;
             const q = @as(f64, @floatFromInt(qtbl[idx]));
             const factor = alpha[u] * alpha[v] * 0.25;
-            // Precompute fixed-point multiplier K = (1<<SHIFT) * factor / q
             const recip_f = (@as(f64, @floatFromInt(1 << RECIP_SHIFT)) * factor) / q;
+            const recip_u: u32 = @intFromFloat(@round(@max(0.0, @min(4_294_967_295.0, recip_f))));
+            divisors_out[idx] = recip_u;
+        }
+    }
+}
+
+fn buildQuantRecipAAN(divisors_out: *[64]u32, qtbl: *const [64]u8) void {
+    // AAN scaling factors per 1D output index (libjpeg aanscalefactor)
+    const aasf = [_]f64{
+        1.0,
+        1.387039845,
+        1.306562965,
+        1.175875602,
+        1.0,
+        0.785694958,
+        0.541196100,
+        0.275899379,
+    };
+    for (0..8) |u| {
+        for (0..8) |v| {
+            const idx = u * 8 + v;
+            const q = @as(f64, @floatFromInt(qtbl[idx]));
+            const scale = aasf[u] * aasf[v] * 8.0;
+            const recip_f = (@as(f64, @floatFromInt(1 << RECIP_SHIFT))) / (q * scale);
             const recip_u: u32 = @intFromFloat(@round(@max(0.0, @min(4_294_967_295.0, recip_f))));
             divisors_out[idx] = recip_u;
         }
@@ -438,9 +622,34 @@ fn encodeBlock(
     dc_encoder: *const HuffmanEncoder,
     ac_encoder: *const HuffmanEncoder,
     prev_dc: *i32,
+    dct_impl: DctImpl,
 ) !void {
     var dct: [64]i32 = undefined;
-    fdct8x8(block, &dct);
+    switch (dct_impl) {
+        .reference => fdct8x8(block, &dct),
+        .aan => fdct8x8_aan(block, &dct),
+    }
+
+    if (__aan_debug_once and dct_impl == .aan) {
+        __aan_debug_once = false;
+        var ref: [64]i32 = undefined;
+        fdct8x8(block, &ref);
+        std.debug.print("AAN vs REF coeff[0..7]:\n", .{});
+        for (0..8) |i| {
+            std.debug.print("k={}: aan={} ref={} diff={}\n", .{ i, dct[i], ref[i], dct[i] - ref[i] });
+        }
+    }
+
+    // Debug compare AAN vs reference cosine FDCT once
+    if (false and __aan_debug_once) {
+        __aan_debug_once = false;
+        var ref: [64]i32 = undefined;
+        fdct8x8(block, &ref);
+        std.debug.print("AAN vs REF (first 8 coeffs natural order):\n", .{});
+        for (0..8) |i| {
+            std.debug.print("k={}: aan={} ref={}\n", .{ i, dct[i], ref[i] });
+        }
+    }
 
     var coeffs: [64]i32 = undefined;
     // Quantization using reciprocal divisors (JPEG normalization folded in)
@@ -489,6 +698,7 @@ fn encodeBlocksRgb(
     ac_luma: *const HuffmanEncoder,
     dc_chroma: *const HuffmanEncoder,
     ac_chroma: *const HuffmanEncoder,
+    dct_impl: DctImpl,
 ) !void {
     const rows: usize = image.rows;
     const cols: usize = image.cols;
@@ -527,7 +737,7 @@ fn encodeBlocksRgb(
                             block[y * 8 + x] = @as(i32, ycbcr.y) - 128;
                         }
                     }
-                    try encodeBlock(&block, ql_recip, writer, dc_luma, ac_luma, &prev_dc_y);
+                    try encodeBlock(&block, ql_recip, writer, dc_luma, ac_luma, &prev_dc_y, dct_impl);
                 }
             }
 
@@ -553,7 +763,7 @@ fn encodeBlocksRgb(
                     block[y * 8 + x] = avg_cb - 128;
                 }
             }
-            try encodeBlock(&block, qc_recip, writer, dc_chroma, ac_chroma, &prev_dc_cb);
+            try encodeBlock(&block, qc_recip, writer, dc_chroma, ac_chroma, &prev_dc_cb, dct_impl);
 
             // Encode Cr block for this MCU (downsampled if needed)
             for (0..8) |y| {
@@ -575,7 +785,7 @@ fn encodeBlocksRgb(
                     block[y * 8 + x] = avg_cr - 128;
                 }
             }
-            try encodeBlock(&block, qc_recip, writer, dc_chroma, ac_chroma, &prev_dc_cr);
+            try encodeBlock(&block, qc_recip, writer, dc_chroma, ac_chroma, &prev_dc_cr, dct_impl);
         }
     }
 }
@@ -609,13 +819,21 @@ fn encodeRgb(allocator: Allocator, image: Image(Rgb), options: EncodeOptions) ![
     const dc_chroma = buildHuffmanEncoder(&StdTables.bits_dc_chroma, &StdTables.val_dc_chroma);
     const ac_chroma = buildHuffmanEncoder(&StdTables.bits_ac_chroma, &StdTables.val_ac_chroma);
 
-    // Build reciprocal quantization tables with folded JPEG normalization
+    // Build reciprocal quantization tables with folded normalization/scaling
     var ql_recip: [64]u32 = undefined;
     var qc_recip: [64]u32 = undefined;
-    buildQuantRecip(&ql_recip, &ql);
-    buildQuantRecip(&qc_recip, &qc);
+    switch (options.dct) {
+        .reference => {
+            buildQuantRecipRef(&ql_recip, &ql);
+            buildQuantRecipRef(&qc_recip, &qc);
+        },
+        .aan => {
+            buildQuantRecipAAN(&ql_recip, &ql);
+            buildQuantRecipAAN(&qc_recip, &qc);
+        },
+    }
 
-    try encodeBlocksRgb(image, options.subsampling, &ql_recip, &qc_recip, &ew, &dc_luma, &ac_luma, &dc_chroma, &ac_chroma);
+    try encodeBlocksRgb(image, options.subsampling, &ql_recip, &qc_recip, &ew, &dc_luma, &ac_luma, &dc_chroma, &ac_chroma, options.dct);
     try ew.flush();
 
     // Append entropy-coded bytes into output
@@ -672,9 +890,12 @@ fn encodeGrayscale(allocator: Allocator, bytes: []const u8, width: u32, height: 
     const dc = buildHuffmanEncoder(&StdTables.bits_dc_luma, &StdTables.val_dc_luma);
     const ac = buildHuffmanEncoder(&StdTables.bits_ac_luma, &StdTables.val_ac_luma);
 
-    // Build reciprocal quantization table with folded JPEG normalization
+    // Build reciprocal quantization table with folded normalization/scaling
     var ql_recip: [64]u32 = undefined;
-    buildQuantRecip(&ql_recip, &ql);
+    switch (options.dct) {
+        .reference => buildQuantRecipRef(&ql_recip, &ql),
+        .aan => buildQuantRecipAAN(&ql_recip, &ql),
+    }
 
     var prev_dc: i32 = 0;
 
@@ -695,7 +916,7 @@ fn encodeGrayscale(allocator: Allocator, bytes: []const u8, width: u32, height: 
                     block[y * 8 + x] = @as(i32, @intCast(v)) - 128;
                 }
             }
-            try encodeBlock(&block, &ql_recip, &ew, &dc, &ac, &prev_dc);
+            try encodeBlock(&block, &ql_recip, &ew, &dc, &ac, &prev_dc, options.dct);
         }
     }
 
@@ -2795,7 +3016,7 @@ test "JPEG subsampling 4:2:2 roundtrip" {
     try renderRgbBlocksToPixels(Rgb, &decoder, &out);
 
     const ps = try img.psnr(out);
-    std.debug.print("4:2:2 test PSNR: {d:.2} (threshold 26.0)\n", .{ps});
+    std.debug.print("4:2:2 test PSNR: {d:.2} (threshold 40.0)\n", .{ps});
     try std.testing.expect(ps > 40);
 }
 
