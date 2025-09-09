@@ -1,5 +1,6 @@
-//! Pure Zig JPEG decoder implementation.
-//! Supports baseline and progressive DCT JPEG images with full compatibility.
+//! Pure Zig JPEG decoder and baseline encoder implementation.
+//! Decoder supports baseline and progressive DCT JPEG images.
+//! Encoder implements baseline (SOF0) JPEG with 4:4:4 sampling and adjustable quality.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -24,6 +25,672 @@ pub const zigzag = [64]u8{
     58, 59, 52, 45, 38, 31, 39, 46,
     53, 60, 61, 54, 47, 55, 62, 63,
 };
+
+// -----------------------------
+// Encoder: public API and types
+// -----------------------------
+
+pub const JpegSubsampling = enum {
+    yuv444,
+    // Note: additional subsampling modes can be added later (yuv422, yuv420)
+};
+
+pub const EncodeOptions = struct {
+    quality: u8 = 90,
+    subsampling: JpegSubsampling = .yuv444,
+    density_dpi: u16 = 72,
+    comment: ?[]const u8 = null,
+    pub const default: EncodeOptions = .{};
+};
+
+/// Save Image to JPEG file with baseline encoding.
+pub fn save(comptime T: type, allocator: Allocator, image: Image(T), file_path: []const u8) !void {
+    const bytes = try encodeImage(T, allocator, image, .default);
+    defer allocator.free(bytes);
+
+    const file = try std.fs.cwd().createFile(file_path, .{});
+    defer file.close();
+    try file.writeAll(bytes);
+}
+
+/// Encode an image into baseline JPEG bytes (SOF0, 8-bit, Huffman).
+/// Supports grayscale (u8) and RGB (Rgb). Other types are converted to RGB.
+pub fn encodeImage(comptime T: type, allocator: Allocator, image: Image(T), options: EncodeOptions) ![]u8 {
+    switch (T) {
+        u8 => return encodeGrayscale(allocator, image.asBytes(), @intCast(image.cols), @intCast(image.rows), options),
+        Rgb => return encodeRgb(allocator, image, options),
+        else => {
+            var rgb = try Image(Rgb).init(allocator, image.rows, image.cols);
+            defer rgb.deinit(allocator);
+            for (image.data, 0..) |pix, i| rgb.data[i] = convertColor(Rgb, pix);
+            return encodeRgb(allocator, rgb, options);
+        },
+    }
+}
+
+// -----------------------------
+// Encoder: internals
+// -----------------------------
+
+const StdTables = struct {
+    // Base quantization tables (ITU T.81, Annex K)
+    const q_luma_base: [64]u8 = .{
+        16, 11, 10, 16, 24,  40,  51,  61,
+        12, 12, 14, 19, 26,  58,  60,  55,
+        14, 13, 16, 24, 40,  57,  69,  56,
+        14, 17, 22, 29, 51,  87,  80,  62,
+        18, 22, 37, 56, 68,  109, 103, 77,
+        24, 35, 55, 64, 81,  104, 113, 92,
+        49, 64, 78, 87, 103, 121, 120, 101,
+        72, 92, 95, 98, 112, 100, 103, 99,
+    };
+    const q_chroma_base: [64]u8 = .{
+        17, 18, 24, 47, 99, 99, 99, 99,
+        18, 21, 26, 66, 99, 99, 99, 99,
+        24, 26, 56, 99, 99, 99, 99, 99,
+        47, 66, 99, 99, 99, 99, 99, 99,
+        99, 99, 99, 99, 99, 99, 99, 99,
+        99, 99, 99, 99, 99, 99, 99, 99,
+        99, 99, 99, 99, 99, 99, 99, 99,
+        99, 99, 99, 99, 99, 99, 99, 99,
+    };
+
+    // Standard Huffman tables (bits and values)
+    // Luminance DC
+    const bits_dc_luma: [16]u8 = .{ 0, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0 };
+    const val_dc_luma: [12]u8 = .{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 };
+    // Chrominance DC
+    const bits_dc_chroma: [16]u8 = .{ 0, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0 };
+    const val_dc_chroma: [12]u8 = .{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 };
+
+    // Luminance AC
+    const bits_ac_luma: [16]u8 = .{ 0, 2, 1, 3, 3, 2, 4, 3, 5, 5, 4, 4, 0, 0, 1, 125 };
+    const val_ac_luma: [162]u8 = .{
+        0x01, 0x02, 0x03, 0x00, 0x04, 0x11, 0x05, 0x12, 0x21, 0x31, 0x41, 0x06, 0x13, 0x51, 0x61, 0x07,
+        0x22, 0x71, 0x14, 0x32, 0x81, 0x91, 0xa1, 0x08, 0x23, 0x42, 0xb1, 0xc1, 0x15, 0x52, 0xd1, 0xf0,
+        0x24, 0x33, 0x62, 0x72, 0x82, 0x09, 0x0a, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x25, 0x26, 0x27, 0x28,
+        0x29, 0x2a, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49,
+        0x4a, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69,
+        0x6a, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89,
+        0x8a, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7,
+        0xa8, 0xa9, 0xaa, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0xb8, 0xb9, 0xba, 0xc2, 0xc3, 0xc4, 0xc5,
+        0xc6, 0xc7, 0xc8, 0xc9, 0xca, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda, 0xe1, 0xe2,
+        0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9, 0xea, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8,
+        0xf9, 0xfa,
+    };
+    // Chrominance AC
+    const bits_ac_chroma: [16]u8 = .{ 0, 2, 1, 2, 4, 4, 3, 4, 7, 5, 4, 4, 0, 1, 2, 119 };
+    const val_ac_chroma: [162]u8 = .{
+        0x00, 0x01, 0x02, 0x03, 0x11, 0x04, 0x05, 0x21, 0x31, 0x06, 0x12, 0x41, 0x51, 0x07, 0x61, 0x71,
+        0x13, 0x22, 0x32, 0x81, 0x08, 0x14, 0x42, 0x91, 0xa1, 0xb1, 0xc1, 0x09, 0x23, 0x33, 0x52, 0xf0,
+        0x15, 0x62, 0x72, 0xd1, 0x0a, 0x16, 0x24, 0x34, 0xe1, 0x25, 0xf1, 0x17, 0x18, 0x19, 0x1a, 0x26,
+        0x27, 0x28, 0x29, 0x2a, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
+        0x49, 0x4a, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68,
+        0x69, 0x6a, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,
+        0x88, 0x89, 0x8a, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0xa2, 0xa3, 0xa4, 0xa5,
+        0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0xb8, 0xb9, 0xba, 0xc2, 0xc3,
+        0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc9, 0xca, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda,
+        0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9, 0xea, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8,
+        0xf9, 0xfa,
+    };
+};
+
+const HuffmanEncoder = struct {
+    codes: [256]u16 = [1]u16{0} ** 256,
+    sizes: [256]u8 = [1]u8{0} ** 256,
+};
+
+fn buildHuffmanEncoder(bits: []const u8, vals: []const u8) HuffmanEncoder {
+    var enc = HuffmanEncoder{};
+    var code: u16 = 0;
+    var k: usize = 0;
+    for (0..16) |i| {
+        const nb = bits[i];
+        for (0..nb) |_| {
+            const sym = vals[k];
+            enc.codes[sym] = code;
+            enc.sizes[sym] = @intCast(i + 1);
+            code += 1;
+            k += 1;
+        }
+        code = code << 1;
+    }
+    return enc;
+}
+
+const EntropyWriter = struct {
+    gpa: Allocator,
+    data: std.ArrayList(u8),
+    bit_buf: u32 = 0,
+    bit_count: u5 = 0,
+
+    pub fn init(gpa: Allocator) EntropyWriter {
+        return .{ .gpa = gpa, .data = .empty };
+    }
+    pub fn deinit(self: *EntropyWriter) void {
+        self.data.deinit(self.gpa);
+    }
+
+    fn writeByte(self: *EntropyWriter, b: u8) !void {
+        try self.data.append(self.gpa, b);
+        if (b == 0xFF) try self.data.append(self.gpa, 0x00);
+    }
+    fn writeBits(self: *EntropyWriter, code: u32, size: u5) !void {
+        self.bit_buf = (self.bit_buf << size) | (code & ((@as(u32, 1) << size) - 1));
+        self.bit_count += size;
+        while (self.bit_count >= 8) {
+            const shard = (self.bit_buf >> (self.bit_count - 8)) & 0xFF;
+            const out: u8 = @intCast(shard);
+            try self.writeByte(out);
+            self.bit_count -= 8;
+        }
+    }
+    fn flush(self: *EntropyWriter) !void {
+        if (self.bit_count > 0) {
+            const pad: u5 = 8 - self.bit_count;
+            try self.writeBits((@as(u32, 1) << pad) - 1, pad);
+        }
+    }
+};
+
+fn writeMarker(dst: *std.ArrayList(u8), gpa: Allocator, marker: u16) !void {
+    try dst.append(gpa, 0xFF);
+    try dst.append(gpa, @intCast(marker & 0xFF));
+}
+
+fn writeSegment(dst: *std.ArrayList(u8), gpa: Allocator, marker: u16, payload: []const u8) !void {
+    try writeMarker(dst, gpa, marker);
+    const len: u16 = @intCast(payload.len + 2);
+    try dst.appendSlice(gpa, std.mem.asBytes(&std.mem.nativeTo(u16, len, .big)));
+    try dst.appendSlice(gpa, payload);
+}
+
+fn scaleQuantTables(quality: u8, ql: *[64]u8, qc: *[64]u8) void {
+    const q = @max(@as(u8, 1), @min(@as(u8, 100), quality));
+    const scale: i32 = if (q < 50)
+        @divTrunc(@as(i32, 5000), @as(i32, q))
+    else
+        200 - @as(i32, q) * 2;
+    for (0..64) |i| {
+        const l = @divTrunc((@as(i32, StdTables.q_luma_base[i]) * scale + 50), 100);
+        const c = @divTrunc((@as(i32, StdTables.q_chroma_base[i]) * scale + 50), 100);
+        ql[i] = @intCast(@max(1, @min(255, l)));
+        qc[i] = @intCast(@max(1, @min(255, c)));
+    }
+}
+
+fn writeDQT(dst: *std.ArrayList(u8), gpa: Allocator, ql: *const [64]u8, qc: *const [64]u8) !void {
+    var tmp = std.ArrayList(u8).empty;
+    defer tmp.deinit(gpa);
+
+    // Luma table (8-bit precision, id 0)
+    try tmp.append(gpa, 0x00);
+    for (0..64) |i| try tmp.append(gpa, ql[zigzag[i]]);
+
+    // Chroma table (8-bit precision, id 1)
+    try tmp.append(gpa, 0x01);
+    for (0..64) |i| try tmp.append(gpa, qc[zigzag[i]]);
+
+    try writeSegment(dst, gpa, 0xFFDB, tmp.items);
+}
+
+fn writeSOF0(dst: *std.ArrayList(u8), gpa: Allocator, width: u16, height: u16, grayscale: bool) !void {
+    var tmp = std.ArrayList(u8).empty;
+    defer tmp.deinit(gpa);
+    try tmp.append(gpa, 8); // precision
+    try tmp.appendSlice(gpa, std.mem.asBytes(&std.mem.nativeTo(u16, height, .big)));
+    try tmp.appendSlice(gpa, std.mem.asBytes(&std.mem.nativeTo(u16, width, .big)));
+    if (grayscale) {
+        try tmp.append(gpa, 1);
+        try tmp.append(gpa, 1); // comp id
+        try tmp.append(gpa, 0x11); // sampling 1x1
+        try tmp.append(gpa, 0); // quant table id 0
+    } else {
+        try tmp.append(gpa, 3);
+        // Y
+        try tmp.append(gpa, 1);
+        try tmp.append(gpa, 0x11); // 4:4:4
+        try tmp.append(gpa, 0);
+        // Cb
+        try tmp.append(gpa, 2);
+        try tmp.append(gpa, 0x11);
+        try tmp.append(gpa, 1);
+        // Cr
+        try tmp.append(gpa, 3);
+        try tmp.append(gpa, 0x11);
+        try tmp.append(gpa, 1);
+    }
+    try writeSegment(dst, gpa, 0xFFC0, tmp.items);
+}
+
+fn writeAPP0_JFIF(dst: *std.ArrayList(u8), gpa: Allocator, density_dpi: u16) !void {
+    var tmp = std.ArrayList(u8).empty;
+    defer tmp.deinit(gpa);
+    try tmp.appendSlice(gpa, "JFIF\x00");
+    try tmp.append(gpa, 1); // version major
+    try tmp.append(gpa, 1); // version minor
+    try tmp.append(gpa, 1); // units: dots per inch
+    try tmp.appendSlice(gpa, std.mem.asBytes(&std.mem.nativeTo(u16, density_dpi, .big)));
+    try tmp.appendSlice(gpa, std.mem.asBytes(&std.mem.nativeTo(u16, density_dpi, .big)));
+    try tmp.append(gpa, 0); // x thumbnail
+    try tmp.append(gpa, 0); // y thumbnail
+    try writeSegment(dst, gpa, 0xFFE0, tmp.items);
+}
+
+fn writeCOM(dst: *std.ArrayList(u8), gpa: Allocator, comment: []const u8) !void {
+    try writeSegment(dst, gpa, 0xFFFE, comment);
+}
+
+fn writeDHT(dst: *std.ArrayList(u8), gpa: Allocator) !void {
+    var tmp = std.ArrayList(u8).empty;
+    defer tmp.deinit(gpa);
+
+    // DC Luma (class 0, id 0)
+    try tmp.append(gpa, 0x00);
+    try tmp.appendSlice(gpa, &StdTables.bits_dc_luma);
+    try tmp.appendSlice(gpa, &StdTables.val_dc_luma);
+    // AC Luma (class 1, id 0)
+    try tmp.append(gpa, 0x10);
+    try tmp.appendSlice(gpa, &StdTables.bits_ac_luma);
+    try tmp.appendSlice(gpa, &StdTables.val_ac_luma);
+    // DC Chroma (class 0, id 1)
+    try tmp.append(gpa, 0x01);
+    try tmp.appendSlice(gpa, &StdTables.bits_dc_chroma);
+    try tmp.appendSlice(gpa, &StdTables.val_dc_chroma);
+    // AC Chroma (class 1, id 1)
+    try tmp.append(gpa, 0x11);
+    try tmp.appendSlice(gpa, &StdTables.bits_ac_chroma);
+    try tmp.appendSlice(gpa, &StdTables.val_ac_chroma);
+
+    try writeSegment(dst, gpa, 0xFFC4, tmp.items);
+}
+
+fn writeSOS(dst: *std.ArrayList(u8), gpa: Allocator, grayscale: bool) !void {
+    var tmp = std.ArrayList(u8).empty;
+    defer tmp.deinit(gpa);
+    if (grayscale) {
+        try tmp.append(gpa, 1);
+        try tmp.append(gpa, 1); // component id
+        try tmp.append(gpa, 0x00); // DC 0, AC 0
+    } else {
+        try tmp.append(gpa, 3);
+        try tmp.append(gpa, 1); // Y
+        try tmp.append(gpa, 0x00);
+        try tmp.append(gpa, 2); // Cb
+        try tmp.append(gpa, 0x11);
+        try tmp.append(gpa, 3); // Cr
+        try tmp.append(gpa, 0x11);
+    }
+    try tmp.append(gpa, 0); // Ss
+    try tmp.append(gpa, 63); // Se
+    try tmp.append(gpa, 0); // Ah/Al
+    try writeSegment(dst, gpa, 0xFFDA, tmp.items);
+}
+
+fn magnitudeCategory(value: i32) u5 {
+    if (value == 0) return 0;
+    var v: u32 = @intCast(if (value < 0) -value else value);
+    var c: u5 = 0;
+    while (v != 0) : (v >>= 1) c += 1;
+    return c;
+}
+
+fn magnitudeBits(value: i32, mag: u5) u32 {
+    if (mag == 0) return 0;
+    if (value >= 0) return @intCast(value);
+    const base: i32 = (@as(i32, 1) << @intCast(mag)) - 1;
+    return @intCast(base + value);
+}
+
+fn fdct8x8(src: *const [64]f32, out: *[64]f32) void {
+    const pi: f32 = std.math.pi;
+    var cosx: [8][8]f32 = undefined;
+    var cosy: [8][8]f32 = undefined;
+    for (0..8) |u| {
+        for (0..8) |x| {
+            cosx[u][x] = std.math.cos(@as(f32, (2 * @as(f32, @floatFromInt(x)) + 1) * @as(f32, @floatFromInt(u)) * pi / 16.0));
+        }
+    }
+    for (0..8) |v| {
+        for (0..8) |y| {
+            cosy[v][y] = std.math.cos(@as(f32, (2 * @as(f32, @floatFromInt(y)) + 1) * @as(f32, @floatFromInt(v)) * pi / 16.0));
+        }
+    }
+
+    for (0..8) |v| {
+        for (0..8) |u| {
+            var sum: f32 = 0.0;
+            for (0..8) |y| {
+                for (0..8) |x| {
+                    sum += src[y * 8 + x] * cosx[u][x] * cosy[v][y];
+                }
+            }
+            const cu: f32 = if (u == 0) 1.0 / std.math.sqrt(2.0) else 1.0;
+            const cv: f32 = if (v == 0) 1.0 / std.math.sqrt(2.0) else 1.0;
+            out[v * 8 + u] = 0.25 * cu * cv * sum;
+        }
+    }
+}
+
+fn encodeBlocksRgb(
+    allocator: Allocator,
+    image: Image(Rgb),
+    ql_f: *const [64]f32,
+    qc_f: *const [64]f32,
+    writer: *EntropyWriter,
+    dc_luma: *const HuffmanEncoder,
+    ac_luma: *const HuffmanEncoder,
+    dc_chroma: *const HuffmanEncoder,
+    ac_chroma: *const HuffmanEncoder,
+) !void {
+    _ = allocator; // reserved
+
+    const rows: usize = image.rows;
+    const cols: usize = image.cols;
+    const block_rows: usize = (rows + 7) / 8;
+    const block_cols: usize = (cols + 7) / 8;
+
+    var prev_dc_y: i32 = 0;
+    var prev_dc_cb: i32 = 0;
+    var prev_dc_cr: i32 = 0;
+
+    var block: [64]f32 = undefined;
+    var dct: [64]f32 = undefined;
+
+    for (0..block_rows) |br| {
+        for (0..block_cols) |bc| {
+            // Y
+            for (0..8) |y| {
+                const iy = @min(rows - 1, br * 8 + y);
+                for (0..8) |x| {
+                    const ix = @min(cols - 1, bc * 8 + x);
+                    const rgb = image.at(iy, ix).*;
+                    const ycbcr = convertColor(Ycbcr, rgb);
+                    block[y * 8 + x] = ycbcr.y - 128.0;
+                }
+            }
+            fdct8x8(&block, &dct);
+
+            var coeff_y: [64]i32 = undefined;
+            for (0..64) |i| coeff_y[i] = @intFromFloat(@round(dct[i] / ql_f[i]));
+
+            // Encode Y block
+            const dc_y = coeff_y[0];
+            var diff = dc_y - prev_dc_y;
+            prev_dc_y = dc_y;
+            var mag = magnitudeCategory(diff);
+            try writer.writeBits(@intCast(dc_luma.codes[mag]), @as(u5, @intCast(dc_luma.sizes[mag])));
+            if (mag > 0) try writer.writeBits(magnitudeBits(diff, mag), mag);
+
+            var run: u8 = 0;
+            for (1..64) |k| {
+                const v = coeff_y[zigzag[k]];
+                if (v == 0) {
+                    run += 1;
+                    if (run == 16) {
+                        try writer.writeBits(@intCast(ac_luma.codes[0xF0]), @as(u5, @intCast(ac_luma.sizes[0xF0])));
+                        run = 0;
+                    }
+                } else {
+                    while (run >= 16) : (run -= 16) {
+                        try writer.writeBits(@intCast(ac_luma.codes[0xF0]), @as(u5, @intCast(ac_luma.sizes[0xF0])));
+                    }
+                    const amag = magnitudeCategory(v);
+                    const sym: u8 = (run << 4) | @as(u8, amag);
+                    try writer.writeBits(@intCast(ac_luma.codes[sym]), @as(u5, @intCast(ac_luma.sizes[sym])));
+                    try writer.writeBits(magnitudeBits(v, amag), amag);
+                    run = 0;
+                }
+            }
+            if (run > 0) try writer.writeBits(@intCast(ac_luma.codes[0x00]), @as(u5, @intCast(ac_luma.sizes[0x00])));
+
+            // Cb
+            for (0..8) |y| {
+                const iy = @min(rows - 1, br * 8 + y);
+                for (0..8) |x| {
+                    const ix = @min(cols - 1, bc * 8 + x);
+                    const rgb = image.at(iy, ix).*;
+                    const ycbcr = convertColor(Ycbcr, rgb);
+                    block[y * 8 + x] = ycbcr.cb - 128.0;
+                }
+            }
+            fdct8x8(&block, &dct);
+            var coeff_cb: [64]i32 = undefined;
+            for (0..64) |i| coeff_cb[i] = @intFromFloat(@round(dct[i] / qc_f[i]));
+
+            const dc_cb = coeff_cb[0];
+            diff = dc_cb - prev_dc_cb;
+            prev_dc_cb = dc_cb;
+            mag = magnitudeCategory(diff);
+            try writer.writeBits(@intCast(dc_chroma.codes[mag]), @as(u5, @intCast(dc_chroma.sizes[mag])));
+            if (mag > 0) try writer.writeBits(magnitudeBits(diff, mag), mag);
+
+            run = 0;
+            for (1..64) |k| {
+                const v = coeff_cb[zigzag[k]];
+                if (v == 0) {
+                    run += 1;
+                    if (run == 16) {
+                        try writer.writeBits(@intCast(ac_chroma.codes[0xF0]), @as(u5, @intCast(ac_chroma.sizes[0xF0])));
+                        run = 0;
+                    }
+                } else {
+                    while (run >= 16) : (run -= 16) {
+                        try writer.writeBits(@intCast(ac_chroma.codes[0xF0]), @as(u5, @intCast(ac_chroma.sizes[0xF0])));
+                    }
+                    const amag2 = magnitudeCategory(v);
+                    const sym2: u8 = (run << 4) | @as(u8, amag2);
+                    try writer.writeBits(@intCast(ac_chroma.codes[sym2]), @as(u5, @intCast(ac_chroma.sizes[sym2])));
+                    try writer.writeBits(magnitudeBits(v, amag2), amag2);
+                    run = 0;
+                }
+            }
+            if (run > 0) try writer.writeBits(@intCast(ac_chroma.codes[0x00]), @as(u5, @intCast(ac_chroma.sizes[0x00])));
+
+            // Cr
+            for (0..8) |y| {
+                const iy = @min(rows - 1, br * 8 + y);
+                for (0..8) |x| {
+                    const ix = @min(cols - 1, bc * 8 + x);
+                    const rgb = image.at(iy, ix).*;
+                    const ycbcr = convertColor(Ycbcr, rgb);
+                    block[y * 8 + x] = ycbcr.cr - 128.0;
+                }
+            }
+            fdct8x8(&block, &dct);
+            var coeff_cr: [64]i32 = undefined;
+            for (0..64) |i| coeff_cr[i] = @intFromFloat(@round(dct[i] / qc_f[i]));
+
+            const dc_cr = coeff_cr[0];
+            diff = dc_cr - prev_dc_cr;
+            prev_dc_cr = dc_cr;
+            mag = magnitudeCategory(diff);
+            try writer.writeBits(@intCast(dc_chroma.codes[mag]), @as(u5, @intCast(dc_chroma.sizes[mag])));
+            if (mag > 0) try writer.writeBits(magnitudeBits(diff, mag), mag);
+
+            run = 0;
+            for (1..64) |k| {
+                const v = coeff_cr[zigzag[k]];
+                if (v == 0) {
+                    run += 1;
+                    if (run == 16) {
+                        try writer.writeBits(@intCast(ac_chroma.codes[0xF0]), @as(u5, @intCast(ac_chroma.sizes[0xF0])));
+                        run = 0;
+                    }
+                } else {
+                    while (run >= 16) : (run -= 16) {
+                        try writer.writeBits(@intCast(ac_chroma.codes[0xF0]), @as(u5, @intCast(ac_chroma.sizes[0xF0])));
+                    }
+                    const amag3 = magnitudeCategory(v);
+                    const sym3: u8 = (run << 4) | @as(u8, amag3);
+                    try writer.writeBits(@intCast(ac_chroma.codes[sym3]), @as(u5, @intCast(ac_chroma.sizes[sym3])));
+                    try writer.writeBits(magnitudeBits(v, amag3), amag3);
+                    run = 0;
+                }
+            }
+            if (run > 0) try writer.writeBits(@intCast(ac_chroma.codes[0x00]), @as(u5, @intCast(ac_chroma.sizes[0x00])));
+        }
+    }
+}
+
+fn encodeRgb(allocator: Allocator, image: Image(Rgb), options: EncodeOptions) ![]u8 {
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    // SOI
+    try out.append(allocator, 0xFF);
+    try out.append(allocator, 0xD8);
+
+    try writeAPP0_JFIF(&out, allocator, options.density_dpi);
+    if (options.comment) |c| try writeCOM(&out, allocator, c);
+
+    var ql: [64]u8 = undefined;
+    var qc: [64]u8 = undefined;
+    scaleQuantTables(options.quality, &ql, &qc);
+    try writeDQT(&out, allocator, &ql, &qc);
+    try writeSOF0(&out, allocator, @intCast(image.cols), @intCast(image.rows), false);
+    try writeDHT(&out, allocator);
+    try writeSOS(&out, allocator, false);
+
+    // Entropy-coded data
+    var ew = EntropyWriter.init(allocator);
+    defer ew.deinit();
+
+    // Build Huffman encoders
+    const dc_luma = buildHuffmanEncoder(&StdTables.bits_dc_luma, &StdTables.val_dc_luma);
+    const ac_luma = buildHuffmanEncoder(&StdTables.bits_ac_luma, &StdTables.val_ac_luma);
+    const dc_chroma = buildHuffmanEncoder(&StdTables.bits_dc_chroma, &StdTables.val_dc_chroma);
+    const ac_chroma = buildHuffmanEncoder(&StdTables.bits_ac_chroma, &StdTables.val_ac_chroma);
+
+    // Float quant tables for math
+    var ql_f: [64]f32 = undefined;
+    var qc_f: [64]f32 = undefined;
+    for (0..64) |i| {
+        ql_f[i] = @floatFromInt(ql[i]);
+        qc_f[i] = @floatFromInt(qc[i]);
+    }
+
+    try encodeBlocksRgb(allocator, image, &ql_f, &qc_f, &ew, &dc_luma, &ac_luma, &dc_chroma, &ac_chroma);
+    try ew.flush();
+
+    // Append entropy-coded bytes into output
+    try out.appendSlice(allocator, ew.data.items);
+
+    // EOI
+    try out.append(allocator, 0xFF);
+    try out.append(allocator, 0xD9);
+
+    return out.toOwnedSlice(allocator);
+}
+
+fn encodeGrayscale(allocator: Allocator, bytes: []const u8, width: u32, height: u32, options: EncodeOptions) ![]u8 {
+    _ = options.subsampling; // not used for grayscale
+
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    // SOI
+    try out.append(allocator, 0xFF);
+    try out.append(allocator, 0xD8);
+
+    try writeAPP0_JFIF(&out, allocator, options.density_dpi);
+    if (options.comment) |c| try writeCOM(&out, allocator, c);
+
+    var ql: [64]u8 = undefined;
+    var dummy: [64]u8 = undefined;
+    scaleQuantTables(options.quality, &ql, &dummy);
+    // Only luma table used
+    var tmp_dqt = std.ArrayList(u8).empty;
+    defer tmp_dqt.deinit(allocator);
+    try tmp_dqt.append(allocator, 0x00);
+    for (0..64) |i| try tmp_dqt.append(allocator, ql[zigzag[i]]);
+    try writeSegment(&out, allocator, 0xFFDB, tmp_dqt.items);
+
+    try writeSOF0(&out, allocator, @intCast(width), @intCast(height), true);
+
+    // DHT: only DC/AC luma
+    var tmp_dht = std.ArrayList(u8).empty;
+    defer tmp_dht.deinit(allocator);
+    try tmp_dht.appendSlice(allocator, &[_]u8{0x00});
+    try tmp_dht.appendSlice(allocator, &StdTables.bits_dc_luma);
+    try tmp_dht.appendSlice(allocator, &StdTables.val_dc_luma);
+    try tmp_dht.appendSlice(allocator, &[_]u8{0x10});
+    try tmp_dht.appendSlice(allocator, &StdTables.bits_ac_luma);
+    try tmp_dht.appendSlice(allocator, &StdTables.val_ac_luma);
+    try writeSegment(&out, allocator, 0xFFC4, tmp_dht.items);
+
+    try writeSOS(&out, allocator, true);
+
+    var ew = EntropyWriter.init(allocator);
+    defer ew.deinit();
+
+    const dc = buildHuffmanEncoder(&StdTables.bits_dc_luma, &StdTables.val_dc_luma);
+    const ac = buildHuffmanEncoder(&StdTables.bits_ac_luma, &StdTables.val_ac_luma);
+
+    // Float quant table
+    var ql_f: [64]f32 = undefined;
+    for (0..64) |i| ql_f[i] = @floatFromInt(ql[i]);
+
+    var prev_dc: i32 = 0;
+
+    const rows: usize = @intCast(height);
+    const cols: usize = @intCast(width);
+    const block_rows: usize = (rows + 7) / 8;
+    const block_cols: usize = (cols + 7) / 8;
+    var block: [64]f32 = undefined;
+    var dct: [64]f32 = undefined;
+
+    for (0..block_rows) |br| {
+        for (0..block_cols) |bc| {
+            for (0..8) |y| {
+                const iy = @min(rows - 1, br * 8 + y);
+                for (0..8) |x| {
+                    const ix = @min(cols - 1, bc * 8 + x);
+                    const v: u8 = bytes[iy * cols + ix];
+                    block[y * 8 + x] = @as(f32, @floatFromInt(v)) - 128.0;
+                }
+            }
+            fdct8x8(&block, &dct);
+            var coeff: [64]i32 = undefined;
+            for (0..64) |i| coeff[i] = @intFromFloat(@round(dct[i] / ql_f[i]));
+
+            const dc_coeff = coeff[0];
+            const diff = dc_coeff - prev_dc;
+            prev_dc = dc_coeff;
+            const mag = magnitudeCategory(diff);
+            try ew.writeBits(@intCast(dc.codes[mag]), @as(u5, @intCast(dc.sizes[mag])));
+            if (mag > 0) try ew.writeBits(magnitudeBits(diff, mag), mag);
+
+            var run: u8 = 0;
+            for (1..64) |k| {
+                const v = coeff[zigzag[k]];
+                if (v == 0) {
+                    run += 1;
+                    if (run == 16) {
+                        try ew.writeBits(@intCast(ac.codes[0xF0]), @as(u5, @intCast(ac.sizes[0xF0])));
+                        run = 0;
+                    }
+                } else {
+                    while (run >= 16) : (run -= 16) {
+                        try ew.writeBits(@intCast(ac.codes[0xF0]), @as(u5, @intCast(ac.sizes[0xF0])));
+                    }
+                    const amag = magnitudeCategory(v);
+                    const sym: u8 = (run << 4) | @as(u8, amag);
+                    try ew.writeBits(@intCast(ac.codes[sym]), @as(u5, @intCast(ac.sizes[sym])));
+                    try ew.writeBits(magnitudeBits(v, amag), amag);
+                    run = 0;
+                }
+            }
+            if (run > 0) try ew.writeBits(@intCast(ac.codes[0x00]), @as(u5, @intCast(ac.sizes[0x00])));
+        }
+    }
+
+    try ew.flush();
+    try out.appendSlice(allocator, ew.data.items);
+    try out.append(allocator, 0xFF);
+    try out.append(allocator, 0xD9);
+    return out.toOwnedSlice(allocator);
+}
 
 /// Lightweight scan to detect number of components declared by the JPEG SOF header.
 /// Returns 1 for grayscale, 3 for color, or null on error/unsupported.
@@ -1699,11 +2366,11 @@ pub fn ycbcrToRgbAllBlocks(decoder: *JpegDecoder) !void {
     if (decoder.block_storage == null) return error.BlockStorageNotAllocated;
 
     if (decoder.num_components == 1) {
-        // Grayscale - just copy Y to all RGB channels
+        // Grayscale - blocks already level-shifted in IDCT
         for (decoder.block_storage.?, 0..) |*block_set, idx| {
             for (0..64) |i| {
                 const y_val = block_set[0][i];
-                const rgb_val: u8 = @intCast(std.math.clamp(y_val + 128, 0, 255));
+                const rgb_val: u8 = @intCast(std.math.clamp(y_val, 0, 255));
                 decoder.rgb_storage.?[idx][0][i] = rgb_val; // R
                 decoder.rgb_storage.?[idx][1][i] = rgb_val; // G
                 decoder.rgb_storage.?[idx][2][i] = rgb_val; // B
@@ -2007,6 +2674,66 @@ pub fn load(comptime T: type, allocator: Allocator, file_path: []const u8) !Imag
     try renderRgbBlocksToPixels(T, &decoder, &img);
 
     return img;
+}
+
+test "JPEG encode -> decode RGB roundtrip" {
+    const gpa = std.testing.allocator;
+
+    var img = try Image(Rgb).init(gpa, 16, 16);
+    defer img.deinit(gpa);
+    for (0..img.rows) |y| {
+        for (0..img.cols) |x| {
+            const r: u8 = @intCast((x * 255) / (img.cols - 1));
+            const g: u8 = @intCast((y * 255) / (img.rows - 1));
+            const b: u8 = @intCast(((x + y) * 255) / (img.cols + img.rows - 2));
+            img.at(y, x).* = .{ .r = r, .g = g, .b = b };
+        }
+    }
+
+    const bytes = try encodeImage(Rgb, gpa, img, .{ .quality = 85 });
+    defer gpa.free(bytes);
+
+    var decoder = try decode(gpa, bytes);
+    defer decoder.deinit();
+    if (decoder.frame_type == .baseline) try performBlockScan(&decoder);
+    try dequantizeAllBlocks(&decoder);
+    idctAllBlocks(&decoder);
+    try ycbcrToRgbAllBlocks(&decoder);
+    var out = try Image(Rgb).init(gpa, decoder.height, decoder.width);
+    defer out.deinit(gpa);
+    try renderRgbBlocksToPixels(Rgb, &decoder, &out);
+
+    const ps = try img.psnr(out);
+    try std.testing.expect(ps > 28.0);
+}
+
+test "JPEG encode -> decode grayscale roundtrip" {
+    const gpa = std.testing.allocator;
+    var img = try Image(u8).init(gpa, 16, 16);
+    defer img.deinit(gpa);
+    for (0..img.rows) |y| {
+        for (0..img.cols) |x| {
+            img.at(y, x).* = @intCast(((x + y) * 255) / (img.cols + img.rows - 2));
+        }
+    }
+    const bytes = try encodeImage(u8, gpa, img, .{ .quality = 85 });
+    defer gpa.free(bytes);
+
+    var decoder = try decode(gpa, bytes);
+    defer decoder.deinit();
+    if (decoder.frame_type == .baseline) try performBlockScan(&decoder);
+    try dequantizeAllBlocks(&decoder);
+    idctAllBlocks(&decoder);
+    try ycbcrToRgbAllBlocks(&decoder);
+    var out = try Image(Rgb).init(gpa, decoder.height, decoder.width);
+    defer out.deinit(gpa);
+    try renderRgbBlocksToPixels(Rgb, &decoder, &out);
+
+    // Convert original gray to RGB for PSNR
+    var gray_rgb = try img.convert(Rgb, gpa);
+    defer gray_rgb.deinit(gpa);
+    const ps = try gray_rgb.psnr(out);
+    try std.testing.expect(ps > 24.0);
 }
 
 // Basic tests
