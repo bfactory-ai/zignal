@@ -356,60 +356,100 @@ fn magnitudeBits(value: i32, mag: u5) u32 {
     return @intCast(base + value);
 }
 
-// Pre-computed DCT cosine table for performance
-const DctCosTable = blk: {
+// Generate DCT cosine table at compile time
+const dct_cos_table = blk: {
     @setEvalBranchQuota(10000);
-    var table: [8][8]f32 = undefined;
+    var table: [64]i32 = undefined;
     const pi = std.math.pi;
-    for (0..8) |u| {
-        for (0..8) |x| {
-            const cu: f32 = if (u == 0) 1.0 / std.math.sqrt(2.0) else 1.0;
-            table[u][x] = cu * std.math.cos((2.0 * @as(f32, @floatFromInt(x)) + 1.0) * @as(f32, @floatFromInt(u)) * pi / 16.0);
+
+    for (0..8) |k| {
+        for (0..8) |n| {
+            const angle = @as(f32, @floatFromInt(2 * n + 1)) * @as(f32, @floatFromInt(k)) * pi / 16.0;
+            const cos_val = std.math.cos(angle);
+            table[k * 8 + n] = @intFromFloat(cos_val * 4096.0 + 0.5);
         }
     }
     break :blk table;
 };
 
-fn fdct8x8(src: *const [64]f32, out: *[64]f32) void {
-    var tmp: [64]f32 = undefined;
+// Forward DCT using fixed-point arithmetic with correct cosine table
+fn fdct8x8(src: *const [64]i32, dst: *[64]i32) void {
+    var tmp: [64]i32 = undefined;
 
-    // 1D DCT on rows
-    for (0..8) |v| {
-        for (0..8) |u| {
-            var sum: f32 = 0.0;
-            for (0..8) |x| {
-                sum += src[v * 8 + x] * DctCosTable[u][x];
+    // Precomputed normalization factors in 12-bit fixed point (4096 scale)
+    // alpha(0) = 1/sqrt(2), alpha(k>0) = 1
+    const alpha: [8]i32 = .{
+        2896, // round(4096 / sqrt(2))
+        4096,
+        4096,
+        4096,
+        4096,
+        4096,
+        4096,
+        4096,
+    };
+    const quarter_fp: i32 = 1024; // round(4096 * 0.25)
+
+    // Process rows (1D DCT)
+    // Cosine values are scaled by 4096 (12-bit fixed point)
+    for (0..8) |i| {
+        for (0..8) |k| {
+            var sum: i64 = 0;
+            for (0..8) |n| {
+                const pixel = src[i * 8 + n];
+                const cos_val = dct_cos_table[k * 8 + n];
+                sum += @as(i64, pixel) * cos_val;
             }
-            tmp[v * 8 + u] = sum * 0.5;
+            // Remove 12-bit scaling from cosine table multiply
+            tmp[i * 8 + k] = @intCast(sum >> 12);
         }
     }
 
-    // 1D DCT on columns
-    for (0..8) |v| {
-        for (0..8) |u| {
-            var sum: f32 = 0.0;
-            for (0..8) |y| {
-                sum += tmp[y * 8 + u] * DctCosTable[v][y];
+    // Process columns (1D DCT) and apply full JPEG normalization:
+    // F(u,v) = (alpha(u) * alpha(v) / 4) * Sum Sum f(x,y)*cos*cos
+    for (0..8) |j| {
+        for (0..8) |k| {
+            var sum: i64 = 0;
+            for (0..8) |n| {
+                const val = tmp[n * 8 + j];
+                const cos_val = dct_cos_table[k * 8 + n];
+                sum += @as(i64, val) * cos_val;
             }
-            out[v * 8 + u] = sum * 0.5;
+            // Remove 12-bit scaling from cosine table multiply
+            var s: i64 = sum >> 12;
+            // Apply alpha(k) * alpha(j) * 0.25 in fixed point (each alpha is 12-bit, quarter_fp is 12-bit)
+            s = (s * @as(i64, alpha[k])) >> 12;
+            s = (s * @as(i64, alpha[j])) >> 12;
+            s = (s * @as(i64, quarter_fp)) >> 12;
+            dst[k * 8 + j] = @intCast(s);
         }
     }
 }
 
 // Helper function to encode a single 8x8 block
 fn encodeBlock(
-    block: *const [64]f32,
-    quant_table: *const [64]f32,
+    block: *const [64]i32,
+    quant_table: *const [64]i32,
     writer: *EntropyWriter,
     dc_encoder: *const HuffmanEncoder,
     ac_encoder: *const HuffmanEncoder,
     prev_dc: *i32,
 ) !void {
-    var dct: [64]f32 = undefined;
+    var dct: [64]i32 = undefined;
     fdct8x8(block, &dct);
 
     var coeffs: [64]i32 = undefined;
-    for (0..64) |i| coeffs[i] = @intFromFloat(@round(dct[i] / quant_table[i]));
+    // Fixed-point quantization with rounding
+    for (0..64) |i| {
+        const val = dct[i];
+        const q = quant_table[i];
+        // Round to nearest: (val + q/2) / q
+        if (val >= 0) {
+            coeffs[i] = @divTrunc(val + @divTrunc(q, 2), q);
+        } else {
+            coeffs[i] = @divTrunc(val - @divTrunc(q, 2), q);
+        }
+    }
 
     // Encode DC coefficient
     const dc_coeff = coeffs[0];
@@ -447,8 +487,8 @@ fn encodeBlock(
 fn encodeBlocksRgb(
     image: Image(Rgb),
     subsampling: JpegSubsampling,
-    ql_f: *const [64]f32,
-    qc_f: *const [64]f32,
+    ql: *const [64]i32,
+    qc: *const [64]i32,
     writer: *EntropyWriter,
     dc_luma: *const HuffmanEncoder,
     ac_luma: *const HuffmanEncoder,
@@ -474,7 +514,7 @@ fn encodeBlocksRgb(
     var prev_dc_cb: i32 = 0;
     var prev_dc_cr: i32 = 0;
 
-    var block: [64]f32 = undefined;
+    var block: [64]i32 = undefined;
 
     for (0..mcu_rows) |mcu_y| {
         for (0..mcu_cols) |mcu_x| {
@@ -489,10 +529,11 @@ fn encodeBlocksRgb(
                             const ix = @min(cols - 1, px0 + x);
                             const rgb = image.at(iy, ix).*;
                             const ycbcr = convertColor(Ycbcr, rgb);
-                            block[y * 8 + x] = ycbcr.y - 128.0;
+                            // Convert to fixed-point: Y is [0, 255], center at 128
+                            block[y * 8 + x] = @intFromFloat(ycbcr.y - 128.0);
                         }
                     }
-                    try encodeBlock(&block, ql_f, writer, dc_luma, ac_luma, &prev_dc_y);
+                    try encodeBlock(&block, ql, writer, dc_luma, ac_luma, &prev_dc_y);
                 }
             }
 
@@ -515,10 +556,10 @@ fn encodeBlocksRgb(
                         }
                     }
                     const avg_cb = sum_cb / @as(f32, @floatFromInt(count));
-                    block[y * 8 + x] = avg_cb - 128.0;
+                    block[y * 8 + x] = @intFromFloat(avg_cb - 128.0);
                 }
             }
-            try encodeBlock(&block, qc_f, writer, dc_chroma, ac_chroma, &prev_dc_cb);
+            try encodeBlock(&block, qc, writer, dc_chroma, ac_chroma, &prev_dc_cb);
 
             // Encode Cr block for this MCU (downsampled if needed)
             for (0..8) |y| {
@@ -537,10 +578,10 @@ fn encodeBlocksRgb(
                         }
                     }
                     const avg_cr = sum_cr / @as(f32, @floatFromInt(count));
-                    block[y * 8 + x] = avg_cr - 128.0;
+                    block[y * 8 + x] = @intFromFloat(avg_cr - 128.0);
                 }
             }
-            try encodeBlock(&block, qc_f, writer, dc_chroma, ac_chroma, &prev_dc_cr);
+            try encodeBlock(&block, qc, writer, dc_chroma, ac_chroma, &prev_dc_cr);
         }
     }
 }
@@ -574,15 +615,15 @@ fn encodeRgb(allocator: Allocator, image: Image(Rgb), options: EncodeOptions) ![
     const dc_chroma = buildHuffmanEncoder(&StdTables.bits_dc_chroma, &StdTables.val_dc_chroma);
     const ac_chroma = buildHuffmanEncoder(&StdTables.bits_ac_chroma, &StdTables.val_ac_chroma);
 
-    // Float quant tables for math
-    var ql_f: [64]f32 = undefined;
-    var qc_f: [64]f32 = undefined;
+    // Convert quant tables to fixed-point
+    var ql_i: [64]i32 = undefined;
+    var qc_i: [64]i32 = undefined;
     for (0..64) |i| {
-        ql_f[i] = @floatFromInt(ql[i]);
-        qc_f[i] = @floatFromInt(qc[i]);
+        ql_i[i] = @intCast(ql[i]);
+        qc_i[i] = @intCast(qc[i]);
     }
 
-    try encodeBlocksRgb(image, options.subsampling, &ql_f, &qc_f, &ew, &dc_luma, &ac_luma, &dc_chroma, &ac_chroma);
+    try encodeBlocksRgb(image, options.subsampling, &ql_i, &qc_i, &ew, &dc_luma, &ac_luma, &dc_chroma, &ac_chroma);
     try ew.flush();
 
     // Append entropy-coded bytes into output
@@ -639,9 +680,9 @@ fn encodeGrayscale(allocator: Allocator, bytes: []const u8, width: u32, height: 
     const dc = buildHuffmanEncoder(&StdTables.bits_dc_luma, &StdTables.val_dc_luma);
     const ac = buildHuffmanEncoder(&StdTables.bits_ac_luma, &StdTables.val_ac_luma);
 
-    // Float quant table
-    var ql_f: [64]f32 = undefined;
-    for (0..64) |i| ql_f[i] = @floatFromInt(ql[i]);
+    // Convert quant table to fixed-point
+    var ql_i: [64]i32 = undefined;
+    for (0..64) |i| ql_i[i] = @intCast(ql[i]);
 
     var prev_dc: i32 = 0;
 
@@ -649,7 +690,7 @@ fn encodeGrayscale(allocator: Allocator, bytes: []const u8, width: u32, height: 
     const cols: usize = @intCast(width);
     const block_rows: usize = (rows + 7) / 8;
     const block_cols: usize = (cols + 7) / 8;
-    var block: [64]f32 = undefined;
+    var block: [64]i32 = undefined;
 
     for (0..block_rows) |br| {
         for (0..block_cols) |bc| {
@@ -658,10 +699,11 @@ fn encodeGrayscale(allocator: Allocator, bytes: []const u8, width: u32, height: 
                 for (0..8) |x| {
                     const ix = @min(cols - 1, bc * 8 + x);
                     const v: u8 = bytes[iy * cols + ix];
-                    block[y * 8 + x] = @as(f32, @floatFromInt(v)) - 128.0;
+                    // Convert to fixed-point, center at 128
+                    block[y * 8 + x] = @as(i32, @intCast(v)) - 128;
                 }
             }
-            try encodeBlock(&block, &ql_f, &ew, &dc, &ac, &prev_dc);
+            try encodeBlock(&block, &ql_i, &ew, &dc, &ac, &prev_dc);
         }
     }
 
@@ -2684,7 +2726,7 @@ test "JPEG encode -> decode RGB roundtrip" {
     try renderRgbBlocksToPixels(Rgb, &decoder, &out);
 
     const ps = try img.psnr(out);
-    try std.testing.expect(ps > 28.0);
+    try std.testing.expect(ps > 40.0);
 }
 
 test "JPEG encode -> decode grayscale roundtrip" {
@@ -2713,7 +2755,7 @@ test "JPEG encode -> decode grayscale roundtrip" {
     var gray_rgb = try img.convert(Rgb, gpa);
     defer gray_rgb.deinit(gpa);
     const ps = try gray_rgb.psnr(out);
-    try std.testing.expect(ps > 24.0);
+    try std.testing.expect(ps > 45);
 }
 
 test "JPEG subsampling 4:2:2 roundtrip" {
