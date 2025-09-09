@@ -41,13 +41,7 @@ pub const EncodeOptions = struct {
     subsampling: JpegSubsampling = .yuv444,
     density_dpi: u16 = 72,
     comment: ?[]const u8 = null,
-    dct: DctImpl = .llm,
     pub const default: EncodeOptions = .{};
-};
-
-pub const DctImpl = enum {
-    reference, // cosine-sum reference FDCT
-    llm, // Loeffler-Ligtenberg-Moschytz integer FDCT (libjpeg)
 };
 
 /// Save Image to JPEG file with baseline encoding.
@@ -208,8 +202,6 @@ const EntropyWriter = struct {
     }
 };
 
-var __aan_debug_once: bool = true; // debug aid: prints once if enabled
-
 fn writeMarker(dst: *std.ArrayList(u8), gpa: Allocator, marker: u16) !void {
     try dst.append(gpa, 0xFF);
     try dst.append(gpa, @intCast(marker & 0xFF));
@@ -365,10 +357,10 @@ fn magnitudeBits(value: i32, mag: u5) u32 {
 }
 
 // -----------------------------
-// Forward DCT (reference cos-sum) and AAN (fixed-point)
+// Forward DCT - Loeffler-Ligtenberg-Moschytz (LLM) algorithm
 // -----------------------------
 
-// AAN constants in 13-bit fixed point (CONST_BITS = 13)
+// LLM DCT constants in 13-bit fixed point (CONST_BITS = 13)
 inline fn FIX(comptime x: f32) i32 {
     return @as(i32, @intFromFloat(x * (1 << 13) + 0.5));
 }
@@ -385,63 +377,14 @@ const FIX_1_961570560: i32 = FIX(1.961570560);
 const FIX_2_053119869: i32 = FIX(2.053119869);
 const FIX_2_562915447: i32 = FIX(2.562915447);
 const FIX_3_072711026: i32 = FIX(3.072711026);
-const FIX_0_707106781: i32 = FIX(0.707106781);
-const FIX_1_306562965: i32 = FIX(1.306562965);
-const FIX_0_382683433: i32 = FIX(0.382683433);
 
 inline fn DESCALE(x: i64, n: u5) i32 {
     const add: i64 = @as(i64, 1) << (n - 1);
     return @intCast((x + add) >> n);
 }
 
-// AAN forward DCT (scaled). Output coefficients are scaled per AAN factors.
-// The per-coefficient scaling S[u]*S[v] is folded into quantization.
-// Reference FDCT using cosine table (kept for correctness baseline).
-// Normalization is folded into quantization for better performance.
-const dct_cos_table = blk: {
-    @setEvalBranchQuota(10000);
-    var table: [64]i32 = undefined;
-    const pi = std.math.pi;
-    for (0..8) |k| {
-        for (0..8) |n| {
-            const angle = @as(f32, @floatFromInt(2 * n + 1)) * @as(f32, @floatFromInt(k)) * pi / 16.0;
-            const cos_val = std.math.cos(angle);
-            table[k * 8 + n] = @intFromFloat(cos_val * 4096.0 + 0.5);
-        }
-    }
-    break :blk table;
-};
-
-fn fdct8x8(src: *const [64]i32, dst: *[64]i32) void {
-    var tmp: [64]i32 = undefined;
-    // Row pass
-    for (0..8) |i| {
-        for (0..8) |k| {
-            var sum: i64 = 0;
-            for (0..8) |n| {
-                const pixel = src[i * 8 + n];
-                const cos_val = dct_cos_table[k * 8 + n];
-                sum += @as(i64, pixel) * @as(i64, cos_val);
-            }
-            tmp[i * 8 + k] = @intCast(sum >> 12);
-        }
-    }
-    // Column pass
-    for (0..8) |j| {
-        for (0..8) |k| {
-            var sum: i64 = 0;
-            for (0..8) |n| {
-                const val = tmp[n * 8 + j];
-                const cos_val = dct_cos_table[k * 8 + n];
-                sum += @as(i64, val) * @as(i64, cos_val);
-            }
-            dst[k * 8 + j] = @intCast(sum >> 12);
-        }
-    }
-}
-
 // Integer forward DCT based on libjpeg's jfdctint.c implementation
-// This is a slow-but-accurate integer implementation using the
+// This is an accurate integer implementation using the
 // Loeffler, Ligtenberg and Moschytz algorithm with 12 multiplies and 32 adds.
 fn fdct8x8_llm(src: *const [64]i32, dst: *[64]i32) void {
     const CONST_BITS: u5 = 13;
@@ -558,22 +501,6 @@ fn fdct8x8_llm(src: *const [64]i32, dst: *[64]i32) void {
 // Reciprocal-based quantization (fold normalization/scaling into the divisor).
 const RECIP_SHIFT: u5 = 24; // high precision for reciprocals
 
-fn buildQuantRecipRef(divisors_out: *[64]u32, qtbl: *const [64]u8) void {
-    // JPEG normalization factors: alpha(u)alpha(v)/4 (where alpha(0)=1/sqrt(2), else 1)
-    const sqrt2: f64 = 1.4142135623730951;
-    const alpha = [_]f64{ 1.0 / sqrt2, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
-    for (0..8) |u| {
-        for (0..8) |v| {
-            const idx = u * 8 + v;
-            const q = @as(f64, @floatFromInt(qtbl[idx]));
-            const factor = alpha[u] * alpha[v] * 0.25;
-            const recip_f = (@as(f64, @floatFromInt(1 << RECIP_SHIFT)) * factor) / q;
-            const recip_u: u32 = @intFromFloat(@round(@max(0.0, @min(4_294_967_295.0, recip_f))));
-            divisors_out[idx] = recip_u;
-        }
-    }
-}
-
 fn buildQuantRecipLLM(divisors_out: *[64]u32, qtbl: *const [64]u8) void {
     // For LLM DCT (libjpeg-style), the output is scaled by 8
     // We need to divide by 8 * quantization value
@@ -603,34 +530,9 @@ fn encodeBlock(
     dc_encoder: *const HuffmanEncoder,
     ac_encoder: *const HuffmanEncoder,
     prev_dc: *i32,
-    dct_impl: DctImpl,
 ) !void {
     var dct: [64]i32 = undefined;
-    switch (dct_impl) {
-        .reference => fdct8x8(block, &dct),
-        .llm => fdct8x8_llm(block, &dct),
-    }
-
-    if (__aan_debug_once and dct_impl == .llm) {
-        __aan_debug_once = false;
-        var ref: [64]i32 = undefined;
-        fdct8x8(block, &ref);
-        std.debug.print("AAN vs REF coeff[0..7]:\n", .{});
-        for (0..8) |i| {
-            std.debug.print("k={}: aan={} ref={} diff={}\n", .{ i, dct[i], ref[i], dct[i] - ref[i] });
-        }
-    }
-
-    // Debug compare AAN vs reference cosine FDCT once
-    if (false and __aan_debug_once) {
-        __aan_debug_once = false;
-        var ref: [64]i32 = undefined;
-        fdct8x8(block, &ref);
-        std.debug.print("AAN vs REF (first 8 coeffs natural order):\n", .{});
-        for (0..8) |i| {
-            std.debug.print("k={}: aan={} ref={}\n", .{ i, dct[i], ref[i] });
-        }
-    }
+    fdct8x8_llm(block, &dct);
 
     var coeffs: [64]i32 = undefined;
     // Quantization using reciprocal divisors (JPEG normalization folded in)
@@ -679,7 +581,6 @@ fn encodeBlocksRgb(
     ac_luma: *const HuffmanEncoder,
     dc_chroma: *const HuffmanEncoder,
     ac_chroma: *const HuffmanEncoder,
-    dct_impl: DctImpl,
 ) !void {
     const rows: usize = image.rows;
     const cols: usize = image.cols;
@@ -718,7 +619,7 @@ fn encodeBlocksRgb(
                             block[y * 8 + x] = @as(i32, ycbcr.y) - 128;
                         }
                     }
-                    try encodeBlock(&block, ql_recip, writer, dc_luma, ac_luma, &prev_dc_y, dct_impl);
+                    try encodeBlock(&block, ql_recip, writer, dc_luma, ac_luma, &prev_dc_y);
                 }
             }
 
@@ -744,7 +645,7 @@ fn encodeBlocksRgb(
                     block[y * 8 + x] = avg_cb - 128;
                 }
             }
-            try encodeBlock(&block, qc_recip, writer, dc_chroma, ac_chroma, &prev_dc_cb, dct_impl);
+            try encodeBlock(&block, qc_recip, writer, dc_chroma, ac_chroma, &prev_dc_cb);
 
             // Encode Cr block for this MCU (downsampled if needed)
             for (0..8) |y| {
@@ -766,7 +667,7 @@ fn encodeBlocksRgb(
                     block[y * 8 + x] = avg_cr - 128;
                 }
             }
-            try encodeBlock(&block, qc_recip, writer, dc_chroma, ac_chroma, &prev_dc_cr, dct_impl);
+            try encodeBlock(&block, qc_recip, writer, dc_chroma, ac_chroma, &prev_dc_cr);
         }
     }
 }
@@ -803,18 +704,10 @@ fn encodeRgb(allocator: Allocator, image: Image(Rgb), options: EncodeOptions) ![
     // Build reciprocal quantization tables with folded normalization/scaling
     var ql_recip: [64]u32 = undefined;
     var qc_recip: [64]u32 = undefined;
-    switch (options.dct) {
-        .reference => {
-            buildQuantRecipRef(&ql_recip, &ql);
-            buildQuantRecipRef(&qc_recip, &qc);
-        },
-        .llm => {
-            buildQuantRecipLLM(&ql_recip, &ql);
-            buildQuantRecipLLM(&qc_recip, &qc);
-        },
-    }
+    buildQuantRecipLLM(&ql_recip, &ql);
+    buildQuantRecipLLM(&qc_recip, &qc);
 
-    try encodeBlocksRgb(image, options.subsampling, &ql_recip, &qc_recip, &ew, &dc_luma, &ac_luma, &dc_chroma, &ac_chroma, options.dct);
+    try encodeBlocksRgb(image, options.subsampling, &ql_recip, &qc_recip, &ew, &dc_luma, &ac_luma, &dc_chroma, &ac_chroma);
     try ew.flush();
 
     // Append entropy-coded bytes into output
@@ -873,10 +766,7 @@ fn encodeGrayscale(allocator: Allocator, bytes: []const u8, width: u32, height: 
 
     // Build reciprocal quantization table with folded normalization/scaling
     var ql_recip: [64]u32 = undefined;
-    switch (options.dct) {
-        .reference => buildQuantRecipRef(&ql_recip, &ql),
-        .llm => buildQuantRecipLLM(&ql_recip, &ql),
-    }
+    buildQuantRecipLLM(&ql_recip, &ql);
 
     var prev_dc: i32 = 0;
 
@@ -897,7 +787,7 @@ fn encodeGrayscale(allocator: Allocator, bytes: []const u8, width: u32, height: 
                     block[y * 8 + x] = @as(i32, @intCast(v)) - 128;
                 }
             }
-            try encodeBlock(&block, &ql_recip, &ew, &dc, &ac, &prev_dc, options.dct);
+            try encodeBlock(&block, &ql_recip, &ew, &dc, &ac, &prev_dc);
         }
     }
 
@@ -1137,9 +1027,6 @@ pub const JpegDecoder = struct {
                 return value;
             }
         }
-
-        // Debug info for invalid Huffman codes (commented out for now)
-        // std.debug.print("DEBUG: Invalid Huffman code: 0x{X} (length tried up to 16)\n", .{code});
 
         return error.InvalidHuffmanCode;
     }
@@ -1607,7 +1494,6 @@ pub const BitReader = struct {
                     byte_curr = self.data[self.byte_pos];
                     self.byte_pos += 1;
                 } else {
-                    std.debug.print("DEBUG: Found marker 0xFF{X:0>2} - ending scan\n", .{byte_next});
                     self.byte_pos -= 2;
                     return error.UnexpectedEndOfData;
                 }
@@ -2931,7 +2817,6 @@ test "JPEG encode -> decode RGB roundtrip" {
     try renderRgbBlocksToPixels(Rgb, &decoder, &out);
 
     const ps = try img.psnr(out);
-    std.debug.print("\nRGB test PSNR: {d:.2} (threshold 40.0)\n", .{ps});
     try std.testing.expect(ps > 40.0);
 }
 
@@ -2961,7 +2846,6 @@ test "JPEG encode -> decode grayscale roundtrip" {
     var gray_rgb = try img.convert(Rgb, gpa);
     defer gray_rgb.deinit(gpa);
     const ps = try gray_rgb.psnr(out);
-    std.debug.print("Grayscale test PSNR: {d:.2} (threshold 45.0)\n", .{ps});
     try std.testing.expect(ps > 45);
 }
 
@@ -2997,7 +2881,6 @@ test "JPEG subsampling 4:2:2 roundtrip" {
     try renderRgbBlocksToPixels(Rgb, &decoder, &out);
 
     const ps = try img.psnr(out);
-    std.debug.print("4:2:2 test PSNR: {d:.2} (threshold 40.0)\n", .{ps});
     try std.testing.expect(ps > 40);
 }
 
@@ -3033,7 +2916,6 @@ test "JPEG subsampling 4:2:0 roundtrip" {
     try renderRgbBlocksToPixels(Rgb, &decoder, &out);
 
     const ps = try img.psnr(out);
-    std.debug.print("4:2:0 test PSNR: {d:.2} (threshold 11.5)\n", .{ps});
     try std.testing.expect(ps > 12);
 }
 
