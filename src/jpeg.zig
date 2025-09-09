@@ -68,7 +68,7 @@ pub fn encodeImage(comptime T: type, allocator: Allocator, image: Image(T), opti
     switch (T) {
         u8 => return encodeGrayscale(allocator, image.asBytes(), @intCast(image.cols), @intCast(image.rows), options),
         Rgb => return encodeRgb(allocator, image, options),
-        else => return encodeRgb(allocator, try image.convert(allocator, Rgb), options),
+        else => return encodeRgb(allocator, try image.convert(Rgb, allocator), options),
     }
 }
 

@@ -95,7 +95,7 @@ pub fn toXyb(self: Ycbcr) Xyb {
 
 /// Converts to grayscale using the Y (luma) component.
 pub fn toGray(self: Ycbcr) u8 {
-    return @intFromFloat(@max(0, @min(255, @round(self.y))));
+    return self.y;
 }
 
 /// Alpha blends this color with another RGBA color using the specified blend mode and returns the result.
