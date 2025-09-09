@@ -41,13 +41,13 @@ pub const EncodeOptions = struct {
     subsampling: JpegSubsampling = .yuv444,
     density_dpi: u16 = 72,
     comment: ?[]const u8 = null,
-    dct: DctImpl = .aan,
+    dct: DctImpl = .llm,
     pub const default: EncodeOptions = .{};
 };
 
 pub const DctImpl = enum {
     reference, // cosine-sum reference FDCT
-    aan, // AAN/LLM fixed-point FDCT with folded scaling
+    llm, // Loeffler-Ligtenberg-Moschytz integer FDCT (libjpeg)
 };
 
 /// Save Image to JPEG file with baseline encoding.
@@ -440,90 +440,81 @@ fn fdct8x8(src: *const [64]i32, dst: *[64]i32) void {
     }
 }
 
-// AAN forward DCT (scaled). Output coefficients are scaled per AAN factors.
-// The per-coefficient scaling S[u]*S[v] is folded into quantization.
-fn fdct8x8_aan(src: *const [64]i32, dst: *[64]i32) void {
+// Integer forward DCT based on libjpeg's jfdctint.c implementation
+// This is a slow-but-accurate integer implementation using the
+// Loeffler, Ligtenberg and Moschytz algorithm with 12 multiplies and 32 adds.
+fn fdct8x8_llm(src: *const [64]i32, dst: *[64]i32) void {
     const CONST_BITS: u5 = 13;
     const PASS1_BITS: u5 = 2;
 
     var data: [64]i32 = undefined;
 
-    // Pass 1: rows
+    // Pass 1: process rows.
+    // Note results are scaled up by sqrt(8) compared to a true DCT;
+    // furthermore, we scale the results by 2**PASS1_BITS.
     for (0..8) |y| {
-        const d0 = src[y * 8 + 0];
-        const d1 = src[y * 8 + 1];
-        const d2 = src[y * 8 + 2];
-        const d3 = src[y * 8 + 3];
-        const d4 = src[y * 8 + 4];
-        const d5 = src[y * 8 + 5];
-        const d6 = src[y * 8 + 6];
-        const d7 = src[y * 8 + 7];
+        const tmp0: i64 = src[y * 8 + 0] + src[y * 8 + 7];
+        const tmp7: i64 = src[y * 8 + 0] - src[y * 8 + 7];
+        const tmp1: i64 = src[y * 8 + 1] + src[y * 8 + 6];
+        const tmp6: i64 = src[y * 8 + 1] - src[y * 8 + 6];
+        const tmp2: i64 = src[y * 8 + 2] + src[y * 8 + 5];
+        const tmp5: i64 = src[y * 8 + 2] - src[y * 8 + 5];
+        const tmp3: i64 = src[y * 8 + 3] + src[y * 8 + 4];
+        const tmp4: i64 = src[y * 8 + 3] - src[y * 8 + 4];
 
-        const tmp0 = d0 + d7;
-        const tmp7 = d0 - d7;
-        const tmp1 = d1 + d6;
-        const tmp6 = d1 - d6;
-        const tmp2 = d2 + d5;
-        const tmp5 = d2 - d5;
-        const tmp3 = d3 + d4;
-        const tmp4 = d3 - d4;
-
-        // Even part
+        // Even part per LL&M figure 1 --- note that published figure is faulty;
+        // rotator "sqrt(2)*c1" should be "sqrt(2)*c6".
         const tmp10 = tmp0 + tmp3;
         const tmp13 = tmp0 - tmp3;
         const tmp11 = tmp1 + tmp2;
         const tmp12 = tmp1 - tmp2;
 
-        data[y * 8 + 0] = (tmp10 + tmp11) << PASS1_BITS;
-        data[y * 8 + 4] = (tmp10 - tmp11) << PASS1_BITS;
+        data[y * 8 + 0] = @intCast((tmp10 + tmp11) << PASS1_BITS);
+        data[y * 8 + 4] = @intCast((tmp10 - tmp11) << PASS1_BITS);
 
-        // AAN even part (jfdctint form)
-        const z1_row = (@as(i64, @intCast(tmp12 + tmp13)) * @as(i64, FIX_0_541196100));
-        data[y * 8 + 2] = DESCALE(z1_row + (@as(i64, @intCast(tmp13)) * @as(i64, FIX_0_765366865)), CONST_BITS - PASS1_BITS);
-        data[y * 8 + 6] = DESCALE(z1_row + (@as(i64, @intCast(tmp12)) * @as(i64, -FIX_1_847759065)), CONST_BITS - PASS1_BITS);
+        const z1 = (tmp12 + tmp13) * FIX_0_541196100;
+        data[y * 8 + 2] = DESCALE(z1 + tmp13 * FIX_0_765366865, CONST_BITS - PASS1_BITS);
+        data[y * 8 + 6] = DESCALE(z1 + tmp12 * (-FIX_1_847759065), CONST_BITS - PASS1_BITS);
 
-        // Odd part
-        var z1: i64 = @as(i64, tmp4 + tmp7);
-        var z2: i64 = @as(i64, tmp5 + tmp6);
-        var z3: i64 = @as(i64, tmp4 + tmp6);
-        var z4: i64 = @as(i64, tmp5 + tmp7);
-        const z5 = (@as(i64, (tmp4 + tmp6) + (tmp5 + tmp7)) * @as(i64, FIX_1_175875602));
+        // Odd part per figure 8 --- note paper omits factor of sqrt(2).
+        // cK represents cos(K*pi/16).
+        // i0..i3 in the paper are tmp4..tmp7 here.
+        var z1_odd = tmp4 + tmp7;
+        var z2 = tmp5 + tmp6;
+        var z3 = tmp4 + tmp6;
+        var z4 = tmp5 + tmp7;
+        const z5 = (z3 + z4) * FIX_1_175875602; // sqrt(2) * c3
 
-        const t4 = @as(i64, tmp4) * @as(i64, FIX_0_298631336);
-        const t5 = @as(i64, tmp5) * @as(i64, FIX_2_053119869);
-        const t6 = @as(i64, tmp6) * @as(i64, FIX_3_072711026);
-        const t7 = @as(i64, tmp7) * @as(i64, FIX_1_501321110);
+        const t4 = tmp4 * FIX_0_298631336; // sqrt(2) * (-c1+c3+c5-c7)
+        const t5 = tmp5 * FIX_2_053119869; // sqrt(2) * ( c1+c3-c5+c7)
+        const t6 = tmp6 * FIX_3_072711026; // sqrt(2) * ( c1+c3+c5-c7)
+        const t7 = tmp7 * FIX_1_501321110; // sqrt(2) * ( c1+c3-c5-c7)
+        z1_odd = z1_odd * (-FIX_0_899976223); // sqrt(2) * (c7-c3)
+        z2 = z2 * (-FIX_2_562915447); // sqrt(2) * (-c1-c3)
+        z3 = z3 * (-FIX_1_961570560); // sqrt(2) * (-c3-c5)
+        z4 = z4 * (-FIX_0_390180644); // sqrt(2) * (c5-c3)
 
-        z1 = z1 * @as(i64, -FIX_0_899976223);
-        z2 = z2 * @as(i64, -FIX_2_562915447);
-        z3 = z3 * @as(i64, -FIX_1_961570560) + z5;
-        z4 = z4 * @as(i64, -FIX_0_390180644) + z5;
+        z3 += z5;
+        z4 += z5;
 
-        data[y * 8 + 7] = DESCALE(t4 + z1 + z3, CONST_BITS - PASS1_BITS);
+        data[y * 8 + 7] = DESCALE(t4 + z1_odd + z3, CONST_BITS - PASS1_BITS);
         data[y * 8 + 5] = DESCALE(t5 + z2 + z4, CONST_BITS - PASS1_BITS);
         data[y * 8 + 3] = DESCALE(t6 + z2 + z3, CONST_BITS - PASS1_BITS);
-        data[y * 8 + 1] = DESCALE(t7 + z1 + z4, CONST_BITS - PASS1_BITS);
+        data[y * 8 + 1] = DESCALE(t7 + z1_odd + z4, CONST_BITS - PASS1_BITS);
     }
 
-    // Pass 2: columns
+    // Pass 2: process columns.
+    // We remove the PASS1_BITS scaling, but leave the results scaled up
+    // by an overall factor of 8.
     for (0..8) |x| {
-        const d0 = data[0 * 8 + x];
-        const d1 = data[1 * 8 + x];
-        const d2 = data[2 * 8 + x];
-        const d3 = data[3 * 8 + x];
-        const d4 = data[4 * 8 + x];
-        const d5 = data[5 * 8 + x];
-        const d6 = data[6 * 8 + x];
-        const d7 = data[7 * 8 + x];
-
-        const tmp0 = d0 + d7;
-        const tmp7 = d0 - d7;
-        const tmp1 = d1 + d6;
-        const tmp6 = d1 - d6;
-        const tmp2 = d2 + d5;
-        const tmp5 = d2 - d5;
-        const tmp3 = d3 + d4;
-        const tmp4 = d3 - d4;
+        const tmp0: i64 = data[0 * 8 + x] + data[7 * 8 + x];
+        const tmp7: i64 = data[0 * 8 + x] - data[7 * 8 + x];
+        const tmp1: i64 = data[1 * 8 + x] + data[6 * 8 + x];
+        const tmp6: i64 = data[1 * 8 + x] - data[6 * 8 + x];
+        const tmp2: i64 = data[2 * 8 + x] + data[5 * 8 + x];
+        const tmp5: i64 = data[2 * 8 + x] - data[5 * 8 + x];
+        const tmp3: i64 = data[3 * 8 + x] + data[4 * 8 + x];
+        const tmp4: i64 = data[3 * 8 + x] - data[4 * 8 + x];
 
         // Even part
         const tmp10 = tmp0 + tmp3;
@@ -531,34 +522,36 @@ fn fdct8x8_aan(src: *const [64]i32, dst: *[64]i32) void {
         const tmp11 = tmp1 + tmp2;
         const tmp12 = tmp1 - tmp2;
 
-        dst[0 * 8 + x] = DESCALE((@as(i64, tmp10 + tmp11)) << PASS1_BITS, PASS1_BITS + 2);
-        dst[4 * 8 + x] = DESCALE((@as(i64, tmp10 - tmp11)) << PASS1_BITS, PASS1_BITS + 2);
+        dst[0 * 8 + x] = DESCALE(tmp10 + tmp11, PASS1_BITS);
+        dst[4 * 8 + x] = DESCALE(tmp10 - tmp11, PASS1_BITS);
 
-        const z1_col = (@as(i64, @intCast(tmp12 + tmp13)) * @as(i64, FIX_0_541196100));
-        dst[2 * 8 + x] = DESCALE(z1_col + (@as(i64, @intCast(tmp13)) * @as(i64, FIX_0_765366865)), CONST_BITS + PASS1_BITS + 2);
-        dst[6 * 8 + x] = DESCALE(z1_col + (@as(i64, @intCast(tmp12)) * @as(i64, -FIX_1_847759065)), CONST_BITS + PASS1_BITS + 2);
+        const z1 = (tmp12 + tmp13) * FIX_0_541196100;
+        dst[2 * 8 + x] = DESCALE(z1 + tmp13 * FIX_0_765366865, CONST_BITS + PASS1_BITS);
+        dst[6 * 8 + x] = DESCALE(z1 + tmp12 * (-FIX_1_847759065), CONST_BITS + PASS1_BITS);
 
         // Odd part
-        var z1: i64 = @as(i64, tmp4 + tmp7);
-        var z2: i64 = @as(i64, tmp5 + tmp6);
-        var z3: i64 = @as(i64, tmp4 + tmp6);
-        var z4: i64 = @as(i64, tmp5 + tmp7);
-        const z5 = (@as(i64, (tmp4 + tmp6) + (tmp5 + tmp7)) * @as(i64, FIX_1_175875602));
+        var z1_odd = tmp4 + tmp7;
+        var z2 = tmp5 + tmp6;
+        var z3 = tmp4 + tmp6;
+        var z4 = tmp5 + tmp7;
+        const z5 = (z3 + z4) * FIX_1_175875602;
 
-        const t4 = @as(i64, tmp4) * @as(i64, FIX_0_298631336);
-        const t5 = @as(i64, tmp5) * @as(i64, FIX_2_053119869);
-        const t6 = @as(i64, tmp6) * @as(i64, FIX_3_072711026);
-        const t7 = @as(i64, tmp7) * @as(i64, FIX_1_501321110);
+        const t4 = tmp4 * FIX_0_298631336;
+        const t5 = tmp5 * FIX_2_053119869;
+        const t6 = tmp6 * FIX_3_072711026;
+        const t7 = tmp7 * FIX_1_501321110;
+        z1_odd = z1_odd * (-FIX_0_899976223);
+        z2 = z2 * (-FIX_2_562915447);
+        z3 = z3 * (-FIX_1_961570560);
+        z4 = z4 * (-FIX_0_390180644);
 
-        z1 = z1 * @as(i64, -FIX_0_899976223);
-        z2 = z2 * @as(i64, -FIX_2_562915447);
-        z3 = z3 * @as(i64, -FIX_1_961570560) + z5;
-        z4 = z4 * @as(i64, -FIX_0_390180644) + z5;
+        z3 += z5;
+        z4 += z5;
 
-        dst[7 * 8 + x] = DESCALE(t4 + z1 + z3, CONST_BITS + PASS1_BITS + 2);
-        dst[5 * 8 + x] = DESCALE(t5 + z2 + z4, CONST_BITS + PASS1_BITS + 2);
-        dst[3 * 8 + x] = DESCALE(t6 + z2 + z3, CONST_BITS + PASS1_BITS + 2);
-        dst[1 * 8 + x] = DESCALE(t7 + z1 + z4, CONST_BITS + PASS1_BITS + 2);
+        dst[7 * 8 + x] = DESCALE(t4 + z1_odd + z3, CONST_BITS + PASS1_BITS);
+        dst[5 * 8 + x] = DESCALE(t5 + z2 + z4, CONST_BITS + PASS1_BITS);
+        dst[3 * 8 + x] = DESCALE(t6 + z2 + z3, CONST_BITS + PASS1_BITS);
+        dst[1 * 8 + x] = DESCALE(t7 + z1_odd + z4, CONST_BITS + PASS1_BITS);
     }
 }
 
@@ -581,27 +574,15 @@ fn buildQuantRecipRef(divisors_out: *[64]u32, qtbl: *const [64]u8) void {
     }
 }
 
-fn buildQuantRecipAAN(divisors_out: *[64]u32, qtbl: *const [64]u8) void {
-    // AAN scaling factors per 1D output index (libjpeg aanscalefactor)
-    const aasf = [_]f64{
-        1.0,
-        1.387039845,
-        1.306562965,
-        1.175875602,
-        1.0,
-        0.785694958,
-        0.541196100,
-        0.275899379,
-    };
-    for (0..8) |u| {
-        for (0..8) |v| {
-            const idx = u * 8 + v;
-            const q = @as(f64, @floatFromInt(qtbl[idx]));
-            const scale = aasf[u] * aasf[v] * 8.0;
-            const recip_f = (@as(f64, @floatFromInt(1 << RECIP_SHIFT))) / (q * scale);
-            const recip_u: u32 = @intFromFloat(@round(@max(0.0, @min(4_294_967_295.0, recip_f))));
-            divisors_out[idx] = recip_u;
-        }
+fn buildQuantRecipLLM(divisors_out: *[64]u32, qtbl: *const [64]u8) void {
+    // For LLM DCT (libjpeg-style), the output is scaled by 8
+    // We need to divide by 8 * quantization value
+    for (0..64) |idx| {
+        const q = @as(f64, @floatFromInt(qtbl[idx]));
+        const scale = 8.0; // Overall factor of 8 from the DCT
+        const recip_f = (@as(f64, @floatFromInt(1 << RECIP_SHIFT))) / (q * scale);
+        const recip_u: u32 = @intFromFloat(@round(@max(0.0, @min(4_294_967_295.0, recip_f))));
+        divisors_out[idx] = recip_u;
     }
 }
 
@@ -627,10 +608,10 @@ fn encodeBlock(
     var dct: [64]i32 = undefined;
     switch (dct_impl) {
         .reference => fdct8x8(block, &dct),
-        .aan => fdct8x8_aan(block, &dct),
+        .llm => fdct8x8_llm(block, &dct),
     }
 
-    if (__aan_debug_once and dct_impl == .aan) {
+    if (__aan_debug_once and dct_impl == .llm) {
         __aan_debug_once = false;
         var ref: [64]i32 = undefined;
         fdct8x8(block, &ref);
@@ -827,9 +808,9 @@ fn encodeRgb(allocator: Allocator, image: Image(Rgb), options: EncodeOptions) ![
             buildQuantRecipRef(&ql_recip, &ql);
             buildQuantRecipRef(&qc_recip, &qc);
         },
-        .aan => {
-            buildQuantRecipAAN(&ql_recip, &ql);
-            buildQuantRecipAAN(&qc_recip, &qc);
+        .llm => {
+            buildQuantRecipLLM(&ql_recip, &ql);
+            buildQuantRecipLLM(&qc_recip, &qc);
         },
     }
 
@@ -894,7 +875,7 @@ fn encodeGrayscale(allocator: Allocator, bytes: []const u8, width: u32, height: 
     var ql_recip: [64]u32 = undefined;
     switch (options.dct) {
         .reference => buildQuantRecipRef(&ql_recip, &ql),
-        .aan => buildQuantRecipAAN(&ql_recip, &ql),
+        .llm => buildQuantRecipLLM(&ql_recip, &ql),
     }
 
     var prev_dc: i32 = 0;
