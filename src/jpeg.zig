@@ -57,6 +57,14 @@ pub fn save(comptime T: type, allocator: Allocator, image: Image(T), file_path: 
 /// Encode an image into baseline JPEG bytes (SOF0, 8-bit, Huffman).
 /// Supports grayscale (u8) and RGB (Rgb). Other types are converted to RGB.
 pub fn encodeImage(comptime T: type, allocator: Allocator, image: Image(T), options: EncodeOptions) ![]u8 {
+    // Validate image dimensions
+    if (image.rows == 0 or image.cols == 0) {
+        return error.InvalidImageDimensions;
+    }
+    if (image.rows > 65535 or image.cols > 65535) {
+        return error.ImageTooLarge;
+    }
+
     switch (T) {
         u8 => return encodeGrayscale(allocator, image.asBytes(), @intCast(image.cols), @intCast(image.rows), options),
         Rgb => return encodeRgb(allocator, image, options),
@@ -348,38 +356,95 @@ fn magnitudeBits(value: i32, mag: u5) u32 {
     return @intCast(base + value);
 }
 
-fn fdct8x8(src: *const [64]f32, out: *[64]f32) void {
-    const pi: f32 = std.math.pi;
-    var cosx: [8][8]f32 = undefined;
-    var cosy: [8][8]f32 = undefined;
+// Pre-computed DCT cosine table for performance
+const DctCosTable = blk: {
+    @setEvalBranchQuota(10000);
+    var table: [8][8]f32 = undefined;
+    const pi = std.math.pi;
     for (0..8) |u| {
         for (0..8) |x| {
-            cosx[u][x] = std.math.cos(@as(f32, (2 * @as(f32, @floatFromInt(x)) + 1) * @as(f32, @floatFromInt(u)) * pi / 16.0));
+            const cu: f32 = if (u == 0) 1.0 / std.math.sqrt(2.0) else 1.0;
+            table[u][x] = cu * std.math.cos((2.0 * @as(f32, @floatFromInt(x)) + 1.0) * @as(f32, @floatFromInt(u)) * pi / 16.0);
         }
     }
+    break :blk table;
+};
+
+fn fdct8x8(src: *const [64]f32, out: *[64]f32) void {
+    var tmp: [64]f32 = undefined;
+
+    // 1D DCT on rows
     for (0..8) |v| {
-        for (0..8) |y| {
-            cosy[v][y] = std.math.cos(@as(f32, (2 * @as(f32, @floatFromInt(y)) + 1) * @as(f32, @floatFromInt(v)) * pi / 16.0));
+        for (0..8) |u| {
+            var sum: f32 = 0.0;
+            for (0..8) |x| {
+                sum += src[v * 8 + x] * DctCosTable[u][x];
+            }
+            tmp[v * 8 + u] = sum * 0.5;
         }
     }
 
+    // 1D DCT on columns
     for (0..8) |v| {
         for (0..8) |u| {
             var sum: f32 = 0.0;
             for (0..8) |y| {
-                for (0..8) |x| {
-                    sum += src[y * 8 + x] * cosx[u][x] * cosy[v][y];
-                }
+                sum += tmp[y * 8 + u] * DctCosTable[v][y];
             }
-            const cu: f32 = if (u == 0) 1.0 / std.math.sqrt(2.0) else 1.0;
-            const cv: f32 = if (v == 0) 1.0 / std.math.sqrt(2.0) else 1.0;
-            out[v * 8 + u] = 0.25 * cu * cv * sum;
+            out[v * 8 + u] = sum * 0.5;
         }
     }
 }
 
+// Helper function to encode a single 8x8 block
+fn encodeBlock(
+    block: *const [64]f32,
+    quant_table: *const [64]f32,
+    writer: *EntropyWriter,
+    dc_encoder: *const HuffmanEncoder,
+    ac_encoder: *const HuffmanEncoder,
+    prev_dc: *i32,
+) !void {
+    var dct: [64]f32 = undefined;
+    fdct8x8(block, &dct);
+
+    var coeffs: [64]i32 = undefined;
+    for (0..64) |i| coeffs[i] = @intFromFloat(@round(dct[i] / quant_table[i]));
+
+    // Encode DC coefficient
+    const dc_coeff = coeffs[0];
+    const diff = dc_coeff - prev_dc.*;
+    prev_dc.* = dc_coeff;
+
+    const mag = magnitudeCategory(diff);
+    try writer.writeBits(@intCast(dc_encoder.codes[mag]), @as(u5, @intCast(dc_encoder.sizes[mag])));
+    if (mag > 0) try writer.writeBits(magnitudeBits(diff, mag), mag);
+
+    // Encode AC coefficients
+    var run: u8 = 0;
+    for (1..64) |k| {
+        const v = coeffs[zigzag[k]];
+        if (v == 0) {
+            run += 1;
+            if (run == 16) {
+                try writer.writeBits(@intCast(ac_encoder.codes[0xF0]), @as(u5, @intCast(ac_encoder.sizes[0xF0])));
+                run = 0;
+            }
+        } else {
+            while (run >= 16) : (run -= 16) {
+                try writer.writeBits(@intCast(ac_encoder.codes[0xF0]), @as(u5, @intCast(ac_encoder.sizes[0xF0])));
+            }
+            const amag = magnitudeCategory(v);
+            const sym: u8 = (run << 4) | @as(u8, amag);
+            try writer.writeBits(@intCast(ac_encoder.codes[sym]), @as(u5, @intCast(ac_encoder.sizes[sym])));
+            try writer.writeBits(magnitudeBits(v, amag), amag);
+            run = 0;
+        }
+    }
+    if (run > 0) try writer.writeBits(@intCast(ac_encoder.codes[0x00]), @as(u5, @intCast(ac_encoder.sizes[0x00])));
+}
+
 fn encodeBlocksRgb(
-    allocator: Allocator,
     image: Image(Rgb),
     subsampling: JpegSubsampling,
     ql_f: *const [64]f32,
@@ -390,8 +455,6 @@ fn encodeBlocksRgb(
     dc_chroma: *const HuffmanEncoder,
     ac_chroma: *const HuffmanEncoder,
 ) !void {
-    _ = allocator; // reserved
-
     const rows: usize = image.rows;
     const cols: usize = image.cols;
     const h_max: usize = switch (subsampling) {
@@ -412,7 +475,6 @@ fn encodeBlocksRgb(
     var prev_dc_cr: i32 = 0;
 
     var block: [64]f32 = undefined;
-    var dct: [64]f32 = undefined;
 
     for (0..mcu_rows) |mcu_y| {
         for (0..mcu_cols) |mcu_x| {
@@ -430,38 +492,7 @@ fn encodeBlocksRgb(
                             block[y * 8 + x] = ycbcr.y - 128.0;
                         }
                     }
-                    fdct8x8(&block, &dct);
-                    var coeff_y: [64]i32 = undefined;
-                    for (0..64) |i| coeff_y[i] = @intFromFloat(@round(dct[i] / ql_f[i]));
-
-                    const dc_y = coeff_y[0];
-                    const diff_y = dc_y - prev_dc_y;
-                    prev_dc_y = dc_y;
-                    const mag_y = magnitudeCategory(diff_y);
-                    try writer.writeBits(@intCast(dc_luma.codes[mag_y]), @as(u5, @intCast(dc_luma.sizes[mag_y])));
-                    if (mag_y > 0) try writer.writeBits(magnitudeBits(diff_y, mag_y), mag_y);
-
-                    var run_y: u8 = 0;
-                    for (1..64) |k| {
-                        const v = coeff_y[zigzag[k]];
-                        if (v == 0) {
-                            run_y += 1;
-                            if (run_y == 16) {
-                                try writer.writeBits(@intCast(ac_luma.codes[0xF0]), @as(u5, @intCast(ac_luma.sizes[0xF0])));
-                                run_y = 0;
-                            }
-                        } else {
-                            while (run_y >= 16) : (run_y -= 16) {
-                                try writer.writeBits(@intCast(ac_luma.codes[0xF0]), @as(u5, @intCast(ac_luma.sizes[0xF0])));
-                            }
-                            const amag = magnitudeCategory(v);
-                            const sym: u8 = (run_y << 4) | @as(u8, amag);
-                            try writer.writeBits(@intCast(ac_luma.codes[sym]), @as(u5, @intCast(ac_luma.sizes[sym])));
-                            try writer.writeBits(magnitudeBits(v, amag), amag);
-                            run_y = 0;
-                        }
-                    }
-                    if (run_y > 0) try writer.writeBits(@intCast(ac_luma.codes[0x00]), @as(u5, @intCast(ac_luma.sizes[0x00])));
+                    try encodeBlock(&block, ql_f, writer, dc_luma, ac_luma, &prev_dc_y);
                 }
             }
 
@@ -487,38 +518,7 @@ fn encodeBlocksRgb(
                     block[y * 8 + x] = avg_cb - 128.0;
                 }
             }
-            fdct8x8(&block, &dct);
-            var coeff_cb: [64]i32 = undefined;
-            for (0..64) |i| coeff_cb[i] = @intFromFloat(@round(dct[i] / qc_f[i]));
-
-            const dc_cb = coeff_cb[0];
-            const diff_cb = dc_cb - prev_dc_cb;
-            prev_dc_cb = dc_cb;
-            const mag_cb = magnitudeCategory(diff_cb);
-            try writer.writeBits(@intCast(dc_chroma.codes[mag_cb]), @as(u5, @intCast(dc_chroma.sizes[mag_cb])));
-            if (mag_cb > 0) try writer.writeBits(magnitudeBits(diff_cb, mag_cb), mag_cb);
-
-            var run_cb: u8 = 0;
-            for (1..64) |k| {
-                const v = coeff_cb[zigzag[k]];
-                if (v == 0) {
-                    run_cb += 1;
-                    if (run_cb == 16) {
-                        try writer.writeBits(@intCast(ac_chroma.codes[0xF0]), @as(u5, @intCast(ac_chroma.sizes[0xF0])));
-                        run_cb = 0;
-                    }
-                } else {
-                    while (run_cb >= 16) : (run_cb -= 16) {
-                        try writer.writeBits(@intCast(ac_chroma.codes[0xF0]), @as(u5, @intCast(ac_chroma.sizes[0xF0])));
-                    }
-                    const amag2 = magnitudeCategory(v);
-                    const sym2: u8 = (run_cb << 4) | @as(u8, amag2);
-                    try writer.writeBits(@intCast(ac_chroma.codes[sym2]), @as(u5, @intCast(ac_chroma.sizes[sym2])));
-                    try writer.writeBits(magnitudeBits(v, amag2), amag2);
-                    run_cb = 0;
-                }
-            }
-            if (run_cb > 0) try writer.writeBits(@intCast(ac_chroma.codes[0x00]), @as(u5, @intCast(ac_chroma.sizes[0x00])));
+            try encodeBlock(&block, qc_f, writer, dc_chroma, ac_chroma, &prev_dc_cb);
 
             // Encode Cr block for this MCU (downsampled if needed)
             for (0..8) |y| {
@@ -540,38 +540,7 @@ fn encodeBlocksRgb(
                     block[y * 8 + x] = avg_cr - 128.0;
                 }
             }
-            fdct8x8(&block, &dct);
-            var coeff_cr: [64]i32 = undefined;
-            for (0..64) |i| coeff_cr[i] = @intFromFloat(@round(dct[i] / qc_f[i]));
-
-            const dc_cr = coeff_cr[0];
-            const diff_cr = dc_cr - prev_dc_cr;
-            prev_dc_cr = dc_cr;
-            const mag_cr = magnitudeCategory(diff_cr);
-            try writer.writeBits(@intCast(dc_chroma.codes[mag_cr]), @as(u5, @intCast(dc_chroma.sizes[mag_cr])));
-            if (mag_cr > 0) try writer.writeBits(magnitudeBits(diff_cr, mag_cr), mag_cr);
-
-            var run_cr: u8 = 0;
-            for (1..64) |k| {
-                const v = coeff_cr[zigzag[k]];
-                if (v == 0) {
-                    run_cr += 1;
-                    if (run_cr == 16) {
-                        try writer.writeBits(@intCast(ac_chroma.codes[0xF0]), @as(u5, @intCast(ac_chroma.sizes[0xF0])));
-                        run_cr = 0;
-                    }
-                } else {
-                    while (run_cr >= 16) : (run_cr -= 16) {
-                        try writer.writeBits(@intCast(ac_chroma.codes[0xF0]), @as(u5, @intCast(ac_chroma.sizes[0xF0])));
-                    }
-                    const amag3 = magnitudeCategory(v);
-                    const sym3: u8 = (run_cr << 4) | @as(u8, amag3);
-                    try writer.writeBits(@intCast(ac_chroma.codes[sym3]), @as(u5, @intCast(ac_chroma.sizes[sym3])));
-                    try writer.writeBits(magnitudeBits(v, amag3), amag3);
-                    run_cr = 0;
-                }
-            }
-            if (run_cr > 0) try writer.writeBits(@intCast(ac_chroma.codes[0x00]), @as(u5, @intCast(ac_chroma.sizes[0x00])));
+            try encodeBlock(&block, qc_f, writer, dc_chroma, ac_chroma, &prev_dc_cr);
         }
     }
 }
@@ -613,7 +582,7 @@ fn encodeRgb(allocator: Allocator, image: Image(Rgb), options: EncodeOptions) ![
         qc_f[i] = @floatFromInt(qc[i]);
     }
 
-    try encodeBlocksRgb(allocator, image, options.subsampling, &ql_f, &qc_f, &ew, &dc_luma, &ac_luma, &dc_chroma, &ac_chroma);
+    try encodeBlocksRgb(image, options.subsampling, &ql_f, &qc_f, &ew, &dc_luma, &ac_luma, &dc_chroma, &ac_chroma);
     try ew.flush();
 
     // Append entropy-coded bytes into output
@@ -681,7 +650,6 @@ fn encodeGrayscale(allocator: Allocator, bytes: []const u8, width: u32, height: 
     const block_rows: usize = (rows + 7) / 8;
     const block_cols: usize = (cols + 7) / 8;
     var block: [64]f32 = undefined;
-    var dct: [64]f32 = undefined;
 
     for (0..block_rows) |br| {
         for (0..block_cols) |bc| {
@@ -693,38 +661,7 @@ fn encodeGrayscale(allocator: Allocator, bytes: []const u8, width: u32, height: 
                     block[y * 8 + x] = @as(f32, @floatFromInt(v)) - 128.0;
                 }
             }
-            fdct8x8(&block, &dct);
-            var coeff: [64]i32 = undefined;
-            for (0..64) |i| coeff[i] = @intFromFloat(@round(dct[i] / ql_f[i]));
-
-            const dc_coeff = coeff[0];
-            const diff = dc_coeff - prev_dc;
-            prev_dc = dc_coeff;
-            const mag = magnitudeCategory(diff);
-            try ew.writeBits(@intCast(dc.codes[mag]), @as(u5, @intCast(dc.sizes[mag])));
-            if (mag > 0) try ew.writeBits(magnitudeBits(diff, mag), mag);
-
-            var run: u8 = 0;
-            for (1..64) |k| {
-                const v = coeff[zigzag[k]];
-                if (v == 0) {
-                    run += 1;
-                    if (run == 16) {
-                        try ew.writeBits(@intCast(ac.codes[0xF0]), @as(u5, @intCast(ac.sizes[0xF0])));
-                        run = 0;
-                    }
-                } else {
-                    while (run >= 16) : (run -= 16) {
-                        try ew.writeBits(@intCast(ac.codes[0xF0]), @as(u5, @intCast(ac.sizes[0xF0])));
-                    }
-                    const amag = magnitudeCategory(v);
-                    const sym: u8 = (run << 4) | @as(u8, amag);
-                    try ew.writeBits(@intCast(ac.codes[sym]), @as(u5, @intCast(ac.sizes[sym])));
-                    try ew.writeBits(magnitudeBits(v, amag), amag);
-                    run = 0;
-                }
-            }
-            if (run > 0) try ew.writeBits(@intCast(ac.codes[0x00]), @as(u5, @intCast(ac.sizes[0x00])));
+            try encodeBlock(&block, &ql_f, &ew, &dc, &ac, &prev_dc);
         }
     }
 
