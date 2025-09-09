@@ -46,7 +46,7 @@ pub const EncodeOptions = struct {
 
 /// Save Image to JPEG file with baseline encoding.
 pub fn save(comptime T: type, allocator: Allocator, image: Image(T), file_path: []const u8) !void {
-    const bytes = try encodeImage(T, allocator, image, .default);
+    const bytes = try encodeImage(T, allocator, image, .{ .subsampling = .yuv420 });
     defer allocator.free(bytes);
 
     const file = try std.fs.cwd().createFile(file_path, .{});
