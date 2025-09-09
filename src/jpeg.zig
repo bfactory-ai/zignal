@@ -487,12 +487,12 @@ fn fdct8x8_aan(src: *const [64]i32, dst: *[64]i32) void {
         var z2: i64 = @as(i64, tmp5 + tmp6);
         var z3: i64 = @as(i64, tmp4 + tmp6);
         var z4: i64 = @as(i64, tmp5 + tmp7);
-        const z5 = (@as(i64, @intCast((tmp4 + tmp6) + (tmp5 + tmp7))) * @as(i64, FIX_1_175875602));
+        const z5 = (@as(i64, (tmp4 + tmp6) + (tmp5 + tmp7)) * @as(i64, FIX_1_175875602));
 
-        const t4 = @as(i64, d4) * @as(i64, FIX_0_298631336);
-        const t5 = @as(i64, d5) * @as(i64, FIX_2_053119869);
-        const t6 = @as(i64, d6) * @as(i64, FIX_3_072711026);
-        const t7 = @as(i64, d7) * @as(i64, FIX_1_501321110);
+        const t4 = @as(i64, tmp4) * @as(i64, FIX_0_298631336);
+        const t5 = @as(i64, tmp5) * @as(i64, FIX_2_053119869);
+        const t6 = @as(i64, tmp6) * @as(i64, FIX_3_072711026);
+        const t7 = @as(i64, tmp7) * @as(i64, FIX_1_501321110);
 
         z1 = z1 * @as(i64, -FIX_0_899976223);
         z2 = z2 * @as(i64, -FIX_2_562915447);
@@ -543,12 +543,12 @@ fn fdct8x8_aan(src: *const [64]i32, dst: *[64]i32) void {
         var z2: i64 = @as(i64, tmp5 + tmp6);
         var z3: i64 = @as(i64, tmp4 + tmp6);
         var z4: i64 = @as(i64, tmp5 + tmp7);
-        const z5 = (@as(i64, @intCast((tmp4 + tmp6) + (tmp5 + tmp7))) * @as(i64, FIX_1_175875602));
+        const z5 = (@as(i64, (tmp4 + tmp6) + (tmp5 + tmp7)) * @as(i64, FIX_1_175875602));
 
-        const t4 = @as(i64, d4) * @as(i64, FIX_0_298631336);
-        const t5 = @as(i64, d5) * @as(i64, FIX_2_053119869);
-        const t6 = @as(i64, d6) * @as(i64, FIX_3_072711026);
-        const t7 = @as(i64, d7) * @as(i64, FIX_1_501321110);
+        const t4 = @as(i64, tmp4) * @as(i64, FIX_0_298631336);
+        const t5 = @as(i64, tmp5) * @as(i64, FIX_2_053119869);
+        const t6 = @as(i64, tmp6) * @as(i64, FIX_3_072711026);
+        const t7 = @as(i64, tmp7) * @as(i64, FIX_1_501321110);
 
         z1 = z1 * @as(i64, -FIX_0_899976223);
         z2 = z2 * @as(i64, -FIX_2_562915447);
