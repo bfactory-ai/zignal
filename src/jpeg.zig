@@ -30,7 +30,7 @@ pub const zigzag = [64]u8{
 // Encoder: public API and types
 // -----------------------------
 
-pub const JpegSubsampling = enum {
+pub const Subsampling = enum {
     yuv444,
     yuv422,
     yuv420,
@@ -38,7 +38,7 @@ pub const JpegSubsampling = enum {
 
 pub const EncodeOptions = struct {
     quality: u8 = 90,
-    subsampling: JpegSubsampling = .yuv444,
+    subsampling: Subsampling = .yuv420,
     density_dpi: u16 = 72,
     comment: ?[]const u8 = null,
     pub const default: EncodeOptions = .{};
@@ -68,12 +68,7 @@ pub fn encodeImage(comptime T: type, allocator: Allocator, image: Image(T), opti
     switch (T) {
         u8 => return encodeGrayscale(allocator, image.asBytes(), @intCast(image.cols), @intCast(image.rows), options),
         Rgb => return encodeRgb(allocator, image, options),
-        else => {
-            var rgb = try Image(Rgb).init(allocator, image.rows, image.cols);
-            defer rgb.deinit(allocator);
-            for (image.data, 0..) |pix, i| rgb.data[i] = convertColor(Rgb, pix);
-            return encodeRgb(allocator, rgb, options);
-        },
+        else => return encodeRgb(allocator, try image.convert(allocator, Rgb), options),
     }
 }
 
@@ -243,7 +238,7 @@ fn writeDQT(dst: *std.ArrayList(u8), gpa: Allocator, ql: *const [64]u8, qc: *con
     try writeSegment(dst, gpa, 0xFFDB, tmp.items);
 }
 
-fn writeSOF0(dst: *std.ArrayList(u8), gpa: Allocator, width: u16, height: u16, grayscale: bool, subsampling: JpegSubsampling) !void {
+fn writeSOF0(dst: *std.ArrayList(u8), gpa: Allocator, width: u16, height: u16, grayscale: bool, subsampling: Subsampling) !void {
     var tmp = std.ArrayList(u8).empty;
     defer tmp.deinit(gpa);
     try tmp.append(gpa, 8); // precision
@@ -573,7 +568,7 @@ fn encodeBlock(
 
 fn encodeBlocksRgb(
     image: Image(Rgb),
-    subsampling: JpegSubsampling,
+    subsampling: Subsampling,
     ql_recip: *const [64]u32,
     qc_recip: *const [64]u32,
     writer: *EntropyWriter,
@@ -2888,8 +2883,8 @@ test "JPEG subsampling 4:2:0 roundtrip" {
     const gpa = std.testing.allocator;
 
     // Non-multiple-of-MCU dimensions (MCU is 16x16 for 4:2:0)
-    const rows: usize = 23;
-    const cols: usize = 29;
+    const rows: usize = 64;
+    const cols: usize = 48;
 
     var img = try Image(Rgb).init(gpa, rows, cols);
     defer img.deinit(gpa);
@@ -2916,7 +2911,7 @@ test "JPEG subsampling 4:2:0 roundtrip" {
     try renderRgbBlocksToPixels(Rgb, &decoder, &out);
 
     const ps = try img.psnr(out);
-    try std.testing.expect(ps > 12);
+    try std.testing.expect(ps > 45);
 }
 
 // Basic tests
