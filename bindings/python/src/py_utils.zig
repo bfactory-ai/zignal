@@ -942,29 +942,31 @@ pub const TypeObjectConfig = struct {
 
 /// Build a PyTypeObject with the given configuration
 pub fn buildTypeObject(comptime config: TypeObjectConfig) c.PyTypeObject {
+    const str_fn: ?*const anyopaque = config.str orelse config.repr;
+
     return .{
         .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
         .tp_name = config.name.ptr,
         .tp_basicsize = @intCast(config.basicsize),
-        .tp_dealloc = @ptrCast(config.dealloc),
-        .tp_repr = @ptrCast(config.repr),
-        .tp_str = @ptrCast(config.str orelse config.repr),
+        .tp_dealloc = if (config.dealloc) |func| @ptrCast(@alignCast(func)) else null,
+        .tp_repr = if (config.repr) |func| @ptrCast(@alignCast(func)) else null,
+        .tp_str = if (str_fn) |func| @ptrCast(@alignCast(func)) else null,
         .tp_flags = config.flags,
         .tp_doc = if (config.doc) |d| d.ptr else null,
         .tp_methods = config.methods,
         .tp_getset = config.getset,
-        .tp_richcompare = @ptrCast(config.richcompare),
-        .tp_iter = @ptrCast(config.iter),
-        .tp_iternext = @ptrCast(config.iternext),
-        .tp_init = @ptrCast(config.init),
-        .tp_new = @ptrCast(config.new),
-        .tp_getattro = @ptrCast(config.getattro),
-        .tp_setattro = @ptrCast(config.setattro),
+        .tp_richcompare = if (config.richcompare) |func| @ptrCast(@alignCast(func)) else null,
+        .tp_iter = if (config.iter) |func| @ptrCast(@alignCast(func)) else null,
+        .tp_iternext = if (config.iternext) |func| @ptrCast(@alignCast(func)) else null,
+        .tp_init = if (config.init) |func| @ptrCast(@alignCast(func)) else null,
+        .tp_new = if (config.new) |func| @ptrCast(@alignCast(func)) else null,
+        .tp_getattro = if (config.getattro) |func| @ptrCast(@alignCast(func)) else null,
+        .tp_setattro = if (config.setattro) |func| @ptrCast(@alignCast(func)) else null,
         .tp_as_number = config.as_number,
         .tp_as_sequence = config.as_sequence,
         .tp_as_mapping = config.as_mapping,
-        .tp_hash = @ptrCast(config.hash),
-        .tp_call = @ptrCast(config.call),
+        .tp_hash = if (config.hash) |func| @ptrCast(@alignCast(func)) else null,
+        .tp_call = if (config.call) |func| @ptrCast(@alignCast(func)) else null,
     };
 }
 
