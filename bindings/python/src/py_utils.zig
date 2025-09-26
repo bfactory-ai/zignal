@@ -274,9 +274,16 @@ pub fn convertFromPython(comptime T: type, py_obj: ?*c.PyObject) ConversionError
     };
 }
 
-/// Convert Python object to Zig type with comprehensive error handling
-/// This is a general-purpose utility for safe Python argument parsing
-pub fn convertPythonArgument(comptime T: type, py_obj: ?*c.PyObject, field_name: []const u8) ConversionError!T {
+/// Convert Python object to Zig type with optional custom validation
+/// This provides a flexible foundation for domain-specific argument parsing
+pub fn convertWithValidation(
+    comptime T: type,
+    py_obj: ?*c.PyObject,
+    field_name: []const u8,
+    comptime validator: ?*const fn (field_name: []const u8, value: anytype) bool,
+    error_message: ?[]const u8,
+) ConversionError!T {
+    // First do the basic type conversion
     const converted = convertFromPython(T, py_obj) catch |err| {
         switch (err) {
             ConversionError.not_integer => {
@@ -284,7 +291,6 @@ pub fn convertPythonArgument(comptime T: type, py_obj: ?*c.PyObject, field_name:
                 return err;
             },
             ConversionError.integer_out_of_range => {
-                // Generate helpful range message for integer types
                 if (@typeInfo(T) == .int) {
                     const min_val = std.math.minInt(T);
                     const max_val = std.math.maxInt(T);
@@ -305,23 +311,6 @@ pub fn convertPythonArgument(comptime T: type, py_obj: ?*c.PyObject, field_name:
                 return err;
             },
         }
-    };
-
-    return converted;
-}
-
-/// Convert Python object to Zig type with optional custom validation
-/// This provides a flexible foundation for domain-specific argument parsing
-pub fn convertWithValidation(
-    comptime T: type,
-    py_obj: ?*c.PyObject,
-    field_name: []const u8,
-    comptime validator: ?*const fn (field_name: []const u8, value: anytype) bool,
-    error_message: ?[]const u8,
-) ConversionError!T {
-    // First do the basic type conversion
-    const converted = convertPythonArgument(T, py_obj, field_name) catch |err| {
-        return err;
     };
 
     // Then apply custom validation if provided
@@ -514,11 +503,6 @@ pub fn parsePointList(comptime T: type, list_obj: ?*c.PyObject) ![]Point(2, T) {
     }
 
     return points;
-}
-
-/// Convert a Point(2, f64) back to a Python tuple
-pub fn pointToTuple(point: Point(2, f64)) ?*c.PyObject {
-    return c.PyTuple_Pack(2, c.PyFloat_FromDouble(point.x()), c.PyFloat_FromDouble(point.y()));
 }
 
 /// Set a Python exception with an error message that includes a file path.
@@ -800,5 +784,204 @@ pub fn parseArgs(comptime T: type, args: ?*c.PyObject, kwds: ?*c.PyObject, out: 
 
     if (result == 0) {
         return error.ArgumentParseError;
+    }
+}
+
+// ============================================================================
+// Essential Error Helpers - Keep it simple!
+// ============================================================================
+
+/// Simple helper for memory errors with context
+pub fn setMemoryError(context: []const u8) void {
+    var buffer: [256]u8 = undefined;
+    const msg = std.fmt.bufPrintZ(&buffer, "Failed to allocate {s}", .{context}) catch "Out of memory";
+    c.PyErr_SetString(c.PyExc_MemoryError, msg.ptr);
+}
+
+/// Set a type error with expected type information
+pub fn setTypeError(expected: []const u8, got: ?*c.PyObject) void {
+    var buffer: [256]u8 = undefined;
+
+    const type_name = if (got != null) blk: {
+        const tp = c.Py_TYPE(got);
+        const tp_name = tp.*.tp_name;
+        // Extract just the type name (after the last dot)
+        var i: usize = 0;
+        while (tp_name[i] != 0) : (i += 1) {}
+        var last_dot: usize = 0;
+        var j: usize = 0;
+        while (j < i) : (j += 1) {
+            if (tp_name[j] == '.') last_dot = j + 1;
+        }
+        break :blk tp_name[last_dot..i];
+    } else "None";
+
+    const msg = std.fmt.bufPrintZ(&buffer, "Expected {s}, got {s}", .{ expected, type_name }) catch "Type error";
+    c.PyErr_SetString(c.PyExc_TypeError, msg.ptr);
+}
+
+/// Set a value error with a custom message
+pub fn setValueError(comptime fmt: []const u8, args: anytype) void {
+    var buffer: [256]u8 = undefined;
+    const msg = std.fmt.bufPrintZ(&buffer, fmt, args) catch "Value error";
+    c.PyErr_SetString(c.PyExc_ValueError, msg.ptr);
+}
+
+/// Set a runtime error with a custom message
+pub fn setRuntimeError(comptime fmt: []const u8, args: anytype) void {
+    var buffer: [256]u8 = undefined;
+    const msg = std.fmt.bufPrintZ(&buffer, fmt, args) catch "Runtime error";
+    c.PyErr_SetString(c.PyExc_RuntimeError, msg.ptr);
+}
+
+/// Set an index error with a custom message
+pub fn setIndexError(comptime fmt: []const u8, args: anytype) void {
+    var buffer: [256]u8 = undefined;
+    const msg = std.fmt.bufPrintZ(&buffer, fmt, args) catch "Index error";
+    c.PyErr_SetString(c.PyExc_IndexError, msg.ptr);
+}
+
+/// Set an import error with a custom message
+pub fn setImportError(comptime fmt: []const u8, args: anytype) void {
+    var buffer: [256]u8 = undefined;
+    const msg = std.fmt.bufPrintZ(&buffer, fmt, args) catch "Import error";
+    c.PyErr_SetString(c.PyExc_ImportError, msg.ptr);
+}
+
+/// Simple error mapping for common Zig errors
+pub fn setZigError(err: anyerror) void {
+    const exc_type = switch (err) {
+        error.OutOfMemory => c.PyExc_MemoryError,
+        else => c.PyExc_RuntimeError,
+    };
+    var buffer: [256]u8 = undefined;
+    const msg = std.fmt.bufPrintZ(&buffer, "Operation failed: {s}", .{@errorName(err)}) catch "Operation failed";
+    c.PyErr_SetString(exc_type, msg.ptr);
+}
+
+// ============================================================================
+// Safe Casting Helpers
+// ============================================================================
+
+/// Safely cast a Python object to a specific type without null checking
+/// Use when you're certain the object is not null (e.g., in methods where self is guaranteed)
+pub fn safeCast(comptime T: type, obj: ?*c.PyObject) *T {
+    return @as(*T, @ptrCast(@alignCast(obj.?)));
+}
+
+// ============================================================================
+// Object Lifecycle Management
+// ============================================================================
+
+/// Generic new function for Python objects
+pub fn genericNew(comptime T: type) fn (?*c.PyTypeObject, ?*c.PyObject, ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    return struct {
+        fn new(type_obj: ?*c.PyTypeObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+            _ = args;
+            _ = kwds;
+
+            const self = @as(?*T, @ptrCast(c.PyType_GenericAlloc(type_obj, 0)));
+            if (self) |obj| {
+                // Initialize all pointer fields to null
+                inline for (@typeInfo(T).@"struct".fields) |field| {
+                    if (@typeInfo(field.type) == .optional) {
+                        @field(obj, field.name) = null;
+                    }
+                }
+            }
+            return @as(?*c.PyObject, @ptrCast(self));
+        }
+    }.new;
+}
+
+/// Generic dealloc function for objects with heap-allocated pointers
+pub fn genericDealloc(comptime T: type, comptime deinit_fn: ?fn (*T) void) fn (?*c.PyObject) callconv(.c) void {
+    return struct {
+        fn dealloc(self_obj: ?*c.PyObject) callconv(.c) void {
+            const self = safeCast(T, self_obj);
+
+            // Call custom deinit if provided
+            if (deinit_fn) |deinit| {
+                deinit(self);
+            }
+
+            // Free the Python object
+            const tp = @as(*c.PyTypeObject, @ptrCast(c.Py_TYPE(self_obj)));
+            tp.*.tp_free.?(self_obj);
+        }
+    }.dealloc;
+}
+
+// ============================================================================
+// PyTypeObject Builder
+// ============================================================================
+
+pub const TypeObjectConfig = struct {
+    name: []const u8,
+    doc: ?[]const u8 = null,
+    basicsize: usize,
+    methods: ?[*]c.PyMethodDef = null,
+    getset: ?[*]c.PyGetSetDef = null,
+    init: ?*const anyopaque = null,
+    new: ?*const anyopaque = null,
+    dealloc: ?*const anyopaque = null,
+    repr: ?*const anyopaque = null,
+    str: ?*const anyopaque = null,
+    richcompare: ?*const anyopaque = null,
+    iter: ?*const anyopaque = null,
+    iternext: ?*const anyopaque = null,
+    getattro: ?*const anyopaque = null,
+    setattro: ?*const anyopaque = null,
+    as_number: ?*c.PyNumberMethods = null,
+    as_sequence: ?*c.PySequenceMethods = null,
+    as_mapping: ?*c.PyMappingMethods = null,
+    hash: ?*const anyopaque = null,
+    call: ?*const anyopaque = null,
+    flags: c_ulong = c.Py_TPFLAGS_DEFAULT,
+};
+
+/// Build a PyTypeObject with the given configuration
+pub fn buildTypeObject(comptime config: TypeObjectConfig) c.PyTypeObject {
+    return .{
+        .ob_base = .{ .ob_base = .{}, .ob_size = 0 },
+        .tp_name = config.name.ptr,
+        .tp_basicsize = @intCast(config.basicsize),
+        .tp_dealloc = @ptrCast(config.dealloc),
+        .tp_repr = @ptrCast(config.repr),
+        .tp_str = @ptrCast(config.str orelse config.repr),
+        .tp_flags = config.flags,
+        .tp_doc = if (config.doc) |d| d.ptr else null,
+        .tp_methods = config.methods,
+        .tp_getset = config.getset,
+        .tp_richcompare = @ptrCast(config.richcompare),
+        .tp_iter = @ptrCast(config.iter),
+        .tp_iternext = @ptrCast(config.iternext),
+        .tp_init = @ptrCast(config.init),
+        .tp_new = @ptrCast(config.new),
+        .tp_getattro = @ptrCast(config.getattro),
+        .tp_setattro = @ptrCast(config.setattro),
+        .tp_as_number = config.as_number,
+        .tp_as_sequence = config.as_sequence,
+        .tp_as_mapping = config.as_mapping,
+        .tp_hash = @ptrCast(config.hash),
+        .tp_call = @ptrCast(config.call),
+    };
+}
+
+/// Create a heap-allocated object with automatic memory management
+pub fn createHeapObject(comptime T: type, args: anytype) !*T {
+    const obj = allocator.create(T) catch {
+        setMemoryError(@typeName(T));
+        return error.OutOfMemory;
+    };
+    obj.* = T.init(args[0]);
+    return obj;
+}
+
+/// Destroy a heap-allocated object
+pub fn destroyHeapObject(comptime T: type, ptr: ?*T) void {
+    if (ptr) |p| {
+        p.deinit();
+        allocator.destroy(p);
     }
 }
