@@ -821,31 +821,35 @@ pub fn setTypeError(expected: []const u8, got: ?*c.PyObject) void {
 }
 
 /// Set a value error with a custom message
-pub fn setValueError(comptime fmt: []const u8, args: anytype) void {
+fn setFormattedError(
+    exc_type: [*c]c.PyObject,
+    comptime fallback: []const u8,
+    comptime fmt: []const u8,
+    args: anytype,
+) void {
     var buffer: [256]u8 = undefined;
-    const msg = std.fmt.bufPrintZ(&buffer, fmt, args) catch "Value error";
-    c.PyErr_SetString(c.PyExc_ValueError, msg.ptr);
+    const msg = std.fmt.bufPrintZ(&buffer, fmt, args) catch fallback;
+    c.PyErr_SetString(exc_type, msg.ptr);
+}
+
+/// Set a value error with a custom message
+pub fn setValueError(comptime fmt: []const u8, args: anytype) void {
+    setFormattedError(c.PyExc_ValueError, "Value error", fmt, args);
 }
 
 /// Set a runtime error with a custom message
 pub fn setRuntimeError(comptime fmt: []const u8, args: anytype) void {
-    var buffer: [256]u8 = undefined;
-    const msg = std.fmt.bufPrintZ(&buffer, fmt, args) catch "Runtime error";
-    c.PyErr_SetString(c.PyExc_RuntimeError, msg.ptr);
+    setFormattedError(c.PyExc_RuntimeError, "Runtime error", fmt, args);
 }
 
 /// Set an index error with a custom message
 pub fn setIndexError(comptime fmt: []const u8, args: anytype) void {
-    var buffer: [256]u8 = undefined;
-    const msg = std.fmt.bufPrintZ(&buffer, fmt, args) catch "Index error";
-    c.PyErr_SetString(c.PyExc_IndexError, msg.ptr);
+    setFormattedError(c.PyExc_IndexError, "Index error", fmt, args);
 }
 
 /// Set an import error with a custom message
 pub fn setImportError(comptime fmt: []const u8, args: anytype) void {
-    var buffer: [256]u8 = undefined;
-    const msg = std.fmt.bufPrintZ(&buffer, fmt, args) catch "Import error";
-    c.PyErr_SetString(c.PyExc_ImportError, msg.ptr);
+    setFormattedError(c.PyExc_ImportError, "Import error", fmt, args);
 }
 
 /// Simple error mapping for common Zig errors
@@ -988,14 +992,14 @@ pub fn destroyHeapObject(comptime T: type, ptr: ?*T) void {
     }
 }
 
-pub const TupleExpectError = error{ InvalidTuple };
+pub const TupleExpectError = error{InvalidTuple};
 
 /// Ensure object is a tuple of fixed length and return borrowed elements.
 pub fn expectTupleLen(
     comptime len: usize,
     obj: ?*c.PyObject,
     description: []const u8,
-) TupleExpectError![len]?*c.PyObject {
+) TupleExpectError![len]*c.PyObject {
     if (obj == null or c.PyTuple_Check(obj) == 0) {
         setTypeError(description, obj);
         return TupleExpectError.InvalidTuple;
@@ -1006,9 +1010,13 @@ pub fn expectTupleLen(
         return TupleExpectError.InvalidTuple;
     }
 
-    var result: [len]?*c.PyObject = undefined;
+    var result: [len]*c.PyObject = undefined;
     inline for (0..len) |index| {
-        result[index] = c.PyTuple_GetItem(obj, @intCast(index));
+        const item = c.PyTuple_GetItem(obj, @intCast(index));
+        if (item == null) {
+            return TupleExpectError.InvalidTuple;
+        }
+        result[index] = item;
     }
     return result;
 }

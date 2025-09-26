@@ -363,8 +363,8 @@ fn image_getitem(self_obj: ?*c.PyObject, key: ?*c.PyObject) callconv(.c) ?*c.PyO
 
     const coords = py_utils.expectTupleLen(2, key, "tuple of (row, col)") catch return null;
 
-    const row_obj = coords[0] orelse return null;
-    const col_obj = coords[1] orelse return null;
+    const row_obj = coords[0];
+    const col_obj = coords[1];
 
     const row = c.PyLong_AsLong(row_obj);
     if (row == -1 and c.PyErr_Occurred() != null) {
@@ -475,8 +475,8 @@ fn image_setitem(self_obj: ?*c.PyObject, key: ?*c.PyObject, value: ?*c.PyObject)
 
     const coords = py_utils.expectTupleLen(2, key, "tuple of (row, col)") catch return -1;
 
-    const row_obj = coords[0] orelse return -1;
-    const col_obj = coords[1] orelse return -1;
+    const row_obj = coords[0];
+    const col_obj = coords[1];
 
     const row = c.PyLong_AsLong(row_obj);
     if (row == -1 and c.PyErr_Occurred() != null) {
