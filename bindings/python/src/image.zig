@@ -391,11 +391,11 @@ fn image_getitem(self_obj: ?*c.PyObject, key: ?*c.PyObject) callconv(.c) ?*c.PyO
     // Bounds checking
     if (pimg_opt) |pimg| {
         if (row < 0 or row >= pimg.rows()) {
-            py_utils.setValueError("Row index out of bounds", .{});
+            py_utils.setIndexError("Row index out of bounds", .{});
             return null;
         }
         if (col < 0 or col >= pimg.cols()) {
-            py_utils.setValueError("Column index out of bounds", .{});
+            py_utils.setIndexError("Column index out of bounds", .{});
             return null;
         }
     } else {
@@ -442,7 +442,7 @@ fn image_setitem(self_obj: ?*c.PyObject, key: ?*c.PyObject, value: ?*c.PyObject)
             (step == 1);
 
         if (!is_full_slice) {
-            py_utils.setRuntimeError("Only full slice [:] assignment is currently supported", .{});
+            c.PyErr_SetString(c.PyExc_NotImplementedError, "Only full slice [:] assignment is currently supported");
             return -1;
         }
 
@@ -510,11 +510,11 @@ fn image_setitem(self_obj: ?*c.PyObject, key: ?*c.PyObject, value: ?*c.PyObject)
     // Bounds checking
     if (pimg_opt) |pimg| {
         if (row < 0 or row >= pimg.rows()) {
-            py_utils.setValueError("Row index out of bounds", .{});
+            py_utils.setIndexError("Row index out of bounds", .{});
             return -1;
         }
         if (col < 0 or col >= pimg.cols()) {
-            py_utils.setValueError("Column index out of bounds", .{});
+            py_utils.setIndexError("Column index out of bounds", .{});
             return -1;
         }
     } else {

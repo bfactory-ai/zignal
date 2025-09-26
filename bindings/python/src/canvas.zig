@@ -230,7 +230,7 @@ fn canvas_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
 
     // Check if it's an Image instance
     if (c.PyObject_IsInstance(params.image, @ptrCast(&image_module.ImageType)) <= 0) {
-        py_utils.setTypeError("Image instance", args);
+        py_utils.setTypeError("Image instance", params.image);
         return -1;
     }
 
