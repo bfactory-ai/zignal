@@ -987,3 +987,49 @@ pub fn destroyHeapObject(comptime T: type, ptr: ?*T) void {
         allocator.destroy(p);
     }
 }
+
+pub const TupleExpectError = error{ InvalidTuple };
+
+/// Ensure object is a tuple of fixed length and return borrowed elements.
+pub fn expectTupleLen(
+    comptime len: usize,
+    obj: ?*c.PyObject,
+    description: []const u8,
+) TupleExpectError![len]?*c.PyObject {
+    if (obj == null or c.PyTuple_Check(obj) == 0) {
+        setTypeError(description, obj);
+        return TupleExpectError.InvalidTuple;
+    }
+
+    if (c.PyTuple_Size(obj) != len) {
+        setValueError("{s} must have exactly {d} elements", .{ description, len });
+        return TupleExpectError.InvalidTuple;
+    }
+
+    var result: [len]?*c.PyObject = undefined;
+    inline for (0..len) |index| {
+        result[index] = c.PyTuple_GetItem(obj, @intCast(index));
+    }
+    return result;
+}
+
+/// Build a Python list from a Zig slice using the provided converter.
+pub fn listFromSlice(
+    comptime T: type,
+    slice: []const T,
+    comptime converter: fn (value: T, index: usize) ?*c.PyObject,
+) ?*c.PyObject {
+    const list = c.PyList_New(@intCast(slice.len));
+    if (list == null) return null;
+
+    for (slice, 0..) |item, idx| {
+        const py_item = converter(item, idx);
+        if (py_item == null) {
+            c.Py_DECREF(list);
+            return null;
+        }
+        _ = c.PyList_SetItem(list, @intCast(idx), py_item);
+    }
+
+    return list;
+}

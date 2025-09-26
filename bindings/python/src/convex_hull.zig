@@ -1,5 +1,6 @@
 const zignal = @import("zignal");
 const ConvexHull = zignal.ConvexHull;
+const Point2F = zignal.Point(2, f32);
 
 const py_utils = @import("py_utils.zig");
 pub const registerType = py_utils.registerType;
@@ -90,41 +91,29 @@ fn convex_hull_find(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
         return py_utils.getPyNone();
     }
 
-    // Convert hull points to Python list of tuples
-    const result_list = c.PyList_New(@intCast(hull_points.?.len));
-    if (result_list == null) {
-        return null;
-    }
+    const result_list = py_utils.listFromSlice(Point2F, hull_points.?, struct {
+        fn toPythonTuple(point: Point2F, _: usize) ?*c.PyObject {
+            const tuple = c.PyTuple_New(2);
+            if (tuple == null) return null;
 
-    for (hull_points.?, 0..) |point, i| {
-        const tuple = c.PyTuple_New(2);
-        if (tuple == null) {
-            c.Py_DECREF(result_list);
-            return null;
+            const x_obj = c.PyFloat_FromDouble(@as(f64, point.x()));
+            if (x_obj == null) {
+                c.Py_DECREF(tuple);
+                return null;
+            }
+
+            const y_obj = c.PyFloat_FromDouble(@as(f64, point.y()));
+            if (y_obj == null) {
+                c.Py_DECREF(x_obj);
+                c.Py_DECREF(tuple);
+                return null;
+            }
+
+            _ = c.PyTuple_SetItem(tuple, 0, x_obj);
+            _ = c.PyTuple_SetItem(tuple, 1, y_obj);
+            return tuple;
         }
-
-        const x_obj = c.PyFloat_FromDouble(@as(f64, point.x()));
-        if (x_obj == null) {
-            c.Py_DECREF(tuple);
-            c.Py_DECREF(result_list);
-            return null;
-        }
-
-        const y_obj = c.PyFloat_FromDouble(@as(f64, point.y()));
-        if (y_obj == null) {
-            c.Py_DECREF(x_obj);
-            c.Py_DECREF(tuple);
-            c.Py_DECREF(result_list);
-            return null;
-        }
-
-        // PyTuple_SetItem steals references
-        _ = c.PyTuple_SetItem(tuple, 0, x_obj);
-        _ = c.PyTuple_SetItem(tuple, 1, y_obj);
-
-        // PyList_SetItem steals reference to tuple
-        _ = c.PyList_SetItem(result_list, @intCast(i), tuple);
-    }
+    }.toPythonTuple) orelse return null;
 
     return result_list;
 }

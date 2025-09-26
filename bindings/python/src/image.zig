@@ -361,20 +361,10 @@ fn image_getitem(self_obj: ?*c.PyObject, key: ?*c.PyObject) callconv(.c) ?*c.PyO
     const self = py_utils.safeCast(ImageObject, self_obj);
     const pimg_opt = self.py_image;
 
-    // Parse the key - expecting a tuple of (row, col)
-    if (c.PyTuple_Check(key) == 0) {
-        py_utils.setTypeError("tuple of (row, col)", key);
-        return null;
-    }
+    const coords = py_utils.expectTupleLen(2, key, "tuple of (row, col)") catch return null;
 
-    if (c.PyTuple_Size(key) != 2) {
-        py_utils.setValueError("Image indices must be a tuple of exactly 2 integers", .{});
-        return null;
-    }
-
-    // Extract row and col
-    const row_obj = c.PyTuple_GetItem(key, 0);
-    const col_obj = c.PyTuple_GetItem(key, 1);
+    const row_obj = coords[0] orelse return null;
+    const col_obj = coords[1] orelse return null;
 
     const row = c.PyLong_AsLong(row_obj);
     if (row == -1 and c.PyErr_Occurred() != null) {
@@ -470,7 +460,10 @@ fn image_setitem(self_obj: ?*c.PyObject, key: ?*c.PyObject, value: ?*c.PyObject)
 
         // Check dimensions match
         if (dst_pimg.rows() != src_pimg.rows() or dst_pimg.cols() != src_pimg.cols()) {
-            _ = c.PyErr_Format(c.PyExc_ValueError, "Image dimensions must match for slice assignment. Got (%zu, %zu) vs (%zu, %zu)", dst_pimg.rows(), dst_pimg.cols(), src_pimg.rows(), src_pimg.cols());
+            py_utils.setValueError(
+                "Image dimensions must match for slice assignment. Got ({d}, {d}) vs ({d}, {d})",
+                .{ dst_pimg.rows(), dst_pimg.cols(), src_pimg.rows(), src_pimg.cols() },
+            );
             return -1;
         }
 
@@ -480,20 +473,10 @@ fn image_setitem(self_obj: ?*c.PyObject, key: ?*c.PyObject, value: ?*c.PyObject)
         return 0;
     }
 
-    // Parse the key - expecting a tuple of (row, col)
-    if (c.PyTuple_Check(key) == 0) {
-        py_utils.setTypeError("tuple of (row, col) or slice", key);
-        return -1;
-    }
+    const coords = py_utils.expectTupleLen(2, key, "tuple of (row, col)") catch return -1;
 
-    if (c.PyTuple_Size(key) != 2) {
-        py_utils.setValueError("Image indices must be a tuple of exactly 2 integers", .{});
-        return -1;
-    }
-
-    // Extract row and col
-    const row_obj = c.PyTuple_GetItem(key, 0);
-    const col_obj = c.PyTuple_GetItem(key, 1);
+    const row_obj = coords[0] orelse return -1;
+    const col_obj = coords[1] orelse return -1;
 
     const row = c.PyLong_AsLong(row_obj);
     if (row == -1 and c.PyErr_Occurred() != null) {
