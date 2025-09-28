@@ -18,11 +18,7 @@ pub const c = @cImport({
         @cDefine("Py_ATOMIC_GCC_H", {}); // Prevent pyatomic_gcc.h from being included
         @cDefine("_Py_USING_ATOMICS", "0"); // Tell Python not to use atomics
     }
-    if (builtin.os.tag == .windows) {
-        @cInclude("Python.h");
-    } else {
-        @cInclude("python_visibility_shim.h");
-    }
+    @cInclude("python_visibility_shim.h");
 });
 
 /// Helper to register a type with a module

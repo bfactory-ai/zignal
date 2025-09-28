@@ -1,15 +1,13 @@
 #ifndef ZIGNAL_PYTHON_VISIBILITY_SHIM_H
 #define ZIGNAL_PYTHON_VISIBILITY_SHIM_H
 
-#ifdef _WIN32
-
-#include <Python.h>
-
-#else
-
 #include <stdbool.h>
 
 // Skip Python's exports.h so we can provide attribute-free linkage macros.
+#ifndef __has_warning
+#  define __has_warning(x) 0
+#endif
+
 #ifndef Py_EXPORTS_H
 #define Py_EXPORTS_H
 #  define Py_IMPORTED_SYMBOL
@@ -30,6 +28,14 @@
 #  endif
 #endif
 
+#if defined(_WIN32)
+// Windows may emit diag pragmas like warning "shadow" that aro cannot parse.
+#  ifndef __clang__
+#    define __pragma(x)
+#  endif
+#endif
+
+#if !defined(_WIN32)
 // Provide soft-fallbacks for GCC atomic builtins that Zig's translator cannot
 // model yet. These degrade to plain loads/stores but keep signatures intact.
 #define __zignal_atomic_fetch_add(obj, value) \
@@ -70,9 +76,8 @@
 #define __atomic_compare_exchange_n(obj, expected, desired, weak, success, failure) \
     __zignal_atomic_compare_exchange_n((obj), (expected), (desired))
 #define __atomic_thread_fence(order) ((void)0)
+#endif
 
 #include <Python.h>
-
-#endif // _WIN32
 
 #endif // ZIGNAL_PYTHON_VISIBILITY_SHIM_H
