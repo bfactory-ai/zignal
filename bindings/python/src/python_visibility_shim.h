@@ -1,6 +1,12 @@
 #ifndef ZIGNAL_PYTHON_VISIBILITY_SHIM_H
 #define ZIGNAL_PYTHON_VISIBILITY_SHIM_H
 
+#ifdef _WIN32
+
+#include <Python.h>
+
+#else
+
 #include <stdbool.h>
 
 // Skip Python's exports.h so we can provide attribute-free linkage macros.
@@ -9,12 +15,18 @@
 #  define Py_IMPORTED_SYMBOL
 #  define Py_EXPORTED_SYMBOL
 #  define Py_LOCAL_SYMBOL
-#  define PyAPI_FUNC(RTYPE) RTYPE
-#  define PyAPI_DATA(RTYPE) extern RTYPE
-#  ifdef __cplusplus
-#    define PyMODINIT_FUNC extern "C" PyObject*
-#  else
-#    define PyMODINIT_FUNC PyObject*
+#  ifndef PyAPI_FUNC
+#    define PyAPI_FUNC(RTYPE) RTYPE
+#  endif
+#  ifndef PyAPI_DATA
+#    define PyAPI_DATA(RTYPE) extern RTYPE
+#  endif
+#  ifndef PyMODINIT_FUNC
+#    ifdef __cplusplus
+#      define PyMODINIT_FUNC extern "C" PyObject*
+#    else
+#      define PyMODINIT_FUNC PyObject*
+#    endif
 #  endif
 #endif
 
@@ -60,5 +72,7 @@
 #define __atomic_thread_fence(order) ((void)0)
 
 #include <Python.h>
+
+#endif // _WIN32
 
 #endif // ZIGNAL_PYTHON_VISIBILITY_SHIM_H
