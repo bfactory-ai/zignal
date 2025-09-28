@@ -27,6 +27,23 @@
 #define Py_DIAG_POP
 #define Py_DIAG_IGNORE(MSG)
 #define Py_DIAG_RESTORE()
+#define Py_DIAG_IGNORE_DEPR_DECLS
+#define Py_DIAG_DEFAULT(MSG)
+#define Py_CLANG_DIAG_IGNORE(MSG)
+#define Py_CLANG_DIAG_RESTORE()
+#define Py_GCC_DIAG_IGNORE(MSG)
+#define Py_GCC_DIAG_RESTORE()
+#define Py_GCC_DIAG_IGNORE_DEPR_DECLS
+#define Py_GCC_DIAG_DEFAULT(MSG)
+#define _Py_DIAG_PUSH
+#define _Py_DIAG_POP
+#define _Py_DIAG_IGNORE(MSG)
+#define _Py_DIAG_RESTORE()
+#define _Py_COMP_DIAG_PUSH
+#define _Py_COMP_DIAG_POP
+#define _Py_COMP_DIAG_IGNORE(MSG)
+#define _Py_COMP_DIAG_RESTORE()
+#define _Py_COMP_DIAG_IGNORE_DEPR_DECLS
 
 #include <Python.h>
 
