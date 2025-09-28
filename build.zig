@@ -128,6 +128,8 @@ pub fn build(b: *Build) void {
         }),
     });
 
+    py_module.root_module.addIncludePath(b.path("bindings/python/src"));
+
     // Link Python for shared library
     const target_info = target.result;
     linkPython(b, py_module, "python3", target.result);
@@ -159,6 +161,8 @@ pub fn build(b: *Build) void {
             .optimize = .Debug,
         }),
     });
+
+    stub_generator.root_module.addIncludePath(b.path("bindings/python/src"));
 
     // Link Python for executable
     linkPython(b, stub_generator, "python3-embed", target_info);

@@ -6,7 +6,16 @@ const Point = zignal.Point;
 
 pub const c = @cImport({
     @cDefine("PY_SSIZE_T_CLEAN", {});
-    @cInclude("Python.h");
+    // Workaround for aroCC issues with complex math headers
+    @cDefine("_Float32", "float");
+    @cDefine("_Float64", "double");
+    @cDefine("_Float128", "long double");
+    @cDefine("_Float32x", "double");
+    @cDefine("_Float64x", "long double");
+    // Disable GCC atomics to avoid aroCC issues
+    @cDefine("Py_ATOMIC_GCC_H", {}); // Prevent pyatomic_gcc.h from being included
+    @cDefine("_Py_USING_ATOMICS", "0"); // Tell Python not to use atomics
+    @cInclude("python_visibility_shim.h");
 });
 
 /// Helper to register a type with a module
