@@ -10,7 +10,7 @@ pub const c = @cImport({
     if (builtin.os.tag == .windows) {
         // Avoid __declspec decorations that translate-c cannot lower
         @cDefine("Py_NO_ENABLE_SHARED", {});
-        @cInclude("Python.h");
+        @cInclude("python_visibility_shim.h");
     } else {
         // Workaround for aroCC issues with complex math headers
         @cDefine("_Float32", "float");

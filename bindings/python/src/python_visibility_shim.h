@@ -1,10 +1,25 @@
 #ifndef ZIGNAL_PYTHON_VISIBILITY_SHIM_H
 #define ZIGNAL_PYTHON_VISIBILITY_SHIM_H
 
-#if defined(_WIN32)
-
 #ifndef __has_warning
 #  define __has_warning(x) 0
+#endif
+
+#if defined(_WIN32)
+
+// Prevent exports.h from redefining the PyAPI macros with __declspec decorations
+#define Py_EXPORTS_H
+#define Py_IMPORTED_SYMBOL
+#define Py_EXPORTED_SYMBOL
+#define Py_LOCAL_SYMBOL
+#ifdef __cplusplus
+#  define PyAPI_FUNC(RTYPE) RTYPE
+#  define PyAPI_DATA(RTYPE) extern RTYPE
+#  define PyMODINIT_FUNC extern "C" PyObject*
+#else
+#  define PyAPI_FUNC(RTYPE) RTYPE
+#  define PyAPI_DATA(RTYPE) extern RTYPE
+#  define PyMODINIT_FUNC PyObject*
 #endif
 
 #include <Python.h>
@@ -12,10 +27,6 @@
 #else
 
 #include <stdbool.h>
-
-#ifndef __has_warning
-#  define __has_warning(x) 0
-#endif
 
 // Skip Python's exports.h so we can provide attribute-free linkage macros.
 #ifndef Py_EXPORTS_H
