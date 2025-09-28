@@ -22,6 +22,12 @@
 #  define PyMODINIT_FUNC PyObject*
 #endif
 
+// Suppress diagnostic pragmas that arocc/translate-c cannot interpret
+#define Py_DIAG_PUSH
+#define Py_DIAG_POP
+#define Py_DIAG_IGNORE(MSG)
+#define Py_DIAG_RESTORE()
+
 #include <Python.h>
 
 #else
