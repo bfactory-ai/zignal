@@ -771,12 +771,13 @@ pub fn parseArgs(comptime T: type, args: ?*c.PyObject, kwds: ?*c.PyObject, out: 
             const type_chars = switch (@typeInfo(actual_type)) {
                 .float => "d",
                 .int => |info| blk2: {
+                    if (actual_type == c.Py_ssize_t) break :blk2 "n";
                     if (info.signedness == .signed) {
                         if (info.bits <= 32) break :blk2 "i";
-                        break :blk2 "l";
+                        break :blk2 "L";
                     } else {
                         if (info.bits <= 32) break :blk2 "I";
-                        break :blk2 "k";
+                        break :blk2 "K";
                     }
                 },
                 .pointer => |ptr| blk2: {
