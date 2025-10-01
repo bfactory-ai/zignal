@@ -88,6 +88,9 @@ pub fn image_threshold_otsu(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv
 
     const handle_opt = prepareGrayscale(self.py_image.?) orelse return null;
     var handle = handle_opt;
+    if (handle.owned) |*owned| {
+        handle.view = owned;
+    }
     defer if (handle.owned) |*owned| owned.deinit(allocator);
 
     const out = Image(u8).initLike(allocator, handle.view.*) catch {
@@ -158,6 +161,9 @@ pub fn image_threshold_adaptive_mean(self_obj: ?*c.PyObject, args: ?*c.PyObject,
 
     const handle_opt = prepareGrayscale(self.py_image.?) orelse return null;
     var handle = handle_opt;
+    if (handle.owned) |*owned| {
+        handle.view = owned;
+    }
     defer if (handle.owned) |*owned| owned.deinit(allocator);
 
     const out = Image(u8).initLike(allocator, handle.view.*) catch {
@@ -194,6 +200,9 @@ fn morphologyCommon(
 
     const handle_opt = prepareGrayscale(self.py_image.?) orelse return null;
     var handle = handle_opt;
+    if (handle.owned) |*owned| {
+        handle.view = owned;
+    }
     defer if (handle.owned) |*owned| owned.deinit(allocator);
 
     const kernel = kernel_bundle.kernel;
