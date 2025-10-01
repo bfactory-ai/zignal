@@ -90,7 +90,7 @@ pub fn image_threshold_otsu(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv
     var handle = handle_opt;
     defer if (handle.owned) |*owned| owned.deinit(allocator);
 
-    const out = Image(u8).initLike(allocator, handle.view) catch {
+    const out = Image(u8).initLike(allocator, handle.view.*) catch {
         py_utils.setMemoryError("threshold operation");
         return null;
     };
@@ -160,7 +160,7 @@ pub fn image_threshold_adaptive_mean(self_obj: ?*c.PyObject, args: ?*c.PyObject,
     var handle = handle_opt;
     defer if (handle.owned) |*owned| owned.deinit(allocator);
 
-    const out = Image(u8).initLike(allocator, handle.view) catch {
+    const out = Image(u8).initLike(allocator, handle.view.*) catch {
         py_utils.setMemoryError("adaptive threshold operation");
         return null;
     };
@@ -198,7 +198,7 @@ fn morphologyCommon(
 
     const kernel = kernel_bundle.kernel;
 
-    const out = Image(u8).initLike(allocator, handle.view) catch {
+    const out = Image(u8).initLike(allocator, handle.view.*) catch {
         py_utils.setMemoryError("morphological operation");
         return null;
     };
