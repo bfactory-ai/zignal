@@ -90,8 +90,11 @@ pub fn image_threshold_otsu(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv
     var handle = handle_opt;
     defer if (handle.owned) |*owned| owned.deinit(allocator);
 
-    var out: Image(u8) = .empty;
-    const threshold = handle.view.thresholdOtsu(allocator, &out) catch {
+    const out = Image(u8).initLike(allocator, handle.view) catch {
+        py_utils.setMemoryError("threshold operation");
+        return null;
+    };
+    const threshold = handle.view.thresholdOtsu(allocator, out) catch {
         py_utils.setMemoryError("threshold operation");
         return null;
     };
@@ -157,8 +160,11 @@ pub fn image_threshold_adaptive_mean(self_obj: ?*c.PyObject, args: ?*c.PyObject,
     var handle = handle_opt;
     defer if (handle.owned) |*owned| owned.deinit(allocator);
 
-    var out: Image(u8) = .empty;
-    handle.view.thresholdAdaptiveMean(allocator, radius, @floatCast(c_value), &out) catch |err| {
+    const out = Image(u8).initLike(allocator, handle.view) catch {
+        py_utils.setMemoryError("adaptive threshold operation");
+        return null;
+    };
+    handle.view.thresholdAdaptiveMean(allocator, radius, @floatCast(c_value), out) catch |err| {
         switch (err) {
             error.InvalidRadius => py_utils.setValueError("radius must be > 0", .{}),
             else => py_utils.setMemoryError("threshold operation"),
@@ -192,12 +198,15 @@ fn morphologyCommon(
 
     const kernel = kernel_bundle.kernel;
 
-    var out: Image(u8) = .empty;
+    const out = Image(u8).initLike(allocator, handle.view) catch {
+        py_utils.setMemoryError("morphological operation");
+        return null;
+    };
     const result = switch (op) {
-        .dilate => handle.view.dilateBinary(allocator, kernel, iterations, &out),
-        .erode => handle.view.erodeBinary(allocator, kernel, iterations, &out),
-        .open => handle.view.openBinary(allocator, kernel, iterations, &out),
-        .close => handle.view.closeBinary(allocator, kernel, iterations, &out),
+        .dilate => handle.view.dilateBinary(allocator, kernel, iterations, out),
+        .erode => handle.view.erodeBinary(allocator, kernel, iterations, out),
+        .open => handle.view.openBinary(allocator, kernel, iterations, out),
+        .close => handle.view.closeBinary(allocator, kernel, iterations, out),
     };
 
     result catch {
