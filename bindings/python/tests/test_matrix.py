@@ -54,6 +54,29 @@ def test_operators():
     assert isinstance(-a, zignal.Matrix)
 
 
+def test_scalar_subtraction():
+    """Test both normal and reflected subtraction with scalars."""
+    m = zignal.Matrix([[2.0]])
+
+    # Normal subtraction: matrix - scalar
+    result = m - 10
+    assert isinstance(result, zignal.Matrix)
+    assert result[0, 0] == pytest.approx(-8.0)
+
+    # Reflected subtraction: scalar - matrix (regression test)
+    result = 10 - m
+    assert isinstance(result, zignal.Matrix)
+    assert result[0, 0] == pytest.approx(8.0)
+
+    # More complex case
+    m2 = zignal.Matrix([[1, 2], [3, 4]])
+    result = 10 - m2
+    assert result[0, 0] == pytest.approx(9.0)
+    assert result[0, 1] == pytest.approx(8.0)
+    assert result[1, 0] == pytest.approx(7.0)
+    assert result[1, 1] == pytest.approx(6.0)
+
+
 def test_creation_methods():
     """Test class method constructors."""
     z = zignal.Matrix.zeros(2, 3)

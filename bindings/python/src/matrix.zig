@@ -712,7 +712,7 @@ fn matrix_subtract(left: ?*c.PyObject, right: ?*c.PyObject) callconv(.c) ?*c.PyO
         return matrixToObject(result_matrix);
     }
 
-    // Check if right is a scalar
+    // Check if left is matrix and right is scalar (normal subtraction)
     if (c.PyObject_IsInstance(left, @ptrCast(&MatrixType)) == 1) {
         const scalar = c.PyFloat_AsDouble(right);
         if (c.PyErr_Occurred() == null) {
@@ -724,6 +724,26 @@ fn matrix_subtract(left: ?*c.PyObject, right: ?*c.PyObject) callconv(.c) ?*c.PyO
             };
 
             const result_matrix = self_ptr.offset(-scalar);
+            return matrixToObject(result_matrix);
+        }
+        c.PyErr_Clear();
+    }
+
+    // Check if left is scalar and right is matrix (reflected subtraction: scalar - matrix)
+    if (c.PyObject_IsInstance(right, @ptrCast(&MatrixType)) == 1) {
+        const scalar = c.PyFloat_AsDouble(left);
+        if (c.PyErr_Occurred() == null) {
+            // scalar - Matrix: compute -(Matrix) + scalar
+            const self = py_utils.safeCast(MatrixObject, right);
+            const self_ptr = self.matrix_ptr orelse {
+                py_utils.setValueError("Matrix not initialized", .{});
+                return null;
+            };
+
+            // Negate the matrix and add the scalar: scalar - matrix = -matrix + scalar
+            var negated = self_ptr.scale(-1.0);
+            defer negated.deinit();
+            const result_matrix = negated.offset(scalar);
             return matrixToObject(result_matrix);
         }
         c.PyErr_Clear();
