@@ -1590,6 +1590,398 @@ fn matrix_submatrix_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c
     return matrixToObject(result_matrix);
 }
 
+// ===== Advanced decomposition methods =====
+
+const matrix_random_doc =
+    \\Create a matrix filled with random values in [0, 1).
+    \\
+    \\## Parameters
+    \\- `rows` (int): Number of rows
+    \\- `cols` (int): Number of columns
+    \\- `seed` (int, optional): Random seed for reproducibility
+    \\
+    \\## Returns
+    \\Matrix: Matrix filled with random float64 values
+    \\
+    \\## Examples
+    \\```python
+    \\m = Matrix.random(10, 5)  # Random 10x5 matrix
+    \\m = Matrix.random(10, 5, seed=42)  # Reproducible random matrix
+    \\```
+;
+
+fn matrix_random(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    const Params = struct {
+        rows: c_int,
+        cols: c_int,
+        seed: ?u64 = null,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
+
+    const rows_pos = py_utils.validatePositive(usize, params.rows, "rows") catch return null;
+    const cols_pos = py_utils.validatePositive(usize, params.cols, "cols") catch return null;
+
+    const self = @as(?*MatrixObject, @ptrCast(c.PyType_GenericAlloc(@ptrCast(type_obj), 0)));
+    if (self == null) return null;
+
+    const matrix_ptr = allocator.create(Matrix(f64)) catch {
+        c.Py_DECREF(@as(?*c.PyObject, @ptrCast(self)));
+        py_utils.setMemoryError("Matrix");
+        return null;
+    };
+
+    matrix_ptr.* = Matrix(f64).random(allocator, rows_pos, cols_pos, params.seed) catch {
+        allocator.destroy(matrix_ptr);
+        c.Py_DECREF(@as(?*c.PyObject, @ptrCast(self)));
+        py_utils.setMemoryError("matrix data");
+        return null;
+    };
+
+    self.?.matrix_ptr = matrix_ptr;
+    self.?.owns_memory = true;
+    self.?.numpy_ref = null;
+
+    return @ptrCast(self);
+}
+
+const matrix_rank_doc =
+    \\Compute the numerical rank of the matrix.
+    \\
+    \\Uses QR decomposition with column pivoting to determine the rank.
+    \\
+    \\## Returns
+    \\int: The numerical rank
+;
+
+fn matrix_rank_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    _ = args;
+    const self = py_utils.safeCast(MatrixObject, self_obj);
+    const ptr = self.matrix_ptr orelse {
+        py_utils.setValueError("Matrix not initialized", .{});
+        return null;
+    };
+
+    const result = ptr.rank() catch {
+        py_utils.setMemoryError("rank computation");
+        return null;
+    };
+
+    return c.PyLong_FromSize_t(result);
+}
+
+const matrix_pinv_doc =
+    \\Compute the Moore-Penrose pseudoinverse.
+    \\
+    \\Works for rectangular matrices and gracefully handles rank deficiency.
+    \\Uses SVD-based algorithm.
+    \\
+    \\## Parameters
+    \\- `tolerance` (float, optional): Threshold for small singular values
+    \\
+    \\## Returns
+    \\Matrix: The pseudoinverse matrix
+    \\
+    \\## Examples
+    \\```python
+    \\# For rectangular matrix
+    \\m = Matrix([[1, 2], [3, 4], [5, 6]])
+    \\pinv = m.pinv()
+    \\# With custom tolerance
+    \\pinv = m.pinv(tolerance=1e-10)
+    \\```
+;
+
+fn matrix_pinv_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    const Params = struct {
+        tolerance: ?f64 = null,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
+
+    const self = py_utils.safeCast(MatrixObject, self_obj);
+    const ptr = self.matrix_ptr orelse {
+        py_utils.setValueError("Matrix not initialized", .{});
+        return null;
+    };
+
+    const options = Matrix(f64).PseudoInverseOptions{
+        .tolerance = params.tolerance,
+        .effective_rank = null,
+    };
+
+    const result_matrix = ptr.pseudoInverse(options);
+    return matrixToObject(result_matrix);
+}
+
+const matrix_lu_doc =
+    \\Compute LU decomposition with partial pivoting.
+    \\
+    \\Returns L, U matrices and permutation vector such that PA = LU.
+    \\
+    \\## Returns
+    \\dict: Dictionary with keys:
+    \\  - 'l': Lower triangular matrix
+    \\  - 'u': Upper triangular matrix
+    \\  - 'p': Permutation vector (as Matrix)
+    \\  - 'sign': Determinant sign (+1.0 or -1.0)
+    \\
+    \\## Raises
+    \\ValueError: If matrix is not square
+;
+
+fn matrix_lu_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    _ = args;
+    const self = py_utils.safeCast(MatrixObject, self_obj);
+    const ptr = self.matrix_ptr orelse {
+        py_utils.setValueError("Matrix not initialized", .{});
+        return null;
+    };
+
+    if (ptr.rows != ptr.cols) {
+        py_utils.setValueError("Matrix must be square for LU decomposition", .{});
+        return null;
+    }
+
+    var lu_result = ptr.lu() catch {
+        py_utils.setMemoryError("LU decomposition");
+        return null;
+    };
+    defer lu_result.deinit();
+
+    // Create Python dictionary
+    const result_dict = c.PyDict_New() orelse return null;
+
+    // Add matrices
+    const l_obj = matrixToObject(lu_result.l.dupe(allocator) catch {
+        c.Py_DECREF(result_dict);
+        py_utils.setMemoryError("Matrix copy");
+        return null;
+    });
+    const u_obj = matrixToObject(lu_result.u.dupe(allocator) catch {
+        c.Py_DECREF(result_dict);
+        py_utils.setMemoryError("Matrix copy");
+        return null;
+    });
+    const p_obj = matrixToObject(lu_result.p.dupe(allocator) catch {
+        c.Py_DECREF(result_dict);
+        py_utils.setMemoryError("Matrix copy");
+        return null;
+    });
+
+    if (l_obj == null or u_obj == null or p_obj == null) {
+        c.Py_DECREF(result_dict);
+        return null;
+    }
+
+    _ = c.PyDict_SetItemString(result_dict, "l", l_obj);
+    _ = c.PyDict_SetItemString(result_dict, "u", u_obj);
+    _ = c.PyDict_SetItemString(result_dict, "p", p_obj);
+    _ = c.PyDict_SetItemString(result_dict, "sign", c.PyFloat_FromDouble(lu_result.sign));
+
+    c.Py_DECREF(l_obj);
+    c.Py_DECREF(u_obj);
+    c.Py_DECREF(p_obj);
+
+    return result_dict;
+}
+
+const matrix_qr_doc =
+    \\Compute QR decomposition with column pivoting.
+    \\
+    \\Returns Q, R matrices and additional information about the decomposition.
+    \\
+    \\## Returns
+    \\dict: Dictionary with keys:
+    \\  - 'q': Orthogonal matrix (m×n)
+    \\  - 'r': Upper triangular matrix (n×n)
+    \\  - 'rank': Numerical rank (int)
+    \\  - 'perm': Column permutation indices (list of int)
+    \\  - 'col_norms': Final column norms (list of float)
+;
+
+fn matrix_qr_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    _ = args;
+    const self = py_utils.safeCast(MatrixObject, self_obj);
+    const ptr = self.matrix_ptr orelse {
+        py_utils.setValueError("Matrix not initialized", .{});
+        return null;
+    };
+
+    var qr_result = ptr.qr() catch {
+        py_utils.setMemoryError("QR decomposition");
+        return null;
+    };
+    defer qr_result.deinit();
+
+    // Create Python dictionary
+    const result_dict = c.PyDict_New() orelse return null;
+
+    // Add matrices
+    const q_obj = matrixToObject(qr_result.q.dupe(allocator) catch {
+        c.Py_DECREF(result_dict);
+        py_utils.setMemoryError("Matrix copy");
+        return null;
+    });
+    const r_obj = matrixToObject(qr_result.r.dupe(allocator) catch {
+        c.Py_DECREF(result_dict);
+        py_utils.setMemoryError("Matrix copy");
+        return null;
+    });
+
+    if (q_obj == null or r_obj == null) {
+        c.Py_DECREF(result_dict);
+        return null;
+    }
+
+    _ = c.PyDict_SetItemString(result_dict, "q", q_obj);
+    _ = c.PyDict_SetItemString(result_dict, "r", r_obj);
+    _ = c.PyDict_SetItemString(result_dict, "rank", c.PyLong_FromSize_t(qr_result.rank));
+
+    // Convert permutation to Python list
+    const perm_list = c.PyList_New(@intCast(qr_result.perm.len)) orelse {
+        c.Py_DECREF(q_obj);
+        c.Py_DECREF(r_obj);
+        c.Py_DECREF(result_dict);
+        return null;
+    };
+    for (qr_result.perm, 0..) |perm_val, i| {
+        _ = c.PyList_SetItem(perm_list, @intCast(i), c.PyLong_FromSize_t(perm_val));
+    }
+    _ = c.PyDict_SetItemString(result_dict, "perm", perm_list);
+
+    // Convert col_norms to Python list
+    const col_norms_list = c.PyList_New(@intCast(qr_result.col_norms.len)) orelse {
+        c.Py_DECREF(q_obj);
+        c.Py_DECREF(r_obj);
+        c.Py_DECREF(perm_list);
+        c.Py_DECREF(result_dict);
+        return null;
+    };
+    for (qr_result.col_norms, 0..) |norm_val, i| {
+        _ = c.PyList_SetItem(col_norms_list, @intCast(i), c.PyFloat_FromDouble(norm_val));
+    }
+    _ = c.PyDict_SetItemString(result_dict, "col_norms", col_norms_list);
+
+    c.Py_DECREF(q_obj);
+    c.Py_DECREF(r_obj);
+    c.Py_DECREF(perm_list);
+    c.Py_DECREF(col_norms_list);
+
+    return result_dict;
+}
+
+const matrix_svd_doc =
+    \\Compute Singular Value Decomposition (SVD).
+    \\
+    \\Computes A = U × Σ × V^T where U and V are orthogonal matrices
+    \\and Σ is a diagonal matrix of singular values.
+    \\
+    \\## Parameters
+    \\- `full_matrices` (bool, optional): If True, U is m×m; if False, U is m×n (default: True)
+    \\- `compute_uv` (bool, optional): If True, compute U and V; if False, only compute singular values (default: True)
+    \\
+    \\## Returns
+    \\dict: Dictionary with keys:
+    \\  - 'u': Left singular vectors (Matrix or None)
+    \\  - 's': Singular values as column vector (Matrix)
+    \\  - 'v': Right singular vectors (Matrix or None)
+    \\  - 'converged': Convergence status (0 = success, k = failed at k-th value)
+    \\
+    \\## Raises
+    \\ValueError: If rows < cols (matrix must be tall or square)
+;
+
+fn matrix_svd_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    const Params = struct {
+        full_matrices: c_int = 1, // True by default
+        compute_uv: c_int = 1, // True by default
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
+
+    const self = py_utils.safeCast(MatrixObject, self_obj);
+    const ptr = self.matrix_ptr orelse {
+        py_utils.setValueError("Matrix not initialized", .{});
+        return null;
+    };
+
+    if (ptr.rows < ptr.cols) {
+        py_utils.setValueError("Matrix must have rows >= cols for SVD", .{});
+        return null;
+    }
+
+    const full_matrices_bool = params.full_matrices != 0;
+    const compute_uv_bool = params.compute_uv != 0;
+
+    const svd_options: Matrix(f64).SvdOptions = .{
+        .with_u = compute_uv_bool,
+        .with_v = compute_uv_bool,
+        .mode = if (full_matrices_bool) .full_u else .skinny_u,
+    };
+
+    var svd_result = ptr.svd(allocator, svd_options) catch {
+        py_utils.setMemoryError("SVD computation");
+        return null;
+    };
+    defer svd_result.deinit();
+
+    // Create Python dictionary
+    const result_dict = c.PyDict_New() orelse return null;
+
+    // Add U matrix (or None)
+    if (compute_uv_bool) {
+        const u_obj = matrixToObject(svd_result.u.dupe(allocator) catch {
+            c.Py_DECREF(result_dict);
+            py_utils.setMemoryError("Matrix copy");
+            return null;
+        });
+        if (u_obj == null) {
+            c.Py_DECREF(result_dict);
+            return null;
+        }
+        _ = c.PyDict_SetItemString(result_dict, "u", u_obj);
+        c.Py_DECREF(u_obj);
+    } else {
+        _ = c.PyDict_SetItemString(result_dict, "u", c.Py_None());
+    }
+
+    // Add S matrix (always computed)
+    const s_obj = matrixToObject(svd_result.s.dupe(allocator) catch {
+        c.Py_DECREF(result_dict);
+        py_utils.setMemoryError("Matrix copy");
+        return null;
+    });
+    if (s_obj == null) {
+        c.Py_DECREF(result_dict);
+        return null;
+    }
+    _ = c.PyDict_SetItemString(result_dict, "s", s_obj);
+    c.Py_DECREF(s_obj);
+
+    // Add V matrix (or None)
+    if (compute_uv_bool) {
+        const v_obj = matrixToObject(svd_result.v.dupe(allocator) catch {
+            c.Py_DECREF(result_dict);
+            py_utils.setMemoryError("Matrix copy");
+            return null;
+        });
+        if (v_obj == null) {
+            c.Py_DECREF(result_dict);
+            return null;
+        }
+        _ = c.PyDict_SetItemString(result_dict, "v", v_obj);
+        c.Py_DECREF(v_obj);
+    } else {
+        _ = c.PyDict_SetItemString(result_dict, "v", c.Py_None());
+    }
+
+    // Add convergence status
+    _ = c.PyDict_SetItemString(result_dict, "converged", c.PyLong_FromSize_t(svd_result.converged));
+
+    return result_dict;
+}
+
 // Metadata for stub generation
 pub const matrix_methods_metadata = [_]stub_metadata.MethodWithMetadata{
     .{
@@ -1807,6 +2199,54 @@ pub const matrix_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .doc = matrix_submatrix_doc,
         .params = "self, row_start: int, col_start: int, row_count: int, col_count: int",
         .returns = "Matrix",
+    },
+    .{
+        .name = "random",
+        .meth = @ptrCast(&matrix_random),
+        .flags = c.METH_VARARGS | c.METH_KEYWORDS | c.METH_CLASS,
+        .doc = matrix_random_doc,
+        .params = "cls, rows: int, cols: int, seed: int | None = None",
+        .returns = "Matrix",
+    },
+    .{
+        .name = "rank",
+        .meth = @ptrCast(&matrix_rank_method),
+        .flags = c.METH_NOARGS,
+        .doc = matrix_rank_doc,
+        .params = "self",
+        .returns = "int",
+    },
+    .{
+        .name = "pinv",
+        .meth = @ptrCast(&matrix_pinv_method),
+        .flags = c.METH_VARARGS | c.METH_KEYWORDS,
+        .doc = matrix_pinv_doc,
+        .params = "self, tolerance: float | None = None",
+        .returns = "Matrix",
+    },
+    .{
+        .name = "lu",
+        .meth = @ptrCast(&matrix_lu_method),
+        .flags = c.METH_NOARGS,
+        .doc = matrix_lu_doc,
+        .params = "self",
+        .returns = "dict",
+    },
+    .{
+        .name = "qr",
+        .meth = @ptrCast(&matrix_qr_method),
+        .flags = c.METH_NOARGS,
+        .doc = matrix_qr_doc,
+        .params = "self",
+        .returns = "dict",
+    },
+    .{
+        .name = "svd",
+        .meth = @ptrCast(&matrix_svd_method),
+        .flags = c.METH_VARARGS | c.METH_KEYWORDS,
+        .doc = matrix_svd_doc,
+        .params = "self, full_matrices: bool = True, compute_uv: bool = True",
+        .returns = "dict",
     },
 };
 
