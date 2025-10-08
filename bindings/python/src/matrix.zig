@@ -127,34 +127,22 @@ fn matrix_full(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
     const rows_pos = py_utils.validatePositive(usize, rows, "rows") catch return null;
     const cols_pos = py_utils.validatePositive(usize, cols, "cols") catch return null;
 
-    // Create new Matrix object
-    const self = @as(?*MatrixObject, @ptrCast(c.PyType_GenericAlloc(@ptrCast(type_obj), 0)));
-    if (self == null) return null;
+    const allocation = allocOwnedMatrix(type_obj) orelse return null;
+    var cleanup_needed = true;
+    var matrix_initialized = false;
+    defer if (cleanup_needed) cleanupOwnedMatrix(allocation, matrix_initialized);
 
-    // Create the matrix
-    const matrix_ptr = allocator.create(Matrix(f64)) catch {
-        // TODO(py3.10): remove explicit cast once Python 3.10 support is dropped
-        c.Py_DECREF(@as(?*c.PyObject, @ptrCast(self)));
-        py_utils.setMemoryError("Matrix");
-        return null;
-    };
-
-    matrix_ptr.* = Matrix(f64).init(allocator, rows_pos, cols_pos) catch {
-        allocator.destroy(matrix_ptr);
-        // TODO(py3.10): remove explicit cast once Python 3.10 support is dropped
-        c.Py_DECREF(@as(?*c.PyObject, @ptrCast(self)));
+    allocation.matrix_ptr.* = Matrix(f64).init(allocator, rows_pos, cols_pos) catch {
         py_utils.setMemoryError("matrix data");
         return null;
     };
+    matrix_initialized = true;
 
     // Fill with value
-    @memset(matrix_ptr.items, fill_value);
+    @memset(allocation.matrix_ptr.items, fill_value);
 
-    self.?.matrix_ptr = matrix_ptr;
-    self.?.owns_memory = true;
-    self.?.numpy_ref = null;
-
-    return @ptrCast(self);
+    cleanup_needed = false;
+    return allocation.py_obj;
 }
 
 fn matrix_init_from_list(self: *MatrixObject, list_obj: ?*c.PyObject) c_int {
@@ -313,40 +301,10 @@ fn matrix_str(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
 }
 
 // Properties
-fn matrix_rows_getter(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-    _ = closure;
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-
-    if (self.matrix_ptr) |ptr| {
-        return c.PyLong_FromLong(@intCast(ptr.rows));
-    }
-
-    py_utils.setValueError("Matrix not initialized", .{});
-    return null;
-}
-
-fn matrix_cols_getter(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
-    _ = closure;
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-
-    if (self.matrix_ptr) |ptr| {
-        return c.PyLong_FromLong(@intCast(ptr.cols));
-    }
-
-    py_utils.setValueError("Matrix not initialized", .{});
-    return null;
-}
-
 fn matrix_shape_getter(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
     _ = closure;
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-
-    if (self.matrix_ptr) |ptr| {
-        return c.PyTuple_Pack(2, c.PyLong_FromLong(@intCast(ptr.rows)), c.PyLong_FromLong(@intCast(ptr.cols)));
-    }
-
-    py_utils.setValueError("Matrix not initialized", .{});
-    return null;
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
+    return c.PyTuple_Pack(2, c.PyLong_FromLong(@intCast(ptr.rows)), c.PyLong_FromLong(@intCast(ptr.cols)));
 }
 
 const matrix_to_numpy_doc =
@@ -367,12 +325,7 @@ const matrix_to_numpy_doc =
 
 fn matrix_to_numpy(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     // Import numpy
     const np_module = c.PyImport_ImportModule("numpy") orelse {
@@ -531,12 +484,7 @@ fn matrix_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
 
 // Indexing support
 fn matrix_getitem(self_obj: ?*c.PyObject, key: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     // Parse the key - expecting (row, col) tuple or two integers
     if (c.PyTuple_Check(key) == 1) {
@@ -582,12 +530,7 @@ fn matrix_getitem(self_obj: ?*c.PyObject, key: ?*c.PyObject) callconv(.c) ?*c.Py
 }
 
 fn matrix_setitem(self_obj: ?*c.PyObject, key: ?*c.PyObject, value: ?*c.PyObject) callconv(.c) c_int {
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return -1;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return -1;
 
     // Parse the key - expecting (row, col) tuple
     if (c.PyTuple_Check(key) == 1) {
@@ -653,17 +596,8 @@ fn matrix_add(left: ?*c.PyObject, right: ?*c.PyObject) callconv(.c) ?*c.PyObject
         c.PyObject_IsInstance(right, @ptrCast(&MatrixType)) == 1)
     {
         // Matrix + Matrix: element-wise addition
-        const self = py_utils.safeCast(MatrixObject, left);
-        const other = py_utils.safeCast(MatrixObject, right);
-
-        const self_ptr = self.matrix_ptr orelse {
-            py_utils.setValueError("Matrix not initialized", .{});
-            return null;
-        };
-        const other_ptr = other.matrix_ptr orelse {
-            py_utils.setValueError("Matrix not initialized", .{});
-            return null;
-        };
+        const self_ptr = requireMatrixPtr(left) orelse return null;
+        const other_ptr = requireMatrixPtr(right) orelse return null;
 
         const result_matrix = self_ptr.add(other_ptr.*);
         return matrixToObject(result_matrix);
@@ -674,11 +608,7 @@ fn matrix_add(left: ?*c.PyObject, right: ?*c.PyObject) callconv(.c) ?*c.PyObject
         const scalar = c.PyFloat_AsDouble(right);
         if (c.PyErr_Occurred() == null) {
             // Matrix + scalar: offset
-            const self = py_utils.safeCast(MatrixObject, left);
-            const self_ptr = self.matrix_ptr orelse {
-                py_utils.setValueError("Matrix not initialized", .{});
-                return null;
-            };
+            const self_ptr = requireMatrixPtr(left) orelse return null;
 
             const result_matrix = self_ptr.offset(scalar);
             return matrixToObject(result_matrix);
@@ -696,17 +626,8 @@ fn matrix_subtract(left: ?*c.PyObject, right: ?*c.PyObject) callconv(.c) ?*c.PyO
         c.PyObject_IsInstance(right, @ptrCast(&MatrixType)) == 1)
     {
         // Matrix - Matrix: element-wise subtraction
-        const self = py_utils.safeCast(MatrixObject, left);
-        const other = py_utils.safeCast(MatrixObject, right);
-
-        const self_ptr = self.matrix_ptr orelse {
-            py_utils.setValueError("Matrix not initialized", .{});
-            return null;
-        };
-        const other_ptr = other.matrix_ptr orelse {
-            py_utils.setValueError("Matrix not initialized", .{});
-            return null;
-        };
+        const self_ptr = requireMatrixPtr(left) orelse return null;
+        const other_ptr = requireMatrixPtr(right) orelse return null;
 
         const result_matrix = self_ptr.sub(other_ptr.*);
         return matrixToObject(result_matrix);
@@ -717,11 +638,7 @@ fn matrix_subtract(left: ?*c.PyObject, right: ?*c.PyObject) callconv(.c) ?*c.PyO
         const scalar = c.PyFloat_AsDouble(right);
         if (c.PyErr_Occurred() == null) {
             // Matrix - scalar: offset by negative
-            const self = py_utils.safeCast(MatrixObject, left);
-            const self_ptr = self.matrix_ptr orelse {
-                py_utils.setValueError("Matrix not initialized", .{});
-                return null;
-            };
+            const self_ptr = requireMatrixPtr(left) orelse return null;
 
             const result_matrix = self_ptr.offset(-scalar);
             return matrixToObject(result_matrix);
@@ -734,11 +651,7 @@ fn matrix_subtract(left: ?*c.PyObject, right: ?*c.PyObject) callconv(.c) ?*c.PyO
         const scalar = c.PyFloat_AsDouble(left);
         if (c.PyErr_Occurred() == null) {
             // scalar - Matrix: compute -(Matrix) + scalar
-            const self = py_utils.safeCast(MatrixObject, right);
-            const self_ptr = self.matrix_ptr orelse {
-                py_utils.setValueError("Matrix not initialized", .{});
-                return null;
-            };
+            const self_ptr = requireMatrixPtr(right) orelse return null;
 
             // Negate the matrix and add the scalar: scalar - matrix = -matrix + scalar
             var negated = self_ptr.scale(-1.0);
@@ -759,17 +672,8 @@ fn matrix_multiply(left: ?*c.PyObject, right: ?*c.PyObject) callconv(.c) ?*c.PyO
         c.PyObject_IsInstance(right, @ptrCast(&MatrixType)) == 1)
     {
         // Matrix * Matrix: element-wise multiplication
-        const self = py_utils.safeCast(MatrixObject, left);
-        const other = py_utils.safeCast(MatrixObject, right);
-
-        const self_ptr = self.matrix_ptr orelse {
-            py_utils.setValueError("Matrix not initialized", .{});
-            return null;
-        };
-        const other_ptr = other.matrix_ptr orelse {
-            py_utils.setValueError("Matrix not initialized", .{});
-            return null;
-        };
+        const self_ptr = requireMatrixPtr(left) orelse return null;
+        const other_ptr = requireMatrixPtr(right) orelse return null;
 
         const result_matrix = self_ptr.times(other_ptr.*);
         return matrixToObject(result_matrix);
@@ -779,11 +683,7 @@ fn matrix_multiply(left: ?*c.PyObject, right: ?*c.PyObject) callconv(.c) ?*c.PyO
     if (c.PyObject_IsInstance(left, @ptrCast(&MatrixType)) == 1) {
         const scalar = c.PyFloat_AsDouble(right);
         if (c.PyErr_Occurred() == null) {
-            const self = py_utils.safeCast(MatrixObject, left);
-            const self_ptr = self.matrix_ptr orelse {
-                py_utils.setValueError("Matrix not initialized", .{});
-                return null;
-            };
+            const self_ptr = requireMatrixPtr(left) orelse return null;
 
             const result_matrix = self_ptr.scale(scalar);
             return matrixToObject(result_matrix);
@@ -795,11 +695,7 @@ fn matrix_multiply(left: ?*c.PyObject, right: ?*c.PyObject) callconv(.c) ?*c.PyO
     if (c.PyObject_IsInstance(right, @ptrCast(&MatrixType)) == 1) {
         const scalar = c.PyFloat_AsDouble(left);
         if (c.PyErr_Occurred() == null) {
-            const self = py_utils.safeCast(MatrixObject, right);
-            const self_ptr = self.matrix_ptr orelse {
-                py_utils.setValueError("Matrix not initialized", .{});
-                return null;
-            };
+            const self_ptr = requireMatrixPtr(right) orelse return null;
 
             const result_matrix = self_ptr.scale(scalar);
             return matrixToObject(result_matrix);
@@ -819,17 +715,8 @@ fn matrix_matmul(left: ?*c.PyObject, right: ?*c.PyObject) callconv(.c) ?*c.PyObj
         return c.Py_NotImplemented();
     }
 
-    const self = py_utils.safeCast(MatrixObject, left);
-    const other = py_utils.safeCast(MatrixObject, right);
-
-    const self_ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
-    const other_ptr = other.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const self_ptr = requireMatrixPtr(left) orelse return null;
+    const other_ptr = requireMatrixPtr(right) orelse return null;
 
     const result_matrix = self_ptr.dot(other_ptr.*);
     return matrixToObject(result_matrix);
@@ -852,22 +739,14 @@ fn matrix_truediv(left: ?*c.PyObject, right: ?*c.PyObject) callconv(.c) ?*c.PyOb
         return null;
     }
 
-    const self = py_utils.safeCast(MatrixObject, left);
-    const self_ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const self_ptr = requireMatrixPtr(left) orelse return null;
 
     const result_matrix = self_ptr.scale(1.0 / scalar);
     return matrixToObject(result_matrix);
 }
 
 fn matrix_negative(obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-    const self = py_utils.safeCast(MatrixObject, obj);
-    const self_ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const self_ptr = requireMatrixPtr(obj) orelse return null;
 
     const result_matrix = self_ptr.scale(-1.0);
     return matrixToObject(result_matrix);
@@ -903,6 +782,86 @@ fn matrixToObject(matrix: Matrix(f64)) ?*c.PyObject {
 
     return @ptrCast(self);
 }
+
+const MatrixHandle = struct {
+    obj: *MatrixObject,
+    ptr: *Matrix(f64),
+};
+
+inline fn requireMatrixHandle(obj: ?*c.PyObject) ?MatrixHandle {
+    const matrix_obj = py_utils.safeCast(MatrixObject, obj);
+    const matrix_ptr = matrix_obj.matrix_ptr orelse {
+        py_utils.setValueError("Matrix not initialized", .{});
+        return null;
+    };
+
+    return .{ .obj = matrix_obj, .ptr = matrix_ptr };
+}
+
+inline fn requireMatrixPtr(obj: ?*c.PyObject) ?*Matrix(f64) {
+    if (requireMatrixHandle(obj)) |handle| {
+        return handle.ptr;
+    }
+    return null;
+}
+
+const OwnedMatrixAlloc = struct {
+    py_obj: ?*c.PyObject,
+    matrix_obj: *MatrixObject,
+    matrix_ptr: *Matrix(f64),
+};
+
+fn allocOwnedMatrix(type_obj: ?*c.PyObject) ?OwnedMatrixAlloc {
+    const raw_self = c.PyType_GenericAlloc(@ptrCast(type_obj), 0);
+    if (raw_self == null) return null;
+
+    const matrix_obj = @as(*MatrixObject, @ptrCast(raw_self.?));
+    matrix_obj.matrix_ptr = null;
+    matrix_obj.numpy_ref = null;
+    matrix_obj.owns_memory = false;
+
+    const matrix_ptr = allocator.create(Matrix(f64)) catch {
+        c.Py_DECREF(raw_self);
+        py_utils.setMemoryError("Matrix");
+        return null;
+    };
+
+    matrix_obj.matrix_ptr = matrix_ptr;
+    matrix_obj.numpy_ref = null;
+    matrix_obj.owns_memory = true;
+
+    return .{ .py_obj = raw_self, .matrix_obj = matrix_obj, .matrix_ptr = matrix_ptr };
+}
+
+fn cleanupOwnedMatrix(allocation: OwnedMatrixAlloc, matrix_initialized: bool) void {
+    if (matrix_initialized) {
+        allocation.matrix_ptr.deinit();
+    }
+    allocator.destroy(allocation.matrix_ptr);
+
+    allocation.matrix_obj.matrix_ptr = null;
+    allocation.matrix_obj.owns_memory = false;
+
+    c.Py_DECREF(allocation.py_obj);
+}
+
+fn matrixDimensionGetter(comptime dim: enum { rows, cols }) *const anyopaque {
+    const dimension = dim;
+    const Gen = struct {
+        fn get(self_obj: ?*c.PyObject, _: ?*anyopaque) callconv(.c) ?*c.PyObject {
+            const ptr = requireMatrixPtr(self_obj) orelse return null;
+            const value: usize = switch (dimension) {
+                .rows => ptr.rows,
+                .cols => ptr.cols,
+            };
+            return c.PyLong_FromLong(@intCast(value));
+        }
+    };
+    return @ptrCast(&Gen.get);
+}
+
+const matrix_rows_getter = matrixDimensionGetter(.rows);
+const matrix_cols_getter = matrixDimensionGetter(.cols);
 
 // Number protocol for arithmetic operations
 var matrix_as_number = c.PyNumberMethods{
@@ -961,11 +920,7 @@ const matrix_transpose_doc =
 
 fn matrix_transpose(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     const result_matrix = ptr.transpose();
     return matrixToObject(result_matrix);
@@ -989,11 +944,7 @@ const matrix_inverse_doc =
 
 fn matrix_inverse(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     const result_matrix = ptr.inverse();
     return matrixToObject(result_matrix);
@@ -1046,11 +997,7 @@ const matrix_sum_doc =
 
 fn matrix_sum_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     const result = ptr.sum();
     return c.PyFloat_FromDouble(result);
@@ -1065,11 +1012,7 @@ const matrix_mean_doc =
 
 fn matrix_mean_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     const result = ptr.mean();
     return c.PyFloat_FromDouble(result);
@@ -1084,11 +1027,7 @@ const matrix_min_doc =
 
 fn matrix_min_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     const result = ptr.min();
     return c.PyFloat_FromDouble(result);
@@ -1103,11 +1042,7 @@ const matrix_max_doc =
 
 fn matrix_max_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     const result = ptr.max();
     return c.PyFloat_FromDouble(result);
@@ -1125,11 +1060,7 @@ const matrix_trace_doc =
 
 fn matrix_trace_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     if (ptr.rows != ptr.cols) {
         py_utils.setValueError("Matrix must be square to compute trace", .{});
@@ -1162,27 +1093,19 @@ fn matrix_identity(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
     const rows_pos = py_utils.validatePositive(usize, params.rows, "rows") catch return null;
     const cols_pos = py_utils.validatePositive(usize, params.cols, "cols") catch return null;
 
-    const self = @as(?*MatrixObject, @ptrCast(c.PyType_GenericAlloc(@ptrCast(type_obj), 0)));
-    if (self == null) return null;
+    const allocation = allocOwnedMatrix(type_obj) orelse return null;
+    var cleanup_needed = true;
+    var matrix_initialized = false;
+    defer if (cleanup_needed) cleanupOwnedMatrix(allocation, matrix_initialized);
 
-    const matrix_ptr = allocator.create(Matrix(f64)) catch {
-        c.Py_DECREF(@as(?*c.PyObject, @ptrCast(self)));
-        py_utils.setMemoryError("Matrix");
-        return null;
-    };
-
-    matrix_ptr.* = Matrix(f64).identity(allocator, rows_pos, cols_pos) catch {
-        allocator.destroy(matrix_ptr);
-        c.Py_DECREF(@as(?*c.PyObject, @ptrCast(self)));
+    allocation.matrix_ptr.* = Matrix(f64).identity(allocator, rows_pos, cols_pos) catch {
         py_utils.setMemoryError("matrix data");
         return null;
     };
+    matrix_initialized = true;
 
-    self.?.matrix_ptr = matrix_ptr;
-    self.?.owns_memory = true;
-    self.?.numpy_ref = null;
-
-    return @ptrCast(self);
+    cleanup_needed = false;
+    return allocation.py_obj;
 }
 
 const matrix_zeros_doc =
@@ -1207,29 +1130,21 @@ fn matrix_zeros(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) 
     const rows_pos = py_utils.validatePositive(usize, params.rows, "rows") catch return null;
     const cols_pos = py_utils.validatePositive(usize, params.cols, "cols") catch return null;
 
-    const self = @as(?*MatrixObject, @ptrCast(c.PyType_GenericAlloc(@ptrCast(type_obj), 0)));
-    if (self == null) return null;
+    const allocation = allocOwnedMatrix(type_obj) orelse return null;
+    var cleanup_needed = true;
+    var matrix_initialized = false;
+    defer if (cleanup_needed) cleanupOwnedMatrix(allocation, matrix_initialized);
 
-    const matrix_ptr = allocator.create(Matrix(f64)) catch {
-        c.Py_DECREF(@as(?*c.PyObject, @ptrCast(self)));
-        py_utils.setMemoryError("Matrix");
-        return null;
-    };
-
-    matrix_ptr.* = Matrix(f64).init(allocator, rows_pos, cols_pos) catch {
-        allocator.destroy(matrix_ptr);
-        c.Py_DECREF(@as(?*c.PyObject, @ptrCast(self)));
+    allocation.matrix_ptr.* = Matrix(f64).init(allocator, rows_pos, cols_pos) catch {
         py_utils.setMemoryError("matrix data");
         return null;
     };
+    matrix_initialized = true;
 
-    @memset(matrix_ptr.items, 0.0);
+    @memset(allocation.matrix_ptr.items, 0.0);
 
-    self.?.matrix_ptr = matrix_ptr;
-    self.?.owns_memory = true;
-    self.?.numpy_ref = null;
-
-    return @ptrCast(self);
+    cleanup_needed = false;
+    return allocation.py_obj;
 }
 
 const matrix_ones_doc =
@@ -1255,29 +1170,21 @@ fn matrix_ones(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
     const rows_pos = py_utils.validatePositive(usize, params.rows, "rows") catch return null;
     const cols_pos = py_utils.validatePositive(usize, params.cols, "cols") catch return null;
 
-    const self = @as(?*MatrixObject, @ptrCast(c.PyType_GenericAlloc(@ptrCast(type_obj), 0)));
-    if (self == null) return null;
+    const allocation = allocOwnedMatrix(type_obj) orelse return null;
+    var cleanup_needed = true;
+    var matrix_initialized = false;
+    defer if (cleanup_needed) cleanupOwnedMatrix(allocation, matrix_initialized);
 
-    const matrix_ptr = allocator.create(Matrix(f64)) catch {
-        c.Py_DECREF(@as(?*c.PyObject, @ptrCast(self)));
-        py_utils.setMemoryError("Matrix");
-        return null;
-    };
-
-    matrix_ptr.* = Matrix(f64).init(allocator, rows_pos, cols_pos) catch {
-        allocator.destroy(matrix_ptr);
-        c.Py_DECREF(@as(?*c.PyObject, @ptrCast(self)));
+    allocation.matrix_ptr.* = Matrix(f64).init(allocator, rows_pos, cols_pos) catch {
         py_utils.setMemoryError("matrix data");
         return null;
     };
+    matrix_initialized = true;
 
-    @memset(matrix_ptr.items, 1.0);
+    @memset(allocation.matrix_ptr.items, params.fill_value);
 
-    self.?.matrix_ptr = matrix_ptr;
-    self.?.owns_memory = true;
-    self.?.numpy_ref = null;
-
-    return @ptrCast(self);
+    cleanup_needed = false;
+    return allocation.py_obj;
 }
 
 const matrix_copy_doc =
@@ -1289,11 +1196,7 @@ const matrix_copy_doc =
 
 fn matrix_copy_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     const result_matrix = ptr.dupe(allocator) catch {
         py_utils.setMemoryError("Matrix copy");
@@ -1315,11 +1218,7 @@ const matrix_determinant_doc =
 
 fn matrix_determinant_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     if (ptr.rows != ptr.cols) {
         py_utils.setValueError("Matrix must be square to compute determinant", .{});
@@ -1343,11 +1242,7 @@ const matrix_gram_doc =
 
 fn matrix_gram_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     const result_matrix = ptr.gram();
     return matrixToObject(result_matrix);
@@ -1362,11 +1257,7 @@ const matrix_covariance_doc =
 
 fn matrix_covariance_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     const result_matrix = ptr.covariance();
     return matrixToObject(result_matrix);
@@ -1390,11 +1281,7 @@ fn matrix_norm_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyOb
     var params: Params = undefined;
     py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     // Default to Frobenius norm
     var kind_str: []const u8 = "fro";
@@ -1432,11 +1319,7 @@ const matrix_variance_doc =
 
 fn matrix_variance_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     const result = ptr.variance();
     return c.PyFloat_FromDouble(result);
@@ -1451,11 +1334,7 @@ const matrix_std_doc =
 
 fn matrix_std_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     const result = ptr.stdDev();
     return c.PyFloat_FromDouble(result);
@@ -1478,11 +1357,7 @@ fn matrix_pow_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
     var params: Params = undefined;
     py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     const result_matrix = ptr.pow(params.n);
     return matrixToObject(result_matrix);
@@ -1505,11 +1380,7 @@ fn matrix_row_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
     var params: Params = undefined;
     py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     const idx: usize = if (params.idx < 0)
         @intCast(@as(i64, @intCast(ptr.rows)) + params.idx)
@@ -1542,11 +1413,7 @@ fn matrix_col_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
     var params: Params = undefined;
     py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     const idx: usize = if (params.idx < 0)
         @intCast(@as(i64, @intCast(ptr.cols)) + params.idx)
@@ -1585,11 +1452,7 @@ fn matrix_submatrix_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c
     var params: Params = undefined;
     py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     // Starting indices can be zero, but counts must be positive
     if (params.row_start < 0) {
@@ -1642,27 +1505,19 @@ fn matrix_random(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject)
     const rows_pos = py_utils.validatePositive(usize, params.rows, "rows") catch return null;
     const cols_pos = py_utils.validatePositive(usize, params.cols, "cols") catch return null;
 
-    const self = @as(?*MatrixObject, @ptrCast(c.PyType_GenericAlloc(@ptrCast(type_obj), 0)));
-    if (self == null) return null;
+    const allocation = allocOwnedMatrix(type_obj) orelse return null;
+    var cleanup_needed = true;
+    var matrix_initialized = false;
+    defer if (cleanup_needed) cleanupOwnedMatrix(allocation, matrix_initialized);
 
-    const matrix_ptr = allocator.create(Matrix(f64)) catch {
-        c.Py_DECREF(@as(?*c.PyObject, @ptrCast(self)));
-        py_utils.setMemoryError("Matrix");
-        return null;
-    };
-
-    matrix_ptr.* = Matrix(f64).random(allocator, rows_pos, cols_pos, params.seed) catch {
-        allocator.destroy(matrix_ptr);
-        c.Py_DECREF(@as(?*c.PyObject, @ptrCast(self)));
+    allocation.matrix_ptr.* = Matrix(f64).random(allocator, rows_pos, cols_pos, params.seed) catch {
         py_utils.setMemoryError("matrix data");
         return null;
     };
+    matrix_initialized = true;
 
-    self.?.matrix_ptr = matrix_ptr;
-    self.?.owns_memory = true;
-    self.?.numpy_ref = null;
-
-    return @ptrCast(self);
+    cleanup_needed = false;
+    return allocation.py_obj;
 }
 
 const matrix_rank_doc =
@@ -1676,11 +1531,7 @@ const matrix_rank_doc =
 
 fn matrix_rank_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     const result = ptr.rank() catch {
         py_utils.setMemoryError("rank computation");
@@ -1719,11 +1570,7 @@ fn matrix_pinv_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyOb
     var params: Params = undefined;
     py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     const options = Matrix(f64).PseudoInverseOptions{
         .tolerance = params.tolerance,
@@ -1752,11 +1599,7 @@ const matrix_lu_doc =
 
 fn matrix_lu_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     if (ptr.rows != ptr.cols) {
         py_utils.setValueError("Matrix must be square for LU decomposition", .{});
@@ -1797,7 +1640,16 @@ fn matrix_lu_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c
     _ = c.PyDict_SetItemString(result_dict, "l", l_obj);
     _ = c.PyDict_SetItemString(result_dict, "u", u_obj);
     _ = c.PyDict_SetItemString(result_dict, "p", p_obj);
-    _ = c.PyDict_SetItemString(result_dict, "sign", c.PyFloat_FromDouble(lu_result.sign));
+
+    const sign_obj = py_utils.convertToPython(lu_result.sign) orelse {
+        c.Py_DECREF(l_obj);
+        c.Py_DECREF(u_obj);
+        c.Py_DECREF(p_obj);
+        c.Py_DECREF(result_dict);
+        return null;
+    };
+    _ = c.PyDict_SetItemString(result_dict, "sign", sign_obj);
+    c.Py_DECREF(sign_obj);
 
     c.Py_DECREF(l_obj);
     c.Py_DECREF(u_obj);
@@ -1822,11 +1674,7 @@ const matrix_qr_doc =
 
 fn matrix_qr_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     var qr_result = ptr.qr() catch {
         py_utils.setMemoryError("QR decomposition");
@@ -1856,31 +1704,41 @@ fn matrix_qr_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c
 
     _ = c.PyDict_SetItemString(result_dict, "q", q_obj);
     _ = c.PyDict_SetItemString(result_dict, "r", r_obj);
-    _ = c.PyDict_SetItemString(result_dict, "rank", c.PyLong_FromSize_t(qr_result.rank));
 
-    // Convert permutation to Python list
-    const perm_list = c.PyList_New(@intCast(qr_result.perm.len)) orelse {
+    const rank_obj = py_utils.convertToPython(qr_result.rank) orelse {
         c.Py_DECREF(q_obj);
         c.Py_DECREF(r_obj);
         c.Py_DECREF(result_dict);
         return null;
     };
-    for (qr_result.perm, 0..) |perm_val, i| {
-        _ = c.PyList_SetItem(perm_list, @intCast(i), c.PyLong_FromSize_t(perm_val));
-    }
+    _ = c.PyDict_SetItemString(result_dict, "rank", rank_obj);
+    c.Py_DECREF(rank_obj);
+
+    // Convert permutation to Python list
+    const perm_list = py_utils.listFromSlice(usize, qr_result.perm, struct {
+        fn toPy(value: usize, _: usize) ?*c.PyObject {
+            return c.PyLong_FromSize_t(value);
+        }
+    }.toPy) orelse {
+        c.Py_DECREF(q_obj);
+        c.Py_DECREF(r_obj);
+        c.Py_DECREF(result_dict);
+        return null;
+    };
     _ = c.PyDict_SetItemString(result_dict, "perm", perm_list);
 
     // Convert col_norms to Python list
-    const col_norms_list = c.PyList_New(@intCast(qr_result.col_norms.len)) orelse {
+    const col_norms_list = py_utils.listFromSlice(f64, qr_result.col_norms, struct {
+        fn toPy(value: f64, _: usize) ?*c.PyObject {
+            return c.PyFloat_FromDouble(value);
+        }
+    }.toPy) orelse {
         c.Py_DECREF(q_obj);
         c.Py_DECREF(r_obj);
         c.Py_DECREF(perm_list);
         c.Py_DECREF(result_dict);
         return null;
     };
-    for (qr_result.col_norms, 0..) |norm_val, i| {
-        _ = c.PyList_SetItem(col_norms_list, @intCast(i), c.PyFloat_FromDouble(norm_val));
-    }
     _ = c.PyDict_SetItemString(result_dict, "col_norms", col_norms_list);
 
     c.Py_DECREF(q_obj);
@@ -1920,11 +1778,7 @@ fn matrix_svd_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
     var params: Params = undefined;
     py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const self = py_utils.safeCast(MatrixObject, self_obj);
-    const ptr = self.matrix_ptr orelse {
-        py_utils.setValueError("Matrix not initialized", .{});
-        return null;
-    };
+    const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     if (ptr.rows < ptr.cols) {
         py_utils.setValueError("Matrix must have rows >= cols for SVD", .{});
@@ -1997,7 +1851,12 @@ fn matrix_svd_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
     }
 
     // Add convergence status
-    _ = c.PyDict_SetItemString(result_dict, "converged", c.PyLong_FromSize_t(svd_result.converged));
+    const converged_obj = py_utils.convertToPython(svd_result.converged) orelse {
+        c.Py_DECREF(result_dict);
+        return null;
+    };
+    _ = c.PyDict_SetItemString(result_dict, "converged", converged_obj);
+    c.Py_DECREF(converged_obj);
 
     return result_dict;
 }
