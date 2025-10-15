@@ -51,14 +51,14 @@ const Blending = @import("color/blending.zig").Blending;
 pub inline fn assignPixel(dest: anytype, sample: anytype, blend_mode: Blending) void {
     comptime {
         const info = @typeInfo(@TypeOf(dest));
-        if (info != .pointer) @compileError("blendColor expects a pointer destination");
+        if (info != .pointer) @compileError("assignPixel expects a pointer destination");
     }
     const DestType = std.meta.Child(@TypeOf(dest));
-    const Src = @TypeOf(sample);
+    const SrcType = @TypeOf(sample);
 
-    if (comptime Src == Rgba) {
-        const rgba_sample: Rgba = sample;
+    if (comptime SrcType == Rgba) {
         if (blend_mode != .none) {
+            const rgba_sample: Rgba = sample;
             if (comptime DestType == Rgba) {
                 dest.* = dest.*.blend(rgba_sample, blend_mode);
             } else {
@@ -66,17 +66,11 @@ pub inline fn assignPixel(dest: anytype, sample: anytype, blend_mode: Blending) 
                 const blended = dst_rgba.blend(rgba_sample, blend_mode);
                 dest.* = convertColor(DestType, blended);
             }
-        } else {
-            if (comptime DestType == Rgba) {
-                dest.* = rgba_sample;
-            } else {
-                dest.* = convertColor(DestType, rgba_sample);
-            }
+            return;
         }
-        return;
     }
 
-    if (comptime Src == DestType) {
+    if (comptime SrcType == DestType) {
         dest.* = sample;
     } else {
         dest.* = convertColor(DestType, sample);
