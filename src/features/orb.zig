@@ -412,7 +412,7 @@ fn computeFeaturesPerLevel(self: Orb, allocator: Allocator) ![]usize {
         const min_features = @min(remaining, base_min);
 
         const allocated = if (desired_clamped < min_features) min_features else desired_clamped;
-        n_features_per_level[level] = @min(allocated, remaining);
+        n_features_per_level[level] = allocated;
         assigned += n_features_per_level[level];
     }
 
