@@ -211,8 +211,8 @@ pub fn convolve(comptime T: type, self: Image(T), allocator: Allocator, kernel: 
                         kernel_sum += weight;
                     }
                     const plane_size = self.rows * self.cols;
-                    const scale = 256;
                     const Pixel = PixelIO(u8, 1);
+                    const scale = Pixel.scale;
 
                     // Separate channels using helper
                     const channels = try channel_ops.splitChannels(T, self, allocator);
