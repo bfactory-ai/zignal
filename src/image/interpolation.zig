@@ -104,7 +104,7 @@ pub fn resize(comptime T: type, allocator: Allocator, self: Image(T), out: Image
         if (self.data.ptr == out.data.ptr) return;
 
         if (self.isContiguous() and out.isContiguous()) {
-            const total = std.math.mul(usize, self.rows, self.cols) catch @panic("resize contiguous copy overflow");
+            const total = try std.math.mul(usize, self.rows, self.cols);
             @memcpy(out.data[0..total], self.data[0..total]);
         } else {
             for (0..self.rows) |r| {

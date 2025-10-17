@@ -106,7 +106,7 @@ pub fn Image(comptime T: type) type {
         /// Constructs an image of rows and cols size allocating its own memory.
         /// The image owns the memory and deinit should be called to free it.
         pub fn init(allocator: Allocator, rows: usize, cols: usize) !Image(T) {
-            const pixel_count = std.math.mul(usize, rows, cols) catch return error.OutOfMemory;
+            const pixel_count = try std.math.mul(usize, rows, cols);
             return .{
                 .rows = rows,
                 .cols = cols,
