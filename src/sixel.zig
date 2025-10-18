@@ -174,7 +174,7 @@ pub fn fromImageProfiled(
     // Build lookup table for all palettes
     var lut_start: u64 = 0;
     if (profiler != null) lut_start = monotonicNs();
-    const color_lut = getCachedLookupTable(options.palette, palette[0..palette_size]);
+    const color_lut = ColorLookupTable.cache.get(options.palette, palette[0..palette_size]);
     if (profiler) |p| {
         p.lut_ns += monotonicNs() - lut_start;
     }
@@ -568,50 +568,35 @@ const ColorLookupTable = struct {
         const b5 = rgb.b >> (8 - color_quantize_bits);
         return self.table[r5][g5][b5];
     }
-};
 
-const LutCache = struct {
-    var mutex = std.Thread.Mutex{};
-    var fixed_6x7x6: ?ColorLookupTable = null;
-    var fixed_vga16: ?ColorLookupTable = null;
-    var fixed_web216: ?ColorLookupTable = null;
-};
+    const cache = struct {
+        var mutex = std.Thread.Mutex{};
+        var fixed_6x7x6: ?ColorLookupTable = null;
+        var fixed_vga16: ?ColorLookupTable = null;
+        var fixed_web216: ?ColorLookupTable = null;
 
-fn getCachedLookupTable(mode: PaletteMode, palette: []const Rgb) ColorLookupTable {
-    switch (mode) {
-        .fixed_6x7x6 => {
-            LutCache.mutex.lock();
-            defer LutCache.mutex.unlock();
-            if (LutCache.fixed_6x7x6) |cached| {
+        fn getOrInit(cache_field: *?ColorLookupTable, palette: []const Rgb) ColorLookupTable {
+            cache.mutex.lock();
+            defer cache.mutex.unlock();
+
+            if (cache_field.*) |cached| {
                 return cached;
             }
-            const lut = ColorLookupTable.init(palette);
-            LutCache.fixed_6x7x6 = lut;
+            const lut: ColorLookupTable = .init(palette);
+            cache_field.* = lut;
             return lut;
-        },
-        .fixed_vga16 => {
-            LutCache.mutex.lock();
-            defer LutCache.mutex.unlock();
-            if (LutCache.fixed_vga16) |cached| {
-                return cached;
-            }
-            const lut = ColorLookupTable.init(palette);
-            LutCache.fixed_vga16 = lut;
-            return lut;
-        },
-        .fixed_web216 => {
-            LutCache.mutex.lock();
-            defer LutCache.mutex.unlock();
-            if (LutCache.fixed_web216) |cached| {
-                return cached;
-            }
-            const lut = ColorLookupTable.init(palette);
-            LutCache.fixed_web216 = lut;
-            return lut;
-        },
-        .adaptive => return ColorLookupTable.init(palette),
-    }
-}
+        }
+
+        pub fn get(mode: PaletteMode, palette: []const Rgb) ColorLookupTable {
+            return switch (mode) {
+                .fixed_6x7x6 => getOrInit(&cache.fixed_6x7x6, palette),
+                .fixed_vga16 => getOrInit(&cache.fixed_vga16, palette),
+                .fixed_web216 => getOrInit(&cache.fixed_web216, palette),
+                .adaptive => .init(palette),
+            };
+        }
+    };
+};
 
 const AdaptiveHistogramHandle = struct {
     counts: []u32,
