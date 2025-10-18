@@ -606,6 +606,7 @@ const AdaptiveHistogramHandle = struct {
 
 const AdaptiveHistogramCache = struct {
     var mutex = std.Thread.Mutex{};
+    var cond = std.Thread.Condition{};
     var counts: []u32 = &[_]u32{};
     var stamps: []u32 = &[_]u32{};
     var generation: u32 = 1;
@@ -614,56 +615,55 @@ const AdaptiveHistogramCache = struct {
 
 fn acquireAdaptiveHistogram() !AdaptiveHistogramHandle {
     const required_len: usize = @as(usize, 1) << (3 * color_quantize_bits);
-    while (true) {
-        AdaptiveHistogramCache.mutex.lock();
-        if (!AdaptiveHistogramCache.in_use) {
-            AdaptiveHistogramCache.in_use = true;
+    AdaptiveHistogramCache.mutex.lock();
+    defer AdaptiveHistogramCache.mutex.unlock();
 
-            if (AdaptiveHistogramCache.counts.len != required_len or AdaptiveHistogramCache.stamps.len != required_len) {
-                const new_counts = std.heap.page_allocator.alloc(u32, required_len) catch |err| {
-                    AdaptiveHistogramCache.in_use = false;
-                    AdaptiveHistogramCache.mutex.unlock();
-                    return err;
-                };
-                const new_stamps = std.heap.page_allocator.alloc(u32, required_len) catch |err| {
-                    std.heap.page_allocator.free(new_counts);
-                    AdaptiveHistogramCache.in_use = false;
-                    AdaptiveHistogramCache.mutex.unlock();
-                    return err;
-                };
-                if (AdaptiveHistogramCache.counts.len != 0) std.heap.page_allocator.free(AdaptiveHistogramCache.counts);
-                if (AdaptiveHistogramCache.stamps.len != 0) std.heap.page_allocator.free(AdaptiveHistogramCache.stamps);
-
-                AdaptiveHistogramCache.counts = new_counts;
-                AdaptiveHistogramCache.stamps = new_stamps;
-                @memset(AdaptiveHistogramCache.stamps, 0);
-            }
-
-            var gen = AdaptiveHistogramCache.generation;
-            AdaptiveHistogramCache.generation +%= 1;
-            if (AdaptiveHistogramCache.generation == 0) {
-                @memset(AdaptiveHistogramCache.stamps, 0);
-                AdaptiveHistogramCache.generation = 1;
-                gen = 1;
-            }
-
-            AdaptiveHistogramCache.mutex.unlock();
-
-            return AdaptiveHistogramHandle{
-                .counts = AdaptiveHistogramCache.counts,
-                .stamps = AdaptiveHistogramCache.stamps,
-                .generation = gen,
-            };
-        }
-        AdaptiveHistogramCache.mutex.unlock();
-        std.Thread.yield() catch {};
+    while (AdaptiveHistogramCache.in_use) {
+        AdaptiveHistogramCache.cond.wait(&AdaptiveHistogramCache.mutex);
     }
+
+    AdaptiveHistogramCache.in_use = true;
+
+    if (AdaptiveHistogramCache.counts.len != required_len or AdaptiveHistogramCache.stamps.len != required_len) {
+        const new_counts = std.heap.page_allocator.alloc(u32, required_len) catch |err| {
+            AdaptiveHistogramCache.in_use = false;
+            AdaptiveHistogramCache.cond.signal();
+            return err;
+        };
+        const new_stamps = std.heap.page_allocator.alloc(u32, required_len) catch |err| {
+            std.heap.page_allocator.free(new_counts);
+            AdaptiveHistogramCache.in_use = false;
+            AdaptiveHistogramCache.cond.signal();
+            return err;
+        };
+        if (AdaptiveHistogramCache.counts.len != 0) std.heap.page_allocator.free(AdaptiveHistogramCache.counts);
+        if (AdaptiveHistogramCache.stamps.len != 0) std.heap.page_allocator.free(AdaptiveHistogramCache.stamps);
+
+        AdaptiveHistogramCache.counts = new_counts;
+        AdaptiveHistogramCache.stamps = new_stamps;
+        @memset(AdaptiveHistogramCache.stamps, 0);
+    }
+
+    var generation_token = AdaptiveHistogramCache.generation;
+    AdaptiveHistogramCache.generation +%= 1;
+    if (AdaptiveHistogramCache.generation == 0) {
+        @memset(AdaptiveHistogramCache.stamps, 0);
+        AdaptiveHistogramCache.generation = 1;
+        generation_token = 1;
+    }
+
+    return AdaptiveHistogramHandle{
+        .counts = AdaptiveHistogramCache.counts,
+        .stamps = AdaptiveHistogramCache.stamps,
+        .generation = generation_token,
+    };
 }
 
 fn releaseAdaptiveHistogram(handle: AdaptiveHistogramHandle) void {
     _ = handle;
     AdaptiveHistogramCache.mutex.lock();
     AdaptiveHistogramCache.in_use = false;
+    AdaptiveHistogramCache.cond.signal();
     AdaptiveHistogramCache.mutex.unlock();
 }
 
