@@ -678,7 +678,8 @@ inline fn divTruncPow2(value: i32, shift: u3) i32 {
     if (value >= 0) {
         return value >> shift;
     }
-    return -(@as(i32, ((-value) >> shift)));
+    const d: i32 = 1 << shift;
+    return (value + d - 1) >> shift;
 }
 
 inline fn clampToU8(value: i32) u8 {
