@@ -102,6 +102,7 @@ fn pixel_iterator_next(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
         c.Py_DECREF(pixel_obj.?);
         return null;
     };
+    c.Py_DECREF(pixel_obj.?);
 
     self.index += 1;
     return result;

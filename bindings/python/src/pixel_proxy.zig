@@ -37,8 +37,18 @@ fn PixelProxyBinding(comptime ColorType: type, comptime ProxyObjectType: type) t
 
         // Helper function to delegate method calls to the underlying color object
         fn delegateToColorMethod(self_obj: ?*c.PyObject, method_name: [*c]const u8, args: ?*c.PyObject) ?*c.PyObject {
+            var owned_empty_tuple: ?*c.PyObject = null;
+            var call_args: ?*c.PyObject = args;
+            if (call_args == null) {
+                const empty = c.PyTuple_New(0) orelse return null;
+                owned_empty_tuple = empty;
+                call_args = empty;
+            }
+            defer if (owned_empty_tuple) |tuple| c.Py_DECREF(tuple);
+
             // Get the color object via item()
-            const color_obj = itemMethod(self_obj, @ptrCast(@alignCast(args orelse c.PyTuple_New(0)))) orelse return null;
+            const args_ptr = @as([*c]c.PyObject, @ptrCast(@alignCast(call_args.?)));
+            const color_obj = itemMethod(self_obj, args_ptr) orelse return null;
             defer c.Py_DECREF(color_obj);
 
             // Get the method from the color object
@@ -47,8 +57,7 @@ fn PixelProxyBinding(comptime ColorType: type, comptime ProxyObjectType: type) t
             defer c.Py_DECREF(method_ptr);
 
             // Call the method with the provided arguments
-            const result = if (args) |a| c.PyObject_CallObject(method_ptr, a) else c.PyObject_CallObject(method_ptr, c.PyTuple_New(0));
-            return result;
+            return c.PyObject_CallObject(method_ptr, call_args);
         }
 
         fn repr(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
