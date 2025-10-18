@@ -630,18 +630,24 @@ fn acquireAdaptiveHistogram() !AdaptiveHistogramHandle {
             AdaptiveHistogramCache.cond.signal();
             return err;
         };
+        errdefer std.heap.page_allocator.free(new_counts);
+
         const new_stamps = std.heap.page_allocator.alloc(u32, required_len) catch |err| {
-            std.heap.page_allocator.free(new_counts);
             AdaptiveHistogramCache.in_use = false;
             AdaptiveHistogramCache.cond.signal();
             return err;
         };
-        if (AdaptiveHistogramCache.counts.len != 0) std.heap.page_allocator.free(AdaptiveHistogramCache.counts);
-        if (AdaptiveHistogramCache.stamps.len != 0) std.heap.page_allocator.free(AdaptiveHistogramCache.stamps);
+        errdefer std.heap.page_allocator.free(new_stamps);
+
+        const old_counts = AdaptiveHistogramCache.counts;
+        const old_stamps = AdaptiveHistogramCache.stamps;
 
         AdaptiveHistogramCache.counts = new_counts;
         AdaptiveHistogramCache.stamps = new_stamps;
         @memset(AdaptiveHistogramCache.stamps, 0);
+
+        if (old_counts.len != 0) std.heap.page_allocator.free(old_counts);
+        if (old_stamps.len != 0) std.heap.page_allocator.free(old_stamps);
     }
 
     var generation_token = AdaptiveHistogramCache.generation;
