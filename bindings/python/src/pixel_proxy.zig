@@ -37,12 +37,9 @@ fn PixelProxyBinding(comptime ColorType: type, comptime ProxyObjectType: type) t
 
         // Helper function to delegate method calls to the underlying color object
         fn delegateToColorMethod(self_obj: ?*c.PyObject, method_name: [*c]const u8, args: ?*c.PyObject) ?*c.PyObject {
-            const args_handle = py_utils.ensureArgsTuple(args) orelse return null;
-            defer args_handle.deinit();
-
             const color_raw = itemMethodImpl(self_obj) orelse return null;
             defer c.Py_DECREF(color_raw);
-            return py_utils.callMethodBorrowingArgs(color_raw, method_name, args_handle.tuple);
+            return py_utils.callMethod(color_raw, method_name, args);
         }
 
         fn repr(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
