@@ -214,9 +214,27 @@ pub fn fromImageProfiled(
                     const src_x = @as(f32, @floatFromInt(col_idx)) / scale;
                     const src_y = @as(f32, @floatFromInt(row_idx)) / scale;
 
-                    if (image.interpolate(src_x, src_y, options.interpolation)) |pixel| {
-                        scaled_img.at(row_idx, col_idx).* = convertColor(Rgb, pixel);
-                    }
+                    const rgb_value = blk: {
+                        if (image.interpolate(src_x, src_y, options.interpolation)) |pixel| {
+                            break :blk convertColor(Rgb, pixel);
+                        }
+
+                        // Fallback to clamped nearest-neighbor sample to avoid leaving pixels uninitialized.
+                        const clamped_col = clamp(
+                            @as(isize, @intFromFloat(@round(src_x))),
+                            0,
+                            @as(isize, @intCast(image.cols - 1)),
+                        );
+                        const clamped_row = clamp(
+                            @as(isize, @intFromFloat(@round(src_y))),
+                            0,
+                            @as(isize, @intCast(image.rows - 1)),
+                        );
+                        const fallback_pixel = image.at(@intCast(clamped_row), @intCast(clamped_col)).*;
+                        break :blk convertColor(Rgb, fallback_pixel);
+                    };
+
+                    scaled_img.at(row_idx, col_idx).* = rgb_value;
                 }
             }
 
