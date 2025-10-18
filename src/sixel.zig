@@ -338,9 +338,12 @@ pub fn fromImageProfiled(
     var encode_start: u64 = 0;
     if (profiler != null) encode_start = monotonicNs();
 
-    var color_map_storage: [256 * max_supported_width]u8 = undefined;
-    var color_map_generation: [256 * max_supported_width]u32 = undefined;
-    @memset(color_map_generation[0..], 0);
+    const color_map_len = palette_size * width;
+    var color_map_storage = try gpa.alloc(u8, color_map_len);
+    defer gpa.free(color_map_storage);
+    var color_map_generation = try gpa.alloc(u32, color_map_len);
+    defer gpa.free(color_map_generation);
+    @memset(color_map_generation[0..color_map_len], 0);
     var color_generation_counter: u32 = 1;
 
     var column_stamp: [256]u32 = undefined;
