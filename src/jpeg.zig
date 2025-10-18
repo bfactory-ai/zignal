@@ -1781,8 +1781,7 @@ fn decodeBlockProgressive(state: *JpegState, scan_info: ScanInfo, scan_comp: Sca
                     }
 
                     // Process zero run and place coefficient
-                    while (ac <= scan_info.end_of_spectral_selection) {
-                        if (ac >= 64) break;
+                    while (ac <= scan_info.end_of_spectral_selection and ac < 64) {
                         if (block[zigzag[ac]] == 0) {
                             if (zero_run_length > 0) {
                                 zero_run_length -= 1;
