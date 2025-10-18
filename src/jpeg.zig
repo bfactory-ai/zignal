@@ -1722,8 +1722,7 @@ fn decodeBlockProgressive(state: *JpegState, scan_info: ScanInfo, scan_comp: Sca
             var ac: usize = scan_info.start_of_spectral_selection;
             // Check skips == 0 first
             if (skips.* == 0) {
-                while (ac <= scan_info.end_of_spectral_selection) {
-                    if (ac >= 64) break;
+                while (ac <= scan_info.end_of_spectral_selection and ac < 64) {
                     var coeff: i32 = 0;
                     const zero_run_length_and_magnitude = try state.readCode(&ac_table);
                     const zero_run_length = zero_run_length_and_magnitude >> 4;
@@ -1754,8 +1753,7 @@ fn decodeBlockProgressive(state: *JpegState, scan_info: ScanInfo, scan_comp: Sca
 
             if (skips.* > 0) {
                 skips.* -= 1;
-                while (ac <= scan_info.end_of_spectral_selection) {
-                    if (ac >= 64) break;
+                while (ac <= scan_info.end_of_spectral_selection and ac < 64) {
                     block[zigzag[ac]] = 0;
                     ac += 1;
                 }
@@ -1764,8 +1762,7 @@ fn decodeBlockProgressive(state: *JpegState, scan_info: ScanInfo, scan_comp: Sca
             const bit: i32 = @as(i32, 1) << @intCast(scan_info.approximation_low);
             var ac: usize = scan_info.start_of_spectral_selection;
             if (skips.* == 0) {
-                while (ac <= scan_info.end_of_spectral_selection) {
-                    if (ac >= 64) break;
+                while (ac <= scan_info.end_of_spectral_selection and ac < 64) {
                     var coeff: i32 = 0;
                     const zero_run_length_and_magnitude = try state.readCode(&ac_table);
                     var zero_run_length = zero_run_length_and_magnitude >> 4;
@@ -1808,8 +1805,7 @@ fn decodeBlockProgressive(state: *JpegState, scan_info: ScanInfo, scan_comp: Sca
 
             // Process skips
             if (skips.* > 0) {
-                while (ac <= scan_info.end_of_spectral_selection) : (ac += 1) {
-                    if (ac >= 64) break;
+                while (ac <= scan_info.end_of_spectral_selection and ac < 64) : (ac += 1) {
                     if (block[zigzag[ac]] != 0) {
                         const sign_bit: u32 = try state.bit_reader.getBits(1);
                         if (sign_bit != 0) {
