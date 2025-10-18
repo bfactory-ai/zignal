@@ -678,7 +678,7 @@ inline fn divTruncPow2(value: i32, shift: u3) i32 {
     if (value >= 0) {
         return value >> shift;
     }
-    const d: i32 = 1 << shift;
+    const d: i32 = @as(i32, 1) << shift;
     return (value + d - 1) >> shift;
 }
 
