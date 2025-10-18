@@ -68,7 +68,11 @@ pub fn encode(comptime T: type, allocator: Allocator, image: Image(T), options: 
     switch (T) {
         u8 => return encodeGrayscale(allocator, image.asBytes(), @intCast(image.cols), @intCast(image.rows), options),
         Rgb => return encodeRgb(allocator, image, options),
-        else => return encodeRgb(allocator, try image.convert(Rgb, allocator), options),
+        else => {
+            var converted = try image.convert(Rgb, allocator);
+            defer converted.deinit(allocator);
+            return encodeRgb(allocator, converted, options);
+        },
     }
 }
 
@@ -1333,6 +1337,7 @@ pub const JpegState = struct {
         if (self.frame_type == .progressive and (num_components == 0 or num_components > self.num_components)) return error.InvalidSOS;
 
         const scan_components = try self.allocator.alloc(ScanComponent, num_components);
+        errdefer self.allocator.free(scan_components);
 
         var pos: usize = 3;
         for (0..num_components) |i| {
@@ -1718,6 +1723,7 @@ fn decodeBlockProgressive(state: *JpegState, scan_info: ScanInfo, scan_comp: Sca
             // Check skips == 0 first
             if (skips.* == 0) {
                 while (ac <= scan_info.end_of_spectral_selection) {
+                    if (ac >= 64) break;
                     var coeff: i32 = 0;
                     const zero_run_length_and_magnitude = try state.readCode(&ac_table);
                     const zero_run_length = zero_run_length_and_magnitude >> 4;
@@ -1736,9 +1742,11 @@ fn decodeBlockProgressive(state: *JpegState, scan_info: ScanInfo, scan_comp: Sca
                     }
 
                     for (0..zero_run_length) |_| {
+                        if (ac >= 64) break;
                         block[zigzag[ac]] = 0;
                         ac += 1;
                     }
+                    if (ac >= 64) break;
                     block[zigzag[ac]] = coeff << @intCast(scan_info.approximation_low);
                     ac += 1;
                 }
@@ -1747,6 +1755,7 @@ fn decodeBlockProgressive(state: *JpegState, scan_info: ScanInfo, scan_comp: Sca
             if (skips.* > 0) {
                 skips.* -= 1;
                 while (ac <= scan_info.end_of_spectral_selection) {
+                    if (ac >= 64) break;
                     block[zigzag[ac]] = 0;
                     ac += 1;
                 }
@@ -1756,6 +1765,7 @@ fn decodeBlockProgressive(state: *JpegState, scan_info: ScanInfo, scan_comp: Sca
             var ac: usize = scan_info.start_of_spectral_selection;
             if (skips.* == 0) {
                 while (ac <= scan_info.end_of_spectral_selection) {
+                    if (ac >= 64) break;
                     var coeff: i32 = 0;
                     const zero_run_length_and_magnitude = try state.readCode(&ac_table);
                     var zero_run_length = zero_run_length_and_magnitude >> 4;
@@ -1775,6 +1785,7 @@ fn decodeBlockProgressive(state: *JpegState, scan_info: ScanInfo, scan_comp: Sca
 
                     // Process zero run and place coefficient
                     while (ac <= scan_info.end_of_spectral_selection) {
+                        if (ac >= 64) break;
                         if (block[zigzag[ac]] == 0) {
                             if (zero_run_length > 0) {
                                 zero_run_length -= 1;
@@ -1798,6 +1809,7 @@ fn decodeBlockProgressive(state: *JpegState, scan_info: ScanInfo, scan_comp: Sca
             // Process skips
             if (skips.* > 0) {
                 while (ac <= scan_info.end_of_spectral_selection) : (ac += 1) {
+                    if (ac >= 64) break;
                     if (block[zigzag[ac]] != 0) {
                         const sign_bit: u32 = try state.bit_reader.getBits(1);
                         if (sign_bit != 0) {
