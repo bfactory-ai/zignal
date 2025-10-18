@@ -124,12 +124,7 @@ pub fn callMethod(target: ?*c.PyObject, method_name: [*c]const u8, args: ?*c.PyO
 /// Build a `(row, col, pixel)` tuple while consuming the pixel reference.
 pub fn buildPixelTuple(row: usize, col: usize, pixel_obj: ?*c.PyObject) ?*c.PyObject {
     if (pixel_obj == null) return null;
-    const tuple = c.Py_BuildValue("(nnO)", @as(c.Py_ssize_t, @intCast(row)), @as(c.Py_ssize_t, @intCast(col)), pixel_obj.?) orelse {
-        c.Py_DECREF(pixel_obj.?);
-        return null;
-    };
-    c.Py_DECREF(pixel_obj.?);
-    return tuple;
+    return c.Py_BuildValue("(nnN)", @as(c.Py_ssize_t, @intCast(row)), @as(c.Py_ssize_t, @intCast(col)), pixel_obj.?);
 }
 
 /// Build a field getter function pointer for a Python-exposed struct.
