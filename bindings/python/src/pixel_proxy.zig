@@ -37,27 +37,12 @@ fn PixelProxyBinding(comptime ColorType: type, comptime ProxyObjectType: type) t
 
         // Helper function to delegate method calls to the underlying color object
         fn delegateToColorMethod(self_obj: ?*c.PyObject, method_name: [*c]const u8, args: ?*c.PyObject) ?*c.PyObject {
-            var owned_empty_tuple: ?*c.PyObject = null;
-            var call_args: ?*c.PyObject = args;
-            if (call_args == null) {
-                const empty = c.PyTuple_New(0) orelse return null;
-                owned_empty_tuple = empty;
-                call_args = empty;
-            }
-            defer if (owned_empty_tuple) |tuple| c.Py_DECREF(tuple);
+            const args_handle = py_utils.ensureArgsTuple(args) orelse return null;
+            defer args_handle.deinit();
 
-            // Get the color object via item()
-            const args_ptr = @as([*c]c.PyObject, @ptrCast(@alignCast(call_args.?)));
-            const color_obj = itemMethod(self_obj, args_ptr) orelse return null;
-            defer c.Py_DECREF(color_obj);
-
-            // Get the method from the color object
-            const method_ptr = c.PyObject_GetAttrString(color_obj, method_name);
-            if (method_ptr == null) return null;
-            defer c.Py_DECREF(method_ptr);
-
-            // Call the method with the provided arguments
-            return c.PyObject_CallObject(method_ptr, call_args);
+            const color_raw = itemMethodImpl(self_obj) orelse return null;
+            defer c.Py_DECREF(color_raw);
+            return py_utils.callMethodBorrowingArgs(color_raw, method_name, args_handle.tuple);
         }
 
         fn repr(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
@@ -201,18 +186,17 @@ fn PixelProxyBinding(comptime ColorType: type, comptime ProxyObjectType: type) t
         }
 
         // __format__ method implementation - delegate to color object
-        fn formatMethod(self_obj: ?*c.PyObject, args: [*c]c.PyObject) callconv(.c) ?*c.PyObject {
-            return delegateToColorMethod(self_obj, "__format__", @ptrCast(args));
+        fn formatMethod(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+            return delegateToColorMethod(self_obj, "__format__", args);
         }
 
         // to_gray method implementation - delegate to color object
-        fn toGrayMethod(self_obj: ?*c.PyObject, args: [*c]c.PyObject) callconv(.c) ?*c.PyObject {
-            _ = args;
+        fn toGrayMethod(self_obj: ?*c.PyObject, _: ?*c.PyObject) callconv(.c) ?*c.PyObject {
             return delegateToColorMethod(self_obj, "to_gray", null);
         }
 
         // item method implementation - extract the pixel value as a color object
-        fn itemMethod(self_obj: ?*c.PyObject, _: [*c]c.PyObject) callconv(.c) ?*c.PyObject {
+        fn itemMethodImpl(self_obj: ?*c.PyObject) ?*c.PyObject {
             const parent = Self.parentFromObj(self_obj) orelse {
                 c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
                 return null;
@@ -249,8 +233,12 @@ fn PixelProxyBinding(comptime ColorType: type, comptime ProxyObjectType: type) t
             return null;
         }
 
+        fn itemMethod(self_obj: ?*c.PyObject, _: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+            return itemMethodImpl(self_obj);
+        }
+
         // blend method implementation
-        fn blendMethod(self_obj: ?*c.PyObject, args: [*c]c.PyObject, kwds: [*c]c.PyObject) callconv(.c) ?*c.PyObject {
+        fn blendMethod(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
             const Params = struct {
                 overlay: ?*c.PyObject,
                 mode: ?*c.PyObject = null,
@@ -321,9 +309,9 @@ fn PixelProxyBinding(comptime ColorType: type, comptime ProxyObjectType: type) t
         fn generateConversionMethod(comptime TargetColorType: type) c.PyCFunction {
             const method_name = comptime getConversionMethodName(TargetColorType);
             return struct {
-                fn method(self_obj: ?*c.PyObject, args: [*c]c.PyObject) callconv(.c) ?*c.PyObject {
+                fn method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
                     // Delegate to the color object's conversion method
-                    return delegateToColorMethod(self_obj, method_name.ptr, @ptrCast(args));
+                    return delegateToColorMethod(self_obj, method_name.ptr, args);
                 }
             }.method;
         }
