@@ -577,6 +577,75 @@ fn getCachedLookupTable(mode: PaletteMode, palette: []const Rgb) ColorLookupTabl
     };
 }
 
+const AdaptiveHistogramHandle = struct {
+    counts: []u32,
+    stamps: []u32,
+    generation: u32,
+};
+
+const AdaptiveHistogramCache = struct {
+    var mutex = std.Thread.Mutex{};
+    var counts: []u32 = &[_]u32{};
+    var stamps: []u32 = &[_]u32{};
+    var generation: u32 = 1;
+    var in_use: bool = false;
+};
+
+fn acquireAdaptiveHistogram() !AdaptiveHistogramHandle {
+    const required_len: usize = @as(usize, 1) << (3 * color_quantize_bits);
+    while (true) {
+        AdaptiveHistogramCache.mutex.lock();
+        if (!AdaptiveHistogramCache.in_use) {
+            AdaptiveHistogramCache.in_use = true;
+
+            if (AdaptiveHistogramCache.counts.len != required_len or AdaptiveHistogramCache.stamps.len != required_len) {
+                const new_counts = std.heap.page_allocator.alloc(u32, required_len) catch |err| {
+                    AdaptiveHistogramCache.in_use = false;
+                    AdaptiveHistogramCache.mutex.unlock();
+                    return err;
+                };
+                const new_stamps = std.heap.page_allocator.alloc(u32, required_len) catch |err| {
+                    std.heap.page_allocator.free(new_counts);
+                    AdaptiveHistogramCache.in_use = false;
+                    AdaptiveHistogramCache.mutex.unlock();
+                    return err;
+                };
+                if (AdaptiveHistogramCache.counts.len != 0) std.heap.page_allocator.free(AdaptiveHistogramCache.counts);
+                if (AdaptiveHistogramCache.stamps.len != 0) std.heap.page_allocator.free(AdaptiveHistogramCache.stamps);
+
+                AdaptiveHistogramCache.counts = new_counts;
+                AdaptiveHistogramCache.stamps = new_stamps;
+                @memset(AdaptiveHistogramCache.stamps, 0);
+            }
+
+            var gen = AdaptiveHistogramCache.generation;
+            AdaptiveHistogramCache.generation +%= 1;
+            if (AdaptiveHistogramCache.generation == 0) {
+                @memset(AdaptiveHistogramCache.stamps, 0);
+                AdaptiveHistogramCache.generation = 1;
+                gen = 1;
+            }
+
+            AdaptiveHistogramCache.mutex.unlock();
+
+            return AdaptiveHistogramHandle{
+                .counts = AdaptiveHistogramCache.counts,
+                .stamps = AdaptiveHistogramCache.stamps,
+                .generation = gen,
+            };
+        }
+        AdaptiveHistogramCache.mutex.unlock();
+        std.Thread.yield() catch {};
+    }
+}
+
+fn releaseAdaptiveHistogram(handle: AdaptiveHistogramHandle) void {
+    _ = handle;
+    AdaptiveHistogramCache.mutex.lock();
+    AdaptiveHistogramCache.in_use = false;
+    AdaptiveHistogramCache.mutex.unlock();
+}
+
 inline fn divTruncPow2(value: i32, shift: u3) i32 {
     if (shift == 0) return value;
     if (value >= 0) {
@@ -743,55 +812,99 @@ fn generateAdaptivePalette(
     palette: []Rgb,
     max_colors: u16,
 ) !usize {
-    const histogram_len = @as(usize, 1) << (3 * color_quantize_bits);
-    var counts = try gpa.alloc(u32, histogram_len);
-    defer gpa.free(counts);
-    @memset(counts[0..histogram_len], 0);
-
-    // Build color histogram (quantized to 5-bit per channel for efficiency)
-    for (0..image.rows) |r| {
-        for (0..image.cols) |c| {
-            const pixel = image.at(r, c).*;
-            const rgb = convertColor(Rgb, pixel);
-
-            // Quantize to 5-bit per channel for histogram
-            const r5 = rgb.r >> (8 - color_quantize_bits);
-            const g5 = rgb.g >> (8 - color_quantize_bits);
-            const b5 = rgb.b >> (8 - color_quantize_bits);
-            const key = (@as(u16, r5) << (2 * color_quantize_bits)) | (@as(u16, g5) << color_quantize_bits) | @as(u16, b5);
-            const hist_index: usize = @intCast(key);
-            counts[hist_index] += 1;
-        }
-    }
-
-    // Convert histogram to array for median cut
-    var non_zero: usize = 0;
-    for (counts) |count| {
-        if (count != 0) non_zero += 1;
-    }
-
-    var color_list = try std.ArrayList(ColorCount).initCapacity(gpa, non_zero);
+    var color_list: std.ArrayList(ColorCount) = .empty;
     defer color_list.deinit(gpa);
 
-    for (counts, 0..) |count, key_idx| {
-        if (count == 0) continue;
+    var touched_indices = try std.ArrayList(u16).initCapacity(gpa, 1024);
+    defer touched_indices.deinit(gpa);
 
-        const key: u32 = @intCast(key_idx);
-        const r5 = @as(u8, @intCast((key >> (2 * color_quantize_bits)) & 0x1F));
-        const g5 = @as(u8, @intCast((key >> color_quantize_bits) & 0x1F));
-        const b5 = @as(u8, @intCast(key & 0x1F));
+    const histogram_len = @as(usize, 1) << (3 * color_quantize_bits);
+    const hist_handle_result = acquireAdaptiveHistogram();
 
-        // Convert back to 8-bit with proper scaling
-        const r8 = (r5 << (8 - color_quantize_bits)) | (r5 >> (2 * color_quantize_bits - 8));
-        const g8 = (g5 << (8 - color_quantize_bits)) | (g5 >> (2 * color_quantize_bits - 8));
-        const b8 = (b5 << (8 - color_quantize_bits)) | (b5 >> (2 * color_quantize_bits - 8));
+    if (hist_handle_result) |hist_handle| {
+        defer releaseAdaptiveHistogram(hist_handle);
 
-        color_list.appendAssumeCapacity(.{
-            .r = r8,
-            .g = g8,
-            .b = b8,
-            .count = count,
-        });
+        // Build histogram using reusable buffers with generation tracking
+        for (0..image.rows) |r| {
+            for (0..image.cols) |c| {
+                const pixel = image.at(r, c).*;
+                const rgb = convertColor(Rgb, pixel);
+
+                const r5 = rgb.r >> (8 - color_quantize_bits);
+                const g5 = rgb.g >> (8 - color_quantize_bits);
+                const b5 = rgb.b >> (8 - color_quantize_bits);
+                const key = (@as(u16, r5) << (2 * color_quantize_bits)) | (@as(u16, g5) << color_quantize_bits) | @as(u16, b5);
+                const hist_index: usize = @intCast(key);
+
+                if (hist_handle.stamps[hist_index] != hist_handle.generation) {
+                    hist_handle.stamps[hist_index] = hist_handle.generation;
+                    hist_handle.counts[hist_index] = 0;
+                    try touched_indices.append(gpa, @intCast(hist_index));
+                }
+                hist_handle.counts[hist_index] += 1;
+            }
+        }
+
+        try color_list.ensureTotalCapacityPrecise(gpa, touched_indices.items.len);
+        for (touched_indices.items) |key_u16| {
+            const key = @as(usize, key_u16);
+            const count = hist_handle.counts[key];
+            if (count == 0) continue;
+
+            const r5 = @as(u8, @intCast((key >> (2 * color_quantize_bits)) & 0x1F));
+            const g5 = @as(u8, @intCast((key >> color_quantize_bits) & 0x1F));
+            const b5 = @as(u8, @intCast(key & 0x1F));
+
+            const r8 = (r5 << (8 - color_quantize_bits)) | (r5 >> (2 * color_quantize_bits - 8));
+            const g8 = (g5 << (8 - color_quantize_bits)) | (g5 >> (2 * color_quantize_bits - 8));
+            const b8 = (b5 << (8 - color_quantize_bits)) | (b5 >> (2 * color_quantize_bits - 8));
+
+            color_list.appendAssumeCapacity(.{
+                .r = r8,
+                .g = g8,
+                .b = b8,
+                .count = count,
+            });
+        }
+    } else |_| {
+        // Fallback: allocate temporary histogram and zero it
+        var counts = try gpa.alloc(u32, histogram_len);
+        defer gpa.free(counts);
+        @memset(counts[0..histogram_len], 0);
+
+        for (0..image.rows) |r| {
+            for (0..image.cols) |c| {
+                const pixel = image.at(r, c).*;
+                const rgb = convertColor(Rgb, pixel);
+
+                const r5 = rgb.r >> (8 - color_quantize_bits);
+                const g5 = rgb.g >> (8 - color_quantize_bits);
+                const b5 = rgb.b >> (8 - color_quantize_bits);
+                const key = (@as(u16, r5) << (2 * color_quantize_bits)) | (@as(u16, g5) << color_quantize_bits) | @as(u16, b5);
+                const hist_index: usize = @intCast(key);
+                counts[hist_index] += 1;
+            }
+        }
+
+        for (counts, 0..) |count, key_idx| {
+            if (count == 0) continue;
+
+            const key: u32 = @intCast(key_idx);
+            const r5 = @as(u8, @intCast((key >> (2 * color_quantize_bits)) & 0x1F));
+            const g5 = @as(u8, @intCast((key >> color_quantize_bits) & 0x1F));
+            const b5 = @as(u8, @intCast(key & 0x1F));
+
+            const r8 = (r5 << (8 - color_quantize_bits)) | (r5 >> (2 * color_quantize_bits - 8));
+            const g8 = (g5 << (8 - color_quantize_bits)) | (g5 >> (2 * color_quantize_bits - 8));
+            const b8 = (b5 << (8 - color_quantize_bits)) | (b5 >> (2 * color_quantize_bits - 8));
+
+            try color_list.append(gpa, .{
+                .r = r8,
+                .g = g8,
+                .b = b8,
+                .count = count,
+            });
+        }
     }
 
     const palette_size = @min(@min(color_list.items.len, max_colors), palette.len);
