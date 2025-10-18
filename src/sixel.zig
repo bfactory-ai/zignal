@@ -51,7 +51,7 @@ pub const DitherMode = enum {
     floyd_steinberg,
     /// Atkinson dithering (used by original Macintosh)
     atkinson,
-    /// Automatic selection based on palette size
+    /// Automatic heuristics based on palette size and image dimensions
     auto,
 };
 
@@ -181,7 +181,14 @@ pub fn fromImageProfiled(
 
     // Determine dithering mode
     const dither_mode = switch (options.dither) {
-        .auto => if (palette_size <= 16) DitherMode.atkinson else DitherMode.floyd_steinberg,
+        .auto => blk: {
+            const total_pixels = std.math.mul(usize, width, height) catch std.math.maxInt(usize);
+            if (palette_size >= 128 and total_pixels >= 512 * 512) {
+                break :blk DitherMode.none;
+            }
+            if (palette_size <= 16) break :blk DitherMode.atkinson;
+            break :blk DitherMode.floyd_steinberg;
+        },
         else => options.dither,
     };
 
