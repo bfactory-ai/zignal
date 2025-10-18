@@ -567,32 +567,47 @@ const ColorLookupTable = struct {
     }
 };
 
-var lut_cache_fixed_6x7x6: ?ColorLookupTable = null;
-var lut_cache_fixed_vga16: ?ColorLookupTable = null;
-var lut_cache_fixed_web216: ?ColorLookupTable = null;
+const LutCache = struct {
+    var mutex = std.Thread.Mutex{};
+    var fixed_6x7x6: ?ColorLookupTable = null;
+    var fixed_vga16: ?ColorLookupTable = null;
+    var fixed_web216: ?ColorLookupTable = null;
+};
 
 fn getCachedLookupTable(mode: PaletteMode, palette: []const Rgb) ColorLookupTable {
-    return switch (mode) {
-        .fixed_6x7x6 => blk: {
-            if (lut_cache_fixed_6x7x6) |cached| break :blk cached;
+    switch (mode) {
+        .fixed_6x7x6 => {
+            LutCache.mutex.lock();
+            defer LutCache.mutex.unlock();
+            if (LutCache.fixed_6x7x6) |cached| {
+                return cached;
+            }
             const lut = ColorLookupTable.init(palette);
-            lut_cache_fixed_6x7x6 = lut;
-            break :blk lut;
+            LutCache.fixed_6x7x6 = lut;
+            return lut;
         },
-        .fixed_vga16 => blk: {
-            if (lut_cache_fixed_vga16) |cached| break :blk cached;
+        .fixed_vga16 => {
+            LutCache.mutex.lock();
+            defer LutCache.mutex.unlock();
+            if (LutCache.fixed_vga16) |cached| {
+                return cached;
+            }
             const lut = ColorLookupTable.init(palette);
-            lut_cache_fixed_vga16 = lut;
-            break :blk lut;
+            LutCache.fixed_vga16 = lut;
+            return lut;
         },
-        .fixed_web216 => blk: {
-            if (lut_cache_fixed_web216) |cached| break :blk cached;
+        .fixed_web216 => {
+            LutCache.mutex.lock();
+            defer LutCache.mutex.unlock();
+            if (LutCache.fixed_web216) |cached| {
+                return cached;
+            }
             const lut = ColorLookupTable.init(palette);
-            lut_cache_fixed_web216 = lut;
-            break :blk lut;
+            LutCache.fixed_web216 = lut;
+            return lut;
         },
-        .adaptive => ColorLookupTable.init(palette),
-    };
+        .adaptive => return ColorLookupTable.init(palette),
+    }
 }
 
 const AdaptiveHistogramHandle = struct {
