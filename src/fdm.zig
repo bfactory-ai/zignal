@@ -9,6 +9,7 @@ const Image = @import("image.zig").Image;
 const Matrix = @import("matrix.zig").Matrix;
 const Rgb = @import("color.zig").Rgb;
 const Rgba = @import("color.zig").Rgba;
+const RunningStats = @import("stats.zig").RunningStats;
 
 /// Feature Distribution Matching struct for stateful image style transfer.
 /// Allows efficient batch processing by reusing target distribution statistics.
@@ -690,19 +691,18 @@ test "FDM grayscale target applied to color source" {
     }
 
     // Pre-compute target statistics (on 0-255 scale).
-    var target_sum: u64 = 0;
+    var target_stats = RunningStats(f64).init();
     for (target_img.data) |pixel| {
-        target_sum += pixel.r;
+        target_stats.add(@as(f64, @floatFromInt(pixel.r)));
     }
-    const target_len = @as(f64, @floatFromInt(target_img.data.len));
-    const target_mean = @as(f64, @floatFromInt(target_sum)) / target_len;
-
-    var target_var: f64 = 0;
-    for (target_img.data) |pixel| {
-        const diff = @as(f64, @floatFromInt(pixel.r)) - target_mean;
-        target_var += diff * diff;
-    }
-    target_var /= target_len;
+    const target_mean = target_stats.mean();
+    const target_var = blk: {
+        const n_samples = target_stats.currentN();
+        if (n_samples <= 1) break :blk 0;
+        const n_f = @as(f64, @floatFromInt(n_samples));
+        const correction = @as(f64, @floatFromInt(n_samples - 1)) / n_f;
+        break :blk target_stats.variance() * correction;
+    };
 
     var fdm = FeatureDistributionMatching(Rgb).init(allocator);
     defer fdm.deinit();
@@ -711,24 +711,23 @@ test "FDM grayscale target applied to color source" {
     try fdm.update();
 
     // Result image should be grayscale and match target statistics within tolerance.
-    var result_sum: u64 = 0;
-    var result_var: f64 = 0;
+    var result_stats = RunningStats(f64).init();
     for (source_img.data) |pixel| {
         try expectEqual(pixel.r, pixel.g);
         try expectEqual(pixel.g, pixel.b);
-
-        const value = pixel.r;
-        result_sum += value;
+        result_stats.add(@as(f64, @floatFromInt(pixel.r)));
     }
 
-    const result_mean = @as(f64, @floatFromInt(result_sum)) / @as(f64, @floatFromInt(source_img.data.len));
+    const result_mean = result_stats.mean();
     try expectApproxEqAbs(result_mean, target_mean, 2.0);
 
-    for (source_img.data) |pixel| {
-        const diff = @as(f64, @floatFromInt(pixel.r)) - result_mean;
-        result_var += diff * diff;
-    }
-    result_var /= @as(f64, @floatFromInt(source_img.data.len));
+    const result_var = blk: {
+        const n_samples = result_stats.currentN();
+        if (n_samples <= 1) break :blk 0;
+        const n_f = @as(f64, @floatFromInt(n_samples));
+        const correction = @as(f64, @floatFromInt(n_samples - 1)) / n_f;
+        break :blk result_stats.variance() * correction;
+    };
     try expectApproxEqAbs(result_var, target_var, 2.0);
 }
 
