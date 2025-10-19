@@ -521,7 +521,6 @@ test "FDM mean and covariance matching" {
     var fdm = FeatureDistributionMatching(Rgb).init(allocator);
     defer fdm.deinit();
     try fdm.match(source_img, target_img);
-    try fdm.update();
 
     // Calculate result statistics
     var result_sum_r: u32 = 0;
@@ -588,7 +587,6 @@ test "FDM grayscale mean and variance matching" {
     var fdm = FeatureDistributionMatching(u8).init(allocator);
     defer fdm.deinit();
     try fdm.match(source_img, target_img);
-    try fdm.update();
 
     // Calculate actual mean of result
     var sum: u32 = 0;
