@@ -81,16 +81,17 @@ pub fn FeatureDistributionMatching(comptime T: type) type {
                 for (target_image.data) |pixel| {
                     sum += @as(f64, @floatFromInt(pixel)) / 255.0;
                 }
-                self.target_mean[0] = sum / @as(f64, @floatFromInt(self.target_size));
+                const mean = sum / @as(f64, @floatFromInt(self.target_size));
+                self.target_mean = .{ mean, 0, 0 };
 
-                // Compute variance
+                // Compute variance (store explicit zeros for unused entries)
                 var variance: f64 = 0;
                 for (target_image.data) |pixel| {
                     const val = @as(f64, @floatFromInt(pixel)) / 255.0 - self.target_mean[0];
                     variance += val * val;
                 }
                 variance /= @as(f64, @floatFromInt(self.target_size));
-                self.target_cov_s[0] = variance;
+                self.target_cov_s = .{ variance, 0, 0 };
 
                 // No eigenvectors needed for grayscale
                 self.target_cov_u = Matrix(f64){
@@ -120,7 +121,7 @@ pub fn FeatureDistributionMatching(comptime T: type) type {
                         variance += val * val;
                     }
                     variance /= @as(f64, @floatFromInt(feature_mat.rows));
-                    self.target_cov_s[0] = variance;
+                    self.target_cov_s = .{ variance, 0, 0 };
                     self.target_cov_u = Matrix(f64){
                         .rows = 0,
                         .cols = 0,
@@ -213,25 +214,41 @@ pub fn FeatureDistributionMatching(comptime T: type) type {
 
                 const source_is_grayscale = getFeatureMatrix(T, source_img, &feature_mat_source);
 
-                if (source_is_grayscale and self.target_is_grayscale) {
-                    // Both grayscale - use simple algorithm
-                    _ = centerImage(&feature_mat_source, 1);
+                if (self.target_is_grayscale) {
+                    // Target statistics are 1D. Convert source to grayscale, match variance, then broadcast.
+                    var gray_matrix = try Matrix(f64).init(self.allocator, source_size, 1);
+                    defer gray_matrix.deinit();
+
+                    if (source_is_grayscale) {
+                        for (0..gray_matrix.rows) |r| {
+                            gray_matrix.at(r, 0).* = feature_mat_source.at(r, 0).*;
+                        }
+                    } else {
+                        for (0..gray_matrix.rows) |r| {
+                            const r_val = feature_mat_source.at(r, 0).*;
+                            const g_val = feature_mat_source.at(r, 1).*;
+                            const b_val = feature_mat_source.at(r, 2).*;
+                            gray_matrix.at(r, 0).* = 0.2126 * r_val + 0.7152 * g_val + 0.0722 * b_val;
+                        }
+                    }
+
+                    _ = centerImage(&gray_matrix, 1);
 
                     const source_var = blk: {
                         var var_sum: f64 = 0;
-                        for (0..feature_mat_source.rows) |r| {
-                            const val = feature_mat_source.at(r, 0).*;
+                        for (0..gray_matrix.rows) |r| {
+                            const val = gray_matrix.at(r, 0).*;
                             var_sum += val * val;
                         }
-                        break :blk var_sum / @as(f64, @floatFromInt(feature_mat_source.rows));
+                        break :blk var_sum / @as(f64, @floatFromInt(gray_matrix.rows));
                     };
 
                     const scale_factor = if (source_var > 1e-10) @sqrt(self.target_cov_s[0] / source_var) else 1.0;
-                    for (0..feature_mat_source.rows) |r| {
-                        feature_mat_source.at(r, 0).* *= scale_factor;
+                    for (0..gray_matrix.rows) |r| {
+                        gray_matrix.at(r, 0).* *= scale_factor;
                     }
 
-                    reshapeToImage(T, feature_mat_source, source_img, self.target_mean, true);
+                    reshapeToImage(T, gray_matrix, source_img, self.target_mean, true);
                 } else {
                     // Full color transformation
                     _ = centerImage(&feature_mat_source, 3);
@@ -652,6 +669,73 @@ test "FDM batch processing with reused target" {
         try expectApproxEqAbs(means[0][1], means[i][1], 5.0); // G channel
         try expectApproxEqAbs(means[0][2], means[i][2], 5.0); // B channel
     }
+}
+
+test "FDM grayscale target applied to color source" {
+    const allocator = testing.allocator;
+
+    // Build a color source image with distinct RGB patterns.
+    var source_img = try Image(Rgb).init(allocator, 12, 12);
+    defer source_img.deinit(allocator);
+    for (source_img.data, 0..) |*pixel, idx| {
+        const x = idx % 12;
+        const y = idx / 12;
+        pixel.* = Rgb{
+            .r = @intCast((x * 30 + y * 5) % 255),
+            .g = @intCast((x * 15 + y * 40) % 255),
+            .b = @intCast((x * 50 + y * 25) % 255),
+        };
+    }
+
+    // Target image is RGB but grayscale-valued.
+    var target_img = try Image(Rgb).init(allocator, 12, 12);
+    defer target_img.deinit(allocator);
+    for (target_img.data, 0..) |*pixel, idx| {
+        const val: u8 = @intCast(40 + (idx % 160));
+        pixel.* = Rgb{ .r = val, .g = val, .b = val };
+    }
+
+    // Pre-compute target statistics (on 0-255 scale).
+    var target_sum: u64 = 0;
+    for (target_img.data) |pixel| {
+        target_sum += pixel.r;
+    }
+    const target_len = @as(f64, @floatFromInt(target_img.data.len));
+    const target_mean = @as(f64, @floatFromInt(target_sum)) / target_len;
+
+    var target_var: f64 = 0;
+    for (target_img.data) |pixel| {
+        const diff = @as(f64, @floatFromInt(pixel.r)) - target_mean;
+        target_var += diff * diff;
+    }
+    target_var /= target_len;
+
+    var fdm = FeatureDistributionMatching(Rgb).init(allocator);
+    defer fdm.deinit();
+
+    try fdm.match(source_img, target_img);
+    try fdm.update();
+
+    // Result image should be grayscale and match target statistics within tolerance.
+    var result_sum: u64 = 0;
+    var result_var: f64 = 0;
+    for (source_img.data) |pixel| {
+        try expectEqual(pixel.r, pixel.g);
+        try expectEqual(pixel.g, pixel.b);
+
+        const value = pixel.r;
+        result_sum += value;
+    }
+
+    const result_mean = @as(f64, @floatFromInt(result_sum)) / @as(f64, @floatFromInt(source_img.data.len));
+    try expectApproxEqAbs(result_mean, target_mean, 2.0);
+
+    for (source_img.data) |pixel| {
+        const diff = @as(f64, @floatFromInt(pixel.r)) - result_mean;
+        result_var += diff * diff;
+    }
+    result_var /= @as(f64, @floatFromInt(source_img.data.len));
+    try expectApproxEqAbs(result_var, target_var, 2.0);
 }
 
 test "FDM error handling" {
