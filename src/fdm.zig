@@ -209,26 +209,21 @@ pub fn FeatureDistributionMatching(comptime T: type) type {
             } else {
                 // Color processing
                 const source_size = source_img.rows * source_img.cols;
-                var feature_mat_source = try Matrix(f64).init(self.allocator, source_size, 3);
-                defer feature_mat_source.deinit();
-
-                const source_is_grayscale = getFeatureMatrix(T, source_img, &feature_mat_source);
 
                 if (self.target_is_grayscale) {
-                    // Target statistics are 1D. Convert source to grayscale, match variance, then broadcast.
+                    // Target statistics are 1D. Build a single-channel matrix directly to avoid extra copies.
                     var gray_matrix = try Matrix(f64).init(self.allocator, source_size, 1);
                     defer gray_matrix.deinit();
 
-                    if (source_is_grayscale) {
-                        for (0..gray_matrix.rows) |r| {
-                            gray_matrix.at(r, 0).* = feature_mat_source.at(r, 0).*;
-                        }
-                    } else {
-                        for (0..gray_matrix.rows) |r| {
-                            const r_val = feature_mat_source.at(r, 0).*;
-                            const g_val = feature_mat_source.at(r, 1).*;
-                            const b_val = feature_mat_source.at(r, 2).*;
-                            gray_matrix.at(r, 0).* = 0.2126 * r_val + 0.7152 * g_val + 0.0722 * b_val;
+                    var idx: usize = 0;
+                    for (0..source_img.rows) |r| {
+                        for (0..source_img.cols) |c| {
+                            const p = source_img.at(r, c);
+                            const r_val = @as(f64, @floatFromInt(p.r)) / 255.0;
+                            const g_val = @as(f64, @floatFromInt(p.g)) / 255.0;
+                            const b_val = @as(f64, @floatFromInt(p.b)) / 255.0;
+                            gray_matrix.at(idx, 0).* = 0.2126 * r_val + 0.7152 * g_val + 0.0722 * b_val;
+                            idx += 1;
                         }
                     }
 
@@ -251,6 +246,10 @@ pub fn FeatureDistributionMatching(comptime T: type) type {
                     reshapeToImage(T, gray_matrix, source_img, self.target_mean, true);
                 } else {
                     // Full color transformation
+                    var feature_mat_source = try Matrix(f64).init(self.allocator, source_size, 3);
+                    defer feature_mat_source.deinit();
+
+                    _ = getFeatureMatrix(T, source_img, &feature_mat_source);
                     _ = centerImage(&feature_mat_source, 3);
 
                     // Compute source covariance
@@ -270,10 +269,6 @@ pub fn FeatureDistributionMatching(comptime T: type) type {
                         .with_v = false,
                         .mode = .skinny_u,
                     });
-
-                    // Compute transformation matrix W = U_src * Σ_src^(-1/2) * Σ_target^(1/2) * U_target^T
-                    var transform_matrix = try Matrix(f64).init(self.allocator, 3, 3);
-                    defer transform_matrix.deinit();
 
                     // Create Σ_src^(-1/2) * Σ_target^(1/2) diagonal
                     var sigma_combined = try Matrix(f64).init(self.allocator, 3, 3);
@@ -308,7 +303,6 @@ pub fn FeatureDistributionMatching(comptime T: type) type {
                     defer u_source_scaled.deinit();
                     @memcpy(u_source_scaled.items, u_source.items);
 
-                    // Apply diagonal matrix
                     for (0..3) |r| {
                         for (0..3) |c| {
                             u_source_scaled.at(r, c).* *= sigma_combined.at(c, c).*;
