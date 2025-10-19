@@ -457,6 +457,14 @@ fn grayscaleMatrixToImage(matrix: Matrix(f64), image: Image(u8), target_mean: f6
     }
 }
 
+fn populationVariance(stats: RunningStats(f64)) f64 {
+    const n_samples = stats.currentN();
+    if (n_samples <= 1) return 0;
+    const n_f = @as(f64, @floatFromInt(n_samples));
+    const correction = @as(f64, @floatFromInt(n_samples - 1)) / n_f;
+    return stats.variance() * correction;
+}
+
 test "FDM mean and covariance matching" {
     const allocator = testing.allocator;
 
@@ -693,13 +701,7 @@ test "FDM grayscale target applied to color source" {
         target_stats.add(@as(f64, @floatFromInt(pixel.r)));
     }
     const target_mean = target_stats.mean();
-    const target_var = blk: {
-        const n_samples = target_stats.currentN();
-        if (n_samples <= 1) break :blk 0;
-        const n_f = @as(f64, @floatFromInt(n_samples));
-        const correction = @as(f64, @floatFromInt(n_samples - 1)) / n_f;
-        break :blk target_stats.variance() * correction;
-    };
+    const target_var = populationVariance(target_stats);
 
     var fdm = FeatureDistributionMatching(Rgb).init(allocator);
     defer fdm.deinit();
@@ -717,13 +719,7 @@ test "FDM grayscale target applied to color source" {
     const result_mean = result_stats.mean();
     try expectApproxEqAbs(result_mean, target_mean, 2.0);
 
-    const result_var = blk: {
-        const n_samples = result_stats.currentN();
-        if (n_samples <= 1) break :blk 0;
-        const n_f = @as(f64, @floatFromInt(n_samples));
-        const correction = @as(f64, @floatFromInt(n_samples - 1)) / n_f;
-        break :blk result_stats.variance() * correction;
-    };
+    const result_var = populationVariance(result_stats);
     try expectApproxEqAbs(result_var, target_var, 2.0);
 }
 
