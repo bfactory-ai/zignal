@@ -9,6 +9,7 @@ const Image = @import("image.zig").Image;
 const Matrix = @import("matrix.zig").Matrix;
 const Rgb = @import("color.zig").Rgb;
 const Rgba = @import("color.zig").Rgba;
+const convertColor = @import("color.zig").convertColor;
 const RunningStats = @import("stats.zig").RunningStats;
 
 /// Feature Distribution Matching struct for stateful image style transfer.
@@ -212,18 +213,16 @@ pub fn FeatureDistributionMatching(comptime T: type) type {
                 const source_size = source_img.rows * source_img.cols;
 
                 if (self.target_is_grayscale) {
-                    // Target statistics are 1D. Build a single-channel matrix directly to avoid extra copies.
+                    // Target statistics are 1D. Build a single-channel matrix directly using Rec.709 luminance.
                     var gray_matrix = try Matrix(f64).init(self.allocator, source_size, 1);
                     defer gray_matrix.deinit();
 
                     var idx: usize = 0;
                     for (0..source_img.rows) |r| {
                         for (0..source_img.cols) |c| {
-                            const p = source_img.at(r, c);
-                            const r_val = @as(f64, @floatFromInt(p.r)) / 255.0;
-                            const g_val = @as(f64, @floatFromInt(p.g)) / 255.0;
-                            const b_val = @as(f64, @floatFromInt(p.b)) / 255.0;
-                            gray_matrix.at(idx, 0).* = 0.2126 * r_val + 0.7152 * g_val + 0.0722 * b_val;
+                            const pixel_ptr = source_img.at(r, c);
+                            const gray_u8 = convertColor(u8, pixel_ptr.*);
+                            gray_matrix.at(idx, 0).* = @as(f64, @floatFromInt(gray_u8)) / 255.0;
                             idx += 1;
                         }
                     }
@@ -706,7 +705,6 @@ test "FDM grayscale target applied to color source" {
     defer fdm.deinit();
 
     try fdm.match(source_img, target_img);
-    try fdm.update();
 
     // Result image should be grayscale and match target statistics within tolerance.
     var result_stats = RunningStats(f64).init();
