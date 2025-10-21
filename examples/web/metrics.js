@@ -20,29 +20,37 @@
     statusEl.textContent = "";
   }
 
-  function displayImage(canvas, ctx, file, setFlag) {
-    const reader = new FileReader();
-    reader.onload = function (e) {
-      const img = new Image();
-      img.onload = function () {
-        const maxSize = 2048;
-        let width = img.width;
-        let height = img.height;
-        if (width > maxSize || height > maxSize) {
-          const scale = Math.min(maxSize / width, maxSize / height);
-          width = Math.floor(width * scale);
-          height = Math.floor(height * scale);
-        }
+  function displayImage(canvas, ctx, file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        const img = new Image();
+        img.onload = function () {
+          const maxSize = 2048;
+          let width = img.width;
+          let height = img.height;
+          if (width > maxSize || height > maxSize) {
+            const scale = Math.min(maxSize / width, maxSize / height);
+            width = Math.floor(width * scale);
+            height = Math.floor(height * scale);
+          }
 
-        canvas.width = width;
-        canvas.height = height;
-        ctx.drawImage(img, 0, 0, width, height);
-        setFlag(true);
-        clearResults();
+          canvas.width = width;
+          canvas.height = height;
+          ctx.drawImage(img, 0, 0, width, height);
+          clearResults();
+          resolve();
+        };
+        img.onerror = function () {
+          reject(new Error("Failed to decode image."));
+        };
+        img.src = e.target.result;
       };
-      img.src = e.target.result;
-    };
-    reader.readAsDataURL(file);
+      reader.onerror = function () {
+        reject(new Error("Failed to read file."));
+      };
+      reader.readAsDataURL(file);
+    });
   }
 
   function makeFileInput(onFile) {
@@ -59,10 +67,24 @@
   }
 
   const refInput = makeFileInput(function (file) {
-    displayImage(canvasRef, ctxRef, file, (val) => (refImageLoaded = val));
+    refImageLoaded = false;
+    displayImage(canvasRef, ctxRef, file)
+      .then(function () {
+        refImageLoaded = true;
+      })
+      .catch(function (error) {
+        statusEl.textContent = error.message;
+      });
   });
   const distInput = makeFileInput(function (file) {
-    displayImage(canvasDist, ctxDist, file, (val) => (distImageLoaded = val));
+    distImageLoaded = false;
+    displayImage(canvasDist, ctxDist, file)
+      .then(function () {
+        distImageLoaded = true;
+      })
+      .catch(function (error) {
+        statusEl.textContent = error.message;
+      });
   });
 
   function enableDrop(canvas, onFile) {
@@ -81,7 +103,14 @@
 
   enableDrop(canvasRef, function (file, fromDrop) {
     if (fromDrop) {
-      displayImage(canvasRef, ctxRef, file, (val) => (refImageLoaded = val));
+      refImageLoaded = false;
+      displayImage(canvasRef, ctxRef, file)
+        .then(function () {
+          refImageLoaded = true;
+        })
+        .catch(function (error) {
+          statusEl.textContent = error.message;
+        });
     } else {
       refInput.click();
     }
@@ -89,7 +118,14 @@
 
   enableDrop(canvasDist, function (file, fromDrop) {
     if (fromDrop) {
-      displayImage(canvasDist, ctxDist, file, (val) => (distImageLoaded = val));
+      distImageLoaded = false;
+      displayImage(canvasDist, ctxDist, file)
+        .then(function () {
+          distImageLoaded = true;
+        })
+        .catch(function (error) {
+          statusEl.textContent = error.message;
+        });
     } else {
       distInput.click();
     }
