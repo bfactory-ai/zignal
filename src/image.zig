@@ -1120,10 +1120,37 @@ pub fn Image(comptime T: type) type {
             }
         }
 
+        /// Calculates the Peak Signal-to-Noise Ratio (PSNR) between two images.
+        /// PSNR is a measure of image fidelity, with higher values indicating better quality.
+        /// Returns `inf` when images are identical (mean squared error = 0).
+        ///
+        /// Returns `error.DimensionMismatch` if the images have different dimensions.
+        ///
+        /// This wrapper is type-agnostic and works with any pixel type:
+        /// - Scalars (u8, f32, etc.)
+        /// - Structs (Rgb, Rgba, etc.)
+        /// - Arrays ([3]u8, [4]f32, etc.)
         pub fn psnr(self: Self, other: Self) !f64 {
             return metrics.psnr(T, self, other);
         }
 
+        /// Calculates the Structural Similarity Index (SSIM) between two images.
+        /// SSIM is a perceptual metric that measures structural similarity, with values in [0, 1].
+        /// 1.0 = identical images, 0.0 = completely different.
+        ///
+        /// This is more perceptually meaningful than PSNR for image quality assessment.
+        /// Uses an 11x11 Gaussian window with σ=1.5, as recommended in the original paper.
+        ///
+        /// Reference: Wang et al., "Image Quality Assessment: From Error Visibility to Structural Similarity",
+        /// IEEE Transactions on Image Processing, 2004.
+        ///
+        /// ## Implementation Notes:
+        /// - For RGB/RGBA pixels: converts to luminance using Rec. 709 weights (ignores alpha)
+        /// - For grayscale pixels: uses pixel value directly
+        /// - For float pixels: assumes normalized [0, 1] range
+        /// - Uses "valid" windowing: drops 5-pixel border (no padding/reflection)
+        ///
+        /// Returns an error if the images have different dimensions or are too small (< 11x11).
         pub fn ssim(self: Self, other: Self) !f64 {
             return metrics.ssim(T, self, other);
         }
