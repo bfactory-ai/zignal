@@ -66,26 +66,28 @@
     return input;
   }
 
-  const refInput = makeFileInput(function (file) {
-    refImageLoaded = false;
-    displayImage(canvasRef, ctxRef, file)
-      .then(function () {
-        refImageLoaded = true;
-      })
-      .catch(function (error) {
-        statusEl.textContent = error.message;
-      });
+  function createLoadHandler(canvas, ctx, setLoaded) {
+    return function (file) {
+      setLoaded(false);
+      displayImage(canvas, ctx, file)
+        .then(function () {
+          setLoaded(true);
+        })
+        .catch(function (error) {
+          statusEl.textContent = error.message;
+        });
+    };
+  }
+
+  const handleRefFile = createLoadHandler(canvasRef, ctxRef, function (loaded) {
+    refImageLoaded = loaded;
   });
-  const distInput = makeFileInput(function (file) {
-    distImageLoaded = false;
-    displayImage(canvasDist, ctxDist, file)
-      .then(function () {
-        distImageLoaded = true;
-      })
-      .catch(function (error) {
-        statusEl.textContent = error.message;
-      });
+  const handleDistFile = createLoadHandler(canvasDist, ctxDist, function (loaded) {
+    distImageLoaded = loaded;
   });
+
+  const refInput = makeFileInput(handleRefFile);
+  const distInput = makeFileInput(handleDistFile);
 
   function enableDrop(canvas, { onClick, onDrop }) {
     canvas.addEventListener("click", onClick);
@@ -103,32 +105,14 @@
     onClick: function () {
       refInput.click();
     },
-    onDrop: function (file) {
-      refImageLoaded = false;
-      displayImage(canvasRef, ctxRef, file)
-        .then(function () {
-          refImageLoaded = true;
-        })
-        .catch(function (error) {
-          statusEl.textContent = error.message;
-        });
-    },
+    onDrop: handleRefFile,
   });
 
   enableDrop(canvasDist, {
     onClick: function () {
       distInput.click();
     },
-    onDrop: function (file) {
-      distImageLoaded = false;
-      displayImage(canvasDist, ctxDist, file)
-        .then(function () {
-          distImageLoaded = true;
-        })
-        .catch(function (error) {
-          statusEl.textContent = error.message;
-        });
-    },
+    onDrop: handleDistFile,
   });
 
   WebAssembly.instantiateStreaming(wasm_promise, {
