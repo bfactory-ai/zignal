@@ -100,8 +100,8 @@ pub fn ssim(comptime T: type, image_a: anytype, image_b: anytype) !f64 {
                     const r = row - window_radius + dy;
                     const c = col - window_radius + dx;
                     const weight = gaussian_window[dy * window_size + dx];
-                    const val_x = getPixelMean(T, image_a.data[r * image_a.stride + c]);
-                    const val_y = getPixelMean(T, image_b.data[r * image_b.stride + c]);
+                    const val_x = getPixelScalar(T, image_a.data[r * image_a.stride + c]);
+                    const val_y = getPixelScalar(T, image_b.data[r * image_b.stride + c]);
                     mu_x += weight * val_x;
                     mu_y += weight * val_y;
                     mu_x_sq += weight * val_x * val_x;
@@ -141,7 +141,7 @@ inline fn getScalarValue(comptime ScalarType: type, value: ScalarType) f64 {
     };
 }
 
-inline fn getPixelMean(comptime PixelType: type, pixel: PixelType) f64 {
+inline fn getPixelScalar(comptime PixelType: type, pixel: PixelType) f64 {
     switch (@typeInfo(PixelType)) {
         .int, .float => return getScalarValue(PixelType, pixel),
         .@"struct" => {
