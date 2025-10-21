@@ -91,20 +91,9 @@ pub fn ssim(comptime T: type, image_a: anytype, image_b: anytype) !f64 {
         for (window_radius..image_a.cols - window_radius) |col| {
             var mu_x: f64 = 0.0;
             var mu_y: f64 = 0.0;
-
-            for (0..window_size) |dy| {
-                for (0..window_size) |dx| {
-                    const r = row - window_radius + dy;
-                    const c = col - window_radius + dx;
-                    const weight = gaussian_window[dy * window_size + dx];
-                    mu_x += getPixelMean(T, image_a.data[r * image_a.stride + c]) * weight;
-                    mu_y += getPixelMean(T, image_b.data[r * image_b.stride + c]) * weight;
-                }
-            }
-
-            var sigma_x_sq: f64 = 0.0;
-            var sigma_y_sq: f64 = 0.0;
-            var sigma_xy: f64 = 0.0;
+            var mu_x_sq: f64 = 0.0;
+            var mu_y_sq: f64 = 0.0;
+            var mu_xy: f64 = 0.0;
 
             for (0..window_size) |dy| {
                 for (0..window_size) |dx| {
@@ -113,13 +102,17 @@ pub fn ssim(comptime T: type, image_a: anytype, image_b: anytype) !f64 {
                     const weight = gaussian_window[dy * window_size + dx];
                     const val_x = getPixelMean(T, image_a.data[r * image_a.stride + c]);
                     const val_y = getPixelMean(T, image_b.data[r * image_b.stride + c]);
-                    const diff_x = val_x - mu_x;
-                    const diff_y = val_y - mu_y;
-                    sigma_x_sq += weight * diff_x * diff_x;
-                    sigma_y_sq += weight * diff_y * diff_y;
-                    sigma_xy += weight * diff_x * diff_y;
+                    mu_x += weight * val_x;
+                    mu_y += weight * val_y;
+                    mu_x_sq += weight * val_x * val_x;
+                    mu_y_sq += weight * val_y * val_y;
+                    mu_xy += weight * val_x * val_y;
                 }
             }
+
+            const sigma_x_sq = @max(0.0, mu_x_sq - mu_x * mu_x);
+            const sigma_y_sq = @max(0.0, mu_y_sq - mu_y * mu_y);
+            const sigma_xy = mu_xy - mu_x * mu_y;
 
             const numerator = (2.0 * mu_x * mu_y + c1) * (2.0 * sigma_xy + c2);
             const denominator = (mu_x * mu_x + mu_y * mu_y + c1) * (sigma_x_sq + sigma_y_sq + c2);
