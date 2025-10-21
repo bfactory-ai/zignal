@@ -161,13 +161,8 @@
 
   // Toggle parameters visibility
   toggleParamsButton.addEventListener("click", () => {
-    if (parametersDiv.style.display === "none") {
-      parametersDiv.style.display = "block";
-      toggleParamsButton.textContent = "Parameters ▲";
-    } else {
-      parametersDiv.style.display = "none";
-      toggleParamsButton.textContent = "Parameters ▼";
-    }
+    const isShown = parametersDiv.classList.toggle("show");
+    toggleParamsButton.textContent = isShown ? "Parameters ▲" : "Parameters ▼";
   });
 
   // Update parameter value displays
