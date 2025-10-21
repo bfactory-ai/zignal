@@ -2,6 +2,8 @@
   const wasm_promise = fetch("metrics.wasm");
   let wasm_exports = null;
 
+  const { createFileInput, enableDrop, createImageLoadHandler } = window.ZignalUtils;
+
   const canvasRef = document.getElementById("reference-canvas");
   const canvasDist = document.getElementById("distorted-canvas");
   const ctxRef = canvasRef.getContext("2d", { willReadFrequently: true });
@@ -53,53 +55,31 @@
     });
   }
 
-  function makeFileInput(onFile) {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "image/*";
-    input.style.display = "none";
-    input.addEventListener("change", function (event) {
-      const file = event.target.files[0];
-      if (file) onFile(file);
-    });
-    document.body.appendChild(input);
-    return input;
-  }
-
-  function createLoadHandler(canvas, ctx, setLoaded) {
-    return function (file) {
-      setLoaded(false);
-      displayImage(canvas, ctx, file)
-        .then(function () {
-          setLoaded(true);
-        })
-        .catch(function (error) {
-          statusEl.textContent = error.message;
-        });
-    };
-  }
-
-  const handleRefFile = createLoadHandler(canvasRef, ctxRef, function (loaded) {
-    refImageLoaded = loaded;
+  const handleRefFile = createImageLoadHandler({
+    load: function (file) {
+      return displayImage(canvasRef, ctxRef, file);
+    },
+    setLoaded: function (loaded) {
+      refImageLoaded = loaded;
+    },
+    onError: function (error) {
+      statusEl.textContent = error.message;
+    },
   });
-  const handleDistFile = createLoadHandler(canvasDist, ctxDist, function (loaded) {
-    distImageLoaded = loaded;
+  const handleDistFile = createImageLoadHandler({
+    load: function (file) {
+      return displayImage(canvasDist, ctxDist, file);
+    },
+    setLoaded: function (loaded) {
+      distImageLoaded = loaded;
+    },
+    onError: function (error) {
+      statusEl.textContent = error.message;
+    },
   });
 
-  const refInput = makeFileInput(handleRefFile);
-  const distInput = makeFileInput(handleDistFile);
-
-  function enableDrop(canvas, { onClick, onDrop }) {
-    canvas.addEventListener("click", onClick);
-    canvas.addEventListener("dragover", function (event) {
-      event.preventDefault();
-    });
-    canvas.addEventListener("drop", function (event) {
-      event.preventDefault();
-      const file = event.dataTransfer.files[0];
-      if (file) onDrop(file);
-    });
-  }
+  const refInput = createFileInput(handleRefFile);
+  const distInput = createFileInput(handleDistFile);
 
   enableDrop(canvasRef, {
     onClick: function () {
