@@ -244,42 +244,42 @@
 
     const resultData = new Uint8ClampedArray(wasm_exports.memory.buffer, resultPtr, resultSize);
 
-  resultCanvas.width = resultWidth;
-  resultCanvas.height = resultHeight;
-  const imageData = new ImageData(resultData, resultWidth, resultHeight);
-  ctx.putImageData(imageData, 0, 0);
-  resultCanvas.classList.add("visible");
+    resultCanvas.width = resultWidth;
+    resultCanvas.height = resultHeight;
+    const imageData = new ImageData(resultData, resultWidth, resultHeight);
+    ctx.putImageData(imageData, 0, 0);
+    resultCanvas.classList.add("visible");
 
-  wasm_exports.getMatchStats(
-    img1Ptr,
-    image1Data.height,
-    image1Data.width,
-    img2Ptr,
-    image2Data.height,
-    image2Data.width,
-    statsPtr,
-    nFeatures,
-    scaleFactor,
-    nLevels,
-    fastThreshold,
-    maxDistance,
-    crossCheck,
-    ratioThreshold,
-  );
+    wasm_exports.getMatchStats(
+      img1Ptr,
+      image1Data.height,
+      image1Data.width,
+      img2Ptr,
+      image2Data.height,
+      image2Data.width,
+      statsPtr,
+      nFeatures,
+      scaleFactor,
+      nLevels,
+      fastThreshold,
+      maxDistance,
+      crossCheck,
+      ratioThreshold,
+    );
 
-  const stats = new Float32Array(wasm_exports.memory.buffer, statsPtr, 6);
-  document.getElementById("features1").textContent = Math.floor(stats[0]);
-  document.getElementById("features2").textContent = Math.floor(stats[1]);
-  document.getElementById("matches").textContent = Math.floor(stats[2]);
-  document.getElementById("avg-distance").textContent = stats[2] > 0 ? stats[3].toFixed(2) : "-";
+    const stats = new Float32Array(wasm_exports.memory.buffer, statsPtr, 6);
+    document.getElementById("features1").textContent = Math.floor(stats[0]);
+    document.getElementById("features2").textContent = Math.floor(stats[1]);
+    document.getElementById("matches").textContent = Math.floor(stats[2]);
+    document.getElementById("avg-distance").textContent = stats[2] > 0 ? stats[3].toFixed(2) : "-";
 
-  const timeMs = performance.now() - startTime;
-  document.getElementById("time").textContent = timeMs.toFixed(0);
+    const timeMs = performance.now() - startTime;
+    document.getElementById("time").textContent = timeMs.toFixed(0);
 
-  wasm_exports.free(img1Ptr, size1);
-  wasm_exports.free(img2Ptr, size2);
-  wasm_exports.free(resultPtr, resultSize);
-  wasm_exports.free(statsPtr, 6 * 4);
+    wasm_exports.free(img1Ptr, size1);
+    wasm_exports.free(img2Ptr, size2);
+    wasm_exports.free(resultPtr, resultSize);
+    wasm_exports.free(statsPtr, 6 * 4);
   });
 
   fetch("feature_matching.wasm")
