@@ -1128,12 +1128,6 @@ pub fn Image(comptime T: type) type {
             return metrics.ssim(T, self, other);
         }
 
-        /// Helper function to get the luminance value of a pixel.
-        /// For RGB/RGBA: uses standard Rec. 709 luminance weights via rgbLuma()
-        /// For grayscale: returns the pixel value directly
-        /// For arrays: uses luminance formula for 3/4-element arrays, averages otherwise
-        /// Note: Alpha channel is ignored for RGBA to match standard SSIM behavior
-        /// Returns an iterator over all pixels in the image
         pub fn pixels(self: Self) PixelIterator(T) {
             return .{
                 .data = self.data,
