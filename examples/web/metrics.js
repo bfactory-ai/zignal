@@ -87,22 +87,23 @@
       });
   });
 
-  function enableDrop(canvas, onFile) {
-    canvas.addEventListener("click", function () {
-      onFile();
-    });
+  function enableDrop(canvas, { onClick, onDrop }) {
+    canvas.addEventListener("click", onClick);
     canvas.addEventListener("dragover", function (event) {
       event.preventDefault();
     });
     canvas.addEventListener("drop", function (event) {
       event.preventDefault();
       const file = event.dataTransfer.files[0];
-      if (file) onFile(file, true);
+      if (file) onDrop(file);
     });
   }
 
-  enableDrop(canvasRef, function (file, fromDrop) {
-    if (fromDrop) {
+  enableDrop(canvasRef, {
+    onClick: function () {
+      refInput.click();
+    },
+    onDrop: function (file) {
       refImageLoaded = false;
       displayImage(canvasRef, ctxRef, file)
         .then(function () {
@@ -111,13 +112,14 @@
         .catch(function (error) {
           statusEl.textContent = error.message;
         });
-    } else {
-      refInput.click();
-    }
+    },
   });
 
-  enableDrop(canvasDist, function (file, fromDrop) {
-    if (fromDrop) {
+  enableDrop(canvasDist, {
+    onClick: function () {
+      distInput.click();
+    },
+    onDrop: function (file) {
       distImageLoaded = false;
       displayImage(canvasDist, ctxDist, file)
         .then(function () {
@@ -126,9 +128,7 @@
         .catch(function (error) {
           statusEl.textContent = error.message;
         });
-    } else {
-      distInput.click();
-    }
+    },
   });
 
   WebAssembly.instantiateStreaming(wasm_promise, {
