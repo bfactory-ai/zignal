@@ -1419,7 +1419,7 @@ fn extractGrayscalePixel(comptime T: type, src_row: []const u8, pass_x: usize, h
 /// Extract RGB pixel from Adam7 pass data with optional transparency
 fn extractRgbPixel(comptime T: type, src_row: []const u8, pass_x: usize, header: Header, config: PixelExtractionConfig) T {
     const channel_stride: usize = if (header.bit_depth == 16) 2 else 1;
-    const total_bytes: usize = channel_stride * 3;
+    const total_bytes: usize = channel_stride * header.channels();
     const offset = pass_x * total_bytes;
     if (offset + total_bytes > src_row.len) {
         return switch (T) {
@@ -1479,7 +1479,7 @@ fn extractRgbPixel(comptime T: type, src_row: []const u8, pass_x: usize, header:
 /// Extract RGBA pixel from Adam7 pass data
 fn extractRgbaPixel(comptime T: type, src_row: []const u8, pass_x: usize, header: Header, config: PixelExtractionConfig) T {
     const channel_stride: usize = if (header.bit_depth == 16) 2 else 1;
-    const total_bytes: usize = channel_stride * 4;
+    const total_bytes: usize = channel_stride * header.channels();
     const offset = pass_x * total_bytes;
     if (offset + total_bytes > src_row.len) {
         return switch (T) {
@@ -2101,8 +2101,18 @@ test "Adam7 interlaced PNG support" {
     const rgb_pixel = extractRgbPixel(Rgb, &rgb_src, 1, interlaced_header, PixelExtractionConfig{});
     try std.testing.expectEqual(Rgb{ .r = 0, .g = 255, .b = 0 }, rgb_pixel);
 
+    const rgba_header = Header{
+        .width = 4,
+        .height = 4,
+        .bit_depth = 8,
+        .color_type = .rgba,
+        .compression_method = 0,
+        .filter_method = 0,
+        .interlace_method = 1,
+    };
+
     const rgba_src = [_]u8{ 255, 0, 0, 255, 0, 255, 0, 128 }; // red (alpha=255), green (alpha=128)
-    const rgba_pixel = extractRgbaPixel(Rgba, &rgba_src, 1, interlaced_header, PixelExtractionConfig{});
+    const rgba_pixel = extractRgbaPixel(Rgba, &rgba_src, 1, rgba_header, PixelExtractionConfig{});
     try std.testing.expectEqual(Rgba{ .r = 0, .g = 255, .b = 0, .a = 128 }, rgba_pixel);
 }
 
