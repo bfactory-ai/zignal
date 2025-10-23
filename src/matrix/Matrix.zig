@@ -774,9 +774,9 @@ pub fn Matrix(comptime T: type) type {
                             return errorMatrix(self.allocator, e);
                         };
                         defer a_transposed.deinit();
-                        for (0..self.cols) |col_idx| {
-                            for (0..self.rows) |row_idx| {
-                                a_transposed.at(col_idx, row_idx).* = self.at(row_idx, col_idx).*;
+                        for (0..a_rows) |i| {
+                            for (0..a_cols) |j| {
+                                a_transposed.at(i, j).* = self.at(j, i).*;
                             }
                         }
 
