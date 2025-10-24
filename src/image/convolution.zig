@@ -364,34 +364,33 @@ pub fn convolveSeparable(
                         is_uniform[i] = uniform_value != null;
                     }
 
-                    // Allocate output and temp planes only for non-uniform channels
+                    // Allocate output planes and a shared temp buffer only for non-uniform channels
                     var out_channels: [channels.len][]u8 = undefined;
-                    var temp_channels: [channels.len][]u8 = undefined;
-                    inline for (&out_channels, &temp_channels, is_uniform) |*out_ch, *temp_ch, uniform| {
+                    var temp_plane: []u8 = &[_]u8{};
+                    defer if (temp_plane.len > 0) allocator.free(temp_plane);
+
+                    inline for (&out_channels, is_uniform) |*out_ch, uniform| {
                         if (uniform) {
-                            // For uniform channels, no processing needed
                             out_ch.* = &[_]u8{};
-                            temp_ch.* = &[_]u8{};
                         } else {
                             out_ch.* = try allocator.alloc(u8, plane_size);
-                            temp_ch.* = try allocator.alloc(u8, plane_size);
-                        }
-                    }
-                    defer {
-                        inline for (out_channels, temp_channels, is_uniform) |out_ch, temp_ch, uniform| {
-                            if (!uniform) {
-                                if (out_ch.len > 0) allocator.free(out_ch);
-                                if (temp_ch.len > 0) allocator.free(temp_ch);
+                            if (temp_plane.len == 0) {
+                                temp_plane = try allocator.alloc(u8, plane_size);
                             }
                         }
                     }
+                    defer {
+                        inline for (out_channels, is_uniform) |out_ch, uniform| {
+                            if (!uniform and out_ch.len > 0) allocator.free(out_ch);
+                        }
+                    }
 
-                    // Convolve only non-uniform channels
-                    inline for (channels, out_channels, temp_channels, is_uniform) |src_data, dst_data, temp_data, uniform| {
+                    // Convolve only non-uniform channels, reusing the shared temp buffer
+                    inline for (channels, out_channels, is_uniform) |src_data, dst_data, uniform| {
                         if (!uniform) {
                             const src_plane: Image(u8) = .{ .rows = image.rows, .cols = image.cols, .stride = image.cols, .data = src_data };
                             const dst_plane: Image(u8) = .{ .rows = image.rows, .cols = image.cols, .stride = image.cols, .data = dst_data };
-                            const tmp_plane: Image(u8) = .{ .rows = image.rows, .cols = image.cols, .stride = image.cols, .data = temp_data };
+                            const tmp_plane: Image(u8) = .{ .rows = image.rows, .cols = image.cols, .stride = image.cols, .data = temp_plane };
                             convolveSeparablePlane(u8, src_plane, dst_plane, tmp_plane, kernel_x_int, kernel_y_int, border_mode);
                         }
                     }
