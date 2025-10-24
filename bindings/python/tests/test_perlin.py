@@ -8,6 +8,7 @@ import zignal
 
 
 MAX_OCTAVES = 32
+MAX_LACUNARITY = 16.0
 
 
 def test_perlin_defaults_and_amplitude_scaling():
@@ -45,6 +46,7 @@ def test_perlin_accepts_custom_parameters():
         {"persistence": -0.1},
         {"persistence": 1.1},
         {"lacunarity": 0.5},
+        {"lacunarity": MAX_LACUNARITY + 1},
         {"octaves": MAX_OCTAVES + 1},
     ],
 )
