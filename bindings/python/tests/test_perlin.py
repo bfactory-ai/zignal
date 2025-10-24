@@ -7,6 +7,9 @@ import pytest
 import zignal
 
 
+MAX_OCTAVES = 32
+
+
 def test_perlin_defaults_and_amplitude_scaling():
     base = zignal.perlin(0.125, 0.5, 0.25)
     assert isinstance(base, float)
@@ -42,6 +45,7 @@ def test_perlin_accepts_custom_parameters():
         {"persistence": -0.1},
         {"persistence": 1.1},
         {"lacunarity": 0.5},
+        {"octaves": MAX_OCTAVES + 1},
     ],
 )
 def test_perlin_rejects_invalid_parameters(kwargs: dict[str, float]) -> None:

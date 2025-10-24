@@ -6,7 +6,9 @@ const py_utils = @import("py_utils.zig");
 const c = py_utils.c;
 const stub_metadata = @import("stub_metadata.zig");
 
-const perlin_doc =
+const max_octaves: usize = 32;
+
+const perlin_doc = std.fmt.comptimePrint(
     \\Sample 3D Perlin noise using Zignal's implementation.
     \\
     \\This computes classic Perlin noise with configurable amplitude, frequency,
@@ -20,13 +22,15 @@ const perlin_doc =
     \\- `z` (float, optional): Z coordinate (default 0.0). Use for animated noise.
     \\- `amplitude` (float, default 1.0): Output scaling factor (> 0).
     \\- `frequency` (float, default 1.0): Base spatial frequency (> 0).
-    \\- `octaves` (int, default 1): Number of summed octaves (>= 1).
+    \\- `octaves` (int, default 1): Number of summed octaves (1-{d}).
     \\- `persistence` (float, default 0.5): Amplitude decay per octave (0-1).
     \\- `lacunarity` (float, default 2.0): Frequency growth per octave (>= 1).
     \\
     \\## Returns
     \\float: Perlin noise sample at `(x, y, z)` with the given parameters.
-;
+,
+    .{max_octaves},
+);
 
 fn perlin_function(_: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const Params = struct {
@@ -43,18 +47,12 @@ fn perlin_function(_: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) call
     var params: Params = undefined;
     py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const amplitude = py_utils.validatePositive(f64, params.amplitude, "amplitude") catch return null;
-    const frequency = py_utils.validatePositive(f64, params.frequency, "frequency") catch return null;
-    const octaves = py_utils.validateRange(usize, params.octaves, 1, std.math.maxInt(usize), "octaves") catch return null;
-    const persistence = py_utils.validateRange(f64, params.persistence, 0.0, 1.0, "persistence") catch return null;
-    const lacunarity = py_utils.validateRange(f64, params.lacunarity, 1.0, std.math.inf(f64), "lacunarity") catch return null;
-
     const options = zignal.PerlinOptions(f64){
-        .amplitude = amplitude,
-        .frequency = frequency,
-        .octaves = octaves,
-        .persistence = persistence,
-        .lacunarity = lacunarity,
+        .amplitude = py_utils.validatePositive(f64, params.amplitude, "amplitude") catch return null,
+        .frequency = py_utils.validatePositive(f64, params.frequency, "frequency") catch return null,
+        .octaves = @intCast(py_utils.validateRange(c_long, params.octaves, 1, @intCast(max_octaves), "octaves") catch return null),
+        .persistence = py_utils.validateRange(f64, params.persistence, 0.0, 1.0, "persistence") catch return null,
+        .lacunarity = py_utils.validateRange(f64, params.lacunarity, 1.0, std.math.inf(f64), "lacunarity") catch return null,
     };
 
     const value = zignal.perlin(f64, params.x, params.y, params.z, options);
