@@ -38,19 +38,18 @@ def test_perlin_accepts_custom_parameters():
 
 
 INVALID_PARAMETER_CASES = [
-    pytest.param({"amplitude": 0.0}, "amplitude must", id="amplitude-nonpositive"),
-    pytest.param({"frequency": 0.0}, "frequency must", id="frequency-nonpositive"),
-    pytest.param({"octaves": 0}, "octaves must", id="octaves-too-small"),
-    pytest.param({"persistence": -0.1}, "persistence must", id="persistence-negative"),
-    pytest.param({"persistence": 1.1}, "persistence must", id="persistence-gt-one"),
-    pytest.param({"lacunarity": 0.5}, "lacunarity must", id="lacunarity-too-small"),
-    pytest.param({"lacunarity": MAX_LACUNARITY + 1}, "lacunarity must", id="lacunarity-too-large"),
-    pytest.param({"octaves": MAX_OCTAVES + 1}, "octaves must", id="octaves-too-large"),
+    pytest.param({"amplitude": 0.0}, r"amplitude must be between", id="amplitude-nonpositive"),
+    pytest.param({"frequency": 0.0}, r"frequency must be between", id="frequency-nonpositive"),
+    pytest.param({"octaves": 0}, r"octaves must be between 1 and 32", id="octaves-too-small"),
+    pytest.param({"persistence": -0.1}, r"persistence must be between 0 and 1", id="persistence-negative"),
+    pytest.param({"persistence": 1.1}, r"persistence must be between 0 and 1", id="persistence-gt-one"),
+    pytest.param({"lacunarity": 0.5}, r"lacunarity must be between 1 and 16", id="lacunarity-too-small"),
+    pytest.param({"lacunarity": MAX_LACUNARITY + 1}, r"lacunarity must be between 1 and 16", id="lacunarity-too-large"),
+    pytest.param({"octaves": MAX_OCTAVES + 1}, r"octaves must be between 1 and 32", id="octaves-too-large"),
 ]
 
 
 @pytest.mark.parametrize(("kwargs", "message"), INVALID_PARAMETER_CASES)
 def test_perlin_rejects_invalid_parameters(kwargs: dict[str, float], message: str) -> None:
-    with pytest.raises(ValueError) as excinfo:
+    with pytest.raises(ValueError, match=message):
         zignal.perlin(0.0, 0.0, **kwargs)
-    assert message in str(excinfo.value)
