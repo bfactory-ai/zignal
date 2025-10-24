@@ -62,8 +62,8 @@ pub fn splitChannelsWithUniform(comptime T: type, image: Image(T), allocator: st
     const plane_size = image.rows * image.cols;
 
     var channels: [num_channels][]FieldType = undefined;
-    var has_value: [num_channels]bool = undefined;
-    var is_uniform: [num_channels]bool = undefined;
+    var has_value: [num_channels]bool = @splat(false);
+    var is_uniform: [num_channels]bool = @splat(true);
     var uniform_values: [num_channels]FieldType = undefined;
 
     // Allocate each channel with proper error handling
@@ -74,10 +74,8 @@ pub fn splitChannelsWithUniform(comptime T: type, image: Image(T), allocator: st
         }
     }
 
-    inline for (&channels, &has_value, &is_uniform) |*channel, *have, *uni| {
+    inline for (&channels) |*channel| {
         channel.* = try allocator.alloc(FieldType, plane_size);
-        have.* = false;
-        uni.* = true;
         allocated_count += 1;
     }
 
