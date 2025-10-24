@@ -215,32 +215,32 @@ pub fn convolve(comptime T: type, self: Image(T), allocator: Allocator, kernel: 
                     const scale = Pixel.scale;
 
                     // Separate channels using helper
-                    const channels = try channel_ops.splitChannels(T, self, allocator);
+                    const split = try channel_ops.splitChannelsWithUniform(T, self, allocator);
+                    const channels = split.channels;
+                    const uniforms = split.uniforms;
                     defer for (channels) |channel| allocator.free(channel);
 
                     const ChannelStrategy = enum { normalized, scaled, non_uniform };
-                    var uniform_values: [channels.len]?u8 = undefined;
                     var strategies: [channels.len]ChannelStrategy = undefined;
 
-                    inline for (channels, 0..) |src_data, i| {
-                        if (channel_ops.findUniformValue(u8, src_data)) |value| {
-                            uniform_values[i] = value;
+                    inline for (uniforms, 0..) |uniform_value, i| {
+                        if (uniform_value) |_| {
                             strategies[i] = if (kernel_sum == scale) .normalized else .scaled;
                         } else {
-                            uniform_values[i] = null;
                             strategies[i] = .non_uniform;
                         }
                     }
 
                     // Allocate output planes for strategies that require storage
                     var out_channels: [channels.len][]u8 = undefined;
-                    inline for (&out_channels, strategies, 0..) |*out_ch, strategy, i| {
+                    inline for (&out_channels, strategies, uniforms) |*out_ch, strategy, uniform_value| {
                         switch (strategy) {
                             .normalized => out_ch.* = &[_]u8{}, // Placeholder for merge
                             .scaled, .non_uniform => out_ch.* = try allocator.alloc(u8, plane_size),
                         }
                         if (strategy == .scaled) {
-                            const accum = @as(Kernel.Scalar, @intCast(uniform_values[i].?)) * kernel_sum;
+                            const value = uniform_value orelse unreachable;
+                            const accum = @as(Kernel.Scalar, @intCast(value)) * kernel_sum;
                             const stored = Pixel.store(accum);
                             @memset(out_ch.*, stored);
                         }
@@ -352,18 +352,16 @@ pub fn convolveSeparable(
                     }
 
                     // Separate channels using helper
-                    const channels = try channel_ops.splitChannels(T, image, allocator);
+                    const split = try channel_ops.splitChannelsWithUniform(T, image, allocator);
+                    const channels = split.channels;
+                    const uniforms = split.uniforms;
                     defer for (channels) |channel| allocator.free(channel);
 
                     // Check which channels are uniform to avoid unnecessary processing
                     var is_uniform: [channels.len]bool = undefined;
 
-                    inline for (channels, 0..) |src_data, i| {
-                        if (channel_ops.findUniformValue(u8, src_data)) |_| {
-                            is_uniform[i] = true;
-                        } else {
-                            is_uniform[i] = false;
-                        }
+                    inline for (uniforms, 0..) |uniform_value, i| {
+                        is_uniform[i] = uniform_value != null;
                     }
 
                     // Allocate output and temp planes only for non-uniform channels
