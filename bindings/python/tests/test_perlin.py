@@ -37,19 +37,20 @@ def test_perlin_accepts_custom_parameters():
     assert not math.isclose(value, single_octave)
 
 
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"amplitude": 0.0},
-        {"frequency": 0.0},
-        {"octaves": 0},
-        {"persistence": -0.1},
-        {"persistence": 1.1},
-        {"lacunarity": 0.5},
-        {"lacunarity": MAX_LACUNARITY + 1},
-        {"octaves": MAX_OCTAVES + 1},
-    ],
-)
-def test_perlin_rejects_invalid_parameters(kwargs: dict[str, float]) -> None:
-    with pytest.raises(ValueError):
+INVALID_PARAMETER_CASES = [
+    pytest.param({"amplitude": 0.0}, "amplitude must", id="amplitude-nonpositive"),
+    pytest.param({"frequency": 0.0}, "frequency must", id="frequency-nonpositive"),
+    pytest.param({"octaves": 0}, "octaves must", id="octaves-too-small"),
+    pytest.param({"persistence": -0.1}, "persistence must", id="persistence-negative"),
+    pytest.param({"persistence": 1.1}, "persistence must", id="persistence-gt-one"),
+    pytest.param({"lacunarity": 0.5}, "lacunarity must", id="lacunarity-too-small"),
+    pytest.param({"lacunarity": MAX_LACUNARITY + 1}, "lacunarity must", id="lacunarity-too-large"),
+    pytest.param({"octaves": MAX_OCTAVES + 1}, "octaves must", id="octaves-too-large"),
+]
+
+
+@pytest.mark.parametrize(("kwargs", "message"), INVALID_PARAMETER_CASES)
+def test_perlin_rejects_invalid_parameters(kwargs: dict[str, float], message: str) -> None:
+    with pytest.raises(ValueError) as excinfo:
         zignal.perlin(0.0, 0.0, **kwargs)
+    assert message in str(excinfo.value)
