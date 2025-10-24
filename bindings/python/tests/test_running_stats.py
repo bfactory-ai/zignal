@@ -110,6 +110,8 @@ def test_running_stats_combine_produces_new_instance():
     _, m2, _, _ = _central_moments(all_values)
     variance = m2 / (len(all_values) - 1)
     assert combined.variance == pytest.approx(variance)
+    assert combined.skewness == pytest.approx(_expected_skewness(all_values))
+    assert combined.ex_kurtosis == pytest.approx(_expected_excess_kurtosis(all_values))
     assert combined.min == pytest.approx(min(all_values))
     assert combined.max == pytest.approx(max(all_values))
 
