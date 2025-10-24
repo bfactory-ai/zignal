@@ -113,9 +113,9 @@ fn ConvolutionKernel(comptime T: type, comptime rows: usize, comptime cols: usiz
                 var c: usize = 0;
 
                 // SIMD path for interior pixels
-                if (r >= half_h and r + half_h < src.rows and src.cols > vec_len + cols) {
+                if (r >= half_h and r + half_h < src.rows and src.cols >= vec_len + 2 * half_w) {
                     c = half_w;
-                    const safe_end = if (src.cols > vec_len + half_w) src.cols - vec_len - half_w else half_w;
+                    const safe_end = src.cols - half_w;
 
                     while (c + vec_len <= safe_end) : (c += vec_len) {
                         var result_vec: @Vector(vec_len, Scalar) = @splat(0);
