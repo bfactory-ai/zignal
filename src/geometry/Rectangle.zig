@@ -265,8 +265,8 @@ pub fn Rectangle(comptime T: type) type {
             };
         }
 
-        /// Checks how strongly two rectangles overlap using intersection-over-union (IoU)
-        /// and coverage thresholds. Returns true if any of these conditions are met:
+        /// Determines whether two rectangles overlap enough using intersection-over-union (IoU)
+        /// and coverage thresholds. A rectangle is considered overlapping if:
         /// - IoU > iou_thresh
         /// - intersection.area / self.area ≥ coverage_thresh
         /// - intersection.area / other.area ≥ coverage_thresh
@@ -300,6 +300,7 @@ pub fn Rectangle(comptime T: type) type {
                     .float => @as(f64, intersection_area) / @as(f64, self_area),
                     else => @compileError("Unsupported type " ++ @typeName(T) ++ " for Rectangle"),
                 };
+                // Inclusive comparison lets coverage_thresh = 1 represent full containment.
                 if (self_coverage >= coverage_thresh) return true;
             }
 
@@ -309,6 +310,7 @@ pub fn Rectangle(comptime T: type) type {
                     .float => @as(f64, intersection_area) / @as(f64, other_area),
                     else => @compileError("Unsupported type " ++ @typeName(T) ++ " for Rectangle"),
                 };
+                // Same rationale as above—coverage_thresh = 1 means the other rect is fully covered.
                 if (other_coverage >= coverage_thresh) return true;
             }
 
