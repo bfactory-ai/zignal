@@ -1,6 +1,7 @@
 """Setup script for zignal Python bindings."""
 
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -107,6 +108,12 @@ class ZigBuildExt(build_ext):
         cmd = ["zig", "build", "python-bindings", f"-Doptimize={ext.zig_optimize}"]
         if ext.zig_target != "native":
             cmd.extend([f"-Dtarget={ext.zig_target}"])
+
+        extra_flags = env.get("ZIG_EXTRA_BUILD_FLAGS")
+        if extra_flags:
+            parsed_flags = shlex.split(extra_flags)
+            cmd.extend(parsed_flags)
+            print(f"Appending ZIG_EXTRA_BUILD_FLAGS: {' '.join(parsed_flags)}")
 
         print(f"Running: {' '.join(cmd)} in {project_root}")
         result = subprocess.run(cmd, cwd=project_root, capture_output=True, text=True, env=env)

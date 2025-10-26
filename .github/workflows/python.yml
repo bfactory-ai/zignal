@@ -74,6 +74,7 @@ jobs:
         python scripts/build_wheels.py --optimize ReleaseFast
       env:
         ZIG_OPTIMIZE: ReleaseFast
+        ZIG_EXTRA_BUILD_FLAGS: "--verbose-cimport -freference-trace=0"
 
     - name: Test wheel (Unix)
       if: runner.os != 'Windows'

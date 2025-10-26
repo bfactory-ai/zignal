@@ -164,6 +164,13 @@ def create_wheel(
     env["ZIG_TARGET"] = zig_target
     env["ZIG_OPTIMIZE"] = env.get("ZIG_OPTIMIZE", "ReleaseFast")  # Default to ReleaseFast
 
+    # Enable verbose arocc diagnostics on Windows unless the caller overrides it.
+    if os.name == "nt":
+        default_flags = "--verbose-cimport -freference-trace=0"
+        if not env.get("ZIG_EXTRA_BUILD_FLAGS"):
+            env["ZIG_EXTRA_BUILD_FLAGS"] = default_flags
+            print(f"Setting ZIG_EXTRA_BUILD_FLAGS={default_flags}")
+
     # Use python setup.py directly to build and create wheel
     # The setup.py will automatically build the Zig extension
 
