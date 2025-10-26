@@ -166,7 +166,7 @@ def create_wheel(
 
     # Enable verbose arocc diagnostics on Windows unless the caller overrides it.
     if os.name == "nt":
-        default_flags = "--verbose-cimport -freference-trace=0"
+        default_flags = "--verbose-cimport --verbose-cc -freference-trace=0"
         if not env.get("ZIG_EXTRA_BUILD_FLAGS"):
             env["ZIG_EXTRA_BUILD_FLAGS"] = default_flags
             print(f"Setting ZIG_EXTRA_BUILD_FLAGS={default_flags}")
