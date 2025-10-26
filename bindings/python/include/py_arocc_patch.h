@@ -127,6 +127,26 @@ typedef long double _Float64x;
 #define __atomic_thread_fence(order) ZIGNAL_ATOMIC_BARRIER(order)
 #endif
 
+#ifndef __atomic_store
+#define __atomic_store(ptr, value_ptr, order) \
+    __extension__ ({ \
+        __auto_type __ptr = (ptr); \
+        __auto_type __val_ptr = (value_ptr); \
+        *__ptr = *__val_ptr; \
+        ZIGNAL_ATOMIC_BARRIER(order); \
+    })
+#endif
+
+#ifndef __atomic_load
+#define __atomic_load(ptr, result_ptr, order) \
+    __extension__ ({ \
+        __auto_type __ptr = (ptr); \
+        __auto_type __res_ptr = (result_ptr); \
+        *__res_ptr = *__ptr; \
+        ZIGNAL_ATOMIC_BARRIER(order); \
+    })
+#endif
+
 #endif // ZIGNAL_APPLY_AROCC_PATCHES
 
 #endif // ZIGNAL_PY_AROCC_PATCH_H
