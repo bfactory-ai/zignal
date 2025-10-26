@@ -1,5 +1,7 @@
 # Zig build artifacts
 .zig-cache/
+.zig-local-cache/
+.zig-global-cache/
 zig-out/
 
 # Python bindings build artifacts

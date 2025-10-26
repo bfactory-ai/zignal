@@ -103,6 +103,50 @@ def get_current_version() -> str:
     return "unknown"
 
 
+def ensure_zig_cache_dirs(env: dict, project_root: Path) -> None:
+    """Ensure Zig cache directories live inside the workspace for easier debugging."""
+
+    local_cache = env.get("ZIG_LOCAL_CACHE_DIR")
+    if not local_cache:
+        local_path = project_root / ".zig-local-cache"
+        local_path.mkdir(parents=True, exist_ok=True)
+        env["ZIG_LOCAL_CACHE_DIR"] = str(local_path)
+        print(f"Setting ZIG_LOCAL_CACHE_DIR={local_path}")
+
+    global_cache = env.get("ZIG_GLOBAL_CACHE_DIR")
+    if not global_cache:
+        global_path = project_root / ".zig-global-cache"
+        global_path.mkdir(parents=True, exist_ok=True)
+        env["ZIG_GLOBAL_CACHE_DIR"] = str(global_path)
+        print(f"Setting ZIG_GLOBAL_CACHE_DIR={global_path}")
+
+
+def dump_latest_cimport(env: dict) -> None:
+    cache_root = env.get("ZIG_LOCAL_CACHE_DIR")
+    if not cache_root:
+        return
+
+    tmp_root = Path(cache_root) / "tmp"
+    if not tmp_root.exists():
+        return
+
+    try:
+        latest = max(tmp_root.glob("*/cimport.h"), key=lambda p: p.stat().st_mtime)
+    except ValueError:
+        return
+
+    print(f"Latest Zig cimport dump: {latest}")
+    try:
+        with latest.open("r", errors="ignore") as fh:
+            for idx, line in enumerate(fh):
+                if idx >= 80:
+                    print("... (truncated)")
+                    break
+                print(line.rstrip())
+    except OSError as exc:
+        print(f"Warning: unable to read {latest}: {exc}")
+
+
 def run_command(cmd: List[str], cwd: Path = None, env: dict = None) -> subprocess.CompletedProcess:
     """Run a command and return the result."""
     print(f"Running: {' '.join(cmd)}")
@@ -115,6 +159,8 @@ def run_command(cmd: List[str], cwd: Path = None, env: dict = None) -> subproces
         print(f"Command failed with return code {result.returncode}")
         print(f"stdout: {result.stdout}")
         print(f"stderr: {result.stderr}")
+        if env is not None:
+            dump_latest_cimport(env)
         raise RuntimeError(f"Command failed: {' '.join(cmd)}")
 
     return result
@@ -163,6 +209,9 @@ def create_wheel(
     env["PLAT_NAME"] = platform_tag
     env["ZIG_TARGET"] = zig_target
     env["ZIG_OPTIMIZE"] = env.get("ZIG_OPTIMIZE", "ReleaseFast")  # Default to ReleaseFast
+
+    project_root = bindings_dir.parent.parent
+    ensure_zig_cache_dirs(env, project_root)
 
     # Enable verbose arocc diagnostics on Windows unless the caller overrides it.
     if os.name == "nt":

@@ -65,6 +65,8 @@ jobs:
         python scripts/build_wheels.py --optimize ReleaseFast
       env:
         ZIG_OPTIMIZE: ReleaseFast
+        ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/.zig-local-cache
+        ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
 
     - name: Build wheel (Windows)
       if: runner.os == 'Windows'
@@ -75,6 +77,8 @@ jobs:
       env:
         ZIG_OPTIMIZE: ReleaseFast
         ZIG_EXTRA_BUILD_FLAGS: "--verbose-cimport --verbose-cc -freference-trace=0"
+        ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}\.zig-local-cache
+        ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}\.zig-global-cache
 
     - name: Test wheel (Unix)
       if: runner.os != 'Windows'
@@ -107,6 +111,16 @@ jobs:
       with:
         name: wheels-${{ matrix.os }}-py${{ matrix.python-version }}
         path: bindings/python/dist/*.whl
+
+    - name: Upload Zig diagnostics
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: zig-diag-${{ matrix.os }}-py${{ matrix.python-version }}
+        path: |
+          .zig-local-cache/tmp/**/cimport.h
+          .zig-local-cache/tmp/**/cimport.zig
+        if-no-files-found: ignore
 
   build_sdist:
     name: Build source distribution
