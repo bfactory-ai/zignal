@@ -5,14 +5,16 @@ pub const allocator = std.heap.c_allocator;
 const zignal = @import("zignal");
 const Point = zignal.Point;
 
-const needs_arocc_shim =
-    (builtin.target.os.tag == .linux and builtin.target.abi == .gnu) or
-    (builtin.target.os.tag == .windows);
+const needs_glibc_floatn_shim = builtin.target.os.tag == .linux and builtin.target.abi == .gnu;
+const needs_arocc_shim = needs_glibc_floatn_shim or (builtin.target.os.tag == .windows);
 
 pub const c = @cImport({
     @cDefine("PY_SSIZE_T_CLEAN", {});
     if (needs_arocc_shim) {
         @cDefine("ZIGNAL_FORCE_AROCC_PATCHES", "1");
+    }
+    if (needs_glibc_floatn_shim) {
+        @cDefine("ZIGNAL_REQUIRE_FLOATN_TYPES", "1");
     }
     // Include our arocc compatibility shim _before_ Python.h so translate-c can
     // survive glibc's vector math macros and Python's atomic helpers.

@@ -16,7 +16,8 @@
 
 #if ZIGNAL_APPLY_AROCC_PATCHES
 
-// ----------------------------------------------------------------------------- 
+#if defined(ZIGNAL_REQUIRE_FLOATN_TYPES)
+// -----------------------------------------------------------------------------
 // FloatN fallbacks
 // -----------------------------------------------------------------------------
 // arocc currently lacks support for the ISO/IEC TS 18661 _FloatN keywords.
@@ -26,6 +27,7 @@ typedef float _Float32;
 typedef double _Float64;
 typedef double _Float32x;
 typedef long double _Float64x;
+#endif
 
 // -----------------------------------------------------------------------------
 // Atomic built-in fallbacks
