@@ -1,23 +1,9 @@
-#ifndef ZIGNAL_FORCE_AROCC_PATCHES
-#  if defined(__has_include)
-#    if __has_include_next(<math.h>)
-#      include_next <math.h>
-#    else
-#      include "/usr/include/math.h"
-#    endif
-#  else
-#    include "/usr/include/math.h"
-#  endif
-#else
-
 #ifndef ZIGNAL_AROCC_STUB_MATH_H
 #define ZIGNAL_AROCC_STUB_MATH_H 1
-#define _MATH_H 1
 
 // Minimal math header to satisfy Python's usage during translate-c when arocc
-// struggles with glibc's macro-heavy <math.h>.
-// This intentionally forgoes full math declarations; it only supplies the
-// pieces referenced by the Python headers we import.
+// struggles with glibc's macro-heavy <math.h>. Only included when
+// ZIGNAL_FORCE_AROCC_PATCHES is defined for glibc builds.
 
 #include <float.h>
 
@@ -77,5 +63,3 @@ typedef double double_t;
 typedef float float_t;
 
 #endif // ZIGNAL_AROCC_STUB_MATH_H
-
-#endif // ZIGNAL_FORCE_AROCC_PATCHES

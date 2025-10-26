@@ -283,7 +283,11 @@ fn linkPython(b: *Build, artifact: *Build.Step.Compile, python_lib: []const u8, 
     // Link against libc for Python headers
     artifact.root_module.link_libc = true;
     artifact.addIncludePath(.{ .cwd_relative = "bindings/python/include" });
-    artifact.root_module.addSystemIncludePath(.{ .cwd_relative = "/usr/include" });
+
+    const uses_glibc_arocc_shim = target_info.os.tag == .linux and target_info.abi == .gnu;
+    if (uses_glibc_arocc_shim) {
+        artifact.addIncludePath(.{ .cwd_relative = "bindings/python/include/glibc" });
+    }
 
     // Add Python include directory if provided via environment variable
     if (std.process.getEnvVarOwned(b.allocator, "PYTHON_INCLUDE_DIR")) |python_include| {
