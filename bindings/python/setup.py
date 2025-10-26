@@ -116,13 +116,10 @@ class ZigBuildExt(build_ext):
             print(f"Appending ZIG_EXTRA_BUILD_FLAGS: {' '.join(parsed_flags)}")
 
         print(f"Running: {' '.join(cmd)} in {project_root}")
-        result = subprocess.run(cmd, cwd=project_root, capture_output=True, text=True, env=env)
+        result = subprocess.run(cmd, cwd=project_root, text=True, env=env)
 
         if result.returncode != 0:
-            print(f"Zig build failed with return code {result.returncode}", file=sys.stderr)
-            print(f"stdout: {result.stdout}", file=sys.stderr)
-            print(f"stderr: {result.stderr}", file=sys.stderr)
-            raise RuntimeError(f"Zig build failed: {result.stderr}")
+            raise RuntimeError(f"Zig build failed with exit code {result.returncode}")
 
         # Find the built library
         lib_dir = project_root / "zig-out" / "lib"
