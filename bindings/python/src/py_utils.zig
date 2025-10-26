@@ -6,12 +6,10 @@ const Point = zignal.Point;
 
 pub const c = @cImport({
     @cDefine("PY_SSIZE_T_CLEAN", {});
-    // NOTE: Python bindings currently broken on Zig 0.16+ due to arocc bugs.
-    // arocc (Zig's new C compiler) cannot parse glibc's complex math header macros
-    // (__MATHCALL, __MATHCALL_VEC, __MATHDECL, etc.) which Python.h transitively includes.
-    // No workaround exists - this requires upstream arocc fixes.
-    // Use Zig 0.15.x or earlier (which use Clang for translate-c) as a temporary solution.
-    // See: arocc_python_bug/ for minimal reproduction case
+    @cDefine("ZIGNAL_FORCE_AROCC_PATCHES", "1");
+    // Include our arocc compatibility shim _before_ Python.h so translate-c can
+    // survive glibc's vector math macros and Python's atomic helpers.
+    @cInclude("py_arocc_patch.h");
     @cInclude("Python.h");
 });
 
