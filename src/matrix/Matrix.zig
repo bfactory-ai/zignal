@@ -1410,9 +1410,21 @@ test "matrix propagates chained errors" {
     defer right_error.deinit();
     try expectError(MatrixError.Singular, right_error.eval());
 
-    var gemm_error = valid.gemm(false, valid, false, 1.0, 1.0, invalid);
-    defer gemm_error.deinit();
-    try expectError(MatrixError.Singular, gemm_error.eval());
+    var sub_error = valid.sub(invalid);
+    defer sub_error.deinit();
+    try expectError(MatrixError.Singular, sub_error.eval());
+
+    var times_error = valid.times(invalid);
+    defer times_error.deinit();
+    try expectError(MatrixError.Singular, times_error.eval());
+
+    var gemm_other_error = valid.gemm(false, invalid, false, 1.0, 0.0, null);
+    defer gemm_other_error.deinit();
+    try expectError(MatrixError.Singular, gemm_other_error.eval());
+
+    var gemm_c_error = valid.gemm(false, valid, false, 1.0, 1.0, invalid);
+    defer gemm_c_error.deinit();
+    try expectError(MatrixError.Singular, gemm_c_error.eval());
 }
 
 test "dynamic matrix format" {
