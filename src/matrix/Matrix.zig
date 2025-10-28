@@ -634,10 +634,8 @@ pub fn Matrix(comptime T: type) type {
             if (self.err != null) return self;
             if (other.err != null) return other;
 
-            var c_checked: ?Self = null;
             if (c) |c_mat| {
                 if (c_mat.err != null) return c_mat;
-                c_checked = c_mat;
             }
 
             // Determine dimensions after potential transposition
@@ -656,7 +654,7 @@ pub fn Matrix(comptime T: type) type {
             };
 
             // Initialize with scaled C matrix if provided
-            if (c_checked) |c_mat| {
+            if (c) |c_mat| {
                 if (c_mat.rows != a_rows or c_mat.cols != b_cols) {
                     result.deinit();
                     return errorMatrix(self.allocator, error.DimensionMismatch);
