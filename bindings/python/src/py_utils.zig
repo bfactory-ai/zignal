@@ -1234,8 +1234,9 @@ pub fn expectTupleLen(
     return result;
 }
 
-/// Build a Python list from a Zig slice using the provided converter.
-pub fn listFromSlice(
+/// Build a Python list from a Zig slice using a custom element converter.
+/// The converter must return a new reference for each element or null to signal failure.
+pub fn listFromSliceCustom(
     comptime T: type,
     slice: []const T,
     comptime converter: fn (value: T, index: usize) ?*c.PyObject,
@@ -1255,10 +1256,18 @@ pub fn listFromSlice(
     return list;
 }
 
-fn f64ToPyObject(value: f64, _: usize) ?*c.PyObject {
-    return c.PyFloat_FromDouble(value);
-}
-
-pub fn listFromF64Slice(slice: []const f64) ?*c.PyObject {
-    return listFromSlice(f64, slice, f64ToPyObject);
+/// Convert a slice of known type into a Python list using built-in converters.
+/// Currently supports floating-point slices; extend the switch to add more types.
+pub fn listFromSlice(comptime T: type, slice: []const T) ?*c.PyObject {
+    return switch (@typeInfo(T)) {
+        .float => blk: {
+            const Converter = struct {
+                fn convert(value: T, _: usize) ?*c.PyObject {
+                    return c.PyFloat_FromDouble(@floatCast(value));
+                }
+            };
+            break :blk listFromSliceCustom(T, slice, Converter.convert);
+        },
+        else => @compileError("listFromSlice for type " ++ @typeName(T) ++ " requires a custom converter overload"),
+    };
 }

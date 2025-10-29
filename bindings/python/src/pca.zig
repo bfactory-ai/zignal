@@ -266,7 +266,7 @@ fn pca_project(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
     };
     defer allocator.free(coeffs);
 
-    return py_utils.listFromF64Slice(coeffs);
+    return py_utils.listFromSlice(f64, coeffs);
 }
 
 const pca_transform_doc =
@@ -447,7 +447,7 @@ fn pca_reconstruct(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
     };
     defer allocator.free(reconstructed);
 
-    return py_utils.listFromF64Slice(reconstructed);
+    return py_utils.listFromSlice(f64, reconstructed);
 }
 
 // Property getters
@@ -469,7 +469,7 @@ fn pca_get_mean(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.P
         return null;
     }
 
-    return py_utils.listFromF64Slice(mean);
+    return py_utils.listFromSlice(f64, mean);
 }
 
 fn pca_get_components(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
@@ -538,7 +538,7 @@ fn pca_get_eigenvalues(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c
         return null;
     }
 
-    return py_utils.listFromF64Slice(pca.eigenvalues);
+    return py_utils.listFromSlice(f64, pca.eigenvalues);
 }
 
 fn pca_get_num_components(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
