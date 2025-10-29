@@ -249,7 +249,7 @@ pub fn getterOptionalPtr(
 
     const Gen = struct {
         fn get(self_obj: ?*c.PyObject, _: ?*anyopaque) callconv(.c) ?*c.PyObject {
-            const self = @as(*Obj, @ptrCast(self_obj.?));
+            const self = safeCast(Obj, self_obj);
             if (@field(self, field_name)) |ptr| {
                 return converter(ptr);
             }
