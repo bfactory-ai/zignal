@@ -699,9 +699,7 @@ pub fn projectPoints2D(points_obj: ?*c.PyObject, ctx: anytype, comptime apply: a
 
         const result_list = c.PyList_New(@intCast(points.len)) orelse return null;
 
-        var i: usize = 0;
-        while (i < points.len) : (i += 1) {
-            const point = points[i];
+        for (points, 0..) |point, i| {
             const result = @call(.auto, apply, .{ ctx, point.x(), point.y() });
             const tuple = c.PyTuple_Pack(2, c.PyFloat_FromDouble(result[0]), c.PyFloat_FromDouble(result[1])) orelse {
                 c.Py_DECREF(result_list);
