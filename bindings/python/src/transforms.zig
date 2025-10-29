@@ -332,9 +332,7 @@ fn applyProjective(self: *ProjectiveTransformObject, x: f64, y: f64) [2]f64 {
     const new_y = self.matrix[1][0] * x + self.matrix[1][1] * y + self.matrix[1][2];
     const w = self.matrix[2][0] * x + self.matrix[2][1] * y + self.matrix[2][2];
 
-    const result_x = if (w != 0) new_x / w else new_x;
-    const result_y = if (w != 0) new_y / w else new_y;
-    return .{ result_x, result_y };
+    return .{ new_x / w, new_y / w };
 }
 
 fn projective_inverse(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
