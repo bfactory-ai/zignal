@@ -690,7 +690,12 @@ pub fn projectPoints2D(points_obj: ?*c.PyObject, ctx: anytype, comptime apply: a
     if (c.PyTuple_Check(points_obj) != 0 and c.PyTuple_Size(points_obj) == 2) {
         const point = parsePointTuple(f64, points_obj) catch return null;
         const result = @call(.auto, apply, .{ ctx, point.x(), point.y() });
-        return c.PyTuple_Pack(2, c.PyFloat_FromDouble(result[0]), c.PyFloat_FromDouble(result[1]));
+        const x_obj = c.PyFloat_FromDouble(result[0]) orelse return null;
+        const y_obj = c.PyFloat_FromDouble(result[1]) orelse {
+            c.Py_DECREF(x_obj);
+            return null;
+        };
+        return c.PyTuple_Pack(2, x_obj, y_obj);
     }
 
     if (c.PySequence_Check(points_obj) != 0) {
@@ -701,7 +706,17 @@ pub fn projectPoints2D(points_obj: ?*c.PyObject, ctx: anytype, comptime apply: a
 
         for (points, 0..) |point, i| {
             const result = @call(.auto, apply, .{ ctx, point.x(), point.y() });
-            const tuple = c.PyTuple_Pack(2, c.PyFloat_FromDouble(result[0]), c.PyFloat_FromDouble(result[1])) orelse {
+            const x_obj = c.PyFloat_FromDouble(result[0]) orelse {
+                c.Py_DECREF(result_list);
+                return null;
+            };
+            const y_obj = c.PyFloat_FromDouble(result[1]) orelse {
+                c.Py_DECREF(x_obj);
+                c.Py_DECREF(result_list);
+                return null;
+            };
+            const tuple = c.PyTuple_Pack(2, x_obj, y_obj) orelse {
+                // PyTuple_Pack decrements references on failure.
                 c.Py_DECREF(result_list);
                 return null;
             };
