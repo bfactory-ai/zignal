@@ -1255,13 +1255,28 @@ pub fn listFromSliceCustom(
 }
 
 /// Convert a slice of known type into a Python list using built-in converters.
-/// Currently supports floating-point slices; extend the switch to add more types.
+/// Currently supports floating-point and integer slices; extend the switch to add more types.
 pub fn listFromSlice(comptime T: type, slice: []const T) ?*c.PyObject {
     return switch (@typeInfo(T)) {
         .float => blk: {
             const Converter = struct {
                 fn convert(value: T, _: usize) ?*c.PyObject {
-                    return c.PyFloat_FromDouble(@floatCast(value));
+                    const as_f64: f64 = @floatCast(value);
+                    return c.PyFloat_FromDouble(as_f64);
+                }
+            };
+            break :blk listFromSliceCustom(T, slice, Converter.convert);
+        },
+        .int => blk: {
+            const info = @typeInfo(T).int;
+            const SignedParam = @typeInfo(@TypeOf(c.PyLong_FromLongLong)).@"fn".params[0].type.?;
+            const UnsignedParam = @typeInfo(@TypeOf(c.PyLong_FromUnsignedLongLong)).@"fn".params[0].type.?;
+            const Converter = struct {
+                fn convert(value: T, _: usize) ?*c.PyObject {
+                    return if (info.signedness == .signed)
+                        c.PyLong_FromLongLong(@as(SignedParam, @intCast(value)))
+                    else
+                        c.PyLong_FromUnsignedLongLong(@as(UnsignedParam, @intCast(value)));
                 }
             };
             break :blk listFromSliceCustom(T, slice, Converter.convert);
