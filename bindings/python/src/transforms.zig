@@ -332,6 +332,13 @@ fn applyProjective(self: *ProjectiveTransformObject, x: f64, y: f64) [2]f64 {
     const new_y = self.matrix[1][0] * x + self.matrix[1][1] * y + self.matrix[1][2];
     const w = self.matrix[2][0] * x + self.matrix[2][1] * y + self.matrix[2][2];
 
+    if (w == 0) {
+        const inf = std.math.inf(f64);
+        return .{
+            std.math.copysign(inf, new_x),
+            std.math.copysign(inf, new_y),
+        };
+    }
     return .{ new_x / w, new_y / w };
 }
 
