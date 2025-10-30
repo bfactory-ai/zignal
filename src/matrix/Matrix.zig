@@ -982,14 +982,14 @@ pub fn Matrix(comptime T: type) type {
         pub fn minNorm(self: Self) T {
             ensureFloat("minNorm");
             if (self.items.len == 0) return 0;
-            var min_abs = std.math.inf(T);
-            for (self.items) |val| {
+            var min_abs = @abs(self.items[0]);
+            for (self.items[1..]) |val| {
                 const abs_val = @abs(val);
                 if (abs_val < min_abs) {
                     min_abs = abs_val;
                 }
             }
-            return if (min_abs == std.math.inf(T)) 0 else min_abs;
+            return min_abs;
         }
 
         /// Counts non-zero elements.
