@@ -8,6 +8,18 @@ const allocator = py_utils.allocator;
 const c = py_utils.c;
 const stub_metadata = @import("stub_metadata.zig");
 
+fn matrixErrorToPython(err: anytype, context: []const u8) void {
+    switch (err) {
+        error.DimensionMismatch => py_utils.setValueError("Matrix dimension mismatch", .{}),
+        error.NotSquare => py_utils.setValueError("Matrix must be square", .{}),
+        error.Singular => py_utils.setValueError("Matrix is singular", .{}),
+        error.OutOfBounds => py_utils.setIndexError("Matrix index out of bounds", .{}),
+        error.OutOfMemory => py_utils.setMemoryError(context),
+        error.NotConverged => py_utils.setValueError("Matrix operation did not converge", .{}),
+        error.InvalidArgument => py_utils.setValueError("Invalid argument", .{}),
+    }
+}
+
 const matrix_class_doc =
     \\Matrix for numerical computations with f64 (float64) values.
     \\
@@ -717,15 +729,7 @@ fn matrix_negative(obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
 // Helper function to convert Zig Matrix to Python MatrixObject
 fn matrixToObject(matrix: Matrix(f64)) ?*c.PyObject {
     if (matrix.err) |e| {
-        switch (e) {
-            error.DimensionMismatch => py_utils.setValueError("Matrix dimension mismatch", .{}),
-            error.NotSquare => py_utils.setValueError("Matrix must be square", .{}),
-            error.Singular => py_utils.setValueError("Matrix is singular", .{}),
-            error.OutOfBounds => py_utils.setIndexError("Matrix index out of bounds", .{}),
-            error.OutOfMemory => py_utils.setMemoryError("Matrix"),
-            error.NotConverged => py_utils.setValueError("Matrix operation did not converge", .{}),
-            error.InvalidArgument => py_utils.setValueError("Invalid argument", .{}),
-        }
+        matrixErrorToPython(e, "Matrix");
         return null;
     }
 
@@ -1306,15 +1310,7 @@ fn matrix_element_norm_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
     }
 
     const result = ptr.elementNorm(p) catch |err| {
-        switch (err) {
-            error.InvalidArgument => py_utils.setValueError("Invalid exponent for element norm", .{}),
-            error.DimensionMismatch => py_utils.setValueError("Matrix dimension mismatch", .{}),
-            error.NotSquare => py_utils.setValueError("Matrix must be square", .{}),
-            error.Singular => py_utils.setValueError("Matrix is singular", .{}),
-            error.OutOfBounds => py_utils.setIndexError("Matrix index out of bounds", .{}),
-            error.OutOfMemory => py_utils.setMemoryError("element norm"),
-            error.NotConverged => py_utils.setValueError("Matrix operation did not converge", .{}),
-        }
+        matrixErrorToPython(err, "element norm");
         return null;
     };
 
@@ -1362,15 +1358,7 @@ fn matrix_schatten_norm_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds:
     }
 
     const result = ptr.schattenNorm(allocator, p) catch |err| {
-        switch (err) {
-            error.InvalidArgument => py_utils.setValueError("Invalid exponent for schatten norm", .{}),
-            error.DimensionMismatch => py_utils.setValueError("Matrix dimension mismatch", .{}),
-            error.NotSquare => py_utils.setValueError("Matrix must be square", .{}),
-            error.Singular => py_utils.setValueError("Matrix is singular", .{}),
-            error.OutOfBounds => py_utils.setIndexError("Matrix index out of bounds", .{}),
-            error.OutOfMemory => py_utils.setMemoryError("schatten norm"),
-            error.NotConverged => py_utils.setValueError("Matrix operation did not converge", .{}),
-        }
+        matrixErrorToPython(err, "schatten norm");
         return null;
     };
 
@@ -1414,15 +1402,7 @@ fn matrix_induced_norm_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
     }
 
     const result = ptr.inducedNorm(allocator, p) catch |err| {
-        switch (err) {
-            error.InvalidArgument => py_utils.setValueError("Induced norm supports p = 1, 2, or +inf", .{}),
-            error.DimensionMismatch => py_utils.setValueError("Matrix dimension mismatch", .{}),
-            error.NotSquare => py_utils.setValueError("Matrix must be square", .{}),
-            error.Singular => py_utils.setValueError("Matrix is singular", .{}),
-            error.OutOfBounds => py_utils.setIndexError("Matrix index out of bounds", .{}),
-            error.OutOfMemory => py_utils.setMemoryError("induced norm"),
-            error.NotConverged => py_utils.setValueError("Matrix operation did not converge", .{}),
-        }
+        matrixErrorToPython(err, "induced norm");
         return null;
     };
 
@@ -1441,15 +1421,7 @@ fn matrix_nuclear_norm_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callco
     const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     const result = ptr.nuclearNorm(allocator) catch |err| {
-        switch (err) {
-            error.InvalidArgument => py_utils.setValueError("Invalid argument", .{}),
-            error.DimensionMismatch => py_utils.setValueError("Matrix dimension mismatch", .{}),
-            error.NotSquare => py_utils.setValueError("Matrix must be square", .{}),
-            error.Singular => py_utils.setValueError("Matrix is singular", .{}),
-            error.OutOfBounds => py_utils.setIndexError("Matrix index out of bounds", .{}),
-            error.OutOfMemory => py_utils.setMemoryError("nuclear norm"),
-            error.NotConverged => py_utils.setValueError("Matrix operation did not converge", .{}),
-        }
+        matrixErrorToPython(err, "nuclear norm");
         return null;
     };
 
@@ -1468,15 +1440,7 @@ fn matrix_spectral_norm_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callc
     const ptr = requireMatrixPtr(self_obj) orelse return null;
 
     const result = ptr.spectralNorm(allocator) catch |err| {
-        switch (err) {
-            error.InvalidArgument => py_utils.setValueError("Invalid argument", .{}),
-            error.DimensionMismatch => py_utils.setValueError("Matrix dimension mismatch", .{}),
-            error.NotSquare => py_utils.setValueError("Matrix must be square", .{}),
-            error.Singular => py_utils.setValueError("Matrix is singular", .{}),
-            error.OutOfBounds => py_utils.setIndexError("Matrix index out of bounds", .{}),
-            error.OutOfMemory => py_utils.setMemoryError("spectral norm"),
-            error.NotConverged => py_utils.setValueError("Matrix operation did not converge", .{}),
-        }
+        matrixErrorToPython(err, "spectral norm");
         return null;
     };
 
