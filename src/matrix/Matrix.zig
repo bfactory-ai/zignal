@@ -1040,20 +1040,14 @@ pub fn Matrix(comptime T: type) type {
             ensureFloat("leadingSingularValue");
             if (self.rows == 0 or self.cols == 0) return 0;
 
-            if (self.rows >= self.cols) {
-                var svd_result = try self.svd(allocator, .{ .with_u = false, .with_v = false, .mode = .skinny_u });
-                defer svd_result.deinit();
-                if (svd_result.converged != 0) {
-                    return error.NotConverged;
-                }
-                return svd_result.s.at(0, 0).*;
+            if (self.rows < self.cols) {
+                var transposed = self.transpose();
+                if (transposed.err) |err| return err;
+                defer transposed.deinit();
+                return transposed.leadingSingularValue(allocator);
             }
 
-            var transposed = self.transpose();
-            if (transposed.err) |err| return err;
-            defer transposed.deinit();
-
-            var svd_result = try transposed.svd(allocator, .{ .with_u = false, .with_v = false, .mode = .skinny_u });
+            var svd_result = try self.svd(allocator, .{ .with_u = false, .with_v = false, .mode = .skinny_u });
             defer svd_result.deinit();
             if (svd_result.converged != 0) {
                 return error.NotConverged;
