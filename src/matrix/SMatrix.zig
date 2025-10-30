@@ -93,7 +93,7 @@ pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) typ
             return accum;
         }
 
-        /// Sums all the elements across rows, returning a 1 × cols matrix.
+        /// Sums all elements across each row, returning a 1 × cols row vector of column sums.
         pub fn sumRows(self: Self) SMatrix(T, 1, cols) {
             var result: SMatrix(T, 1, cols) = .initAll(0);
             for (0..rows) |r| {
@@ -104,7 +104,7 @@ pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) typ
             return result;
         }
 
-        /// Sums all the elements down columns, returning a rows × 1 matrix.
+        /// Sums all elements down each column, returning a rows × 1 column vector of row sums.
         pub fn sumCols(self: Self) SMatrix(T, rows, 1) {
             var result: SMatrix(T, rows, 1) = .initAll(0);
             for (0..rows) |r| {
@@ -794,10 +794,10 @@ test "SMatrix norm" {
 
 test "SMatrix sum" {
     var matrix: SMatrix(f32, 3, 4) = .initAll(1);
-    const matrixSumCols: SMatrix(f32, 3, 1) = .initAll(4);
-    const matrixSumRows: SMatrix(f32, 1, 4) = .initAll(3);
-    try expectEqual(matrix.sumRows(), matrixSumRows);
-    try expectEqual(matrix.sumCols(), matrixSumCols);
+    const col_sums: SMatrix(f32, 1, 4) = .initAll(3);
+    const row_sums: SMatrix(f32, 3, 1) = .initAll(4);
+    try expectEqual(matrix.sumRows(), col_sums);
+    try expectEqual(matrix.sumCols(), row_sums);
     try expectEqual(matrix.sumCols().sumRows().item(), matrix.sum());
 }
 

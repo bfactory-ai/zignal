@@ -20,6 +20,19 @@ fn matrixErrorToPython(err: anytype, context: []const u8) void {
     }
 }
 
+fn parsePNormParam(p_obj_opt: ?*c.PyObject) ?f64 {
+    if (p_obj_opt) |p_obj| {
+        if (p_obj == c.Py_None()) return 2.0;
+        const value = c.PyFloat_AsDouble(p_obj);
+        if (c.PyErr_Occurred() != null) {
+            py_utils.setTypeError("float for p", p_obj);
+            return null;
+        }
+        return value;
+    }
+    return 2.0;
+}
+
 const matrix_class_doc =
     \\Matrix for numerical computations with f64 (float64) values.
     \\
@@ -1287,18 +1300,7 @@ fn matrix_element_norm_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
     py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
     const ptr = requireMatrixPtr(self_obj) orelse return null;
-    const p = blk: {
-        if (params.p) |p_obj| {
-            if (p_obj == c.Py_None()) break :blk 2.0;
-            const val = c.PyFloat_AsDouble(p_obj);
-            if (c.PyErr_Occurred() != null) {
-                py_utils.setTypeError("float for p", p_obj);
-                return null;
-            }
-            break :blk val;
-        }
-        break :blk 2.0;
-    };
+    const p = parsePNormParam(params.p) orelse return null;
     if (!std.math.isFinite(p)) {
         if (!std.math.isInf(p)) {
             py_utils.setValueError("Element norm exponent must be finite or ±inf", .{});
@@ -1335,18 +1337,7 @@ fn matrix_schatten_norm_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds:
     py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
     const ptr = requireMatrixPtr(self_obj) orelse return null;
-    const p = blk: {
-        if (params.p) |p_obj| {
-            if (p_obj == c.Py_None()) break :blk 2.0;
-            const val = c.PyFloat_AsDouble(p_obj);
-            if (c.PyErr_Occurred() != null) {
-                py_utils.setTypeError("float for p", p_obj);
-                return null;
-            }
-            break :blk val;
-        }
-        break :blk 2.0;
-    };
+    const p = parsePNormParam(params.p) orelse return null;
     if (!std.math.isFinite(p)) {
         if (!(std.math.isInf(p) and p > 0)) {
             py_utils.setValueError("Schatten norm exponent must be finite ≥ 1 or +inf", .{});
@@ -1383,18 +1374,7 @@ fn matrix_induced_norm_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
     py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
     const ptr = requireMatrixPtr(self_obj) orelse return null;
-    const p = blk: {
-        if (params.p) |p_obj| {
-            if (p_obj == c.Py_None()) break :blk 2.0;
-            const val = c.PyFloat_AsDouble(p_obj);
-            if (c.PyErr_Occurred() != null) {
-                py_utils.setTypeError("float for p", p_obj);
-                return null;
-            }
-            break :blk val;
-        }
-        break :blk 2.0;
-    };
+    const p = parsePNormParam(params.p) orelse return null;
     const valid = (p == 1) or (p == 2) or (std.math.isInf(p) and p > 0);
     if (!valid) {
         py_utils.setValueError("Induced norm supports p = 1, 2, or +inf", .{});
