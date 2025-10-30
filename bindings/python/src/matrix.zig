@@ -724,6 +724,7 @@ fn matrixToObject(matrix: Matrix(f64)) ?*c.PyObject {
             error.OutOfBounds => py_utils.setIndexError("Matrix index out of bounds", .{}),
             error.OutOfMemory => py_utils.setMemoryError("Matrix"),
             error.NotConverged => py_utils.setValueError("Matrix operation did not converge", .{}),
+            error.InvalidArgument => py_utils.setValueError("Invalid argument", .{}),
         }
         return null;
     }
@@ -1276,13 +1277,24 @@ const matrix_element_norm_doc =
 
 fn matrix_element_norm_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const Params = struct {
-        p: ?f64 = null,
+        p: ?*c.PyObject = null,
     };
     var params: Params = undefined;
     py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
     const ptr = requireMatrixPtr(self_obj) orelse return null;
-    const p = params.p orelse 2.0;
+    const p = blk: {
+        if (params.p) |p_obj| {
+            if (p_obj == c.Py_None()) break :blk 2.0;
+            const val = c.PyFloat_AsDouble(p_obj);
+            if (c.PyErr_Occurred() != null) {
+                py_utils.setTypeError("float for p", p_obj);
+                return null;
+            }
+            break :blk val;
+        }
+        break :blk 2.0;
+    };
     if (!std.math.isFinite(p)) {
         if (!std.math.isInf(p)) {
             py_utils.setValueError("Element norm exponent must be finite or ±inf", .{});
@@ -1293,7 +1305,20 @@ fn matrix_element_norm_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
         return null;
     }
 
-    return c.PyFloat_FromDouble(ptr.elementNorm(p));
+    const result = ptr.elementNorm(p) catch |err| {
+        switch (err) {
+            error.InvalidArgument => py_utils.setValueError("Invalid exponent for element norm", .{}),
+            error.DimensionMismatch => py_utils.setValueError("Matrix dimension mismatch", .{}),
+            error.NotSquare => py_utils.setValueError("Matrix must be square", .{}),
+            error.Singular => py_utils.setValueError("Matrix is singular", .{}),
+            error.OutOfBounds => py_utils.setIndexError("Matrix index out of bounds", .{}),
+            error.OutOfMemory => py_utils.setMemoryError("element norm"),
+            error.NotConverged => py_utils.setValueError("Matrix operation did not converge", .{}),
+        }
+        return null;
+    };
+
+    return c.PyFloat_FromDouble(result);
 }
 
 const matrix_schatten_norm_doc =
@@ -1308,13 +1333,24 @@ const matrix_schatten_norm_doc =
 
 fn matrix_schatten_norm_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const Params = struct {
-        p: ?f64 = null,
+        p: ?*c.PyObject = null,
     };
     var params: Params = undefined;
     py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
     const ptr = requireMatrixPtr(self_obj) orelse return null;
-    const p = params.p orelse 2.0;
+    const p = blk: {
+        if (params.p) |p_obj| {
+            if (p_obj == c.Py_None()) break :blk 2.0;
+            const val = c.PyFloat_AsDouble(p_obj);
+            if (c.PyErr_Occurred() != null) {
+                py_utils.setTypeError("float for p", p_obj);
+                return null;
+            }
+            break :blk val;
+        }
+        break :blk 2.0;
+    };
     if (!std.math.isFinite(p)) {
         if (!(std.math.isInf(p) and p > 0)) {
             py_utils.setValueError("Schatten norm exponent must be finite ≥ 1 or +inf", .{});
@@ -1327,6 +1363,7 @@ fn matrix_schatten_norm_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds:
 
     const result = ptr.schattenNorm(allocator, p) catch |err| {
         switch (err) {
+            error.InvalidArgument => py_utils.setValueError("Invalid exponent for schatten norm", .{}),
             error.DimensionMismatch => py_utils.setValueError("Matrix dimension mismatch", .{}),
             error.NotSquare => py_utils.setValueError("Matrix must be square", .{}),
             error.Singular => py_utils.setValueError("Matrix is singular", .{}),
@@ -1352,13 +1389,24 @@ const matrix_induced_norm_doc =
 
 fn matrix_induced_norm_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     const Params = struct {
-        p: ?f64 = null,
+        p: ?*c.PyObject = null,
     };
     var params: Params = undefined;
     py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
     const ptr = requireMatrixPtr(self_obj) orelse return null;
-    const p = params.p orelse 2.0;
+    const p = blk: {
+        if (params.p) |p_obj| {
+            if (p_obj == c.Py_None()) break :blk 2.0;
+            const val = c.PyFloat_AsDouble(p_obj);
+            if (c.PyErr_Occurred() != null) {
+                py_utils.setTypeError("float for p", p_obj);
+                return null;
+            }
+            break :blk val;
+        }
+        break :blk 2.0;
+    };
     const valid = (p == 1) or (p == 2) or (std.math.isInf(p) and p > 0);
     if (!valid) {
         py_utils.setValueError("Induced norm supports p = 1, 2, or +inf", .{});
@@ -1367,6 +1415,7 @@ fn matrix_induced_norm_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
 
     const result = ptr.inducedNorm(allocator, p) catch |err| {
         switch (err) {
+            error.InvalidArgument => py_utils.setValueError("Induced norm supports p = 1, 2, or +inf", .{}),
             error.DimensionMismatch => py_utils.setValueError("Matrix dimension mismatch", .{}),
             error.NotSquare => py_utils.setValueError("Matrix must be square", .{}),
             error.Singular => py_utils.setValueError("Matrix is singular", .{}),
@@ -1393,6 +1442,7 @@ fn matrix_nuclear_norm_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callco
 
     const result = ptr.nuclearNorm(allocator) catch |err| {
         switch (err) {
+            error.InvalidArgument => py_utils.setValueError("Invalid argument", .{}),
             error.DimensionMismatch => py_utils.setValueError("Matrix dimension mismatch", .{}),
             error.NotSquare => py_utils.setValueError("Matrix must be square", .{}),
             error.Singular => py_utils.setValueError("Matrix is singular", .{}),
@@ -1419,6 +1469,7 @@ fn matrix_spectral_norm_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callc
 
     const result = ptr.spectralNorm(allocator) catch |err| {
         switch (err) {
+            error.InvalidArgument => py_utils.setValueError("Invalid argument", .{}),
             error.DimensionMismatch => py_utils.setValueError("Matrix dimension mismatch", .{}),
             error.NotSquare => py_utils.setValueError("Matrix must be square", .{}),
             error.Singular => py_utils.setValueError("Matrix is singular", .{}),

@@ -59,6 +59,7 @@ pub const MatrixError = error{
     OutOfBounds,
     OutOfMemory,
     NotConverged,
+    InvalidArgument,
 };
 
 /// Matrix with runtime dimensions using flat array storage
@@ -1002,19 +1003,19 @@ pub fn Matrix(comptime T: type) type {
             return count;
         }
 
-        fn elementNormInternal(self: Self, p: T) T {
+        /// Entrywise ℓᵖ norm with optional runtime exponent.
+        pub fn elementNorm(self: Self, p: T) MatrixError!T {
             ensureFloat("elementNorm");
             if (std.math.isInf(p)) {
                 if (p > 0) {
                     return self.maxNorm();
                 } else if (p < 0) {
                     return self.minNorm();
-                } else {
-                    @panic("elementNorm: indeterminate exponent");
                 }
+                return error.InvalidArgument;
             }
             if (!std.math.isFinite(p)) {
-                @panic("elementNorm: unsupported exponent");
+                return error.InvalidArgument;
             }
             if (p == 0) {
                 return self.sparseNorm();
@@ -1031,14 +1032,8 @@ pub fn Matrix(comptime T: type) type {
                     }
                 }
                 return std.math.pow(T, accum, 1 / p);
-            } else {
-                @panic("elementNorm: exponent must be positive (or 0, ±inf)");
             }
-        }
-
-        /// Entrywise ℓᵖ norm with optional runtime exponent.
-        pub fn elementNorm(self: Self, p: T) T {
-            return self.elementNormInternal(p);
+            return error.InvalidArgument;
         }
 
         fn leadingSingularValue(self: Self, allocator: std.mem.Allocator) !T {
@@ -1096,10 +1091,10 @@ pub fn Matrix(comptime T: type) type {
                 if (p > 0) {
                     return self.leadingSingularValue(allocator);
                 }
-                @panic("schattenNorm: negative infinity not supported");
+                return error.InvalidArgument;
             }
             if (!std.math.isFinite(p) or p < 1) {
-                @panic("schattenNorm: exponent must be finite and ≥ 1 (or +inf)");
+                return error.InvalidArgument;
             }
             if (p == 1) {
                 return self.sumSingularP(allocator, 1);
@@ -1151,7 +1146,7 @@ pub fn Matrix(comptime T: type) type {
                 }
                 return max_sum;
             }
-            @panic("inducedNorm only supports p = 1, 2, or ∞");
+            return error.InvalidArgument;
         }
 
         /// Trace: sum of diagonal elements (square matrices only)
@@ -1608,6 +1603,18 @@ test "matrix propagates chained errors" {
     var gemm_c_error = valid.gemm(false, valid, false, 1.0, 1.0, invalid);
     defer gemm_c_error.deinit();
     try expectError(MatrixError.Singular, gemm_c_error.eval());
+}
+
+test "matrix elementNorm invalid exponent" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var m = try Matrix(f64).init(arena.allocator(), 1, 1);
+    defer m.deinit();
+    m.at(0, 0).* = 1.0;
+
+    try std.testing.expectError(MatrixError.InvalidArgument, m.elementNorm(-1.0));
+    try std.testing.expectError(MatrixError.InvalidArgument, m.elementNorm(std.math.nan(f64)));
 }
 
 test "dynamic matrix format" {

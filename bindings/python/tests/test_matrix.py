@@ -159,6 +159,15 @@ def test_linear_algebra_methods():
     assert isinstance(m.nuclear_norm(), float)
     assert isinstance(m.spectral_norm(), float)
 
+    import pytest
+
+    with pytest.raises(ValueError):
+        _ = m.element_norm(p=-1)
+    with pytest.raises(ValueError):
+        _ = m.schatten_norm(p=0.5)
+    with pytest.raises(ValueError):
+        _ = m.induced_norm(p=3)
+
 
 def test_element_wise_operations():
     """Test element-wise operations."""
