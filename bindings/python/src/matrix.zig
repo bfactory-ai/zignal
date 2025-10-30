@@ -1306,7 +1306,7 @@ fn matrix_element_norm_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
             py_utils.setValueError("Element norm exponent must be finite or ±inf", .{});
             return null;
         }
-    } else if (p < 0 and p != 0) {
+    } else if (p < 0) {
         py_utils.setValueError("Element norm requires p >= 0 (or ±inf)", .{});
         return null;
     }
