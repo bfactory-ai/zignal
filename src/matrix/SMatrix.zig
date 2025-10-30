@@ -202,18 +202,15 @@ pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) typ
             ensureFloat("schattenNorm");
             if (rows == 0 or cols == 0) return 0;
 
-            var accum: T = 0;
-            if (rows >= cols) {
-                const svd_result = self.svd(.{ .mode = .skinny_u, .with_u = false, .with_v = false });
-                for (0..svd_result.s.rows) |i| {
-                    accum += std.math.pow(T, svd_result.s.items[i][0], exponent);
-                }
-            } else {
+            if (rows < cols) {
                 const transposed = self.transpose();
-                const svd_result = transposed.svd(.{ .mode = .skinny_u, .with_u = false, .with_v = false });
-                for (0..svd_result.s.rows) |i| {
-                    accum += std.math.pow(T, svd_result.s.items[i][0], exponent);
-                }
+                return transposed.sumSingularP(exponent);
+            }
+
+            const svd_result = self.svd(.{ .mode = .skinny_u, .with_u = false, .with_v = false });
+            var accum: T = 0;
+            for (0..svd_result.s.rows) |i| {
+                accum += std.math.pow(T, svd_result.s.items[i][0], exponent);
             }
             return accum;
         }
