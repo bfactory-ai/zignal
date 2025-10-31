@@ -918,8 +918,20 @@ test "FormatFlags decoding" {
                 .ink_bounds = false,
             },
         },
-    .{
-        .format = 0x0000070C, // compressed + accel inkbounds + ink bounds
+        .{
+            .format = 0x00000031, // glyph pad 1, scan unit 3
+            .expected = .{
+                .glyph_pad = 1,
+                .byte_order_msb = false,
+                .bit_order_msb = false,
+                .scan_unit = 3,
+                .accel_w_inkbounds = false,
+                .compressed_metrics = false,
+                .ink_bounds = false,
+            },
+        },
+        .{
+            .format = 0x0000070C, // compressed + accel inkbounds + ink bounds
             .expected = .{
                 .glyph_pad = 0,
                 .byte_order_msb = true,
@@ -937,6 +949,7 @@ test "FormatFlags decoding" {
         try testing.expectEqual(tc.expected.glyph_pad, flags.glyph_pad);
         try testing.expectEqual(tc.expected.byte_order_msb, flags.byte_order_msb);
         try testing.expectEqual(tc.expected.bit_order_msb, flags.bit_order_msb);
+        try testing.expectEqual(tc.expected.scan_unit, flags.scan_unit);
         try testing.expectEqual(tc.expected.accel_w_inkbounds, flags.accel_w_inkbounds);
         try testing.expectEqual(tc.expected.compressed_metrics, flags.compressed_metrics);
         try testing.expectEqual(tc.expected.ink_bounds, flags.ink_bounds);
