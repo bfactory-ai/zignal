@@ -65,8 +65,8 @@ const FormatFlags = struct {
             .bit_order_msb = (format & (1 << 3)) != 0,
             .scan_unit = @as(u2, @truncate((format >> 4) & 0x3)),
             .compressed_metrics = (format & 0x100) != 0,
-            .ink_bounds = (format & 0x200) != 0,
-            .accel_w_inkbounds = (format & 0x100) != 0,
+            .accel_w_inkbounds = (format & 0x200) != 0,
+            .ink_bounds = (format & 0x400) != 0,
         };
     }
 
@@ -74,9 +74,9 @@ const FormatFlags = struct {
     byte_order_msb: bool,
     bit_order_msb: bool,
     scan_unit: u2,
+    accel_w_inkbounds: bool,
     compressed_metrics: bool,
     ink_bounds: bool,
-    accel_w_inkbounds: bool,
 };
 
 /// PCF glyph padding values
@@ -877,9 +877,9 @@ test "FormatFlags decoding" {
                 .byte_order_msb = false,
                 .bit_order_msb = false,
                 .scan_unit = 0,
+                .accel_w_inkbounds = false,
                 .compressed_metrics = false,
                 .ink_bounds = false,
-                .accel_w_inkbounds = false,
             },
         },
         .{
@@ -889,9 +889,9 @@ test "FormatFlags decoding" {
                 .byte_order_msb = true,
                 .bit_order_msb = false,
                 .scan_unit = 0,
+                .accel_w_inkbounds = false,
                 .compressed_metrics = false,
                 .ink_bounds = false,
-                .accel_w_inkbounds = false,
             },
         },
         .{
@@ -901,9 +901,9 @@ test "FormatFlags decoding" {
                 .byte_order_msb = false,
                 .bit_order_msb = true,
                 .scan_unit = 0,
+                .accel_w_inkbounds = false,
                 .compressed_metrics = false,
                 .ink_bounds = false,
-                .accel_w_inkbounds = false,
             },
         },
         .{
@@ -913,9 +913,21 @@ test "FormatFlags decoding" {
                 .byte_order_msb = true,
                 .bit_order_msb = true,
                 .scan_unit = 0,
+                .accel_w_inkbounds = false,
                 .compressed_metrics = true,
                 .ink_bounds = false,
+            },
+        },
+    .{
+        .format = 0x0000070C, // compressed + accel inkbounds + ink bounds
+            .expected = .{
+                .glyph_pad = 0,
+                .byte_order_msb = true,
+                .bit_order_msb = true,
+                .scan_unit = 0,
                 .accel_w_inkbounds = true,
+                .compressed_metrics = true,
+                .ink_bounds = true,
             },
         },
     };
@@ -925,7 +937,9 @@ test "FormatFlags decoding" {
         try testing.expectEqual(tc.expected.glyph_pad, flags.glyph_pad);
         try testing.expectEqual(tc.expected.byte_order_msb, flags.byte_order_msb);
         try testing.expectEqual(tc.expected.bit_order_msb, flags.bit_order_msb);
+        try testing.expectEqual(tc.expected.accel_w_inkbounds, flags.accel_w_inkbounds);
         try testing.expectEqual(tc.expected.compressed_metrics, flags.compressed_metrics);
+        try testing.expectEqual(tc.expected.ink_bounds, flags.ink_bounds);
     }
 }
 
