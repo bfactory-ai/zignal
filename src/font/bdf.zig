@@ -586,7 +586,7 @@ test "BDF parses glyph rows wider than 32 bits" {
         \\DWIDTH 40 0
         \\BBX 40 1 0 0
         \\BITMAP
-        \\FFFFFFFFFF
+        \\1234567890
         \\ENDCHAR
         \\ENDFONT
     ;
@@ -611,7 +611,7 @@ test "BDF parses glyph rows wider than 32 bits" {
     const maybe_data = font.getCharData(65);
     try testing.expect(maybe_data != null);
     const data = maybe_data.?;
-    const expected = [_]u8{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+    const expected = [_]u8{ 0x48, 0x2C, 0x6A, 0x1E, 0x09 };
     try testing.expectEqualSlices(u8, &expected, data[0..expected.len]);
 }
 
