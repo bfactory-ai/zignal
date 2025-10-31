@@ -312,6 +312,7 @@ fn parseGlyph(gpa: Allocator, lines: *std.mem.TokenIterator(u8, .any), state: *B
                     const end_bit = @min(start_bit + 8, glyph.bbox.width);
 
                     if (end_bit > start_bit) {
+                        // BDF stores pixels MSB-first per byte; convert to zignal's LSB-first layout
                         const raw_byte = try parseHexByte(bitmap_trimmed, byte_idx);
                         const reversed_byte = @bitReverse(raw_byte);
                         const bits_to_take: u4 = @intCast(end_bit - start_bit);
