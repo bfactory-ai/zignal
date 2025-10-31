@@ -955,13 +955,7 @@ test "FormatFlags decoding" {
 
     for (test_cases) |tc| {
         const flags = FormatFlags.decode(tc.format);
-        try testing.expectEqual(tc.expected.glyph_pad, flags.glyph_pad);
-        try testing.expectEqual(tc.expected.byte_order_msb, flags.byte_order_msb);
-        try testing.expectEqual(tc.expected.bit_order_msb, flags.bit_order_msb);
-        try testing.expectEqual(tc.expected.scan_unit, flags.scan_unit);
-        try testing.expectEqual(tc.expected.accel_w_inkbounds, flags.accel_w_inkbounds);
-        try testing.expectEqual(tc.expected.compressed_metrics, flags.compressed_metrics);
-        try testing.expectEqual(tc.expected.ink_bounds, flags.ink_bounds);
+        try testing.expectEqualDeep(tc.expected, flags);
     }
 }
 
