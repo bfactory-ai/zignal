@@ -314,14 +314,8 @@ fn parseGlyph(gpa: Allocator, lines: *std.mem.TokenIterator(u8, .any), state: *B
                     if (end_bit > start_bit) {
                         const raw_byte = try parseHexByte(bitmap_trimmed, byte_idx);
                         const reversed_byte = @bitReverse(raw_byte);
-                        const bits_to_take = end_bit - start_bit;
-                        const mask: u8 = if (bits_to_take >= 8)
-                            0xFF
-                        else blk: {
-                            const limited_bits: u4 = @intCast(bits_to_take);
-                            const mask_u16 = (@as(u16, 1) << limited_bits) - 1;
-                            break :blk @intCast(mask_u16);
-                        };
+                        const bits_to_take: u4 = @intCast(end_bit - start_bit);
+                        const mask: u8 = @intCast((@as(u16, 1) << bits_to_take) - 1);
                         our_byte = reversed_byte & mask;
                     }
 
