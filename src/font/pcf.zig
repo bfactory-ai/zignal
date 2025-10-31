@@ -57,16 +57,25 @@ const TableType = enum(u32) {
 
 /// PCF format flags structure for better type safety
 const FormatFlags = struct {
+    const glyph_pad_mask: u32 = 0x3;
+    const byte_order_mask: u32 = 1 << 2;
+    const bit_order_mask: u32 = 1 << 3;
+    const scan_unit_mask: u32 = 0x30;
+    const scan_unit_shift: u5 = 4;
+    const compressed_metrics_mask: u32 = 0x100;
+    const accel_w_inkbounds_mask: u32 = 0x200;
+    const ink_bounds_mask: u32 = 0x400;
+
     // Helper to decode format flags from u32
     pub fn decode(format: u32) FormatFlags {
         return FormatFlags{
-            .glyph_pad = @as(u2, @truncate(format & 0x3)),
-            .byte_order_msb = (format & (1 << 2)) != 0,
-            .bit_order_msb = (format & (1 << 3)) != 0,
-            .scan_unit = @as(u2, @truncate((format >> 4) & 0x3)),
-            .compressed_metrics = (format & 0x100) != 0,
-            .accel_w_inkbounds = (format & 0x200) != 0,
-            .ink_bounds = (format & 0x400) != 0,
+            .glyph_pad = @as(u2, @truncate(format & glyph_pad_mask)),
+            .byte_order_msb = (format & byte_order_mask) != 0,
+            .bit_order_msb = (format & bit_order_mask) != 0,
+            .scan_unit = @as(u2, @truncate((format & scan_unit_mask) >> scan_unit_shift)),
+            .compressed_metrics = (format & compressed_metrics_mask) != 0,
+            .accel_w_inkbounds = (format & accel_w_inkbounds_mask) != 0,
+            .ink_bounds = (format & ink_bounds_mask) != 0,
         };
     }
 
