@@ -61,8 +61,8 @@ const FormatFlags = struct {
     pub fn decode(format: u32) FormatFlags {
         return FormatFlags{
             .glyph_pad = @as(u2, @truncate(format & 0x3)),
-            .byte_order_msb = (format & (1 << 3)) != 0,
-            .bit_order_msb = (format & (1 << 2)) != 0,
+            .byte_order_msb = (format & (1 << 2)) != 0,
+            .bit_order_msb = (format & (1 << 3)) != 0,
             .scan_unit = @as(u2, @truncate((format >> 4) & 0x3)),
             .compressed_metrics = (format & 0x100) != 0,
             .ink_bounds = (format & 0x200) != 0,
@@ -809,8 +809,14 @@ fn convertToBitmapFont(
         // Store converted bitmap offset
         const converted_offset = converted_bitmaps.items.len;
 
+        if (glyph_info.glyph_index >= bitmap_info.offsets.len) {
+            return PcfError.InvalidBitmapData;
+        }
         // Convert bitmap data for this glyph
         const bitmap_offset = bitmap_info.offsets[glyph_info.glyph_index];
+        if (bitmap_offset >= bitmap_info.bitmap_data.len) {
+            return PcfError.InvalidBitmapData;
+        }
         const format_flags = FormatFlags.decode(bitmap_info.format);
         const pad_bits = @as(u2, @truncate(bitmap_info.format & 0x3));
         const glyph_pad = @as(GlyphPadding, @enumFromInt(pad_bits));
@@ -870,6 +876,30 @@ test "FormatFlags decoding" {
                 .glyph_pad = 0,
                 .byte_order_msb = false,
                 .bit_order_msb = false,
+                .scan_unit = 0,
+                .compressed_metrics = false,
+                .ink_bounds = false,
+                .accel_w_inkbounds = false,
+            },
+        },
+        .{
+            .format = 0x00000004,
+            .expected = .{
+                .glyph_pad = 0,
+                .byte_order_msb = true,
+                .bit_order_msb = false,
+                .scan_unit = 0,
+                .compressed_metrics = false,
+                .ink_bounds = false,
+                .accel_w_inkbounds = false,
+            },
+        },
+        .{
+            .format = 0x00000008,
+            .expected = .{
+                .glyph_pad = 0,
+                .byte_order_msb = false,
+                .bit_order_msb = true,
                 .scan_unit = 0,
                 .compressed_metrics = false,
                 .ink_bounds = false,
