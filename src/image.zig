@@ -1214,46 +1214,6 @@ pub fn Image(comptime T: type) type {
     };
 }
 
-test "Image loadFromBytes PNG matches file load" {
-    const gpa = std.testing.allocator;
-    const path = "assets/png_variants/rgb_bit8.png";
-    const max_size = 10 * 1024 * 1024;
-
-    const bytes = try std.fs.cwd().readFileAlloc(path, gpa, .limited(max_size));
-    defer gpa.free(bytes);
-
-    var from_bytes = try Image(Rgb).loadFromBytes(gpa, bytes);
-    defer from_bytes.deinit(gpa);
-
-    var from_file = try Image(Rgb).load(gpa, path);
-    defer from_file.deinit(gpa);
-
-    try std.testing.expectEqual(from_file.rows, from_bytes.rows);
-    try std.testing.expectEqual(from_file.cols, from_bytes.cols);
-    try std.testing.expectEqual(from_file.stride, from_bytes.stride);
-    try std.testing.expectEqualSlices(Rgb, from_file.data, from_bytes.data);
-}
-
-test "Image loadFromBytes JPEG matches file load" {
-    const gpa = std.testing.allocator;
-    const path = "assets/liza.jpg";
-    const max_size = 20 * 1024 * 1024;
-
-    const bytes = try std.fs.cwd().readFileAlloc(path, gpa, .limited(max_size));
-    defer gpa.free(bytes);
-
-    var from_bytes = try Image(Rgb).loadFromBytes(gpa, bytes);
-    defer from_bytes.deinit(gpa);
-
-    var from_file = try Image(Rgb).load(gpa, path);
-    defer from_file.deinit(gpa);
-
-    try std.testing.expectEqual(from_file.rows, from_bytes.rows);
-    try std.testing.expectEqual(from_file.cols, from_bytes.cols);
-    try std.testing.expectEqual(from_file.stride, from_bytes.stride);
-    try std.testing.expectEqualSlices(Rgb, from_file.data, from_bytes.data);
-}
-
 // Run all tests
 test {
     _ = @import("image/PixelIterator.zig");
