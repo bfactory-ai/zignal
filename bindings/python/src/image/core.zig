@@ -31,6 +31,14 @@ fn setDecodeError(kind: []const u8, err: anyerror) void {
     }
 }
 
+fn wrapNativeImage(native: anytype) ?*c.PyObject {
+    switch (native) {
+        inline else => |img| {
+            return @ptrCast(moveImageToPython(img) orelse return null);
+        },
+    }
+}
+
 fn loadBytes(comptime format: ImageFormat, data: []const u8) ?*c.PyObject {
     const codec = switch (format) {
         .png => zignal.png,
@@ -52,13 +60,7 @@ fn loadBytes(comptime format: ImageFormat, data: []const u8) ?*c.PyObject {
             setDecodeError(kind, err);
             return null;
         };
-
-        switch (native) {
-            inline else => |img| {
-                return @ptrCast(moveImageToPython(img) orelse return null);
-            },
-        }
-        return null;
+        return wrapNativeImage(native);
     } else {
         var decoded = codec.decode(allocator, data) catch |err| {
             setDecodeError(kind, err);
@@ -70,13 +72,7 @@ fn loadBytes(comptime format: ImageFormat, data: []const u8) ?*c.PyObject {
             setDecodeError(kind, err);
             return null;
         };
-
-        switch (native) {
-            inline else => |img| {
-                return @ptrCast(moveImageToPython(img) orelse return null);
-            },
-        }
-        return null;
+        return wrapNativeImage(native);
     }
 }
 
