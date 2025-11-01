@@ -31,41 +31,52 @@ fn setDecodeError(kind: []const u8, err: anyerror) void {
     }
 }
 
-fn loadJpegBytes(data: []const u8) ?*c.PyObject {
-    var decoded = zignal.jpeg.decode(allocator, data) catch |err| {
-        setDecodeError("JPEG data", err);
-        return null;
+fn loadBytes(comptime format: ImageFormat, data: []const u8) ?*c.PyObject {
+    const codec = switch (format) {
+        .png => zignal.png,
+        .jpeg => zignal.jpeg,
     };
-    defer decoded.deinit();
-
-    const native = zignal.jpeg.toNativeImage(allocator, &decoded) catch |err| {
-        setDecodeError("JPEG data", err);
-        return null;
+    const kind = switch (format) {
+        .png => "PNG data",
+        .jpeg => "JPEG data",
     };
 
-    switch (native) {
-        inline else => |img| {
-            return @ptrCast(moveImageToPython(img) orelse return null);
-        },
-    }
-}
+    if (comptime format == .png) {
+        var decoded = codec.decode(allocator, data) catch |err| {
+            setDecodeError(kind, err);
+            return null;
+        };
+        defer decoded.deinit(allocator);
 
-fn loadPngBytes(data: []const u8) ?*c.PyObject {
-    var decoded = zignal.png.decode(allocator, data) catch |err| {
-        setDecodeError("PNG data", err);
+        const native = codec.toNativeImage(allocator, decoded) catch |err| {
+            setDecodeError(kind, err);
+            return null;
+        };
+
+        switch (native) {
+            inline else => |img| {
+                return @ptrCast(moveImageToPython(img) orelse return null);
+            },
+        }
         return null;
-    };
-    defer decoded.deinit(allocator);
+    } else {
+        var decoded = codec.decode(allocator, data) catch |err| {
+            setDecodeError(kind, err);
+            return null;
+        };
+        defer decoded.deinit();
 
-    const native = zignal.png.toNativeImage(allocator, decoded) catch |err| {
-        setDecodeError("PNG data", err);
+        const native = codec.toNativeImage(allocator, &decoded) catch |err| {
+            setDecodeError(kind, err);
+            return null;
+        };
+
+        switch (native) {
+            inline else => |img| {
+                return @ptrCast(moveImageToPython(img) orelse return null);
+            },
+        }
         return null;
-    };
-
-    switch (native) {
-        inline else => |img| {
-            return @ptrCast(moveImageToPython(img) orelse return null);
-        },
     }
 }
 
@@ -238,8 +249,8 @@ pub fn image_load_from_bytes(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?
     };
 
     return switch (detected) {
-        .png => loadPngBytes(data_slice),
-        .jpeg => loadJpegBytes(data_slice),
+        .png => loadBytes(.png, data_slice),
+        .jpeg => loadBytes(.jpeg, data_slice),
     };
 }
 
