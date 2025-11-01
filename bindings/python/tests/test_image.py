@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -10,6 +12,26 @@ class TestImage:
         img = zignal.Image.from_numpy(arr)
         assert (img.rows, img.cols) == (3, 4)
         assert img.is_contiguous() is True
+
+    def test_load_from_bytes_png_matches_file(self):
+        base = Path(__file__).resolve().parents[1]
+        png_path = base / "edges.png"
+        data = png_path.read_bytes()
+
+        img_from_bytes = zignal.Image.load_from_bytes(data)
+        img_from_file = zignal.Image.load(str(png_path))
+
+        assert np.array_equal(img_from_bytes.to_numpy(), img_from_file.to_numpy())
+
+    def test_load_from_bytes_jpeg_memoryview(self):
+        root = Path(__file__).resolve().parents[3]
+        jpeg_path = root / "assets" / "liza.jpg"
+        data = jpeg_path.read_bytes()
+
+        img_from_bytes = zignal.Image.load_from_bytes(memoryview(data))
+        img_from_file = zignal.Image.load(str(jpeg_path))
+
+        assert np.array_equal(img_from_bytes.to_numpy(), img_from_file.to_numpy())
 
     def test_slice_assignment_converts_between_color_spaces(self):
         rgb = zignal.Image(2, 2, dtype=zignal.Rgb)
