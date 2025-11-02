@@ -270,9 +270,6 @@ pub fn ProjectiveTransform(comptime T: type) type {
             }
             const u = &result.u;
             const s = &result.s;
-            if (s.at(0, 0).* == 0) {
-                return error.RankDeficient;
-            }
             self.matrix = blk: {
                 var min: T = s.at(0, 0).*;
                 var idx: usize = 0;
