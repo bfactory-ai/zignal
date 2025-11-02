@@ -160,9 +160,9 @@ pub fn ProjectiveTransform(comptime T: type) type {
         pub const identity: Self = .{ .matrix = .identity() };
 
         /// Finds the best projective transform that maps between the two given sets of points.
-        pub fn init(from_points: []const Point(2, T), to_points: []const Point(2, T)) Self {
+        pub fn init(from_points: []const Point(2, T), to_points: []const Point(2, T)) !Self {
             var transform: ProjectiveTransform(T) = .identity;
-            transform.find(from_points, to_points);
+            try transform.find(from_points, to_points);
             return transform;
         }
 
@@ -182,7 +182,7 @@ pub fn ProjectiveTransform(comptime T: type) type {
         }
 
         /// Finds the best projective transform that maps between the two given sets of points.
-        pub fn find(self: *Self, from_points: []const Point(2, T), to_points: []const Point(2, T)) void {
+        pub fn find(self: *Self, from_points: []const Point(2, T), to_points: []const Point(2, T)) !void {
             assert(from_points.len >= 4);
             assert(from_points.len == to_points.len);
             var accum: SMatrix(T, 9, 9) = .initAll(0);
@@ -197,10 +197,11 @@ pub fn ProjectiveTransform(comptime T: type) type {
                 accum = accum.add(b.transpose().dot(b));
             }
             const result = accum.svd(.{ .with_u = true, .with_v = false, .mode = .full_u });
+            if (result.converged != 0) {
+                return error.NotConverged;
+            }
             const u = &result.u;
             const s = &result.s;
-            // TODO: Check the result.converged from svd for convergence errors.
-            // If svd fails to converge (result.converged != 0), the resulting transform matrix might be unstable.
             self.matrix = blk: {
                 var min: T = s.at(0, 0).*;
                 var idx: usize = 0;
@@ -300,7 +301,7 @@ test "projection4" {
         .init(.{ 484.23328400, 279.44332123 }),
         .init(.{ 488.08315277, 272.79547691 }),
     };
-    const transform: ProjectiveTransform(T) = .init(from_points, to_points);
+    const transform: ProjectiveTransform(T) = try .init(from_points, to_points);
     const matrix: SMatrix(T, 3, 3) = .init(.{
         .{ -5.9291612941280800e-03, 7.0341614664190845e-03, -8.9922894648198459e-01 },
         .{ -2.8361695646354147e-03, 2.9060176209597761e-03, -4.3735741833190661e-01 },
@@ -318,7 +319,7 @@ test "projection4" {
     }
 
     const m_inv = transform.inverse().?;
-    const t_inv: ProjectiveTransform(T) = .init(to_points, from_points);
+    const t_inv: ProjectiveTransform(T) = try .init(to_points, from_points);
     for (from_points) |f| {
         var fp = t_inv.project(transform.project(f));
         try std.testing.expectApproxEqRel(f.x(), fp.x(), tol);
@@ -353,7 +354,7 @@ test "projection8" {
         .init(.{ 398.66107178, 413.83139420 }),
         .init(.{ 395.29974365, 401.73685455 }),
     };
-    const transform: ProjectiveTransform(T) = .init(from_points, to_points);
+    const transform: ProjectiveTransform(T) = try .init(from_points, to_points);
     const matrix: SMatrix(T, 3, 3) = .init(.{
         .{ 7.9497770144471079e-05, 8.6315632819330035e-04, -6.3240797603906806e-01 },
         .{ 3.9739851020393160e-04, 6.4356336568222570e-04, -7.7463154396817901e-01 },

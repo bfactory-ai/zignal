@@ -299,7 +299,16 @@ fn projective_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
     defer pairs.deinit();
 
     // Create and fit the transform
-    const transform = ProjectiveTransform(f64).init(pairs.from_points, pairs.to_points);
+    const transform: ProjectiveTransform(f64) = .init(pairs.from_points, pairs.to_points) catch |err| {
+        switch (err) {
+            error.NotConverged => py_utils.setValueError(
+                "SVD failed to converge; cannot fit projective transform",
+                .{},
+            ),
+            else => py_utils.setRuntimeError("Failed to compute projective transform: {s}", .{@errorName(err)}),
+        }
+        return -1;
+    };
 
     // Store matrix components
     for (0..3) |i| {
