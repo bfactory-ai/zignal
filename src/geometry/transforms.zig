@@ -15,9 +15,11 @@ pub fn SimilarityTransform(comptime T: type) type {
         pub const identity: Self = .{ .matrix = .identity(), .bias = .initAll(0) };
 
         /// Finds the best similarity transform that maps between the two given sets of points.
-        pub fn init(from_points: []const Point(2, T), to_points: []const Point(2, T)) Self {
+        /// Returns `error.NotConverged` when the internal SVD fails to converge or
+        /// `error.RankDeficient` when the correspondences do not span a full-rank transform.
+        pub fn init(from_points: []const Point(2, T), to_points: []const Point(2, T)) !Self {
             var transform: SimilarityTransform(T) = .identity;
-            transform.find(from_points, to_points);
+            try transform.find(from_points, to_points);
             return transform;
         }
 
@@ -28,7 +30,9 @@ pub fn SimilarityTransform(comptime T: type) type {
         }
 
         /// Finds the best similarity transform that maps between the two given sets of points.
-        pub fn find(self: *Self, from_points: []const Point(2, T), to_points: []const Point(2, T)) void {
+        /// Returns `error.NotConverged` when the SVD fails to converge or `error.RankDeficient`
+        /// if the input points lack the rank required to define a similarity transform.
+        pub fn find(self: *Self, from_points: []const Point(2, T), to_points: []const Point(2, T)) !void {
             assert(from_points.len >= 2);
             assert(from_points.len == to_points.len);
             const num_points: T = @floatFromInt(from_points.len);
@@ -58,9 +62,29 @@ pub fn SimilarityTransform(comptime T: type) type {
             }
             sigma_from /= num_points;
             sigma_to /= num_points;
+            if (sigma_from == 0 or sigma_to == 0) {
+                return error.RankDeficient;
+            }
             cov = cov.scale(1.0 / num_points);
             const det_cov = cov.at(0, 0).* * cov.at(1, 1).* - cov.at(0, 1).* * cov.at(1, 0).*;
             const result = cov.svd(.{ .with_u = true, .with_v = true, .mode = .skinny_u });
+            if (result.converged != 0) {
+                return error.NotConverged;
+            }
+            const s_values = result.s;
+            if (s_values.at(0, 0).* == 0) {
+                return error.RankDeficient;
+            }
+            const tol = s_values.at(0, 0).* * std.math.floatEps(T) * @as(T, @floatFromInt(s_values.rows));
+            var effective_rank: usize = 0;
+            for (0..s_values.rows) |i| {
+                if (s_values.at(i, 0).* > tol) {
+                    effective_rank += 1;
+                }
+            }
+            if (effective_rank == 0) {
+                return error.RankDeficient;
+            }
             const u = &result.u;
             const d: SMatrix(T, 2, 2) = .init(.{ .{ result.s.at(0, 0).*, 0 }, .{ 0, result.s.at(1, 0).* } });
             const v = &result.v;
@@ -97,6 +121,8 @@ pub fn AffineTransform(comptime T: type) type {
         allocator: std.mem.Allocator,
 
         /// Finds the best affine transform that maps between the two given sets of points.
+        /// Returns `error.NotConverged` when the pseudo-inverse SVD fails to converge or
+        /// `error.RankDeficient` when the correspondences do not span a full-rank affine mapping.
         pub fn init(allocator: std.mem.Allocator, from_points: []const Point(2, T), to_points: []const Point(2, T)) !Self {
             var transform: AffineTransform(T) = .{
                 .matrix = SMatrix(T, 2, 2).identity(),
@@ -114,6 +140,8 @@ pub fn AffineTransform(comptime T: type) type {
         }
 
         /// Finds the best affine transform that maps between the two given sets of points.
+        /// Returns `error.NotConverged` when the SVD inside the pseudo-inverse fails to converge or
+        /// `error.RankDeficient` if the input points are degenerate.
         pub fn find(self: *Self, from_points: []const Point(2, T), to_points: []const Point(2, T)) !void {
             assert(from_points.len == to_points.len);
             assert(from_points.len >= 3);
@@ -131,8 +159,13 @@ pub fn AffineTransform(comptime T: type) type {
             }
             // Use Matrix operations to perform matrix operations
             // Compute the pseudo-inverse so we can support additional correspondences
-            var pinv = try p.pseudoInverse(.{}).eval();
+            var effective_rank: usize = 0;
+            var pinv_chain = p.pseudoInverse(.{ .effective_rank = &effective_rank });
+            var pinv = try pinv_chain.eval();
             defer pinv.deinit();
+            if (effective_rank < 3) {
+                return error.RankDeficient;
+            }
 
             // Calculate m = q * p^+
             var m = try q.dot(pinv).eval();
@@ -159,7 +192,40 @@ pub fn ProjectiveTransform(comptime T: type) type {
         matrix: SMatrix(T, 3, 3),
         pub const identity: Self = .{ .matrix = .identity() };
 
+        fn hasSufficientArea(points: []const Point(2, T)) bool {
+            if (points.len < 3) return false;
+            var max_span_sq: T = 0;
+            for (0..points.len) |i| {
+                for (i + 1..points.len) |j| {
+                    const dx = points[j].x() - points[i].x();
+                    const dy = points[j].y() - points[i].y();
+                    const dist_sq = dx * dx + dy * dy;
+                    if (dist_sq > max_span_sq) {
+                        max_span_sq = dist_sq;
+                    }
+                }
+            }
+            const tol = std.math.floatEps(T) * (max_span_sq + 1);
+            for (0..points.len) |i| {
+                for (i + 1..points.len) |j| {
+                    const dx1 = points[j].x() - points[i].x();
+                    const dy1 = points[j].y() - points[i].y();
+                    for (j + 1..points.len) |k| {
+                        const dx2 = points[k].x() - points[i].x();
+                        const dy2 = points[k].y() - points[i].y();
+                        const area2 = dx1 * dy2 - dy1 * dx2;
+                        if (@abs(area2) > tol) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
         /// Finds the best projective transform that maps between the two given sets of points.
+        /// Returns `error.NotConverged` when the underlying SVD fails to converge or
+        /// `error.RankDeficient` when the correspondences are degenerate.
         pub fn init(from_points: []const Point(2, T), to_points: []const Point(2, T)) !Self {
             var transform: ProjectiveTransform(T) = .identity;
             try transform.find(from_points, to_points);
@@ -182,9 +248,14 @@ pub fn ProjectiveTransform(comptime T: type) type {
         }
 
         /// Finds the best projective transform that maps between the two given sets of points.
+        /// Returns `error.NotConverged` when the SVD fails to converge or `error.RankDeficient`
+        /// when the system does not have enough rank to define a projective transform.
         pub fn find(self: *Self, from_points: []const Point(2, T), to_points: []const Point(2, T)) !void {
             assert(from_points.len >= 4);
             assert(from_points.len == to_points.len);
+            if (!hasSufficientArea(from_points) or !hasSufficientArea(to_points)) {
+                return error.RankDeficient;
+            }
             var accum: SMatrix(T, 9, 9) = .initAll(0);
             var b: SMatrix(T, 2, 9) = .initAll(0);
             for (0..from_points.len) |i| {
@@ -202,6 +273,9 @@ pub fn ProjectiveTransform(comptime T: type) type {
             }
             const u = &result.u;
             const s = &result.s;
+            if (s.at(0, 0).* == 0) {
+                return error.RankDeficient;
+            }
             self.matrix = blk: {
                 var min: T = s.at(0, 0).*;
                 var idx: usize = 0;
@@ -216,6 +290,51 @@ pub fn ProjectiveTransform(comptime T: type) type {
             };
         }
     };
+}
+
+test "similarity transform rejects rank deficient input" {
+    const T = f64;
+    const from_points: []const Point(2, T) = &.{
+        Point(2, T).init(.{ 0, 0 }),
+        Point(2, T).init(.{ 0, 0 }),
+    };
+    const to_points: []const Point(2, T) = &.{
+        Point(2, T).init(.{ 1, 1 }),
+        Point(2, T).init(.{ 1, 1 }),
+    };
+    try std.testing.expectError(error.RankDeficient, SimilarityTransform(T).init(from_points, to_points));
+}
+
+test "affine transform rejects rank deficient input" {
+    const T = f64;
+    const from_points: []const Point(2, T) = &.{
+        .init(.{ 0, 0 }),
+        .init(.{ 1, 0 }),
+        .init(.{ 2, 0 }),
+    };
+    const to_points: []const Point(2, T) = &.{
+        .init(.{ 0, 0 }),
+        .init(.{ 1, 0 }),
+        .init(.{ 2, 0 }),
+    };
+    try std.testing.expectError(error.RankDeficient, AffineTransform(T).init(std.testing.allocator, from_points, to_points));
+}
+
+test "projective transform rejects rank deficient input" {
+    const T = f64;
+    const from_points: []const Point(2, T) = &.{
+        .init(.{ 0, 0 }),
+        .init(.{ 1, 0 }),
+        .init(.{ 2, 0 }),
+        .init(.{ 3, 0 }),
+    };
+    const to_points: []const Point(2, T) = &.{
+        .init(.{ 0, 0 }),
+        .init(.{ 1, 0 }),
+        .init(.{ 2, 0 }),
+        .init(.{ 3, 0 }),
+    };
+    try std.testing.expectError(error.RankDeficient, ProjectiveTransform(T).init(from_points, to_points));
 }
 
 test "affine3" {
