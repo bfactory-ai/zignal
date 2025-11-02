@@ -4,6 +4,7 @@ const assert = std.debug.assert;
 const SMatrix = @import("../matrix.zig").SMatrix;
 const Matrix = @import("../matrix.zig").Matrix;
 const Point = @import("Point.zig").Point;
+const geom_utils = @import("utils.zig");
 
 /// Applies a similarity transform to a point.  By default, it will be initialized to the identity
 /// function.  Use the fit method to update the transform to map between two sets of points.
@@ -186,37 +187,6 @@ pub fn ProjectiveTransform(comptime T: type) type {
         matrix: SMatrix(T, 3, 3),
         pub const identity: Self = .{ .matrix = .identity() };
 
-        fn hasSufficientArea(points: []const Point(2, T)) bool {
-            if (points.len < 3) return false;
-            var max_span_sq: T = 0;
-            for (0..points.len) |i| {
-                for (i + 1..points.len) |j| {
-                    const dx = points[j].x() - points[i].x();
-                    const dy = points[j].y() - points[i].y();
-                    const dist_sq = dx * dx + dy * dy;
-                    if (dist_sq > max_span_sq) {
-                        max_span_sq = dist_sq;
-                    }
-                }
-            }
-            const tol = std.math.floatEps(T) * (max_span_sq + 1);
-            for (0..points.len) |i| {
-                for (i + 1..points.len) |j| {
-                    const dx1 = points[j].x() - points[i].x();
-                    const dy1 = points[j].y() - points[i].y();
-                    for (j + 1..points.len) |k| {
-                        const dx2 = points[k].x() - points[i].x();
-                        const dy2 = points[k].y() - points[i].y();
-                        const area2 = dx1 * dy2 - dy1 * dx2;
-                        if (@abs(area2) > tol) {
-                            return true;
-                        }
-                    }
-                }
-            }
-            return false;
-        }
-
         /// Finds the best projective transform that maps between the two given sets of points.
         /// Returns `error.NotConverged` when the underlying SVD fails to converge or
         /// `error.RankDeficient` when the correspondences are degenerate.
@@ -247,7 +217,7 @@ pub fn ProjectiveTransform(comptime T: type) type {
         pub fn find(self: *Self, from_points: []const Point(2, T), to_points: []const Point(2, T)) !void {
             assert(from_points.len >= 4);
             assert(from_points.len == to_points.len);
-            if (!hasSufficientArea(from_points) or !hasSufficientArea(to_points)) {
+            if (!geom_utils.hasNonCollinearTriplet(T, from_points) or !geom_utils.hasNonCollinearTriplet(T, to_points)) {
                 return error.RankDeficient;
             }
             var accum: SMatrix(T, 9, 9) = .initAll(0);
