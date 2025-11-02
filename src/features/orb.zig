@@ -383,11 +383,6 @@ fn computeFeaturesPerLevel(self: Orb, allocator: Allocator) ![]usize {
 
     // Handle degenerate scale factors by distributing features evenly
     if (self.n_levels == 1 or self.scale_factor <= 1.0) {
-        if (self.n_levels == 1) {
-            n_features_per_level[0] = self.n_features;
-            return n_features_per_level;
-        }
-
         const base = if (levels_usize == 0) 0 else self.n_features / levels_usize;
         var remainder = if (levels_usize == 0) 0 else self.n_features % levels_usize;
 
