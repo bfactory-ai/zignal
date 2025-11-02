@@ -72,9 +72,6 @@ pub fn SimilarityTransform(comptime T: type) type {
                 return error.NotConverged;
             }
             const s_values = result.s;
-            if (s_values.at(0, 0).* == 0) {
-                return error.RankDeficient;
-            }
             const tol = s_values.at(0, 0).* * std.math.floatEps(T) * @as(T, @floatFromInt(s_values.rows));
             var effective_rank: usize = 0;
             for (0..s_values.rows) |i| {
