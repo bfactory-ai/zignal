@@ -349,28 +349,36 @@ pub fn Canvas(comptime T: type) type {
             const dy = y2 - y1;
             const gradient = if (dx == 0) 1.0 else dy / dx;
 
-            // Handle endpoints
-            const x_end = @round(x1);
-            const y_end = y1 + gradient * (x_end - x1);
-
-            // Draw the actual endpoint pixels at full intensity
+            // Handle first endpoint
+            const x_end1 = @round(x1);
+            const y_end1 = y1 + gradient * (x_end1 - x1);
+            const x_gap1 = rfpart(x1 + 0.5);
+            const x_px1 = x_end1;
+            const y_px1 = @floor(y_end1);
             if (steep) {
-                self.setPixel(.init(.{ @round(y1), @round(x1) }), c2);
+                self.setPixel(.init(.{ y_px1, x_px1 }), c2.fade(rfpart(y_end1) * x_gap1));
+                self.setPixel(.init(.{ y_px1 + 1, x_px1 }), c2.fade(fpart(y_end1) * x_gap1));
             } else {
-                self.setPixel(.init(.{ @round(x1), @round(y1) }), c2);
+                self.setPixel(.init(.{ x_px1, y_px1 }), c2.fade(rfpart(y_end1) * x_gap1));
+                self.setPixel(.init(.{ x_px1, y_px1 + 1 }), c2.fade(fpart(y_end1) * x_gap1));
             }
-            var intery = y_end + gradient;
+            var intery = y_end1 + gradient;
 
-            // Draw the actual endpoint pixels at full intensity
+            // Handle second endpoint
+            const x_end2 = @round(x2);
+            const y_end2 = y2 + gradient * (x_end2 - x2);
+            const x_gap2 = fpart(x2 + 0.5);
+            const x_px2 = x_end2;
+            const y_px2 = @floor(y_end2);
             if (steep) {
-                self.setPixel(.init(.{ @round(y2), @round(x2) }), c2);
+                self.setPixel(.init(.{ y_px2, x_px2 }), c2.fade(rfpart(y_end2) * x_gap2));
+                self.setPixel(.init(.{ y_px2 + 1, x_px2 }), c2.fade(fpart(y_end2) * x_gap2));
             } else {
-                self.setPixel(.init(.{ @round(x2), @round(y2) }), c2);
+                self.setPixel(.init(.{ x_px2, y_px2 }), c2.fade(rfpart(y_end2) * x_gap2));
+                self.setPixel(.init(.{ x_px2, y_px2 + 1 }), c2.fade(fpart(y_end2) * x_gap2));
             }
 
             // Main loop
-            const x_px1 = @round(x1);
-            const x_px2 = @round(x2);
             var x = x_px1 + 1;
             while (x < x_px2) : (x += 1) {
                 if (steep) {
