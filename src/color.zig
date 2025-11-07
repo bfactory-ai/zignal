@@ -321,6 +321,16 @@ test "color invert matches RGB inversion" {
     }
 }
 
+test "Xyz blend matches RGB blend" {
+    const base_rgb = Rgb{ .r = 120, .g = 100, .b = 80 };
+    const overlay = Rgba{ .r = 200, .g = 50, .b = 150, .a = 128 };
+
+    const blended_xyz = base_rgb.toXyz().blend(overlay, Blending.normal);
+    const blended_rgb = base_rgb.blend(overlay, Blending.normal);
+
+    try expectEqualDeep(blended_rgb, blended_xyz.toRgb());
+}
+
 /// List of color types to test. This is the only thing to update when adding a new color space.
 const color_types = .{ Rgb, Rgba, Hsl, Hsv, Lab, Lch, Xyz, Lms, Oklab, Oklch, Xyb, Ycbcr };
 
