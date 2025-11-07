@@ -166,6 +166,15 @@ fn generateColorClass(stub: *GeneratedStub, comptime ColorType: type) !void {
         \\
     );
 
+    if (@hasDecl(ColorType, "invert")) {
+        try stub.writef(
+            \\    def invert(self) -> {s}:
+            \\        """Return a new color with inverted RGB channels while preserving alpha (if present)."""
+            \\    ...
+            \\
+        , .{class_name});
+    }
+
     // Add blend method if the type has it
     if (@hasDecl(ColorType, "blend")) {
         try stub.write("    def blend(self, overlay: Rgba | tuple[int, int, int, int], mode: Blending = Blending.NORMAL) -> ");
