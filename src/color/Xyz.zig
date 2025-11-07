@@ -99,3 +99,8 @@ pub fn toXyb(self: Self) Xyb {
 pub fn toYcbcr(self: Self) Ycbcr {
     return self.toRgb().toYcbcr();
 }
+
+/// Returns the inverted XYZ color by inverting via RGB space.
+pub fn invert(self: Self) Self {
+    return self.toRgb().invert().toXyz();
+}
