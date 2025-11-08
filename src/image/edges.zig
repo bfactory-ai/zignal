@@ -9,7 +9,6 @@ const as = meta.as;
 const isScalar = meta.isScalar;
 const convertColor = @import("../color.zig").convertColor;
 const convolve = @import("convolution.zig").convolve;
-const Integral = @import("integral.zig").integral;
 
 /// Sobel X gradient kernel (horizontal edges)
 const sobel_x = [3][3]f32{
