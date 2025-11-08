@@ -10,6 +10,28 @@ const isScalar = meta.isScalar;
 /// Integral image operations for fast box filtering and region sums.
 pub fn Integral(comptime T: type) type {
     return struct {
+        const is_scalar = isScalar(T);
+        const channel_count = Image(T).channels();
+
+        pub const PlanarSat = struct {
+            planes: [channel_count]Image(f32),
+
+            pub fn init() PlanarSat {
+                var init_planes: [channel_count]Image(f32) = undefined;
+                inline for (0..channel_count) |i| {
+                    init_planes[i] = Image(f32).empty;
+                }
+                return .{ .planes = init_planes };
+            }
+
+            pub fn deinit(self: *PlanarSat, allocator: Allocator) void {
+                inline for (0..channel_count) |i| {
+                    self.planes[i].deinit(allocator);
+                    self.planes[i] = Image(f32).empty;
+                }
+            }
+        };
+
         /// Computes the integral image (summed-area table) from a source image.
         /// The integral image allows O(1) computation of rectangular region sums.
         ///
@@ -136,6 +158,53 @@ pub fn Integral(comptime T: type) type {
             }
         }
 
+        /// Computes the integral image but stores each channel in its own planar image.
+        /// This keeps memory contiguous per channel so we can reuse the scalar-optimized
+        /// box blur kernel for struct-based pixels and only interleave results once.
+        pub fn computePlanar(
+            image: Image(T),
+            allocator: Allocator,
+            planar: *PlanarSat,
+        ) !void {
+            if (is_scalar) @compileError("computePlanar is only supported for multi-channel image types.");
+
+            inline for (0..channel_count) |i| {
+                if (planar.planes[i].rows != image.rows or planar.planes[i].cols != image.cols) {
+                    planar.planes[i].deinit(allocator);
+                    planar.planes[i] = try Image(f32).init(allocator, image.rows, image.cols);
+                }
+            }
+
+            const fields = std.meta.fields(T);
+            const plane_len = image.rows * image.cols;
+            const src_plane = try allocator.alloc(f32, plane_len);
+            defer allocator.free(src_plane);
+
+            const src_img = Image(f32){
+                .rows = image.rows,
+                .cols = image.cols,
+                .stride = image.cols,
+                .data = src_plane,
+            };
+
+            inline for (fields, 0..) |field, ch| {
+                for (0..image.rows) |r| {
+                    for (0..image.cols) |c| {
+                        const pix = image.at(r, c).*;
+                        const channel_val = @field(pix, field.name);
+                        src_plane[r * image.cols + c] = switch (@typeInfo(field.type)) {
+                            .int => @floatFromInt(channel_val),
+                            .float => @floatCast(channel_val),
+                            else => 0,
+                        };
+                    }
+                }
+
+                const dst_img = planar.planes[ch];
+                Integral(f32).plane(src_img, dst_img);
+            }
+        }
+
         /// Applies box blur using a pre-computed integral image.
         /// This allows efficient reuse of the integral image for multiple blur operations.
         pub fn boxBlur(
@@ -177,6 +246,48 @@ pub fn Integral(comptime T: type) type {
                     }
                 },
                 else => @compileError("Can't compute box blur of " ++ @typeName(T) ++ "."),
+            }
+        }
+
+        /// Apply box blur using a planar integral (one f32 summed-area table per channel).
+        /// The planar representation allows us to reuse the SIMD `boxBlurPlane` kernel for
+        /// every channel and only scatter the results back into the struct image once.
+        pub fn boxBlurPlanar(
+            planar: *const PlanarSat,
+            allocator: Allocator,
+            src: Image(T),
+            dst: Image(T),
+            radius: usize,
+        ) !void {
+            if (is_scalar) @compileError("boxBlurPlanar is only supported for multi-channel image types.");
+            if (radius == 0) {
+                src.copy(dst);
+                return;
+            }
+
+            std.debug.assert(planar.planes.len == std.meta.fields(T).len);
+            if (planar.planes[0].rows != dst.rows or planar.planes[0].cols != dst.cols) {
+                @panic("planar integral dimensions must match destination image");
+            }
+
+            var scratch = try Image(f32).init(allocator, dst.rows, dst.cols);
+            defer scratch.deinit(allocator);
+
+            const fields = std.meta.fields(T);
+            inline for (fields, 0..) |field, ch| {
+                boxBlurPlane(f32, planar.planes[ch], scratch, radius);
+
+                for (0..dst.rows) |r| {
+                    for (0..dst.cols) |c| {
+                        const blurred_val = scratch.data[r * scratch.stride + c];
+                        const out_pixel = dst.at(r, c);
+                        @field(out_pixel.*, field.name) = switch (@typeInfo(field.type)) {
+                            .int => meta.clamp(field.type, blurred_val),
+                            .float => as(field.type, blurred_val),
+                            else => @compileError("Unsupported channel type for boxBlurPlanar"),
+                        };
+                    }
+                }
             }
         }
 

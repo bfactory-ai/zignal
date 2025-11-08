@@ -689,7 +689,15 @@ pub fn Image(comptime T: type) type {
                 return;
             }
 
-            // Compute integral image and apply box blur
+            if (@typeInfo(T) == .@"struct") {
+                var planar = Self.Integral.PlanarSat.init();
+                defer planar.deinit(allocator);
+                try Self.Integral.computePlanar(self, allocator, &planar);
+                try Self.Integral.boxBlurPlanar(&planar, allocator, self, out, radius);
+                return;
+            }
+
+            // Scalar fast path retains the original SAT + SIMD implementation.
             var sat: Image(if (isScalar(T)) f32 else [Self.channels()]f32) = .empty;
             try Self.Integral.compute(self, allocator, &sat);
             defer sat.deinit(allocator);
