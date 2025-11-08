@@ -982,28 +982,10 @@ pub fn image_mean_pixel_error(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
 
     const other_variant = other.py_image.?.data;
     const error_value = switch (self.py_image.?.data) {
-        .grayscale => |img1| blk: {
-            const img2 = other_variant.grayscale;
-            const val = img1.meanPixelError(img2) catch |err| switch (err) {
-                error.DimensionMismatch => {
-                    py_utils.setValueError("Images must have the same dimensions", .{});
-                    return null;
-                },
+        inline else => |img1| blk: {
+            const img2 = switch (other_variant) {
+                inline else => |img| if (@TypeOf(img) == @TypeOf(img1)) img else unreachable,
             };
-            break :blk val;
-        },
-        .rgb => |img1| blk: {
-            const img2 = other_variant.rgb;
-            const val = img1.meanPixelError(img2) catch |err| switch (err) {
-                error.DimensionMismatch => {
-                    py_utils.setValueError("Images must have the same dimensions", .{});
-                    return null;
-                },
-            };
-            break :blk val;
-        },
-        .rgba => |img1| blk: {
-            const img2 = other_variant.rgba;
             const val = img1.meanPixelError(img2) catch |err| switch (err) {
                 error.DimensionMismatch => {
                     py_utils.setValueError("Images must have the same dimensions", .{});
