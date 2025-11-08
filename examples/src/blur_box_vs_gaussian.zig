@@ -6,60 +6,6 @@ const zignal = @import("zignal");
 const Image = zignal.Image;
 const Rgb = zignal.Rgb;
 
-// fn buildBenchmarkScene(image: Image(u8), allocator: std.mem.Allocator) void {
-//     const rows = image.rows;
-//     const cols = image.cols;
-
-//     // Create a smooth gradient background (easier for blur comparison)
-//     const rows_f = if (rows > 1) @as(f64, @floatFromInt(rows - 1)) else 1.0;
-//     const cols_f = if (cols > 1) @as(f64, @floatFromInt(cols - 1)) else 1.0;
-
-//     image.fill(0);
-//     for (0..rows) |r| {
-//         const row_norm = @as(f64, @floatFromInt(r)) / rows_f;
-//         for (0..cols) |c| {
-//             const col_norm = @as(f64, @floatFromInt(c)) / cols_f;
-//             // Simple radial gradient from center
-//             const dx = col_norm - 0.5;
-//             const dy = row_norm - 0.5;
-//             const dist = @sqrt(dx * dx + dy * dy);
-//             const value = 0.3 + 0.4 * (1.0 - @min(dist * 2.0, 1.0));
-//             const clamped = std.math.clamp(value, 0.0, 1.0);
-//             image.data[r * image.stride + c] = @as(u8, @intFromFloat(clamped * 255.0));
-//         }
-//     }
-
-//     // Draw simple shapes to test blur quality
-//     var canvas = Canvas(u8).init(allocator, image);
-//     const point = zignal.Point(2, f32).init;
-//     const cols_f32 = @as(f32, @floatFromInt(cols));
-//     const rows_f32 = @as(f32, @floatFromInt(rows));
-//     const center = point(.{
-//         cols_f32 / 2.0,
-//         rows_f32 / 2.0,
-//     });
-
-//     const min_dim = @as(f32, @floatFromInt(@min(rows, cols)));
-
-//     // Central filled circle with soft edge
-//     canvas.fillCircle(center, min_dim * 0.25, @as(u8, 220), .soft);
-
-//     // A few smaller circles at corners for edge testing
-//     canvas.fillCircle(point(.{ min_dim * 0.2, min_dim * 0.2 }), min_dim * 0.08, @as(u8, 200), .soft);
-//     canvas.fillCircle(point(.{ cols_f32 - min_dim * 0.2, min_dim * 0.2 }), min_dim * 0.08, @as(u8, 180), .soft);
-//     canvas.fillCircle(point(.{ min_dim * 0.2, rows_f32 - min_dim * 0.2 }), min_dim * 0.08, @as(u8, 160), .soft);
-//     canvas.fillCircle(point(.{ cols_f32 - min_dim * 0.2, rows_f32 - min_dim * 0.2 }), min_dim * 0.08, @as(u8, 140), .soft);
-
-//     // Single rectangle for edge testing
-//     const rect = zignal.Rectangle(f32).init(
-//         cols_f32 * 0.3,
-//         rows_f32 * 0.6,
-//         cols_f32 * 0.7,
-//         rows_f32 * 0.8,
-//     );
-//     canvas.fillRectangle(rect, @as(u8, 80), .soft);
-// }
-
 fn formatWidths(widths: []const usize, buffer: []u8) ![]const u8 {
     if (buffer.len == 0) return error.BufferTooSmall;
     var index: usize = 0;
@@ -140,22 +86,17 @@ pub fn main() !void {
 
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
-
-    var original: Image(Rgb) = undefined;
-    if (args.len >= 2) {
-        const input_path = args[1];
-        std.debug.print("Loading input image: {s}\n", .{input_path});
-        original = try .load(allocator, input_path);
-        // } else {
-        //     std.debug.print("No input image provided, generating {d}x{d} benchmark scene.\n", .{ default_size, default_size });
-        //     original = try .init(allocator, default_size, default_size);
-        //     buildBenchmarkScene(original, allocator);
+    if (args.len < 2) {
+        std.debug.print("Provide an image path and an optional sigma (default: 1.0)\n", .{});
+        return;
     }
+
+    var original: Image(Rgb) = try .load(allocator, args[1]);
     defer original.deinit(allocator);
+    const sigma: f32 = if (args.len > 2) std.fmt.parseFloat(f32, args[2]) catch 1.0 else 1.0;
 
     try original.save(allocator, "blur_original.png");
 
-    const sigma: f32 = 5.0;
     var gaussian: Image(Rgb) = try .initLike(allocator, original);
     defer gaussian.deinit(allocator);
 
@@ -166,7 +107,7 @@ pub fn main() !void {
 
     std.debug.print("Gaussian blur sigma={d:.1} took {d:.3} ms\n\n", .{ sigma, @as(f64, @floatFromInt(gaussian_ns)) / std.time.ns_per_ms });
     std.debug.print("Box blur approximations using formula: w_ideal = sqrt((12*σ²/n) + 1)\n", .{});
-    std.debug.print("{s:^6} | {s:^15} | {s:^13} | {s:^9} | {s:^9} | {s:^7} | {s:^10}\n", .{
+    std.debug.print("{s:^6} | {s:^20} | {s:^13} | {s:^9} | {s:^9} | {s:^7} | {s:^10}\n", .{
         "passes",
         "widths",
         "box time (ms)",
@@ -175,7 +116,7 @@ pub fn main() !void {
         "SSIM",
         "Avg Error",
     });
-    std.debug.print("{s:-<6}-+-{s:-<15}-+-{s:-<13}-+-{s:-<9}-+-{s:-<9}-+-{s:-<7}-+-{s:-<10}\n", .{ "", "", "", "", "", "", "" });
+    std.debug.print("{s:-<6}-+-{s:-<20}-+-{s:-<13}-+-{s:-<9}-+-{s:-<9}-+-{s:-<7}-+-{s:-<10}\n", .{ "", "", "", "", "", "", "" });
 
     var temp_a = try Image(Rgb).initLike(allocator, original);
     defer temp_a.deinit(allocator);
@@ -220,7 +161,7 @@ pub fn main() !void {
         try last_result.save(allocator, output_name);
 
         std.debug.print(
-            "{d:>6} | {s:>15} | {d:>13.3} | {d:>8.2}x | {d:>9.2} | {d:>7.4} | {d:>8.2}%\n",
+            "{d:>6} | {s:>20} | {d:>13.3} | {d:>8.2}x | {d:>9.2} | {d:>7.4} | {d:>8.2}%\n",
             .{ passes, widths_text, @as(f64, @floatFromInt(box_ns)) / std.time.ns_per_ms, speedup, psnr, ssim_value, avg_error },
         );
     }
