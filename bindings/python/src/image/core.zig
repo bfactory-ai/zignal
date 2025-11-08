@@ -935,14 +935,13 @@ pub fn image_ssim(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
 // ============================================================================
 
 pub const image_mean_pixel_error_doc =
-    \\Calculate mean absolute pixel error between two images, expressed as a percentage
-    \\of the maximum channel value (e.g., 255 for uint8 images).
+    \\Calculate mean absolute pixel error between two images, normalized to [0, 1].
     \\
     \\## Parameters
     \\- `other` (Image): The image to compare against. Must have same dimensions and dtype.
     \\
     \\## Returns
-    \\float: Mean absolute pixel error in percent (0 = identical, higher = more different)
+    \\float: Mean absolute pixel error in [0, 1] (0 = identical, higher = more different)
     \\
     \\## Raises
     \\- `ValueError`: If images have different dimensions or dtypes
@@ -985,7 +984,7 @@ pub fn image_mean_pixel_error(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
     const error_value = switch (self.py_image.?.data) {
         .grayscale => |img1| blk: {
             const img2 = other_variant.grayscale;
-            const val = img1.meanPixelErrorPercent(img2) catch |err| switch (err) {
+            const val = img1.meanPixelError(img2) catch |err| switch (err) {
                 error.DimensionMismatch => {
                     py_utils.setValueError("Images must have the same dimensions", .{});
                     return null;
@@ -995,7 +994,7 @@ pub fn image_mean_pixel_error(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
         },
         .rgb => |img1| blk: {
             const img2 = other_variant.rgb;
-            const val = img1.meanPixelErrorPercent(img2) catch |err| switch (err) {
+            const val = img1.meanPixelError(img2) catch |err| switch (err) {
                 error.DimensionMismatch => {
                     py_utils.setValueError("Images must have the same dimensions", .{});
                     return null;
@@ -1005,7 +1004,7 @@ pub fn image_mean_pixel_error(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
         },
         .rgba => |img1| blk: {
             const img2 = other_variant.rgba;
-            const val = img1.meanPixelErrorPercent(img2) catch |err| switch (err) {
+            const val = img1.meanPixelError(img2) catch |err| switch (err) {
                 error.DimensionMismatch => {
                     py_utils.setValueError("Images must have the same dimensions", .{});
                     return null;

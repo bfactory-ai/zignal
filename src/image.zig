@@ -1175,10 +1175,10 @@ pub fn Image(comptime T: type) type {
             return metrics.ssim(T, self, other);
         }
 
-        /// Computes the mean absolute pixel error expressed as a percentage of the maximum
-        /// channel value (e.g. 255 for `u8`). Requires both images to share the same dimensions.
-        pub fn meanPixelErrorPercent(self: Self, other: Self) !f64 {
-            return metrics.meanPixelErrorPercent(T, self, other);
+        /// Computes the mean absolute pixel error normalized by the maximum channel value
+        /// (e.g. 255 for `u8`). Requires both images to share the same dimensions.
+        pub fn meanPixelError(self: Self, other: Self) !f64 {
+            return metrics.meanPixelError(T, self, other);
         }
 
         pub fn pixels(self: Self) PixelIterator(T) {

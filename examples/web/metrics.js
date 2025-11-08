@@ -153,7 +153,7 @@
     const results = new Float64Array(wasm_exports.memory.buffer, resultPtr, 3);
     psnrEl.textContent = Number.isFinite(results[0]) ? results[0].toFixed(3) + " dB" : "--";
     ssimEl.textContent = Number.isFinite(results[1]) ? results[1].toFixed(6) : "--";
-    mpeEl.textContent = Number.isFinite(results[2]) ? results[2].toFixed(3) + "%" : "--";
+    mpeEl.textContent = Number.isFinite(results[2]) ? (results[2] * 100).toFixed(3) + "%" : "--";
     statusEl.textContent = `time: ${elapsed.toFixed(1)} ms`;
 
     wasm_exports.free(refPtr, pixelBytes);

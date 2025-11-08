@@ -111,7 +111,7 @@ pub fn ssim(comptime T: type, image_a: anytype, image_b: anytype) !f64 {
     return ssim_sum / weight_sum;
 }
 
-pub fn meanPixelErrorPercent(comptime T: type, image_a: anytype, image_b: anytype) !f64 {
+pub fn meanPixelError(comptime T: type, image_a: anytype, image_b: anytype) !f64 {
     if (image_a.rows != image_b.rows or image_a.cols != image_b.cols) {
         return error.DimensionMismatch;
     }
@@ -151,7 +151,7 @@ pub fn meanPixelErrorPercent(comptime T: type, image_a: anytype, image_b: anytyp
                         component_count += 1;
                     }
                 },
-                else => @compileError("Unsupported pixel type for meanPixelErrorPercent: " ++ @typeName(T)),
+                else => @compileError("Unsupported pixel type for meanPixelError: " ++ @typeName(T)),
             }
         }
     }
@@ -162,7 +162,7 @@ pub fn meanPixelErrorPercent(comptime T: type, image_a: anytype, image_b: anytyp
     const max_val = componentMaxValue(T);
     if (max_val == 0) return 0.0;
 
-    return (mean_abs / max_val) * 100.0;
+        return mean_abs / max_val;
 }
 
 inline fn componentType(comptime T: type) type {
@@ -256,7 +256,7 @@ fn generateSsimWindow() [121]f64 {
     return gaussian_window;
 }
 
-test "meanPixelErrorPercent RGB example" {
+test "meanPixelError RGB example" {
     const Pixel = struct { r: u8, g: u8, b: u8 };
 
     var data_a = [_]Pixel{.{ .r = 255, .g = 0, .b = 0 }};
@@ -275,8 +275,8 @@ test "meanPixelErrorPercent RGB example" {
         .data = data_b[0..],
     };
 
-    const percent = try meanPixelErrorPercent(Pixel, image_a, image_b);
-    try testing.expectApproxEqAbs(100.0 / 3.0, percent, 1e-9);
+    const percent = try meanPixelError(Pixel, image_a, image_b);
+    try testing.expectApproxEqAbs(1.0 / 3.0, percent, 1e-9);
 }
 
 test "ssim rgb scales with luminance" {
