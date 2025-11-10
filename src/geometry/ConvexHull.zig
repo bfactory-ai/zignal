@@ -101,22 +101,13 @@ pub fn ConvexHull(comptime T: type) type {
             if (!self.isValid()) {
                 return null;
             }
-
-            var min_x = self.hull.items[0].x();
-            var max_x = min_x;
-            var min_y = self.hull.items[0].y();
-            var max_y = min_y;
-
+            var min = self.hull.items[0].items;
+            var max = self.hull.items[0].items;
             for (self.hull.items[1..]) |point| {
-                const x = point.x();
-                const y = point.y();
-                min_x = @min(min_x, x);
-                max_x = @max(max_x, x);
-                min_y = @min(min_y, y);
-                max_y = @max(max_y, y);
+                min = @min(point.items, min);
+                max = @max(point.items, max);
             }
-
-            return .init(min_x, min_y, max_x, max_y);
+            return .init(min[0], min[1], max[0], max[1]);
         }
     };
 }
