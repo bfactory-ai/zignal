@@ -142,7 +142,13 @@ fn convex_hull_get_rectangle(self_obj: ?*c.PyObject, args: ?*c.PyObject) callcon
     }
 
     const rect = rect_opt.?;
-    const args_tuple = c.Py_BuildValue("(dddd)", rect.l, rect.t, rect.r, rect.b) orelse return null;
+    const args_tuple = c.Py_BuildValue(
+        "(dddd)",
+        @as(f64, rect.l),
+        @as(f64, rect.t),
+        @as(f64, rect.r),
+        @as(f64, rect.b),
+    ) orelse return null;
     defer c.Py_DECREF(args_tuple);
     return c.PyObject_CallObject(@ptrCast(&rectangle.RectangleType), args_tuple);
 }
