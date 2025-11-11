@@ -1099,12 +1099,9 @@ pub const JpegState = struct {
     // Parse Start of Frame (SOF0/SOF2) marker
     pub fn parseSOF(self: *JpegState, data: []const u8, frame_type: FrameType, limits: DecodeLimits) !void {
         self.frame_type = frame_type;
-        if (data.len < 8) return error.InvalidSOF;
+        if (data.len < 6) return error.InvalidSOF;
 
-        const length = (@as(u16, data[0]) << 8) | data[1];
-        if (data.len < length) return error.InvalidSOF;
-
-        const precision = data[2];
+        const precision = data[0];
         // Provide specific error messages for different precision values
         switch (precision) {
             8 => {}, // Supported
@@ -1113,9 +1110,9 @@ pub const JpegState = struct {
             else => return error.UnsupportedPrecision,
         }
 
-        self.height = (@as(u16, data[3]) << 8) | data[4];
-        self.width = (@as(u16, data[5]) << 8) | data[6];
-        self.num_components = data[7];
+        self.height = (@as(u16, data[1]) << 8) | data[2];
+        self.width = (@as(u16, data[3]) << 8) | data[4];
+        self.num_components = data[5];
 
         if (self.width == 0 or self.height == 0) {
             return error.InvalidSOF;
@@ -1134,7 +1131,7 @@ pub const JpegState = struct {
         }
 
         // Parse component information
-        var pos: usize = 8;
+        var pos: usize = 6;
         var max_h_sampling: u4 = 0;
         var max_v_sampling: u4 = 0;
 
@@ -1232,12 +1229,9 @@ pub const JpegState = struct {
 
     // Parse Define Huffman Table (DHT) marker
     pub fn parseDHT(self: *JpegState, data: []const u8) !void {
-        if (data.len < 2) return error.InvalidDHT;
-
-        const length = (@as(u16, data[0]) << 8) | data[1];
-        if (data.len < length) return error.InvalidDHT;
-
-        var pos: usize = 2;
+        if (data.len == 0) return error.InvalidDHT;
+        var pos: usize = 0;
+        const length = data.len;
 
         while (pos < length) {
             if (pos + 17 > length) return error.InvalidDHT;
@@ -1337,12 +1331,9 @@ pub const JpegState = struct {
 
     // Parse Define Quantization Table (DQT) marker
     pub fn parseDQT(self: *JpegState, data: []const u8) !void {
-        if (data.len < 2) return error.InvalidDQT;
-
-        const length = (@as(u16, data[0]) << 8) | data[1];
-        if (data.len < length) return error.InvalidDQT;
-
-        var pos: usize = 2;
+        if (data.len == 0) return error.InvalidDQT;
+        var pos: usize = 0;
+        const length = data.len;
 
         while (pos < length) {
             if (pos + 1 > length) return error.InvalidDQT;
@@ -1383,10 +1374,7 @@ pub const JpegState = struct {
     pub fn parseSOS(self: *JpegState, data: []const u8) !ScanInfo {
         if (data.len < 6) return error.InvalidSOS;
 
-        const length = (@as(u16, data[0]) << 8) | data[1];
-        if (data.len < length) return error.InvalidSOS;
-
-        const num_components = data[2];
+        const num_components = data[0];
         // For progressive JPEG, individual scans can have fewer components
         if (self.frame_type == .baseline and num_components != self.num_components) return error.InvalidSOS;
         if (self.frame_type == .progressive and (num_components == 0 or num_components > self.num_components)) return error.InvalidSOS;
@@ -1394,9 +1382,9 @@ pub const JpegState = struct {
         const scan_components = try self.allocator.alloc(ScanComponent, num_components);
         errdefer self.allocator.free(scan_components);
 
-        var pos: usize = 3;
+        var pos: usize = 1;
         for (0..num_components) |i| {
-            if (pos + 2 > length) return error.InvalidSOS;
+            if (pos + 2 > data.len) return error.InvalidSOS;
 
             scan_components[i] = .{
                 .component_id = data[pos],
@@ -1408,7 +1396,7 @@ pub const JpegState = struct {
         }
 
         // Read spectral selection and successive approximation
-        if (pos + 3 > length) return error.InvalidSOS;
+        if (pos + 3 > data.len) return error.InvalidSOS;
 
         const start_of_spectral = data[pos];
         const end_of_spectral = data[pos + 1];
@@ -1442,12 +1430,9 @@ pub const JpegState = struct {
 
     // Parse Define Restart Interval (DRI) marker
     pub fn parseDRI(self: *JpegState, data: []const u8) !void {
-        if (data.len < 4) return error.InvalidDRI;
+        if (data.len != 2) return error.InvalidDRI;
 
-        const length = (@as(u16, data[0]) << 8) | data[1];
-        if (length != 4) return error.InvalidDRI;
-
-        self.restart_interval = (@as(u16, data[2]) << 8) | data[3];
+        self.restart_interval = (@as(u16, data[0]) << 8) | data[1];
     }
 };
 
@@ -1929,9 +1914,15 @@ fn readMarkerLength(data: []const u8, pos: usize) !u16 {
 
 // Helper function to process a Start of Scan marker
 fn processScanMarker(state: *JpegState, data: []const u8, pos: usize) !usize {
-    const scan_info = try state.parseSOS(data[pos + 2 ..]);
     const header_len = try readMarkerLength(data, pos + 2);
-    const scan_start = pos + 2 + header_len;
+    if (header_len < 2) return error.InvalidMarker;
+    const marker_end = pos + 2 + header_len;
+    if (marker_end > data.len) return error.InvalidMarker;
+
+    const payload_start = pos + 4;
+    if (payload_start > marker_end) return error.InvalidMarker;
+    const scan_info = try state.parseSOS(data[payload_start .. marker_end]);
+    const scan_start = marker_end;
 
     const scan_end = findScanEnd(data, scan_start);
     state.bit_reader = BitReader.init(data[scan_start..scan_end]);
@@ -2002,8 +1993,8 @@ pub fn decode(allocator: Allocator, data: []const u8, limits: DecodeLimits) !Jpe
                 const marker_end = pos + 2 + length;
                 if (marker_end > data.len) return error.InvalidMarker;
                 try accumulateWithLimit(&total_marker_bytes, length, limits.max_marker_bytes, error.MarkerDataLimitExceeded);
-                try state.parseSOF(data[pos + 2 .. marker_end], frame_type, limits);
-                pos += 2 + length;
+                try state.parseSOF(data[pos + 4 .. marker_end], frame_type, limits);
+                pos = marker_end;
             },
 
             // Specific unsupported SOF markers
@@ -2016,7 +2007,7 @@ pub fn decode(allocator: Allocator, data: []const u8, limits: DecodeLimits) !Jpe
                 const marker_end = pos + 2 + length;
                 if (marker_end > data.len) return error.InvalidMarker;
                 try accumulateWithLimit(&total_marker_bytes, length, limits.max_marker_bytes, error.MarkerDataLimitExceeded);
-                try state.parseDHT(data[pos + 2 .. marker_end]);
+                try state.parseDHT(data[pos + 4 .. marker_end]);
                 pos = marker_end;
             },
 
@@ -2026,7 +2017,7 @@ pub fn decode(allocator: Allocator, data: []const u8, limits: DecodeLimits) !Jpe
                 const marker_end = pos + 2 + length;
                 if (marker_end > data.len) return error.InvalidMarker;
                 try accumulateWithLimit(&total_marker_bytes, length, limits.max_marker_bytes, error.MarkerDataLimitExceeded);
-                try state.parseDQT(data[pos + 2 .. marker_end]);
+                try state.parseDQT(data[pos + 4 .. marker_end]);
                 pos = marker_end;
             },
 
@@ -2052,7 +2043,7 @@ pub fn decode(allocator: Allocator, data: []const u8, limits: DecodeLimits) !Jpe
                 const marker_end = pos + 2 + length;
                 if (marker_end > data.len) return error.InvalidMarker;
                 try accumulateWithLimit(&total_marker_bytes, length, limits.max_marker_bytes, error.MarkerDataLimitExceeded);
-                try state.parseDRI(data[pos + 2 .. marker_end]);
+                try state.parseDRI(data[pos + 4 .. marker_end]);
                 pos = marker_end;
             },
 
@@ -3073,7 +3064,7 @@ test "JPEG block limit prevents excessive allocation" {
     var state = JpegState.init(std.testing.allocator);
     defer state.deinit();
 
-    const sof_data = [_]u8{ 0x00, 0x0B, 0x08, 0x00, 0x10, 0x00, 0x10, 0x01, 0x01, 0x11, 0x00 };
+    const sof_data = [_]u8{ 0x08, 0x00, 0x10, 0x00, 0x10, 0x01, 0x01, 0x11, 0x00 };
     const limits: DecodeLimits = .{ .max_blocks = 1 };
     const result = state.parseSOF(&sof_data, .baseline, limits);
     try std.testing.expectError(error.BlockMemoryLimitExceeded, result);
