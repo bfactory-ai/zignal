@@ -11,7 +11,7 @@ const file_png_limits: zignal.png.DecodeLimits = .{ .max_png_bytes = 100 * 1024 
 const default_jpeg_limits: zignal.jpeg.DecodeLimits = .{};
 const file_jpeg_limits: zignal.jpeg.DecodeLimits = .{
     .max_jpeg_bytes = 200 * 1024 * 1024,
-    .max_marker_bytes = 200 * 1024 * 1024,
+    .max_marker_bytes = 16 * 1024 * 1024,
 };
 
 const py_utils = @import("../py_utils.zig");
