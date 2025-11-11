@@ -1125,11 +1125,6 @@ pub const JpegState = struct {
             return error.ImageTooLarge;
         }
 
-        const pixel_count = @as(u64, self.width) * @as(u64, self.height);
-        if (exceedsU64(limits.max_pixels, pixel_count)) {
-            return error.ImageTooLarge;
-        }
-
         // Distinguish between invalid and unsupported component counts
         switch (self.num_components) {
             1, 3 => {}, // Supported: grayscale and YCbCr
@@ -1204,10 +1199,14 @@ pub const JpegState = struct {
         self.block_height_actual = @intCast((height_actual + 7) / 8);
 
         // Allocate block storage
-        const width_actual_usize = std.math.cast(usize, width_actual) orelse return error.ImageTooLarge;
-        const height_actual_usize = std.math.cast(usize, height_actual) orelse return error.ImageTooLarge;
-        const total_pixels_actual = std.math.mul(usize, width_actual_usize, height_actual_usize) catch return error.ImageTooLarge;
-        const total_blocks = total_pixels_actual / 64;
+        const width_actual_u64 = @as(u64, width_actual);
+        const height_actual_u64 = @as(u64, height_actual);
+        const total_pixels_actual = std.math.mul(u64, width_actual_u64, height_actual_u64) catch return error.ImageTooLarge;
+        if (exceedsU64(limits.max_pixels, total_pixels_actual)) {
+            return error.ImageTooLarge;
+        }
+        const total_blocks_u64 = total_pixels_actual / 64;
+        const total_blocks = std.math.cast(usize, total_blocks_u64) orelse return error.BlockMemoryLimitExceeded;
         if (exceedsUsize(limits.max_blocks, total_blocks)) {
             return error.BlockMemoryLimitExceeded;
         }
