@@ -130,11 +130,11 @@ pub const DeflateDecoder = struct {
         const len = std.mem.readInt(u16, len_bytes[0..2], .little);
         const nlen = std.mem.readInt(u16, nlen_bytes[0..2], .little);
         if (len != ~nlen) return error.InvalidUncompressedBlock;
-        const len_usize: usize = len;
-        try self.ensureOutputCapacity(len_usize);
+        try self.ensureOutputCapacity(len);
         const old_len = self.output.items.len;
-        try self.output.resize(self.gpa, old_len + len_usize);
-        try reader.readBytes(self.output.items[old_len..]);
+        const new_len = old_len + len;
+        self.output.items.len = new_len;
+        try reader.readBytes(self.output.items[old_len..new_len]);
     }
 
     fn decodeFixedHuffmanBlock(self: *DeflateDecoder, reader: *BitReader) !void {
