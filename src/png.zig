@@ -14,6 +14,9 @@ const Rgb = @import("color.zig").Rgb;
 const Rgba = @import("color.zig").Rgba;
 
 const max_file_size: usize = 100 * 1024 * 1024;
+const max_dimensions_default: u32 = 8192;
+const max_pixels_default: u64 = 67_108_864; // 8K square
+const max_decompressed_default: usize = 536_886_272; // 8K×8K RGBA 16-bit Adam7 worst case
 
 /// User-configurable resource limits applied while decoding PNG data.
 /// A zero value disables the corresponding limit.
@@ -28,14 +31,14 @@ pub const DecodeLimits = struct {
     /// that add thousands of tiny ancillary entries.
     max_chunks: usize = 8192,
     /// Maximum allowed width in pixels.
-    max_width: u32 = 8192,
+    max_width: u32 = max_dimensions_default,
     /// Maximum allowed height in pixels.
-    max_height: u32 = 8192,
+    max_height: u32 = max_dimensions_default,
     /// Maximum allowed pixel count (width * height). Default ~8K square.
-    max_pixels: u64 = 67_108_864,
+    max_pixels: u64 = max_pixels_default,
     /// Maximum number of bytes produced by zlib inflate (including filter bytes,
     /// across all Adam7 passes when applicable).
-    max_decompressed_bytes: usize = 512 * 1024 * 1024,
+    max_decompressed_bytes: usize = max_decompressed_default,
 };
 
 const ChunkOrderState = struct {
@@ -2051,6 +2054,21 @@ test "PNG enforces decompressed byte limit" {
         .max_decompressed_bytes = 1,
     };
     try std.testing.expectError(error.ImageTooLarge, decode(gpa, data.items, limits));
+}
+
+test "PNG default decompressed limit covers 8K RGBA 16-bit" {
+    const header = Header{
+        .width = max_dimensions_default,
+        .height = max_dimensions_default,
+        .bit_depth = 16,
+        .color_type = .rgba,
+        .compression_method = 0,
+        .filter_method = 0,
+        .interlace_method = 1,
+    };
+    const inflated = try adam7TotalSize(header);
+    const limits = DecodeLimits{};
+    try std.testing.expect(inflated <= limits.max_decompressed_bytes);
 }
 
 test "CRC calculation" {
