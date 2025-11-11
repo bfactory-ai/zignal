@@ -69,6 +69,20 @@ fn accumulateWithLimit(current: *usize, addend: usize, limit: usize, limit_error
     current.* = new_total;
 }
 
+fn ensureArrayCapacityWithinLimit(list: *ArrayList(u8), allocator: Allocator, required_len: usize, limit: usize) !void {
+    if (required_len <= list.capacity) return;
+
+    var target = required_len;
+    if (list.capacity > 0) {
+        const doubled = std.math.mul(usize, list.capacity, 2) catch std.math.maxInt(usize);
+        if (doubled > target) target = doubled;
+    }
+    if (limit != 0 and target > limit) {
+        target = limit;
+    }
+    try list.ensureTotalCapacityPrecise(allocator, target);
+}
+
 /// PNG signature: 8 bytes that identify a PNG file
 pub const signature = [_]u8{ 137, 80, 78, 71, 13, 10, 26, 10 };
 
@@ -543,7 +557,9 @@ pub fn decode(gpa: Allocator, png_data: []const u8, limits: DecodeLimits) !PngSt
                 return error.MissingPalette;
             }
             try accumulateWithLimit(&total_idat_bytes, chunk_len, limits.max_idat_bytes, error.ImageDataLimitExceeded);
-            try png_state.idat_data.appendSlice(gpa, chunk.data);
+            const new_len = std.math.add(usize, png_state.idat_data.items.len, chunk.data.len) catch return error.ImageTooLarge;
+            try ensureArrayCapacityWithinLimit(&png_state.idat_data, gpa, new_len, limits.max_idat_bytes);
+            png_state.idat_data.appendSliceAssumeCapacity(chunk.data);
             chunk_state.seen_idat = true;
         } else if (std.mem.eql(u8, &chunk.type, "IEND")) {
             chunk_state.seen_iend = true;
