@@ -249,7 +249,7 @@ pub fn Image(comptime T: type) type {
 
             return switch (image_format) {
                 .png => png.load(T, allocator, file_path, .{}),
-                .jpeg => jpeg.load(T, allocator, file_path),
+                .jpeg => jpeg.load(T, allocator, file_path, .{}),
             };
         }
 
@@ -267,7 +267,7 @@ pub fn Image(comptime T: type) type {
 
             return switch (image_format) {
                 .png => png.loadFromBytes(T, allocator, data, .{}),
-                .jpeg => jpeg.loadFromBytes(T, allocator, data),
+                .jpeg => jpeg.loadFromBytes(T, allocator, data, .{}),
             };
         }
 

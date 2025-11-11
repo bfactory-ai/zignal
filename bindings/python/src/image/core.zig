@@ -8,6 +8,8 @@ const Rgb = zignal.Rgb;
 const ImageFormat = zignal.ImageFormat;
 const default_png_limits: zignal.png.DecodeLimits = .{};
 const file_png_limits: zignal.png.DecodeLimits = .{ .max_png_bytes = 100 * 1024 * 1024 };
+const default_jpeg_limits: zignal.jpeg.DecodeLimits = .{};
+const file_jpeg_limits: zignal.jpeg.DecodeLimits = .{ .max_jpeg_bytes = 200 * 1024 * 1024 };
 
 const py_utils = @import("../py_utils.zig");
 const allocator = py_utils.allocator;
@@ -58,7 +60,7 @@ fn loadBytes(comptime format: ImageFormat, data: []const u8) ?*c.PyObject {
         },
         .jpeg => {
             const kind = "JPEG data";
-            var decoded = zignal.jpeg.decode(allocator, data) catch |err| {
+            var decoded = zignal.jpeg.decode(allocator, data, default_jpeg_limits) catch |err| {
                 setDecodeError(kind, err);
                 return null;
             };
@@ -124,13 +126,17 @@ pub fn image_load(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
 
     if (is_jpeg) {
         // Read file and decode JPEG
-        const data = std.fs.cwd().readFileAlloc(path_slice, allocator, .limited(200 * 1024 * 1024)) catch |err| {
+        const jpeg_cap = if (file_jpeg_limits.max_jpeg_bytes == 0)
+            std.math.maxInt(usize)
+        else
+            file_jpeg_limits.max_jpeg_bytes;
+        const data = std.fs.cwd().readFileAlloc(path_slice, allocator, .limited(jpeg_cap)) catch |err| {
             py_utils.setErrorWithPath(err, path_slice);
             return null;
         };
         defer allocator.free(data);
 
-        var decoded = zignal.jpeg.decode(allocator, data) catch |err| {
+        var decoded = zignal.jpeg.decode(allocator, data, file_jpeg_limits) catch |err| {
             py_utils.setErrorWithPath(err, path_slice);
             return null;
         };
@@ -149,7 +155,11 @@ pub fn image_load(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
 
     // PNG: load native dtype (Grayscale, RGB, RGBA)
     if (std.mem.endsWith(u8, path_slice, ".png") or std.mem.endsWith(u8, path_slice, ".PNG")) {
-        const data = std.fs.cwd().readFileAlloc(path_slice, allocator, .limited(100 * 1024 * 1024)) catch |err| {
+        const png_cap = if (file_png_limits.max_png_bytes == 0)
+            std.math.maxInt(usize)
+        else
+            file_png_limits.max_png_bytes;
+        const data = std.fs.cwd().readFileAlloc(path_slice, allocator, .limited(png_cap)) catch |err| {
             py_utils.setErrorWithPath(err, path_slice);
             return null;
         };
