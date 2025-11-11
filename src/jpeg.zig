@@ -1946,6 +1946,21 @@ fn processScanMarker(state: *JpegState, data: []const u8, pos: usize) !usize {
     return scan_end;
 }
 
+fn readMarkerPayload(data: []const u8, pos: *usize, total_marker_bytes: *usize, limits: DecodeLimits) ![]const u8 {
+    const length = try readMarkerLength(data, pos.* + 2);
+    if (length < 2) return error.InvalidMarker;
+    const marker_end = pos.* + 2 + length;
+    if (marker_end > data.len) return error.InvalidMarker;
+    try accumulateWithLimit(total_marker_bytes, length, limits.max_marker_bytes, error.MarkerDataLimitExceeded);
+
+    const payload_start = pos.* + 4;
+    if (payload_start > marker_end) return error.InvalidMarker;
+
+    const payload = data[payload_start..marker_end];
+    pos.* = marker_end;
+    return payload;
+}
+
 pub fn decode(allocator: Allocator, data: []const u8, limits: DecodeLimits) !JpegState {
     var state = JpegState.init(allocator);
     errdefer state.deinit();
@@ -1988,13 +2003,8 @@ pub fn decode(allocator: Allocator, data: []const u8, limits: DecodeLimits) !Jpe
 
             .SOF0, .SOF2 => {
                 const frame_type: FrameType = if (marker == .SOF0) .baseline else .progressive;
-                const length = try readMarkerLength(data, pos + 2);
-                if (length < 2) return error.InvalidMarker;
-                const marker_end = pos + 2 + length;
-                if (marker_end > data.len) return error.InvalidMarker;
-                try accumulateWithLimit(&total_marker_bytes, length, limits.max_marker_bytes, error.MarkerDataLimitExceeded);
-                try state.parseSOF(data[pos + 4 .. marker_end], frame_type, limits);
-                pos = marker_end;
+                const payload = try readMarkerPayload(data, &pos, &total_marker_bytes, limits);
+                try state.parseSOF(payload, frame_type, limits);
             },
 
             // Specific unsupported SOF markers
@@ -2002,23 +2012,13 @@ pub fn decode(allocator: Allocator, data: []const u8, limits: DecodeLimits) !Jpe
             .SOF3 => return error.UnsupportedLosslessJpeg,
 
             .DHT => {
-                const length = try readMarkerLength(data, pos + 2);
-                if (length < 2) return error.InvalidMarker;
-                const marker_end = pos + 2 + length;
-                if (marker_end > data.len) return error.InvalidMarker;
-                try accumulateWithLimit(&total_marker_bytes, length, limits.max_marker_bytes, error.MarkerDataLimitExceeded);
-                try state.parseDHT(data[pos + 4 .. marker_end]);
-                pos = marker_end;
+                const payload = try readMarkerPayload(data, &pos, &total_marker_bytes, limits);
+                try state.parseDHT(payload);
             },
 
             .DQT => {
-                const length = try readMarkerLength(data, pos + 2);
-                if (length < 2) return error.InvalidMarker;
-                const marker_end = pos + 2 + length;
-                if (marker_end > data.len) return error.InvalidMarker;
-                try accumulateWithLimit(&total_marker_bytes, length, limits.max_marker_bytes, error.MarkerDataLimitExceeded);
-                try state.parseDQT(data[pos + 4 .. marker_end]);
-                pos = marker_end;
+                const payload = try readMarkerPayload(data, &pos, &total_marker_bytes, limits);
+                try state.parseDQT(payload);
             },
 
             .SOS => {
@@ -2038,13 +2038,8 @@ pub fn decode(allocator: Allocator, data: []const u8, limits: DecodeLimits) !Jpe
             },
 
             .DRI => {
-                const length = try readMarkerLength(data, pos + 2);
-                if (length < 2) return error.InvalidMarker;
-                const marker_end = pos + 2 + length;
-                if (marker_end > data.len) return error.InvalidMarker;
-                try accumulateWithLimit(&total_marker_bytes, length, limits.max_marker_bytes, error.MarkerDataLimitExceeded);
-                try state.parseDRI(data[pos + 4 .. marker_end]);
-                pos = marker_end;
+                const payload = try readMarkerPayload(data, &pos, &total_marker_bytes, limits);
+                try state.parseDRI(payload);
             },
 
             // Detect arithmetic coding
