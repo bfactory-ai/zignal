@@ -22,6 +22,7 @@ const ChunkOrderState = struct {
     seen_iend: bool = false,
     seen_iccp: bool = false,
     seen_srgb: bool = false,
+    idat_stream_finished: bool = false,
 };
 
 /// PNG signature: 8 bytes that identify a PNG file
@@ -367,6 +368,10 @@ pub fn decode(gpa: Allocator, png_data: []const u8) !PngState {
             return error.ChunkBeforeHeader;
         }
 
+        if (chunk_state.seen_idat and !std.mem.eql(u8, &chunk.type, "IDAT")) {
+            chunk_state.idat_stream_finished = true;
+        }
+
         if (std.mem.eql(u8, &chunk.type, "IHDR")) {
             if (header_found) return error.MultipleHeaders;
             png_state.header = try parseHeader(chunk);
@@ -442,6 +447,9 @@ pub fn decode(gpa: Allocator, png_data: []const u8) !PngState {
             if (chunk_state.seen_srgb) return error.ColorProfileConflict;
             chunk_state.seen_iccp = true;
         } else if (std.mem.eql(u8, &chunk.type, "IDAT")) {
+            if (chunk_state.idat_stream_finished) {
+                return error.NonConsecutiveIdatChunks;
+            }
             if (png_state.header.color_type == .palette and png_state.palette == null) {
                 return error.MissingPalette;
             }
@@ -1723,6 +1731,35 @@ test "PNG rejects PLTE for grayscale" {
     try appendTestChunk(&data, gpa, "IEND".*, &[_]u8{});
 
     try std.testing.expectError(error.PaletteForbiddenForColorType, decode(gpa, data.items));
+}
+
+test "PNG IDAT chunks must be consecutive" {
+    const gpa = std.testing.allocator;
+    var data: ArrayList(u8) = .empty;
+    defer data.deinit(gpa);
+
+    try data.appendSlice(gpa, &signature);
+
+    var ihdr: [13]u8 = undefined;
+    std.mem.writeInt(u32, ihdr[0..4], 1, .big);
+    std.mem.writeInt(u32, ihdr[4..8], 1, .big);
+    ihdr[8] = 8;
+    ihdr[9] = @intFromEnum(ColorType.rgb);
+    ihdr[10] = 0;
+    ihdr[11] = 0;
+    ihdr[12] = 0;
+    try appendTestChunk(&data, gpa, "IHDR".*, &ihdr);
+
+    const empty_idat = [_]u8{ 0x78, 0x9c, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01 };
+    try appendTestChunk(&data, gpa, "IDAT".*, &empty_idat);
+
+    const text_payload = [_]u8{ 'k', 'e', 'y', 0, 'v', 'a', 'l' };
+    try appendTestChunk(&data, gpa, "tEXt".*, &text_payload);
+
+    try appendTestChunk(&data, gpa, "IDAT".*, &empty_idat);
+    try appendTestChunk(&data, gpa, "IEND".*, &[_]u8{});
+
+    try std.testing.expectError(error.NonConsecutiveIdatChunks, decode(gpa, data.items));
 }
 
 test "CRC calculation" {
