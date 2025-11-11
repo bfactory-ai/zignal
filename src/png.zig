@@ -1626,13 +1626,11 @@ fn appendTestChunk(list: *ArrayList(u8), allocator: Allocator, chunk_type: [4]u8
         try list.appendSlice(allocator, chunk_data);
     }
 
-    var crc_buf = try allocator.alloc(u8, 4 + chunk_data.len);
-    defer allocator.free(crc_buf);
-    @memcpy(crc_buf[0..4], &chunk_type);
+    var crc_val = updateCrc(0xffffffff, &chunk_type);
     if (chunk_data.len != 0) {
-        @memcpy(crc_buf[4..], chunk_data);
+        crc_val = updateCrc(crc_val, chunk_data);
     }
-    const chunk_crc = crc(crc_buf);
+    const chunk_crc = crc_val ^ 0xffffffff;
     var crc_be = std.mem.nativeTo(u32, chunk_crc, .big);
     try list.appendSlice(allocator, std.mem.asBytes(&crc_be));
 }
