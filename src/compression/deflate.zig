@@ -237,6 +237,13 @@ pub const DeflateDecoder = struct {
         if (additional == 0) return;
         const new_total = std.math.add(usize, self.output.items.len, additional) catch return error.OutputLimitExceeded;
         if (new_total > self.max_output_bytes) return error.OutputLimitExceeded;
+
+        if (new_total > self.output.capacity) {
+            const doubled = std.math.mul(usize, self.output.capacity, 2) catch self.max_output_bytes;
+            const desired = @max(new_total, doubled);
+            const capped = @min(desired, self.max_output_bytes);
+            try self.output.ensureTotalCapacityPrecise(self.gpa, capped);
+        }
     }
 
     fn decodeSymbol(self: *DeflateDecoder, reader: *BitReader, decoder: *huffman.Decoder) !u16 {
@@ -856,6 +863,27 @@ test "deflate encoder and decoder reuse without residue" {
     var decoded_second = try decoder.decode(encoded_second.items, std.math.maxInt(usize));
     defer decoded_second.deinit(allocator);
     try std.testing.expectEqualSlices(u8, second, decoded_second.items);
+}
+
+test "deflate decoder capacity respects caller limit" {
+    const allocator = std.testing.allocator;
+    var data: [600]u8 = undefined;
+    for (&data, 0..) |*byte, idx| {
+        byte.* = @intCast(idx % 251);
+    }
+    const compressed = try deflate(allocator, data[0..], .level_6, .default);
+    defer allocator.free(compressed);
+
+    var decoder = DeflateDecoder.init(allocator);
+    defer decoder.deinit();
+    const limit: usize = data.len + 50;
+
+    var decoded = try decoder.decode(compressed, limit);
+    defer decoded.deinit(allocator);
+
+    try std.testing.expectEqual(data.len, decoded.items.len);
+    try std.testing.expect(decoded.capacity <= limit);
+    try std.testing.expectEqualSlices(u8, data[0..], decoded.items);
 }
 
 test "encodeCodeLengths emits spec-compliant stream" {
