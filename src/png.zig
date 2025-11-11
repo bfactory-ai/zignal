@@ -411,8 +411,9 @@ pub fn decode(gpa: Allocator, png_data: []const u8) !PngState {
                 },
                 .palette => {
                     if (!chunk_state.seen_plte) return error.TransparencyBeforePalette;
-                    // Palette transparency: chunk.length should be <= palette size
-                    // We'll validate this after PLTE chunk is processed
+                    if (chunk.length > (png_state.palette orelse return error.MissingPalette).len) {
+                        return error.InvalidTransparencyLength;
+                    }
                 },
                 .grayscale_alpha, .rgba => {
                     // These color types cannot have tRNS chunks
