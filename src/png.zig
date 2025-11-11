@@ -425,11 +425,15 @@ pub fn decode(gpa: Allocator, png_data: []const u8) !PngState {
             png_state.transparency = transparency;
             chunk_state.seen_trns = true;
         } else if (std.mem.eql(u8, &chunk.type, "gAMA")) {
+            if (chunk_state.seen_plte) return error.GammaAfterPalette;
+            if (chunk_state.seen_idat) return error.GammaAfterImageData;
             // gAMA chunk: 4 bytes containing gamma value * 100,000
             if (chunk.length != 4) return error.InvalidGammaLength;
             const gamma_int = std.mem.readInt(u32, chunk.data[0..4][0..4], .big);
             png_state.gamma = @as(f32, @floatFromInt(gamma_int)) / 100000.0;
         } else if (std.mem.eql(u8, &chunk.type, "sRGB")) {
+            if (chunk_state.seen_plte) return error.SrgbAfterPalette;
+            if (chunk_state.seen_idat) return error.SrgbAfterImageData;
             // sRGB chunk: 1 byte containing rendering intent
             // NOTE: sRGB and iCCP chunks are mutually exclusive according to PNG spec
             if (chunk.length != 1) return error.InvalidSrgbLength;
@@ -444,6 +448,8 @@ pub fn decode(gpa: Allocator, png_data: []const u8) !PngState {
             };
             chunk_state.seen_srgb = true;
         } else if (std.mem.eql(u8, &chunk.type, "iCCP")) {
+            if (chunk_state.seen_plte) return error.IccpAfterPalette;
+            if (chunk_state.seen_idat) return error.IccpAfterImageData;
             if (chunk_state.seen_srgb) return error.ColorProfileConflict;
             chunk_state.seen_iccp = true;
         } else if (std.mem.eql(u8, &chunk.type, "IDAT")) {
@@ -1760,6 +1766,60 @@ test "PNG IDAT chunks must be consecutive" {
     try appendTestChunk(&data, gpa, "IEND".*, &[_]u8{});
 
     try std.testing.expectError(error.NonConsecutiveIdatChunks, decode(gpa, data.items));
+}
+
+test "PNG gamma chunk must precede PLTE" {
+    const gpa = std.testing.allocator;
+    var data: ArrayList(u8) = .empty;
+    defer data.deinit(gpa);
+
+    try data.appendSlice(gpa, &signature);
+
+    var ihdr: [13]u8 = undefined;
+    std.mem.writeInt(u32, ihdr[0..4], 1, .big);
+    std.mem.writeInt(u32, ihdr[4..8], 1, .big);
+    ihdr[8] = 8;
+    ihdr[9] = @intFromEnum(ColorType.rgb);
+    ihdr[10] = 0;
+    ihdr[11] = 0;
+    ihdr[12] = 0;
+    try appendTestChunk(&data, gpa, "IHDR".*, &ihdr);
+
+    const plte_payload = [_]u8{ 0, 0, 0 };
+    try appendTestChunk(&data, gpa, "PLTE".*, &plte_payload);
+
+    const gama_payload = [_]u8{ 0, 0, 0, 1 };
+    try appendTestChunk(&data, gpa, "gAMA".*, &gama_payload);
+    try appendTestChunk(&data, gpa, "IEND".*, &[_]u8{});
+
+    try std.testing.expectError(error.GammaAfterPalette, decode(gpa, data.items));
+}
+
+test "PNG sRGB chunk must precede IDAT" {
+    const gpa = std.testing.allocator;
+    var data: ArrayList(u8) = .empty;
+    defer data.deinit(gpa);
+
+    try data.appendSlice(gpa, &signature);
+
+    var ihdr: [13]u8 = undefined;
+    std.mem.writeInt(u32, ihdr[0..4], 1, .big);
+    std.mem.writeInt(u32, ihdr[4..8], 1, .big);
+    ihdr[8] = 8;
+    ihdr[9] = @intFromEnum(ColorType.rgb);
+    ihdr[10] = 0;
+    ihdr[11] = 0;
+    ihdr[12] = 0;
+    try appendTestChunk(&data, gpa, "IHDR".*, &ihdr);
+
+    const empty_idat = [_]u8{ 0x78, 0x9c, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01 };
+    try appendTestChunk(&data, gpa, "IDAT".*, &empty_idat);
+
+    const srgb_payload = [_]u8{0};
+    try appendTestChunk(&data, gpa, "sRGB".*, &srgb_payload);
+    try appendTestChunk(&data, gpa, "IEND".*, &[_]u8{});
+
+    try std.testing.expectError(error.SrgbAfterImageData, decode(gpa, data.items));
 }
 
 test "CRC calculation" {
