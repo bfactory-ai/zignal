@@ -14,7 +14,7 @@
 //! defer allocator.free(compressed);
 //!
 //! // Decompress data
-//! const decompressed = try inflate(allocator, compressed);
+//! const decompressed = try inflate(allocator, compressed, std.math.maxInt(usize));
 //! defer allocator.free(decompressed);
 //! ```
 //!
@@ -83,6 +83,7 @@ pub const DeflateDecoder = struct {
     literal_decoder: huffman.Decoder,
     distance_decoder: huffman.Decoder,
     current_byte_offset: usize = 0,
+    max_output_bytes: usize = std.math.maxInt(usize),
 
     pub fn init(allocator: Allocator) DeflateDecoder {
         return .{
@@ -99,8 +100,9 @@ pub const DeflateDecoder = struct {
         self.distance_decoder.deinit();
     }
 
-    pub fn decode(self: *DeflateDecoder, compressed_data: []const u8) !ArrayList(u8) {
+    pub fn decode(self: *DeflateDecoder, compressed_data: []const u8, max_output_bytes: usize) !ArrayList(u8) {
         self.output.clearRetainingCapacity();
+        self.max_output_bytes = max_output_bytes;
         var reader = BitReader.init(compressed_data);
         self.current_byte_offset = 0;
         while (true) {
@@ -128,8 +130,10 @@ pub const DeflateDecoder = struct {
         const len = std.mem.readInt(u16, len_bytes[0..2], .little);
         const nlen = std.mem.readInt(u16, nlen_bytes[0..2], .little);
         if (len != ~nlen) return error.InvalidUncompressedBlock;
+        const len_usize: usize = len;
+        try self.ensureOutputCapacity(len_usize);
         const old_len = self.output.items.len;
-        try self.output.resize(self.gpa, old_len + len);
+        try self.output.resize(self.gpa, old_len + len_usize);
         try reader.readBytes(self.output.items[old_len..]);
     }
 
@@ -200,6 +204,7 @@ pub const DeflateDecoder = struct {
         while (true) {
             const symbol = try self.decodeSymbol(reader, &self.literal_decoder);
             if (symbol < 256) {
+                try self.ensureOutputCapacity(1);
                 try self.output.append(self.gpa, @intCast(symbol));
             } else if (symbol == 256) {
                 break;
@@ -217,6 +222,7 @@ pub const DeflateDecoder = struct {
                 if (distance_val > self.output.items.len) return error.InvalidDistance;
                 const start_pos = self.output.items.len - distance_val;
                 var j: usize = 0;
+                try self.ensureOutputCapacity(length_val);
                 while (j < length_val) : (j += 1) {
                     const byte = self.output.items[start_pos + (j % distance_val)];
                     try self.output.append(self.gpa, byte);
@@ -225,6 +231,12 @@ pub const DeflateDecoder = struct {
                 return error.InvalidDeflateSymbol;
             }
         }
+    }
+
+    fn ensureOutputCapacity(self: *DeflateDecoder, additional: usize) !void {
+        if (additional == 0) return;
+        const new_total = std.math.add(usize, self.output.items.len, additional) catch return error.OutputLimitExceeded;
+        if (new_total > self.max_output_bytes) return error.OutputLimitExceeded;
     }
 
     fn decodeSymbol(self: *DeflateDecoder, reader: *BitReader, decoder: *huffman.Decoder) !u16 {
@@ -734,10 +746,10 @@ pub const DeflateEncoder = struct {
     }
 };
 
-pub fn inflate(gpa: Allocator, compressed_data: []const u8) ![]u8 {
+pub fn inflate(gpa: Allocator, compressed_data: []const u8, max_output_bytes: usize) ![]u8 {
     var decoder = DeflateDecoder.init(gpa);
     defer decoder.deinit();
-    var result = try decoder.decode(compressed_data);
+    var result = try decoder.decode(compressed_data, max_output_bytes);
     defer result.deinit(gpa);
     return result.toOwnedSlice(gpa);
 }
@@ -754,7 +766,7 @@ pub fn deflate(gpa: Allocator, data: []const u8, level: CompressionLevel, strate
 test "deflate decompression empty" {
     const allocator = std.testing.allocator;
     const empty_data = [_]u8{};
-    const result = inflate(allocator, &empty_data);
+    const result = inflate(allocator, &empty_data, std.math.maxInt(usize));
     try std.testing.expectError(error.UnexpectedEndOfData, result);
 }
 
@@ -763,7 +775,7 @@ test "deflate round-trip uncompressed" {
     const original_data = "Hello, World! This is a test string for deflate compression.";
     const compressed = try deflate(allocator, original_data, .level_0, .default);
     defer allocator.free(compressed);
-    const decompressed = try inflate(allocator, compressed);
+    const decompressed = try inflate(allocator, compressed, std.math.maxInt(usize));
     defer allocator.free(decompressed);
     try std.testing.expectEqualSlices(u8, original_data, decompressed);
 }
@@ -785,7 +797,7 @@ test "deflate level_1 fast mode" {
     const compressed_fast = try deflate(allocator, test_data, .level_1, .default);
     defer allocator.free(compressed_fast);
 
-    const decompressed = try inflate(allocator, compressed_fast);
+    const decompressed = try inflate(allocator, compressed_fast, std.math.maxInt(usize));
     defer allocator.free(decompressed);
 
     try std.testing.expectEqualSlices(u8, test_data, decompressed);
@@ -819,7 +831,7 @@ test "deflate uncompressed empty payload" {
     const compressed = try deflate(allocator, "", .level_0, .default);
     defer allocator.free(compressed);
     try std.testing.expectEqual(@as(usize, 5), compressed.len);
-    const decompressed = try inflate(allocator, compressed);
+    const decompressed = try inflate(allocator, compressed, std.math.maxInt(usize));
     defer allocator.free(decompressed);
     try std.testing.expectEqual(@as(usize, 0), decompressed.len);
 }
@@ -834,14 +846,14 @@ test "deflate encoder and decoder reuse without residue" {
     const first = "reusable encoder";
     var encoded_first = try encoder.encode(first);
     defer encoded_first.deinit(allocator);
-    var decoded_first = try decoder.decode(encoded_first.items);
+    var decoded_first = try decoder.decode(encoded_first.items, std.math.maxInt(usize));
     defer decoded_first.deinit(allocator);
     try std.testing.expectEqualSlices(u8, first, decoded_first.items);
 
     const second = "second payload";
     var encoded_second = try encoder.encode(second);
     defer encoded_second.deinit(allocator);
-    var decoded_second = try decoder.decode(encoded_second.items);
+    var decoded_second = try decoder.decode(encoded_second.items, std.math.maxInt(usize));
     defer decoded_second.deinit(allocator);
     try std.testing.expectEqualSlices(u8, second, decoded_second.items);
 }
@@ -978,10 +990,10 @@ test "methods comparison static vs none" {
     defer allocator.free(uncompressed);
     const static_huffman = try deflate(allocator, test_data, .level_1, .default);
     defer allocator.free(static_huffman);
-    const d1 = try inflate(allocator, uncompressed);
+    const d1 = try inflate(allocator, uncompressed, std.math.maxInt(usize));
     defer allocator.free(d1);
     try std.testing.expectEqualSlices(u8, test_data, d1);
-    const d2 = try inflate(allocator, static_huffman);
+    const d2 = try inflate(allocator, static_huffman, std.math.maxInt(usize));
     defer allocator.free(d2);
     try std.testing.expectEqualSlices(u8, test_data, d2);
 }

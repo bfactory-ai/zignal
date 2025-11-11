@@ -129,12 +129,15 @@ pub fn decompress(allocator: Allocator, gzip_data: []const u8) ![]u8 {
         return error.InvalidGzipData;
     }
 
+    const trailer = gzip_data[gzip_data.len - 8 ..];
+    const expected_crc = std.mem.readInt(u32, trailer[0..4], .little);
+    const expected_size_u32 = std.mem.readInt(u32, trailer[4..8], .little);
+    const max_output = @as(usize, expected_size_u32);
     const compressed_data = gzip_data[offset .. gzip_data.len - 8];
-    const decompressed = try deflate.inflate(allocator, compressed_data);
+    const decompressed = try deflate.inflate(allocator, compressed_data, max_output);
     errdefer allocator.free(decompressed);
 
     // Verify CRC32
-    const expected_crc = std.mem.readInt(u32, gzip_data[gzip_data.len - 8 ..][0..4], .little);
     const actual_crc = crc32(decompressed);
     if (actual_crc != expected_crc) {
         allocator.free(decompressed);
@@ -142,7 +145,7 @@ pub fn decompress(allocator: Allocator, gzip_data: []const u8) ![]u8 {
     }
 
     // Verify uncompressed size
-    const expected_size = std.mem.readInt(u32, gzip_data[gzip_data.len - 4 ..][0..4], .little);
+    const expected_size = expected_size_u32;
     const actual_size: u32 = @intCast(decompressed.len & 0xFFFFFFFF);
     if (actual_size != expected_size) {
         allocator.free(decompressed);

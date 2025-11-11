@@ -6,6 +6,8 @@ const Image = zignal.Image;
 const Rgba = zignal.Rgba;
 const Rgb = zignal.Rgb;
 const ImageFormat = zignal.ImageFormat;
+const default_png_limits: zignal.png.DecodeLimits = .{};
+const file_png_limits: zignal.png.DecodeLimits = .{ .max_png_bytes = 100 * 1024 * 1024 };
 
 const py_utils = @import("../py_utils.zig");
 const allocator = py_utils.allocator;
@@ -43,7 +45,7 @@ fn loadBytes(comptime format: ImageFormat, data: []const u8) ?*c.PyObject {
     switch (format) {
         .png => {
             const kind = "PNG data";
-            var decoded = zignal.png.decode(allocator, data) catch |err| {
+            var decoded = zignal.png.decode(allocator, data, default_png_limits) catch |err| {
                 setDecodeError(kind, err);
                 return null;
             };
@@ -152,7 +154,7 @@ pub fn image_load(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
             return null;
         };
         defer allocator.free(data);
-        var decoded = zignal.png.decode(allocator, data) catch |err| {
+        var decoded = zignal.png.decode(allocator, data, file_png_limits) catch |err| {
             py_utils.setErrorWithPath(err, path_slice);
             return null;
         };
