@@ -420,8 +420,6 @@ pub fn decode(gpa: Allocator, png_data: []const u8) !PngState {
                 },
             }
 
-            if (png_state.transparency != null) return error.MultipleTransparencyChunks;
-
             const transparency = try gpa.alloc(u8, chunk.length);
             @memcpy(transparency, chunk.data);
             png_state.transparency = transparency;
