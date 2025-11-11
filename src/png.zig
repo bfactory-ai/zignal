@@ -372,6 +372,9 @@ pub fn decode(gpa: Allocator, png_data: []const u8) !PngState {
             png_state.header = try parseHeader(chunk);
             header_found = true;
         } else if (std.mem.eql(u8, &chunk.type, "PLTE")) {
+            if (png_state.header.color_type == .grayscale or png_state.header.color_type == .grayscale_alpha) {
+                return error.PaletteForbiddenForColorType;
+            }
             if (chunk_state.seen_idat) return error.PaletteAfterImageData;
             if (png_state.palette != null) return error.DuplicatePalette;
 
@@ -1705,6 +1708,30 @@ test "PNG palette transparency requires PLTE first" {
     try appendTestChunk(&data, gpa, "IEND".*, &[_]u8{});
 
     try std.testing.expectError(error.TransparencyBeforePalette, decode(gpa, data.items));
+}
+
+test "PNG rejects PLTE for grayscale" {
+    const gpa = std.testing.allocator;
+    var data: ArrayList(u8) = .empty;
+    defer data.deinit(gpa);
+
+    try data.appendSlice(gpa, &signature);
+
+    var ihdr: [13]u8 = undefined;
+    std.mem.writeInt(u32, ihdr[0..4], 1, .big);
+    std.mem.writeInt(u32, ihdr[4..8], 1, .big);
+    ihdr[8] = 8;
+    ihdr[9] = @intFromEnum(ColorType.grayscale);
+    ihdr[10] = 0;
+    ihdr[11] = 0;
+    ihdr[12] = 0;
+    try appendTestChunk(&data, gpa, "IHDR".*, &ihdr);
+
+    const plte_payload = [_]u8{ 0, 0, 0 };
+    try appendTestChunk(&data, gpa, "PLTE".*, &plte_payload);
+    try appendTestChunk(&data, gpa, "IEND".*, &[_]u8{});
+
+    try std.testing.expectError(error.PaletteForbiddenForColorType, decode(gpa, data.items));
 }
 
 test "CRC calculation" {
