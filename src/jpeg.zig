@@ -2012,16 +2012,22 @@ pub fn decode(allocator: Allocator, data: []const u8, limits: DecodeLimits) !Jpe
 
             .DHT => {
                 const length = try readMarkerLength(data, pos + 2);
+                if (length < 2) return error.InvalidMarker;
+                const marker_end = pos + 2 + length;
+                if (marker_end > data.len) return error.InvalidMarker;
                 try accumulateWithLimit(&total_marker_bytes, length, limits.max_marker_bytes, error.MarkerDataLimitExceeded);
-                try state.parseDHT(data[pos + 2 ..]);
-                pos += 2 + length;
+                try state.parseDHT(data[pos + 2 .. marker_end]);
+                pos = marker_end;
             },
 
             .DQT => {
                 const length = try readMarkerLength(data, pos + 2);
+                if (length < 2) return error.InvalidMarker;
+                const marker_end = pos + 2 + length;
+                if (marker_end > data.len) return error.InvalidMarker;
                 try accumulateWithLimit(&total_marker_bytes, length, limits.max_marker_bytes, error.MarkerDataLimitExceeded);
-                try state.parseDQT(data[pos + 2 ..]);
-                pos += 2 + length;
+                try state.parseDQT(data[pos + 2 .. marker_end]);
+                pos = marker_end;
             },
 
             .SOS => {
@@ -2042,9 +2048,12 @@ pub fn decode(allocator: Allocator, data: []const u8, limits: DecodeLimits) !Jpe
 
             .DRI => {
                 const length = try readMarkerLength(data, pos + 2);
+                if (length < 2) return error.InvalidMarker;
+                const marker_end = pos + 2 + length;
+                if (marker_end > data.len) return error.InvalidMarker;
                 try accumulateWithLimit(&total_marker_bytes, length, limits.max_marker_bytes, error.MarkerDataLimitExceeded);
-                try state.parseDRI(data[pos + 2 ..]);
-                pos += 2 + length;
+                try state.parseDRI(data[pos + 2 .. marker_end]);
+                pos = marker_end;
             },
 
             // Detect arithmetic coding

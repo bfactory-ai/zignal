@@ -31,6 +31,10 @@ const moveImageToPython = @import("../image.zig").moveImageToPython;
 const ImageObject = @import("../image.zig").ImageObject;
 const getImageType = @import("../image.zig").getImageType;
 
+inline fn readLimit(max_bytes: usize) usize {
+    return if (max_bytes == 0) std.math.maxInt(usize) else max_bytes;
+}
+
 fn setDecodeError(kind: []const u8, err: anyerror) void {
     switch (err) {
         error.OutOfMemory => py_utils.setMemoryError(kind),
@@ -129,11 +133,7 @@ pub fn image_load(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
 
     if (is_jpeg) {
         // Read file and decode JPEG
-        const jpeg_cap = if (file_jpeg_limits.max_jpeg_bytes == 0)
-            std.math.maxInt(usize)
-        else
-            file_jpeg_limits.max_jpeg_bytes;
-        const data = std.fs.cwd().readFileAlloc(path_slice, allocator, .limited(jpeg_cap)) catch |err| {
+        const data = std.fs.cwd().readFileAlloc(path_slice, allocator, .limited(readLimit(file_jpeg_limits.max_jpeg_bytes))) catch |err| {
             py_utils.setErrorWithPath(err, path_slice);
             return null;
         };
@@ -158,11 +158,7 @@ pub fn image_load(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
 
     // PNG: load native dtype (Grayscale, RGB, RGBA)
     if (std.mem.endsWith(u8, path_slice, ".png") or std.mem.endsWith(u8, path_slice, ".PNG")) {
-        const png_cap = if (file_png_limits.max_png_bytes == 0)
-            std.math.maxInt(usize)
-        else
-            file_png_limits.max_png_bytes;
-        const data = std.fs.cwd().readFileAlloc(path_slice, allocator, .limited(png_cap)) catch |err| {
+        const data = std.fs.cwd().readFileAlloc(path_slice, allocator, .limited(readLimit(file_png_limits.max_png_bytes))) catch |err| {
             py_utils.setErrorWithPath(err, path_slice);
             return null;
         };
