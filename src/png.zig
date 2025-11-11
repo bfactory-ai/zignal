@@ -391,12 +391,6 @@ pub fn decode(gpa: Allocator, png_data: []const u8) !PngState {
             }
             png_state.palette = palette;
             chunk_state.seen_plte = true;
-
-            if (png_state.transparency) |trans| {
-                if (png_state.header.color_type == .palette and trans.len > palette_size) {
-                    return error.InvalidTransparencyLength;
-                }
-            }
         } else if (std.mem.eql(u8, &chunk.type, "tRNS")) {
             if (chunk_state.seen_trns) return error.MultipleTransparencyChunks;
             if (chunk_state.seen_idat) return error.TransparencyAfterImageData;
