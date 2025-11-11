@@ -1998,8 +1998,11 @@ pub fn decode(allocator: Allocator, data: []const u8, limits: DecodeLimits) !Jpe
             .SOF0, .SOF2 => {
                 const frame_type: FrameType = if (marker == .SOF0) .baseline else .progressive;
                 const length = try readMarkerLength(data, pos + 2);
+                if (length < 2) return error.InvalidMarker;
+                const marker_end = pos + 2 + length;
+                if (marker_end > data.len) return error.InvalidMarker;
                 try accumulateWithLimit(&total_marker_bytes, length, limits.max_marker_bytes, error.MarkerDataLimitExceeded);
-                try state.parseSOF(data[pos + 2 ..], frame_type, limits);
+                try state.parseSOF(data[pos + 2 .. marker_end], frame_type, limits);
                 pos += 2 + length;
             },
 
