@@ -246,10 +246,11 @@ const State = struct {
     /// On POSIX, relies on termios timeout settings.
     fn readWithTimeout(self: *const State, buffer: []u8, timeout_ms: u64) !usize {
         if (builtin.os.tag == .windows) {
-            const start_time = std.time.milliTimestamp();
+            const start_time = try std.time.Instant.now();
+            const timeout_ns = timeout_ms * std.time.ns_per_ms;
             var total_read: usize = 0;
 
-            while (std.time.milliTimestamp() - start_time < timeout_ms) {
+            while ((try std.time.Instant.now()).since(start_time) < timeout_ns) {
                 // Check if console has input available
                 if (win_api._kbhit() != 0) {
                     // Read one character
