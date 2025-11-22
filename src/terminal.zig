@@ -24,7 +24,7 @@ const win_api = if (builtin.os.tag == .windows) struct {
     extern "kernel32" fn GetStdHandle(nStdHandle: i32) callconv(.c) ?*anyopaque;
     extern "kernel32" fn GetConsoleMode(hConsoleHandle: ?*anyopaque, lpMode: *u32) callconv(.c) i32;
     extern "kernel32" fn SetConsoleMode(hConsoleHandle: ?*anyopaque, dwMode: u32) callconv(.c) i32;
-    extern "kernel32" fn Sleep(dwMilliseconds: u32) callconv(.Stdcall) void;
+    extern "kernel32" fn Sleep(dwMilliseconds: u32) callconv(.winapi) void;
     extern "c" fn _kbhit() callconv(.c) c_int;
     extern "c" fn _getch() callconv(.c) c_int;
 } else void;
