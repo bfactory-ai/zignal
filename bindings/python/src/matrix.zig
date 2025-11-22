@@ -1621,14 +1621,13 @@ fn matrix_random(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject)
 
     const rows_pos = py_utils.validatePositive(usize, params.rows, "rows") catch return null;
     const cols_pos = py_utils.validatePositive(usize, params.cols, "cols") catch return null;
-    const seed_value: ?u64 = if (params.seed) |s| s else std.crypto.random.int(u64);
 
     const allocation = allocOwnedMatrix(type_obj) orelse return null;
     var cleanup_needed = true;
     var matrix_initialized = false;
     defer if (cleanup_needed) cleanupOwnedMatrix(allocation, matrix_initialized);
 
-    allocation.matrix_ptr.* = Matrix(f64).random(allocator, rows_pos, cols_pos, seed_value) catch {
+    allocation.matrix_ptr.* = Matrix(f64).random(allocator, rows_pos, cols_pos, params.seed) catch {
         py_utils.setMemoryError("matrix data");
         return null;
     };
