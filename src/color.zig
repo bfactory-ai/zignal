@@ -7,6 +7,9 @@ const std = @import("std");
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const expectEqualDeep = std.testing.expectEqualDeep;
+const clamp = std.math.clamp;
+const lerp = std.math.lerp;
+const pow = std.math.pow;
 
 const blending = @import("color/blending.zig");
 pub const Blending = blending.Blending;
@@ -14,19 +17,886 @@ pub const blendColors = blending.blendColors;
 const conversions = @import("color/conversions.zig");
 pub const convertColor = conversions.convertColor;
 pub const isColor = conversions.isColor;
-pub const Hsl = @import("color/Hsl.zig");
-pub const Hsv = @import("color/Hsv.zig");
-pub const Lab = @import("color/Lab.zig");
-pub const Lch = @import("color/Lch.zig");
-pub const Lms = @import("color/Lms.zig");
-pub const Oklab = @import("color/Oklab.zig");
-pub const Oklch = @import("color/Oklch.zig");
-pub const Rgb = @import("color/Rgb.zig");
-pub const Rgba = @import("color/Rgba.zig").Rgba;
-pub const Xyb = @import("color/Xyb.zig");
-pub const Xyz = @import("color/Xyz.zig");
-pub const Ycbcr = @import("color/Ycbcr.zig");
 const getSimpleTypeName = @import("meta.zig").getSimpleTypeName;
+
+pub const ColorSpace = enum {
+    hsl,
+    hsv,
+    lab,
+    lch,
+    lms,
+    oklab,
+    oklch,
+    rgb,
+    rgba,
+    xyb,
+    xyz,
+    ycbcr,
+
+    pub fn fromSource(comptime S: type, comptime T: type) ColorSpace {
+        return switch (S) {
+            Hsl(T) => .hsl,
+            Hsv(T) => .hsv,
+            Lab(T) => .lab,
+            Lch(T) => .lch,
+            Lms(T) => .lms,
+            Oklab(T) => .oklab,
+            Oklch(T) => .oklch,
+            Rgba(T) => .rgba,
+            Rgb(T) => .rgb,
+            Xyb(T) => .xyb,
+            Xyz(T) => .xyz,
+            Ycbcr(T) => .ycbcr,
+            else => @compileError("Unknown color type " ++ @typeName(S)),
+        };
+    }
+
+    pub fn Color(self: ColorSpace, comptime T: type) type {
+        return switch (self) {
+            .hsl => Hsl(T),
+            .hsv => Hsv(T),
+            .lab => Lab(T),
+            .lch => Lch(T),
+            .lms => Lms(T),
+            .oklab => Oklab(T),
+            .oklch => Oklch(T),
+            .rgba => Rgba(T),
+            .rgb => Rgb(T),
+            .xyb => Xyb(T),
+            .xyz => Xyz(T),
+            .ycbcr => Ycbcr(T),
+        };
+    }
+
+    fn ComponentType(comptime C: type) type {
+        switch (@typeInfo(C)) {
+            .@"struct" => |info| info.fields[0].type,
+            else => @compileError("Unknown color type " ++ @typeName(C)),
+        }
+    }
+};
+
+/// A color in the [sRGB](https://en.wikipedia.org/wiki/SRGB) colorspace, with all components
+/// within the range 0-255 when `T` is `u8` and within 0-1 when `T` is float.
+pub fn Rgb(comptime T: type) type {
+    switch (@typeInfo(T)) {
+        .float => {},
+        .int => |info| if (info.bits != 8 or info.signedness != .unsigned) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
+        else => @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
+    }
+    return struct {
+        r: T,
+        g: T,
+        b: T,
+
+        pub fn to(self: Rgb(T), comptime color_space: ColorSpace) color_space.Color(T) {
+            return switch (color_space) {
+                .rgb => self,
+                .rgba => .{ .r = self.r, .g = self.g, .b = self.b, .a = if (T == u8) 255 else 1.0 },
+                .hsv => rgbToHsv(T, self),
+                .hsl => rgbToHsl(T, self),
+                .xyz => rgbToXyz(T, self),
+                .lab => rgbToLab(T, self),
+                .lch => labToLch(T, rgbToLab(T, self)),
+                .lms => xyzToLms(T, rgbToXyz(T, self)),
+                .oklab => lmsToOklab(T, xyzToLms(T, rgbToXyz(T, self))),
+                .oklch => oklabToOklch(T, lmsToOklab(T, xyzToLms(T, rgbToXyz(T, self)))),
+                .xyb => lmsToXyb(T, xyzToLms(T, rgbToXyz(T, self))),
+                .ycbcr => if (T == u8) rgbToYcbcr(self) else @compileError("YCbCr only supported for u8"),
+            };
+        }
+
+        pub fn as(self: Rgb(T), comptime U: type) Rgb(U) {
+            switch (@typeInfo(U)) {
+                .float => {},
+                .int => |info| if (info.bits != 8 or info.signedness != .unsigned) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
+                else => @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
+            }
+            return switch (T) {
+                u8 => switch (U) {
+                    u8 => self,
+                    else => .{
+                        .r = @as(U, @floatFromInt(self.r)) / 255,
+                        .g = @as(U, @floatFromInt(self.g)) / 255,
+                        .b = @as(U, @floatFromInt(self.b)) / 255,
+                    },
+                },
+                else => switch (U) {
+                    u8 => .{
+                        .r = @intFromFloat(@round(255 * clamp(self.r, 0, 1))),
+                        .g = @intFromFloat(@round(255 * clamp(self.g, 0, 1))),
+                        .b = @intFromFloat(@round(255 * clamp(self.b, 0, 1))),
+                    },
+                    else => .{
+                        .r = @floatCast(self.r),
+                        .g = @floatCast(self.g),
+                        .b = @floatCast(self.b),
+                    },
+                },
+            };
+        }
+    };
+}
+
+/// A color in the [sRGB](https://en.wikipedia.org/wiki/SRGB) colorspace, with all components
+/// within the range 0-255 when `T` is `u8` and within 0-1 when `T` is float.
+pub fn Rgba(comptime T: type) type {
+    switch (@typeInfo(T)) {
+        .float => {},
+        .int => |info| if (info.bits != 8 or info.signedness != .unsigned) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
+        else => @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
+    }
+    return packed struct {
+        r: T,
+        g: T,
+        b: T,
+        a: T,
+
+        pub fn to(self: Rgba(T), comptime color_space: ColorSpace) color_space.Color(T) {
+            return switch (color_space) {
+                .rgb => .{ .r = self.r, .g = self.g, .b = self.b },
+                .rgba => self,
+                .hsv => rgbToHsv(T, self.to(.rgb)),
+                .hsl => rgbToHsl(T, self.to(.rgb)),
+                .xyz => rgbToXyz(T, self.to(.rgb)),
+                .lab => rgbToLab(T, self.to(.rgb)),
+                .lch => labToLch(T, rgbToLab(T, self.to(.rgb))),
+                .lms => xyzToLms(T, rgbToXyz(T, self.to(.rgb))),
+                .oklab => lmsToOklab(T, xyzToLms(T, rgbToXyz(T, self.to(.rgb)))),
+                .oklch => oklabToOklch(T, lmsToOklab(T, xyzToLms(T, rgbToXyz(T, self.to(.rgb))))),
+                .xyb => lmsToXyb(T, xyzToLms(T, rgbToXyz(T, self.to(.rgb)))),
+                .ycbcr => if (T == u8) rgbToYcbcr(self.to(.rgb)) else @compileError("YCbCr only supported for u8"),
+            };
+        }
+
+        pub fn as(self: Rgba(T), comptime U: type) Rgba(U) {
+            switch (@typeInfo(U)) {
+                .float => {},
+                .int => |info| if (info.bits != 8 or info.signedness != .unsigned) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
+                else => @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
+            }
+            return switch (T) {
+                u8 => switch (U) {
+                    u8 => self,
+                    else => .{
+                        .r = @as(U, @floatFromInt(self.r)) / 255,
+                        .g = @as(U, @floatFromInt(self.g)) / 255,
+                        .b = @as(U, @floatFromInt(self.b)) / 255,
+                        .a = @as(U, @floatFromInt(self.a)) / 255,
+                    },
+                },
+                else => switch (U) {
+                    u8 => .{
+                        .r = @intFromFloat(@round(255 * clamp(self.r, 0, 1))),
+                        .g = @intFromFloat(@round(255 * clamp(self.g, 0, 1))),
+                        .b = @intFromFloat(@round(255 * clamp(self.b, 0, 1))),
+                        .a = @intFromFloat(@round(255 * clamp(self.a, 0, 1))),
+                    },
+                    else => .{
+                        .r = @floatCast(self.r),
+                        .g = @floatCast(self.g),
+                        .b = @floatCast(self.b),
+                        .a = @floatCast(self.a),
+                    },
+                },
+            };
+        }
+    };
+}
+
+/// A color in the [HSV](https://en.wikipedia.org/wiki/HSL_and_HSV) colorspace.
+/// - h: Hue, in degrees (0-360, though often normalized to 0-359).
+/// - s: Saturation, as a percentage (0-100).
+/// - v: Value, as a percentage (0-100).
+pub fn Hsv(comptime T: type) type {
+    if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
+    return struct {
+        h: T,
+        s: T,
+        v: T,
+
+        pub fn to(self: Hsv(T), comptime color_space: ColorSpace) color_space.Color(T) {
+            return switch (color_space) {
+                .rgb => hsvToRgb(T, self),
+                .hsv => self,
+            };
+        }
+
+        pub fn as(self: Hsv(T), comptime U: type) Hsv(U) {
+            if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
+            return .{
+                .h = @floatCast(self.h),
+                .s = @floatCast(self.s),
+                .v = @floatCast(self.v),
+            };
+        }
+    };
+}
+
+/// A color in the [HSL](https://en.wikipedia.org/wiki/HSL_and_HSV) colorspace.
+/// - h: Hue, in degrees (0-360, though often normalized to 0-359).
+/// - s: Saturation, as a percentage (0-100).
+/// - l: Lightness, as a percentage (0-100).
+pub fn Hsl(comptime T: type) type {
+    if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
+    return struct {
+        h: T,
+        s: T,
+        l: T,
+
+        pub fn to(self: Hsl(T), comptime color_space: ColorSpace) color_space.Color(T) {
+            return switch (color_space) {
+                .rgb => hslToRgb(T, self),
+                .hsl => self,
+            };
+        }
+
+        pub fn as(self: Hsl(T), comptime U: type) Hsv(U) {
+            if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
+            return .{
+                .h = @floatCast(self.h),
+                .s = @floatCast(self.s),
+                .l = @floatCast(self.l),
+            };
+        }
+    };
+}
+
+/// A color in the [CIE 1931 XYZ color space](https://en.wikipedia.org/wiki/CIE_1931_color_space).
+/// This is a device-independent space that covers the full gamut of human-perceptible colors
+/// visible to the CIE 2° standard observer.
+/// - x, y, z: Tristimulus values, typically non-negative. Y represents luminance.
+///   The typical range for these values can vary depending on the reference white point (e.g. D65).
+///   Often, Y is normalized to 100 for white.
+pub fn Xyz(comptime T: type) type {
+    if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
+    return struct {
+        x: T,
+        y: T,
+        z: T,
+
+        pub fn to(self: Xyz(T), comptime color_space: ColorSpace) color_space.Color(T) {
+            return switch (color_space) {
+                .rgb => xyzToRgb(T, self),
+                .xyz => self,
+            };
+        }
+
+        pub fn as(self: Xyz(T), comptime U: type) Xyz(U) {
+            if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
+            return .{
+                .x = @floatCast(self.x),
+                .y = @floatCast(self.y),
+                .z = @floatCast(self.z),
+            };
+        }
+    };
+}
+
+/// A color in the [CIELAB color space](https://en.wikipedia.org/wiki/CIELAB_color_space) (also known as L*a*b*).
+/// It expresses color as three values:
+/// - l: Lightness (0 for black to 100 for white).
+/// - a: Green-red axis (-128 for green to +127 for red).
+/// - b: Blue-yellow axis (-128 for blue to +127 for yellow).
+pub fn Lab(comptime T: type) type {
+    if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
+    return struct {
+        l: T,
+        a: T,
+        b: T,
+
+        pub fn to(self: Lab(T), comptime color_space: ColorSpace) color_space.Color(T) {
+            return switch (color_space) {
+                .rgb => labToRgb(T, self),
+                .lab => self,
+            };
+        }
+
+        pub fn as(self: Lab(T), comptime U: type) Lab(U) {
+            if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
+            return .{
+                .l = @floatCast(self.l),
+                .a = @floatCast(self.a),
+                .b = @floatCast(self.b),
+            };
+        }
+    };
+}
+
+/// A color in the [CIELCh color space](https://en.wikipedia.org/wiki/CIELAB_color_space#Cylindrical_model).
+/// LCh is the cylindrical representation of the CIELAB color space.
+/// - l: Lightness (0 for black to 100 for white).
+/// - c: Chroma (chromatic intensity) (0 for achromatic, no upper bound).
+/// - h: Hue angle in degrees (0-360).
+pub fn Lch(comptime T: type) type {
+    if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
+    return struct {
+        l: T,
+        c: T,
+        h: T,
+
+        pub fn to(self: Lch(T), comptime color_space: ColorSpace) color_space.Color(T) {
+            return switch (color_space) {
+                .rgb => xyzToRgb(T, self),
+                .xyz => self,
+            };
+        }
+
+        pub fn as(self: Lch(T), comptime U: type) Lch(U) {
+            if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
+            return .{
+                .l = @floatCast(self.l),
+                .c = @floatCast(self.c),
+                .h = @floatCast(self.h),
+            };
+        }
+    };
+}
+
+/// A color in the [LMS color space](https://en.wikipedia.org/wiki/LMS_color_space).
+/// Represents the response of the three types of cones (Long, Medium, Short wavelength) in the human eye.
+/// Values are typically positive and represent the stimulus for each cone type.
+pub fn Lms(comptime T: type) type {
+    if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
+    return struct {
+        l: T,
+        m: T,
+        s: T,
+
+        pub fn to(self: Lch(T), comptime color_space: ColorSpace) color_space.Color(T) {
+            return switch (color_space) {
+                .rgb => xyzToRgb(T, self),
+                .xyz => self,
+            };
+        }
+
+        pub fn as(self: Lms(T), comptime U: type) Lms(U) {
+            if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
+            return .{
+                .l = @floatCast(self.l),
+                .m = @floatCast(self.m),
+                .s = @floatCast(self.s),
+            };
+        }
+    };
+}
+
+/// A color in the [Oklab color space](https://bottosson.github.io/posts/oklab/).
+/// Oklab is designed to be a perceptually uniform color space.
+/// - l: Perceived lightness (0 for black to approximately 1 for white).
+/// - a: Green-red axis (negative values towards green, positive towards red, typically around -0.4 to 0.4).
+/// - b: Blue-yellow axis (negative values towards blue, positive towards yellow, typically around -0.4 to 0.4).
+pub fn Oklab(comptime T: type) type {
+    if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
+    return struct {
+        l: T,
+        a: T,
+        b: T,
+
+        pub fn to(self: Oklab(T), comptime color_space: ColorSpace) color_space.Color(T) {
+            return switch (color_space) {
+                .rgb => xyzToRgb(T, self),
+                .xyz => self,
+            };
+        }
+
+        pub fn as(self: Oklab(T), comptime U: type) Oklab(U) {
+            if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
+            return .{
+                .l = @floatCast(self.l),
+                .a = @floatCast(self.a),
+                .b = @floatCast(self.b),
+            };
+        }
+    };
+}
+
+/// A color in the [Oklch color space](https://en.wikipedia.org/wiki/Oklab_color_space).
+/// Oklch is the cylindrical representation of the Oklab color space.
+/// - l: Perceived lightness (0 for black to approximately 1 for white).
+/// - c: Chroma (chromatic intensity) (0 for achromatic to approximately 0.5 for pure colors).
+/// - h: Hue angle in degrees (0-360).
+pub fn Oklch(comptime T: type) type {
+    if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
+    return struct {
+        l: T,
+        c: T,
+        h: T,
+
+        pub fn to(self: Oklch(T), comptime color_space: ColorSpace) color_space.Color(T) {
+            return switch (color_space) {
+                .rgb => xyzToRgb(T, self),
+                .xyz => self,
+            };
+        }
+
+        pub fn as(self: Oklch(T), comptime U: type) Oklch(U) {
+            if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
+            return .{
+                .l = @floatCast(self.l),
+                .c = @floatCast(self.c),
+                .h = @floatCast(self.h),
+            };
+        }
+    };
+}
+
+/// A color in the [XYB color space](https://jpeg.org/jpegxl/documentation/xl-color-management.html#xyb)
+/// used in JPEG XL. It's derived from LMS and designed for efficient image compression.
+/// - x: X component (L-M, red-green opponent channel).
+/// - y: Y component (L+M, luminance-like channel).
+/// - b: B component (S, blue-yellow like channel, but often scaled S cone response).
+/// Ranges can vary based on transformations, but often centered around 0 for x and b, and positive for y.
+pub fn Xyb(comptime T: type) type {
+    if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
+    return struct {
+        x: T,
+        y: T,
+        z: T,
+
+        pub fn to(self: Xyb(T), comptime color_space: ColorSpace) color_space.Color(T) {
+            return switch (color_space) {
+                .rgb => xyzToRgb(T, self),
+                .xyz => self,
+            };
+        }
+
+        pub fn as(self: Xyb(T), comptime U: type) Xyb(U) {
+            if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
+            return .{
+                .x = @floatCast(self.x),
+                .y = @floatCast(self.y),
+                .b = @floatCast(self.b),
+            };
+        }
+    };
+}
+
+/// Ycbcr (Y'CbCr) colorspace used in JPEG and video encoding.
+/// Y is luma (brightness), Cb is blue-difference chroma, Cr is red-difference chroma.
+/// Uses ITU-R BT.601 coefficients for conversion to/from RGB.
+pub fn Ycbcr(comptime T: type) type {
+    switch (@typeInfo(T)) {
+        .float => {},
+        .int => |info| if (info.bits != 8 or info.signedness != .unsigned) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
+        else => @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
+    }
+    return struct {
+        y: T,
+        cb: T,
+        cr: T,
+
+        pub fn to(self: Rgb(T), comptime color_space: ColorSpace) color_space.Color(T) {
+            return switch (color_space) {
+                .rgb => self,
+            };
+        }
+
+        pub fn as(self: Ycbcr(T), comptime U: type) Ycbcr(U) {
+            switch (@typeInfo(U)) {
+                .float => {},
+                .int => |info| if (info.bits != 8 or info.signedness != .unsigned) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
+                else => @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
+            }
+            return switch (T) {
+                u8 => switch (U) {
+                    u8 => self,
+                    else => .{
+                        .y = @as(U, @floatFromInt(self.y)) / 255,
+                        .cb = @as(U, @floatFromInt(self.cb)) / 255,
+                        .cr = @as(U, @floatFromInt(self.cr)) / 255,
+                    },
+                },
+                else => switch (U) {
+                    u8 => .{
+                        .y = @intFromFloat(@round(255 * clamp(self.y, 0, 1))),
+                        .cb = @intFromFloat(@round(255 * clamp(self.cb, 0, 1))),
+                        .cr = @intFromFloat(@round(255 * clamp(self.cr, 0, 1))),
+                    },
+                    else => .{
+                        .y = @floatCast(self.y),
+                        .cb = @floatCast(self.cb),
+                        .cr = @floatCast(self.cr),
+                    },
+                },
+            };
+        }
+    };
+}
+
+/// Converts RGB to Ycbcr using ITU-R BT.601 coefficients.
+/// All components in [0, 255] range, with Cb/Cr having 128 as neutral.
+/// Uses 16-bit fixed-point arithmetic for precision.
+fn rgbToYcbcr(rgb: Rgb(u8)) Ycbcr(u8) {
+    const r: i32 = rgb.r;
+    const g: i32 = rgb.g;
+    const b: i32 = rgb.b;
+
+    // BT.601 coefficients scaled by 65536 (2^16) for fixed-point
+    // Y = 0.299*R + 0.587*G + 0.114*B
+    const y: u8 = @intCast(@min(255, @max(0, (19595 * r + 38470 * g + 7471 * b + 32768) >> 16)));
+
+    // Cb = -0.169*R - 0.331*G + 0.5*B + 128
+    const cb: u8 = @intCast(@min(255, @max(0, ((-11059 * r - 21710 * g + 32768 * b + 32768) >> 16) + 128)));
+
+    // Cr = 0.5*R - 0.419*G - 0.081*B + 128
+    const cr: u8 = @intCast(@min(255, @max(0, ((32768 * r - 27439 * g - 5329 * b + 32768) >> 16) + 128)));
+
+    return .{
+        .y = y,
+        .cb = cb,
+        .cr = cr,
+    };
+}
+
+/// Converts Ycbcr to RGB using ITU-R BT.601 coefficients.
+/// Expects all components in [0, 255] range, with Cb/Cr having 128 as neutral.
+/// Uses 16-bit fixed-point arithmetic for precision.
+pub fn ycbcrToRgb(ycbcr: Ycbcr(u8)) Rgb(u8) {
+    const y = @as(i32, ycbcr.y);
+    const cb = @as(i32, ycbcr.cb) - 128;
+    const cr = @as(i32, ycbcr.cr) - 128;
+
+    // BT.601 inverse coefficients scaled by 65536 (2^16) for fixed-point
+    // R = Y + 1.402 * Cr
+    const r: u8 = @intCast(@min(255, @max(0, y + ((91881 * cr + 32768) >> 16))));
+
+    // G = Y - 0.344136 * Cb - 0.714136 * Cr
+    const g: u8 = @intCast(@min(255, @max(0, y - ((22554 * cb + 46802 * cr + 32768) >> 16))));
+
+    // B = Y + 1.772 * Cb
+    const b: u8 = @intCast(@min(255, @max(0, y + ((116130 * cb + 32768) >> 16))));
+
+    return .{
+        .r = r,
+        .g = g,
+        .b = b,
+    };
+}
+
+fn rgbToHsv(comptime T: type, rgb: Rgb(T)) Hsv(T) {
+    const min = @min(rgb.r, @min(rgb.g, rgb.b));
+    const max = @max(rgb.r, @max(rgb.g, rgb.b));
+    const delta = max - min;
+
+    return .{
+        .h = if (delta == 0) 0 else blk: {
+            if (max == rgb.r) {
+                break :blk @mod((rgb.g - rgb.b) / delta * 60, 360);
+            } else if (max == rgb.g) {
+                break :blk @mod(120 + (rgb.b - rgb.r) / delta * 60, 360);
+            } else {
+                break :blk @mod(240 + (rgb.r - rgb.g) / delta * 60, 360);
+            }
+        },
+        .s = if (max == 0) 0 else (delta / max) * 100,
+        .v = max * 100,
+    };
+}
+
+pub fn hslToRgb(comptime T: type, hsl: Hsl(T)) Rgb(T) {
+    const h = @max(0, @min(360, hsl.h));
+    const s = @max(0, @min(1, hsl.s / 100));
+    const l = @max(0, @min(1, hsl.l / 100));
+
+    const hue_sector = h / 60.0;
+    const sector: usize = @intFromFloat(hue_sector);
+    const fractional = hue_sector - @as(f64, @floatFromInt(sector));
+
+    const hue_factors = [_][3]f64{
+        .{ 1, fractional, 0 },
+        .{ 1 - fractional, 1, 0 },
+        .{ 0, 1, fractional },
+        .{ 0, 1 - fractional, 1 },
+        .{ fractional, 0, 1 },
+        .{ 1, 0, 1 - fractional },
+    };
+
+    const index = @mod(sector, 6);
+    const r = lerp(1, 2 * hue_factors[index][0], s);
+    const g = lerp(1, 2 * hue_factors[index][1], s);
+    const b = lerp(1, 2 * hue_factors[index][2], s);
+
+    return if (l < 0.5)
+        .{
+            .r = r * l,
+            .g = g * l,
+            .b = b * l,
+        }
+    else
+        .{
+            .r = lerp(r, 2, l) - 1,
+            .g = lerp(g, 2, l) - 1,
+            .b = lerp(b, 2, l) - 1,
+        };
+}
+
+fn rgbToHsl(comptime T: type, rgb: Rgb(T)) Hsl(T) {
+    const min = @min(rgb.r, @min(rgb.g, rgb.b));
+    const max = @max(rgb.r, @max(rgb.g, rgb.b));
+    const delta = max - min;
+
+    const hue = if (delta == 0) 0 else blk: {
+        if (max == rgb.r) {
+            break :blk (rgb.g - rgb.b) / delta;
+        } else if (max == rgb.g) {
+            break :blk 2 + (rgb.b - rgb.r) / delta;
+        } else {
+            break :blk 4 + (rgb.r - rgb.g) / delta;
+        }
+    };
+
+    const l = (max + min) / 2.0;
+    const s = if (delta == 0) 0 else if (l < 0.5) delta / (2 * l) else delta / (2 - 2 * l);
+
+    return .{
+        .h = @mod(hue * 60.0, 360.0),
+        .s = @max(0, @min(1, s)) * 100.0,
+        .l = @max(0, @min(1, l)) * 100.0,
+    };
+}
+
+fn hsvToRgb(comptime T: type, hsv: Hsv(T)) Rgb(T) {
+    const hue = @max(0, @min(1, hsv.h / 360));
+    const sat = @max(0, @min(1, hsv.s / 100));
+    const val = @max(0, @min(1, hsv.v / 100));
+
+    if (sat == 0.0) {
+        return .{ .r = val, .g = val, .b = val };
+    }
+
+    const sector = hue * 6;
+    const index: i32 = @intFromFloat(sector);
+    const fractional = sector - @as(T, @floatFromInt(index));
+    const p = val * (1 - sat);
+    const q = val * (1 - (sat * fractional));
+    const t = val * (1 - sat * (1 - fractional));
+    const colors = [_][3]T{
+        .{ val, t, p },
+        .{ q, val, p },
+        .{ p, val, t },
+        .{ p, q, val },
+        .{ t, p, val },
+        .{ val, p, q },
+    };
+    const idx: usize = @intCast(@mod(index, 6));
+
+    return .{
+        .r = colors[idx][0],
+        .g = colors[idx][1],
+        .b = colors[idx][2],
+    };
+}
+
+fn linearToGamma(comptime T: type, c: T) T {
+    return if (c > 0.0031308) 1.055 * pow(T, c, (1.0 / 2.4)) - 0.055 else c * 12.92;
+}
+
+fn gammaToLinear(comptime T: type, c: T) T {
+    return if (c > 0.04045) pow(T, (c + 0.055) / 1.055, 2.4) else c / 12.92;
+}
+
+pub fn rgbToXyz(comptime T: type, rgb: Rgb(T)) Xyz(T) {
+    const r = gammaToLinear(rgb.r);
+    const g = gammaToLinear(rgb.g);
+    const b = gammaToLinear(rgb.b);
+
+    return .{
+        .x = (r * 0.4124 + g * 0.3576 + b * 0.1805) * 100,
+        .y = (r * 0.2126 + g * 0.7152 + b * 0.0722) * 100,
+        .z = (r * 0.0193 + g * 0.1192 + b * 0.9505) * 100,
+    };
+}
+
+pub fn xyzToRgb(comptime T: type, xyz: Xyz(T)) Rgb(T) {
+    const r = (xyz.x * 3.2406 + xyz.y * -1.5372 + xyz.z * -0.4986) / 100;
+    const g = (xyz.x * -0.9689 + xyz.y * 1.8758 + xyz.z * 0.0415) / 100;
+    const b = (xyz.x * 0.0557 + xyz.y * -0.2040 + xyz.z * 1.0570) / 100;
+
+    return .{
+        .r = clamp(linearToGamma(r), 0, 1),
+        .g = clamp(linearToGamma(g), 0, 1),
+        .b = clamp(linearToGamma(b), 0, 1),
+    };
+}
+
+pub fn rgbToLab(comptime T: type, rgb: Rgb(T)) Lab(T) {
+
+    // Convert to XYZ first
+    const r = gammaToLinear(rgb.r);
+    const g = gammaToLinear(rgb.g);
+    const b = gammaToLinear(rgb.b);
+
+    const x = (r * 0.4124 + g * 0.3576 + b * 0.1805) * 100;
+    const y = (r * 0.2126 + g * 0.7152 + b * 0.0722) * 100;
+    const z = (r * 0.0193 + g * 0.1192 + b * 0.9505) * 100;
+
+    // Convert XYZ to Lab
+    var xn = x / 95.047;
+    var yn = y / 100.000;
+    var zn = z / 108.883;
+
+    if (xn > 0.008856) {
+        xn = pow(T, xn, 1.0 / 3.0);
+    } else {
+        xn = (7.787 * xn) + (16.0 / 116.0);
+    }
+
+    if (yn > 0.008856) {
+        yn = pow(T, yn, 1.0 / 3.0);
+    } else {
+        yn = (7.787 * yn) + (16.0 / 116.0);
+    }
+
+    if (zn > 0.008856) {
+        zn = pow(T, zn, 1.0 / 3.0);
+    } else {
+        zn = (7.787 * zn) + (16.0 / 116.0);
+    }
+
+    return .{
+        .l = clamp(116.0 * yn - 16.0, 0, 100),
+        .a = clamp(500.0 * (xn - yn), -128, 127),
+        .b = clamp(200.0 * (yn - zn), -128, 127),
+    };
+}
+
+pub fn labToRgb(comptime T: type, lab: Lab(T)) Rgb(T) {
+    // Convert Lab to XYZ first
+    var y: f64 = (@max(0, @min(100, lab.l)) + 16.0) / 116.0;
+    var x: f64 = (@max(-128, @min(127, lab.a)) / 500.0) + y;
+    var z: f64 = y - (@max(-128, @min(127, lab.b)) / 200.0);
+
+    if (pow(f64, y, 3.0) > 0.008856) {
+        y = pow(f64, y, 3.0);
+    } else {
+        y = (y - 16.0 / 116.0) / 7.787;
+    }
+
+    if (pow(f64, x, 3.0) > 0.008856) {
+        x = pow(f64, x, 3.0);
+    } else {
+        x = (x - 16.0 / 116.0) / 7.787;
+    }
+
+    if (pow(f64, z, 3.0) > 0.008856) {
+        z = pow(f64, z, 3.0);
+    } else {
+        z = (z - 16.0 / 116.0) / 7.787;
+    }
+
+    // Observer. = 2°, illuminant = D65.
+    x *= 95.047;
+    y *= 100.000;
+    z *= 108.883;
+
+    // Convert XYZ to RGB
+    const r = (x * 3.2406 + y * -1.5372 + z * -0.4986) / 100;
+    const g = (x * -0.9689 + y * 1.8758 + z * 0.0415) / 100;
+    const b = (x * 0.0557 + y * -0.2040 + z * 1.0570) / 100;
+
+    return .{
+        .r = clamp(linearToGamma(r), 0, 1),
+        .g = clamp(linearToGamma(g), 0, 1),
+        .b = clamp(linearToGamma(b), 0, 1),
+    };
+}
+
+fn labToLch(comptime T: type, lab: Lab(T)) Lch(T) {
+    const c = @sqrt(lab.a * lab.a + lab.b * lab.b);
+    var h = std.math.atan2(lab.b, lab.a) * 180.0 / std.math.pi;
+    // Ensure hue is in range [0, 360)
+    if (h < 0) {
+        h += 360.0;
+    }
+    return .{
+        .l = lab.l,
+        .c = c,
+        .h = h,
+    };
+}
+
+fn lchToLab(comptime T: type, lch: Lch(T)) Lab(T) {
+    const h_rad = lch.h * std.math.pi / 180.0;
+    return .{
+        .l = lch.l,
+        .a = lch.c * @cos(h_rad),
+        .b = lch.c * @sin(h_rad),
+    };
+}
+
+fn xyzToLms(comptime T: type, xyz: Xyz(T)) Lms(T) {
+    return .{
+        .l = (0.8951 * xyz.x + 0.2664 * xyz.y - 0.1614 * xyz.z) / 100,
+        .m = (-0.7502 * xyz.x + 1.7135 * xyz.y + 0.0367 * xyz.z) / 100,
+        .s = (0.0389 * xyz.x - 0.0685 * xyz.y + 1.0296 * xyz.z) / 100,
+    };
+}
+
+fn lmsToXyz(comptime T: type, lms: Lms(T)) Xyz(T) {
+    return .{
+        .x = 100 * (0.9869929 * lms.l - 0.1470543 * lms.m + 0.1599627 * lms.s),
+        .y = 100 * (0.4323053 * lms.l + 0.5183603 * lms.m + 0.0492912 * lms.s),
+        .z = 100 * (-0.0085287 * lms.l + 0.0400428 * lms.m + 0.9684867 * lms.s),
+    };
+}
+
+fn lmsToOklab(comptime T: type, lms: Lms(T)) Oklab(T) {
+    const lp = std.math.cbrt(lms.l);
+    const mp = std.math.cbrt(lms.m);
+    const sp = std.math.cbrt(lms.s);
+    return .{
+        .l = 0.2104542553 * lp + 0.7936177850 * mp - 0.0040720468 * sp,
+        .a = 1.9779984951 * lp - 2.4285922050 * mp + 0.4505937099 * sp,
+        .b = 0.0259040371 * lp + 0.7827717662 * mp - 0.8086757660 * sp,
+    };
+}
+
+fn oklabToLms(comptime T: type, oklab: Oklab(T)) Lms(T) {
+    return .{
+        .l = std.math.pow(f64, 0.9999999985 * oklab.l + 0.3963377922 * oklab.a + 0.2158037581 * oklab.b, 3),
+        .m = std.math.pow(f64, 1.000000009 * oklab.l - 0.1055613423 * oklab.a - 0.06385417477 * oklab.b, 3),
+        .s = std.math.pow(f64, 1.000000055 * oklab.l - 0.08948418209 * oklab.a - 1.291485538 * oklab.b, 3),
+    };
+}
+
+fn oklabToOklch(comptime T: type, oklab: Oklab(T)) Oklch(T) {
+    const c = @sqrt(oklab.a * oklab.a + oklab.b * oklab.b);
+    var h = std.math.atan2(oklab.b, oklab.a) * 180.0 / std.math.pi;
+
+    // Ensure hue is in range [0, 360)
+    if (h < 0) {
+        h += 360.0;
+    }
+
+    return .{
+        .l = oklab.l,
+        .c = c,
+        .h = h,
+    };
+}
+
+fn oklchToOklab(comptime T: type, oklch: Oklch(T)) Oklab(T) {
+    const h_rad = oklch.h * std.math.pi / 180.0;
+
+    return .{
+        .l = oklch.l,
+        .a = oklch.c * @cos(h_rad),
+        .b = oklch.c * @sin(h_rad),
+    };
+}
+
+fn lmsToXyb(comptime T: type, lms: Lms(T)) Xyb(T) {
+    return .{ .x = lms.l - lms.m, .y = lms.l + lms.m, .b = lms.s };
+}
+
+fn xybToLms(comptime T: type, xyb: Xyb(T)) Lms(T) {
+    return .{
+        .l = 0.5 * (xyb.x + xyb.y),
+        .m = 0.5 * (xyb.y - xyb.x),
+        .s = xyb.b,
+    };
+}
 
 // ============================================================================
 // TESTS
@@ -38,7 +908,7 @@ test {
 }
 
 // Helper function for testing round-trip conversions
-fn testColorConversion(from: Rgb, to: anytype) !void {
+fn testColorConversion(from: Rgb(u8), to: anytype) !void {
     const converted = convertColor(@TypeOf(to), from);
     try expectEqualDeep(converted, to);
     const recovered = convertColor(Rgb, converted);
