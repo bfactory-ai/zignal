@@ -34,15 +34,8 @@ pub const ColorSpace = enum {
     ycbcr,
 
     pub fn tag(comptime S: type) ColorSpace {
-        const T = switch (@typeInfo(S)) {
-            .@"struct" => |info| info.fields[0].type,
-            else => @compileError("Unknown color type " ++ @typeName(S)),
-        };
-        inline for (std.meta.fields(ColorSpace)) |field| {
-            const space: ColorSpace = @enumFromInt(field.value);
-            if (S == space.Type(T)) return space;
-        }
-        @compileError("Unknown color type " ++ @typeName(S));
+        if (@hasDecl(S, "space")) return S.space;
+        @compileError("Type " ++ @typeName(S) ++ " is not a ColorSpace type");
     }
 
     pub fn Type(self: ColorSpace, comptime T: type) type {
@@ -61,31 +54,6 @@ pub const ColorSpace = enum {
             .xyz => Xyz(T),
             .ycbcr => Ycbcr(T),
         };
-    }
-
-    pub fn convert(comptime self: ColorSpace, comptime T: type, color: anytype) self.Type(T) {
-        const InputType = @TypeOf(color);
-        const input_space = ColorSpace.tag(InputType);
-
-        const input_supports_int = switch (input_space) {
-            .rgb, .rgba, .ycbcr, .gray => true,
-            else => false,
-        };
-        const target_is_int = switch (@typeInfo(T)) {
-            .int => true,
-            else => false,
-        };
-
-        if (target_is_int and !input_supports_int) {
-            // Input is float-only (e.g. HSV), Target is Int.
-            // Must convert to TargetSpace (preserving float) then cast to Int.
-            // This assumes TargetSpace supports float (which is true for all current spaces).
-            return color.to(self).as(T);
-        } else {
-            // Input supports T, or T is float (all spaces support float).
-            // Convert type first (for better precision if promoting to float), then space.
-            return color.as(T).to(self);
-        }
     }
 };
 
@@ -125,6 +93,7 @@ pub fn Rgb(comptime T: type) type {
         else => @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
     }
     return struct {
+        pub const space = ColorSpace.rgb;
         r: T,
         g: T,
         b: T,
@@ -222,6 +191,7 @@ pub fn Rgba(comptime T: type) type {
         else => @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
     }
     return packed struct {
+        pub const space = ColorSpace.rgba;
         r: T,
         g: T,
         b: T,
@@ -323,6 +293,7 @@ pub fn Gray(comptime T: type) type {
     }
 
     return struct {
+        pub const space = ColorSpace.gray;
         y: T,
 
         pub fn to(self: Gray(T), comptime color_space: ColorSpace) color_space.Type(T) {
@@ -364,6 +335,7 @@ pub fn Gray(comptime T: type) type {
 pub fn Hsv(comptime T: type) type {
     if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
     return struct {
+        pub const space = ColorSpace.hsv;
         h: T,
         s: T,
         v: T,
@@ -404,6 +376,7 @@ pub fn Hsv(comptime T: type) type {
 pub fn Hsl(comptime T: type) type {
     if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
     return struct {
+        pub const space = ColorSpace.hsl;
         h: T,
         s: T,
         l: T,
@@ -426,7 +399,7 @@ pub fn Hsl(comptime T: type) type {
             };
         }
 
-        pub fn as(self: Hsl(T), comptime U: type) Hsv(U) {
+        pub fn as(self: Hsl(T), comptime U: type) Hsl(U) {
             if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
             return .{
                 .h = @floatCast(self.h),
@@ -446,6 +419,7 @@ pub fn Hsl(comptime T: type) type {
 pub fn Xyz(comptime T: type) type {
     if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
     return struct {
+        pub const space = ColorSpace.xyz;
         x: T,
         y: T,
         z: T,
@@ -487,6 +461,7 @@ pub fn Xyz(comptime T: type) type {
 pub fn Lab(comptime T: type) type {
     if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
     return struct {
+        pub const space = ColorSpace.lab;
         l: T,
         a: T,
         b: T,
@@ -528,6 +503,7 @@ pub fn Lab(comptime T: type) type {
 pub fn Lch(comptime T: type) type {
     if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
     return struct {
+        pub const space = ColorSpace.lch;
         l: T,
         m: T,
         s: T,
@@ -566,6 +542,7 @@ pub fn Lch(comptime T: type) type {
 pub fn Lms(comptime T: type) type {
     if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
     return struct {
+        pub const space = ColorSpace.lms;
         l: T,
         m: T,
         s: T,
@@ -607,6 +584,7 @@ pub fn Lms(comptime T: type) type {
 pub fn Oklab(comptime T: type) type {
     if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
     return struct {
+        pub const space = ColorSpace.oklab;
         l: T,
         a: T,
         b: T,
@@ -648,6 +626,7 @@ pub fn Oklab(comptime T: type) type {
 pub fn Oklch(comptime T: type) type {
     if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
     return struct {
+        pub const space = ColorSpace.oklch;
         l: T,
         c: T,
         h: T,
@@ -690,6 +669,7 @@ pub fn Oklch(comptime T: type) type {
 pub fn Xyb(comptime T: type) type {
     if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
     return struct {
+        pub const space = ColorSpace.xyb;
         x: T,
         y: T,
         b: T,
@@ -733,6 +713,7 @@ pub fn Ycbcr(comptime T: type) type {
         else => @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
     }
     return struct {
+        pub const space = ColorSpace.ycbcr;
         y: T,
         cb: T,
         cr: T,
@@ -1334,19 +1315,25 @@ fn xybToRgb(comptime T: type, xyb: Xyb(T)) Rgb(T) {
 // }
 
 // Helper function for testing round-trip conversions
-fn testColorConversion(from: Rgb(u8), to: anytype) !void {
+inline fn testColorConversion(from: Rgb(u8), to: anytype) !void {
     const Dest = @TypeOf(to);
-    const T = @typeInfo(Dest).@"struct".fields[0].type;
-    const target_space = ColorSpace.tag(Dest);
+    const T = switch (@typeInfo(Dest)) {
+        .@"struct" => |info| info.fields[0].type, // Assumes first field is component type, consistent with rest of file
+        else => @compileError("Invalid test destination type"),
+    };
+    const target_space = comptime ColorSpace.tag(Dest);
 
-    const converted = target_space.convert(T, from);
+    // Convert using .to() method instead of removed convert function
+    const converted = from.as(f64).to(target_space).as(T);
     try expectEqualDeep(converted, to);
 
     const Source = @TypeOf(from);
-    const U = @typeInfo(Source).@"struct".fields[0].type;
-    const source_space = ColorSpace.tag(Source);
-
-    const recovered = source_space.convert(U, converted);
+    const U = switch (@typeInfo(Source)) {
+        .@"struct" => |info| info.fields[0].type,
+        else => @compileError("Invalid test source type"),
+    };
+    // Convert back
+    const recovered = converted.as(f64).to(ColorSpace.tag(Source)).as(U);
     try expectEqualDeep(recovered, from);
 }
 
@@ -1414,91 +1401,91 @@ test "Rgba fromHex and toHex" {
     try expectEqualDeep(Rgba(u8).initHex(0xffffffff), Rgba(u8).white);
 }
 
-// test "primary colors" {
-//     // red: 0xff0000
-//     try testColorConversion(.{ .r = 255, .g = 0, .b = 0 }, Hsl{ .h = 0, .s = 100, .l = 50 });
-//     try testColorConversion(.{ .r = 255, .g = 0, .b = 0 }, Hsv{ .h = 0, .s = 100, .v = 100 });
-//     try testColorConversion(.{ .r = 255, .g = 0, .b = 0 }, Lab{ .l = 53.23288178584245, .a = 80.10930952982204, .b = 67.22006831026425 });
-//     // green: 0x00ff00
-//     try testColorConversion(.{ .r = 0, .g = 255, .b = 0 }, Hsl{ .h = 120, .s = 100, .l = 50 });
-//     try testColorConversion(.{ .r = 0, .g = 255, .b = 0 }, Hsv{ .h = 120, .s = 100, .v = 100 });
-//     try testColorConversion(.{ .r = 0, .g = 255, .b = 0 }, Lab{ .l = 87.73703347354422, .a = -86.1846364976253, .b = 83.18116474777855 });
-//     // blue: 0x0000ff
-//     try testColorConversion(.{ .r = 0, .g = 0, .b = 255 }, Hsl{ .h = 240, .s = 100, .l = 50 });
-//     try testColorConversion(.{ .r = 0, .g = 0, .b = 255 }, Hsv{ .h = 240, .s = 100, .v = 100 });
-//     try testColorConversion(.{ .r = 0, .g = 0, .b = 255 }, Lab{ .l = 32.302586667249486, .a = 79.19666178930935, .b = -107.86368104495168 });
-// }
+test "primary colors" {
+    // red: 0xff0000
+    try testColorConversion(.{ .r = 255, .g = 0, .b = 0 }, Hsl(f64){ .h = 0, .s = 100, .l = 50 });
+    try testColorConversion(.{ .r = 255, .g = 0, .b = 0 }, Hsv(f64){ .h = 0, .s = 100, .v = 100 });
+    try testColorConversion(.{ .r = 255, .g = 0, .b = 0 }, Lab(f64){ .l = 53.23288178584245, .a = 80.10930952982204, .b = 67.22006831026425 });
+    // green: 0x00ff00
+    try testColorConversion(.{ .r = 0, .g = 255, .b = 0 }, Hsl(f64){ .h = 120, .s = 100, .l = 50 });
+    try testColorConversion(.{ .r = 0, .g = 255, .b = 0 }, Hsv(f64){ .h = 120, .s = 100, .v = 100 });
+    try testColorConversion(.{ .r = 0, .g = 255, .b = 0 }, Lab(f64){ .l = 87.73703347354422, .a = -86.1846364976253, .b = 83.18116474777855 });
+    // blue: 0x0000ff
+    try testColorConversion(.{ .r = 0, .g = 0, .b = 255 }, Hsl(f64){ .h = 240, .s = 100, .l = 50 });
+    try testColorConversion(.{ .r = 0, .g = 0, .b = 255 }, Hsv(f64){ .h = 240, .s = 100, .v = 100 });
+    try testColorConversion(.{ .r = 0, .g = 0, .b = 255 }, Lab(f64){ .l = 32.302586667249486, .a = 79.19666178930935, .b = -107.86368104495168 });
+}
 
-// test "secondary colors" {
-//     // cyan: 0x00ffff
-//     try testColorConversion(.{ .r = 0, .g = 255, .b = 255 }, Hsl{ .h = 180, .s = 100, .l = 50 });
-//     try testColorConversion(.{ .r = 0, .g = 255, .b = 255 }, Hsv{ .h = 180, .s = 100, .v = 100 });
-//     try testColorConversion(.{ .r = 0, .g = 255, .b = 255 }, Lab{ .l = 91.11652110946342, .a = -48.079618466228716, .b = -14.138127754846131 });
-//     // magenta: 0xff00ff
-//     try testColorConversion(.{ .r = 255, .g = 0, .b = 255 }, Hsl{ .h = 300, .s = 100, .l = 50 });
-//     try testColorConversion(.{ .r = 255, .g = 0, .b = 255 }, Hsv{ .h = 300, .s = 100, .v = 100 });
-//     try testColorConversion(.{ .r = 255, .g = 0, .b = 255 }, Lab{ .l = 60.319933664076004, .a = 98.25421868616108, .b = -60.84298422386232 });
-//     // yellow: 0xffff00
-//     try testColorConversion(.{ .r = 255, .g = 255, .b = 0 }, Hsl{ .h = 60, .s = 100, .l = 50 });
-//     try testColorConversion(.{ .r = 255, .g = 255, .b = 0 }, Hsv{ .h = 60, .s = 100, .v = 100 });
-//     try testColorConversion(.{ .r = 255, .g = 255, .b = 0 }, Lab{ .l = 97.13824698129729, .a = -21.555908334832285, .b = 94.48248544644461 });
-// }
+test "secondary colors" {
+    // cyan: 0x00ffff
+    try testColorConversion(.{ .r = 0, .g = 255, .b = 255 }, Hsl(f64){ .h = 180, .s = 100, .l = 50 });
+    try testColorConversion(.{ .r = 0, .g = 255, .b = 255 }, Hsv(f64){ .h = 180, .s = 100, .v = 100 });
+    try testColorConversion(.{ .r = 0, .g = 255, .b = 255 }, Lab(f64){ .l = 91.11652110946342, .a = -48.079618466228716, .b = -14.138127754846131 });
+    // magenta: 0xff00ff
+    try testColorConversion(.{ .r = 255, .g = 0, .b = 255 }, Hsl(f64){ .h = 300, .s = 100, .l = 50 });
+    try testColorConversion(.{ .r = 255, .g = 0, .b = 255 }, Hsv(f64){ .h = 300, .s = 100, .v = 100 });
+    try testColorConversion(.{ .r = 255, .g = 0, .b = 255 }, Lab(f64){ .l = 60.319933664076004, .a = 98.25421868616108, .b = -60.84298422386232 });
+    // yellow: 0xffff00
+    try testColorConversion(.{ .r = 255, .g = 255, .b = 0 }, Hsl(f64){ .h = 60, .s = 100, .l = 50 });
+    try testColorConversion(.{ .r = 255, .g = 255, .b = 0 }, Hsv(f64){ .h = 60, .s = 100, .v = 100 });
+    try testColorConversion(.{ .r = 255, .g = 255, .b = 0 }, Lab(f64){ .l = 97.13824698129729, .a = -21.555908334832285, .b = 94.48248544644461 });
+}
 
-// test "complementary colors" {
-//     // orange: 0xff8800
-//     try testColorConversion(.{ .r = 255, .g = 136, .b = 0 }, Hsl{ .h = 32, .s = 100, .l = 50 });
-//     try testColorConversion(.{ .r = 255, .g = 136, .b = 0 }, Hsv{ .h = 32, .s = 100, .v = 100 });
-//     try testColorConversion(.{ .r = 255, .g = 136, .b = 0 }, Lab{ .l = 68.65577208167872, .a = 38.85052375564019, .b = 74.99022544139406 });
-//     // purple: 0x800080
-//     try testColorConversion(.{ .r = 128, .g = 0, .b = 128 }, Hsl{ .h = 300, .s = 100, .l = 25.098039215686274 });
-//     try testColorConversion(.{ .r = 128, .g = 0, .b = 128 }, Hsv{ .h = 300, .s = 100, .v = 50.19607843137255 });
-//     try testColorConversion(.{ .r = 128, .g = 0, .b = 128 }, Lab{ .l = 29.782100092098077, .a = 58.93983731904206, .b = -36.49792996282386 });
-// }
+test "complementary colors" {
+    // orange: 0xff8800
+    try testColorConversion(.{ .r = 255, .g = 136, .b = 0 }, Hsl(f64){ .h = 32, .s = 100, .l = 50 });
+    try testColorConversion(.{ .r = 255, .g = 136, .b = 0 }, Hsv(f64){ .h = 32, .s = 100, .v = 100 });
+    try testColorConversion(.{ .r = 255, .g = 136, .b = 0 }, Lab(f64){ .l = 68.65577208167872, .a = 38.85052375564019, .b = 74.99022544139406 });
+    // purple: 0x800080
+    try testColorConversion(.{ .r = 128, .g = 0, .b = 128 }, Hsl(f64){ .h = 300, .s = 100, .l = 25.098039215686274 });
+    try testColorConversion(.{ .r = 128, .g = 0, .b = 128 }, Hsv(f64){ .h = 300, .s = 100, .v = 50.19607843137255 });
+    try testColorConversion(.{ .r = 128, .g = 0, .b = 128 }, Lab(f64){ .l = 29.782100092098077, .a = 58.93983731904206, .b = -36.49792996282386 });
+}
 
-// test "neutral colors" {
-//     // white: 0xffffff
-//     try testColorConversion(.{ .r = 255, .g = 255, .b = 255 }, Hsl{ .h = 0, .s = 0, .l = 100 });
-//     try testColorConversion(.{ .r = 255, .g = 255, .b = 255 }, Hsv{ .h = 0, .s = 0, .v = 100 });
-//     try testColorConversion(.{ .r = 255, .g = 255, .b = 255 }, Lab{ .l = 100, .a = 0.00526049995830391, .b = -0.010408184525267927 });
-//     // gray: 0x808080
-//     try testColorConversion(.{ .r = 128, .g = 128, .b = 128 }, Hsl{ .h = 0, .s = 0, .l = 50.19607843137255 });
-//     try testColorConversion(.{ .r = 128, .g = 128, .b = 128 }, Hsv{ .h = 0, .s = 0, .v = 50.19607843137255 });
-//     try testColorConversion(.{ .r = 128, .g = 128, .b = 128 }, Lab{ .l = 53.58501345216902, .a = 0.003155620347972121, .b = -0.006243566036268078 });
-//     // black: 0x000000
-//     try testColorConversion(.{ .r = 0, .g = 0, .b = 0 }, Hsl{ .h = 0, .s = 0, .l = 0 });
-//     try testColorConversion(.{ .r = 0, .g = 0, .b = 0 }, Hsv{ .h = 0, .s = 0, .v = 0 });
-//     try testColorConversion(.{ .r = 0, .g = 0, .b = 0 }, Lab{ .l = 0, .a = 0, .b = 0 });
-// }
+test "neutral colors" {
+    // white: 0xffffff
+    try testColorConversion(.{ .r = 255, .g = 255, .b = 255 }, Hsl(f64){ .h = 0, .s = 0, .l = 100 });
+    try testColorConversion(.{ .r = 255, .g = 255, .b = 255 }, Hsv(f64){ .h = 0, .s = 0, .v = 100 });
+    try testColorConversion(.{ .r = 255, .g = 255, .b = 255 }, Lab(f64){ .l = 100, .a = 0.00526049995830391, .b = -0.010408184525267927 });
+    // gray: 0x808080
+    try testColorConversion(.{ .r = 128, .g = 128, .b = 128 }, Hsl(f64){ .h = 0, .s = 0, .l = 50.19607843137255 });
+    try testColorConversion(.{ .r = 128, .g = 128, .b = 128 }, Hsv(f64){ .h = 0, .s = 0, .v = 50.19607843137255 });
+    try testColorConversion(.{ .r = 128, .g = 128, .b = 128 }, Lab(f64){ .l = 53.58501345216902, .a = 0.003155620347972121, .b = -0.006243566036268078 });
+    // black: 0x000000
+    try testColorConversion(.{ .r = 0, .g = 0, .b = 0 }, Hsl(f64){ .h = 0, .s = 0, .l = 0 });
+    try testColorConversion(.{ .r = 0, .g = 0, .b = 0 }, Hsv(f64){ .h = 0, .s = 0, .v = 0 });
+    try testColorConversion(.{ .r = 0, .g = 0, .b = 0 }, Lab(f64){ .l = 0, .a = 0, .b = 0 });
+}
 
-// test "pastel colors" {
-//     // pale_pink: 0xffd3ba
-//     try testColorConversion(.{ .r = 255, .g = 211, .b = 186 }, Hsl{ .h = 21.739130434782602, .s = 100, .l = 86.47058823529412 });
-//     try testColorConversion(.{ .r = 255, .g = 211, .b = 186 }, Hsv{ .h = 21.739130434782602, .s = 27.058823529411768, .v = 100 });
-//     try testColorConversion(.{ .r = 255, .g = 211, .b = 186 }, Lab{ .l = 87.67593388241974, .a = 11.843797404960165, .b = 18.16236917854479 });
-//     // mint_green: 0x96fa96
-//     try testColorConversion(.{ .r = 150, .g = 250, .b = 150 }, Hsl{ .h = 120, .s = 90.90909090909089, .l = 78.43137254901961 });
-//     try testColorConversion(.{ .r = 150, .g = 250, .b = 150 }, Hsv{ .h = 120, .s = 40, .v = 98.0392156862745 });
-//     try testColorConversion(.{ .r = 150, .g = 250, .b = 150 }, Lab{ .l = 90.34795996024553, .a = -48.75545372512652, .b = 38.96689290268498 });
-//     // sky_blue: #8ad1ed
-//     try testColorConversion(.{ .r = 138, .g = 209, .b = 237 }, Hsl{ .h = 196.96969696969697, .s = 73.33333333333336, .l = 73.52941176470588 });
-//     try testColorConversion(.{ .r = 138, .g = 209, .b = 237 }, Hsv{ .h = 196.96969696969697, .s = 41.77215189873419, .v = 92.94117647058823 });
-//     try testColorConversion(.{ .r = 138, .g = 209, .b = 237 }, Lab{ .l = 80.24627015828005, .a = -15.11865203941365, .b = -20.767024460106565 });
-// }
+test "pastel colors" {
+    // pale_pink: 0xffd3ba
+    try testColorConversion(.{ .r = 255, .g = 211, .b = 186 }, Hsl(f64){ .h = 21.739130434782602, .s = 100, .l = 86.47058823529412 });
+    try testColorConversion(.{ .r = 255, .g = 211, .b = 186 }, Hsv(f64){ .h = 21.739130434782602, .s = 27.058823529411768, .v = 100 });
+    try testColorConversion(.{ .r = 255, .g = 211, .b = 186 }, Lab(f64){ .l = 87.67593388241974, .a = 11.843797404960165, .b = 18.16236917854479 });
+    // mint_green: 0x96fa96
+    try testColorConversion(.{ .r = 150, .g = 250, .b = 150 }, Hsl(f64){ .h = 120, .s = 90.90909090909089, .l = 78.43137254901961 });
+    try testColorConversion(.{ .r = 150, .g = 250, .b = 150 }, Hsv(f64){ .h = 120, .s = 40, .v = 98.0392156862745 });
+    try testColorConversion(.{ .r = 150, .g = 250, .b = 150 }, Lab(f64){ .l = 90.34795996024553, .a = -48.75545372512652, .b = 38.96689290268498 });
+    // sky_blue: #8ad1ed
+    try testColorConversion(.{ .r = 138, .g = 209, .b = 237 }, Hsl(f64){ .h = 196.96969696969697, .s = 73.33333333333336, .l = 73.52941176470588 });
+    try testColorConversion(.{ .r = 138, .g = 209, .b = 237 }, Hsv(f64){ .h = 196.96969696969697, .s = 41.77215189873419, .v = 92.94117647058823 });
+    try testColorConversion(.{ .r = 138, .g = 209, .b = 237 }, Lab(f64){ .l = 80.24627015828005, .a = -15.11865203941365, .b = -20.767024460106565 });
+}
 
-// test "vivid colors" {
-//     // hot_pink: #ff66b3
-//     try testColorConversion(.{ .r = 255, .g = 102, .b = 179 }, Hsl{ .h = 329.80392156862746, .s = 99.99999999999997, .l = 70 });
-//     try testColorConversion(.{ .r = 255, .g = 102, .b = 179 }, Hsv{ .h = 329.80392156862746, .s = 60, .v = 100 });
-//     try testColorConversion(.{ .r = 255, .g = 102, .b = 179 }, Lab{ .l = 64.9763931162809, .a = 65.40669278373645, .b = -10.847761988977656 });
-//     // lime_green:#31cc31
-//     try testColorConversion(.{ .r = 49, .g = 204, .b = 49 }, Hsl{ .h = 120, .s = 61.26482213438735, .l = 49.6078431372549 });
-//     try testColorConversion(.{ .r = 49, .g = 204, .b = 49 }, Hsv{ .h = 120, .s = 75.98039215686275, .v = 80 });
-//     try testColorConversion(.{ .r = 49, .g = 204, .b = 49 }, Lab{ .l = 72.26888334336961, .a = -67.03378336285304, .b = 61.425460443480894 });
-//     // electric_blue: #80dfff
-//     try testColorConversion(.{ .r = 128, .g = 223, .b = 255 }, Hsl{ .h = 195.11811023622047, .s = 100, .l = 75.09803921568627 });
-//     try testColorConversion(.{ .r = 128, .g = 223, .b = 255 }, Hsv{ .h = 195.11811023622047, .s = 49.80392156862745, .v = 100 });
-//     try testColorConversion(.{ .r = 128, .g = 223, .b = 255 }, Lab{ .l = 84.26919487615707, .a = -19.773688316136685, .b = -24.252061008370738 });
-// }
+test "vivid colors" {
+    // hot_pink: #ff66b3
+    try testColorConversion(.{ .r = 255, .g = 102, .b = 179 }, Hsl(f64){ .h = 329.80392156862746, .s = 99.99999999999997, .l = 70 });
+    try testColorConversion(.{ .r = 255, .g = 102, .b = 179 }, Hsv(f64){ .h = 329.80392156862746, .s = 60, .v = 100 });
+    try testColorConversion(.{ .r = 255, .g = 102, .b = 179 }, Lab(f64){ .l = 64.9763931162809, .a = 65.40669278373645, .b = -10.847761988977656 });
+    // lime_green:#31cc31
+    try testColorConversion(.{ .r = 49, .g = 204, .b = 49 }, Hsl(f64){ .h = 120, .s = 61.26482213438735, .l = 49.6078431372549 });
+    try testColorConversion(.{ .r = 49, .g = 204, .b = 49 }, Hsv(f64){ .h = 120, .s = 75.98039215686275, .v = 80 });
+    try testColorConversion(.{ .r = 49, .g = 204, .b = 49 }, Lab(f64){ .l = 72.26888334336961, .a = -67.03378336285304, .b = 61.425460443480894 });
+    // electric_blue: #80dfff
+    try testColorConversion(.{ .r = 128, .g = 223, .b = 255 }, Hsl(f64){ .h = 195.11811023622047, .s = 100, .l = 75.09803921568627 });
+    try testColorConversion(.{ .r = 128, .g = 223, .b = 255 }, Hsv(f64){ .h = 195.11811023622047, .s = 49.80392156862745, .v = 100 });
+    try testColorConversion(.{ .r = 128, .g = 223, .b = 255 }, Lab(f64){ .l = 84.26919487615707, .a = -19.773688316136685, .b = -24.252061008370738 });
+}
 
 // test "color formatting" {
 //     const red = Rgb{ .r = 255, .g = 0, .b = 0 };
