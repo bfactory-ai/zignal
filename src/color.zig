@@ -1517,42 +1517,10 @@ test "100 random colors" {
         try expectEqualDeep(rgb, rgb_from_xyz);
         const rgb_from_lab = rgb.as(f64).to(.lab).to(.rgb).as(u8);
         try expectEqualDeep(rgb, rgb_from_lab);
+        const rgb_from_oklab = rgb.as(f64).to(.oklab).to(.rgb).as(u8);
+        try expectEqualDeep(rgb, rgb_from_oklab);
     }
 }
-
-// test "color type validation" {
-//     try expectEqual(isColor(u8), true);
-//     try expectEqual(isColor(Rgb), true);
-//     try expectEqual(isColor(Rgba), true);
-//     try expectEqual(isColor(Hsl), true);
-//     try expectEqual(isColor(Hsv), true);
-//     try expectEqual(isColor(Lab), true);
-//     try expectEqual(isColor(Xyz), true);
-//     try expectEqual(isColor(Lms), true);
-//     try expectEqual(isColor(Oklab), true);
-//     try expectEqual(isColor(Oklch), true);
-//     try expectEqual(isColor(Xyb), true);
-//     try expectEqual(isColor(Ycbcr), true);
-//     try expectEqual(isColor(f32), false);
-//     try expectEqual(isColor(i32), false);
-// }
-
-// test "generic convert function" {
-//     const red = Rgb{ .r = 255, .g = 0, .b = 0 };
-
-//     // Test conversion to all color types
-//     const red_rgba = convertColor(Rgba, red);
-//     try expectEqualDeep(red_rgba, Rgba{ .r = 255, .g = 0, .b = 0, .a = 255 });
-
-//     const red_hsl = convertColor(Hsl, red);
-//     try expectEqualDeep(red_hsl, Hsl{ .h = 0, .s = 100, .l = 50 });
-
-//     const red_hsv = convertColor(Hsv, red);
-//     try expectEqualDeep(red_hsv, Hsv{ .h = 0, .s = 100, .v = 100 });
-
-//     const gray = convertColor(u8, red);
-//     try expectEqual(gray, 54); // Luma-based grayscale of red
-// }
 
 // test "extended color space round trips" {
 //     const colors = [_]Rgb{
