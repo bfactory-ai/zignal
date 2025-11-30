@@ -127,14 +127,14 @@ pub fn Rgb(comptime T: type) type {
                 .gray => rgbToGray(T, self),
                 .hsl => rgbToHsl(T, self),
                 .hsv => rgbToHsv(T, self),
-                .lab => rgbToLab(T, self),
-                .lch => labToLch(T, rgbToLab(T, self)),
+                .lab => xyzToLab(T, rgbToXyz(T, self)),
+                .lch => labToLch(T, xyzToLab(T, rgbToXyz(T, self))),
                 .lms => xyzToLms(T, rgbToXyz(T, self)),
-                .oklab => lmsToOklab(T, xyzToLms(T, rgbToXyz(T, self))),
-                .oklch => oklabToOklch(T, lmsToOklab(T, xyzToLms(T, rgbToXyz(T, self)))),
+                .oklab => xyzToOklab(T, rgbToXyz(T, self)),
+                .oklch => oklabToOklch(T, xyzToOklab(T, rgbToXyz(T, self))),
                 .rgba => .{ .r = self.r, .g = self.g, .b = self.b, .a = if (T == u8) 255 else 1.0 },
                 .rgb => self,
-                .xyb => lmsToXyb(T, xyzToLms(T, rgbToXyz(T, self))),
+                .xyb => rgbToXyb(T, self),
                 .xyz => rgbToXyz(T, self),
                 .ycbcr => rgbToYcbcr(T, self),
             };
@@ -191,14 +191,14 @@ pub fn Rgba(comptime T: type) type {
                 .gray => rgbToGray(T, self.to(.rgb)),
                 .hsl => rgbToHsl(T, self.to(.rgb)),
                 .hsv => rgbToHsv(T, self.to(.rgb)),
-                .lab => rgbToLab(T, self.to(.rgb)),
-                .lch => labToLch(T, rgbToLab(T, self.to(.rgb))),
+                .lab => xyzToLab(T, rgbToXyz(T, self.to(.rgb))),
+                .lch => labToLch(T, xyzToLab(T, rgbToXyz(T, self.to(.rgb)))),
                 .lms => xyzToLms(T, rgbToXyz(T, self.to(.rgb))),
-                .oklab => lmsToOklab(T, xyzToLms(T, rgbToXyz(T, self.to(.rgb)))),
-                .oklch => oklabToOklch(T, lmsToOklab(T, xyzToLms(T, rgbToXyz(T, self.to(.rgb))))),
+                .oklab => xyzToOklab(T, rgbToXyz(T, self.to(.rgb))),
+                .oklch => oklabToOklch(T, xyzToOklab(T, rgbToXyz(T, self.to(.rgb)))),
                 .rgba => self,
                 .rgb => .{ .r = self.r, .g = self.g, .b = self.b },
-                .xyb => lmsToXyb(T, xyzToLms(T, rgbToXyz(T, self.to(.rgb)))),
+                .xyb => rgbToXyb(T, self.to(.rgb)),
                 .xyz => rgbToXyz(T, self.to(.rgb)),
                 .ycbcr => rgbToYcbcr(T, self.to(.rgb)),
             };
@@ -297,18 +297,18 @@ pub fn Hsv(comptime T: type) type {
         pub fn to(self: Hsv(T), comptime color_space: ColorSpace) color_space.Color(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
-                .hsl => rgbToHsl(T, self.to(.rgb)),
+                .hsl => hsvToHsl(T, self),
                 .hsv => self,
-                .lab => rgbToLab(T, self.to(.rgb)),
-                .lch => labToLch(T, rgbToLab(T, self.to(.rgb))),
+                .lab => xyzToLab(T, rgbToXyz(T, self.to(.rgb))),
+                .lch => labToLch(T, xyzToLab(T, rgbToXyz(T, self.to(.rgb)))),
                 .lms => xyzToLms(T, rgbToXyz(T, self.to(.rgb))),
-                .oklab => lmsToOklab(T, xyzToLms(T, rgbToXyz(T, self.to(.rgb)))),
-                .oklch => oklabToOklch(T, lmsToOklab(T, xyzToLms(T, rgbToXyz(T, self.to(.rgb))))),
+                .oklab => xyzToOklab(T, rgbToXyz(T, self.to(.rgb))),
+                .oklch => oklabToOklch(T, xyzToOklab(T, rgbToXyz(T, self.to(.rgb)))),
                 .rgba => self.to(.rgb).to(.rgba),
                 .rgb => hsvToRgb(T, self),
-                .xyb => lmsToXyb(T, xyzToLms(T, rgbToXyz(T, self.to(.rgb)))),
+                .xyb => rgbToXyb(T, self.to(.rgb)),
                 .xyz => rgbToXyz(T, self.to(.rgb)),
-                .ycbcr => @compileError("YCbCr only supported for u8"),
+                .ycbcr => rgbToYcbcr(T, self.to(.rgb)),
             };
         }
 
@@ -338,17 +338,17 @@ pub fn Hsl(comptime T: type) type {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
                 .hsl => self,
-                .hsv => rgbToHsv(T, self.to(.rgb)),
-                .lab => rgbToLab(T, self.to(.rgb)),
-                .lch => labToLch(T, rgbToLab(T, self.to(.rgb))),
+                .hsv => hslToHsv(T, self),
+                .lab => xyzToLab(T, rgbToXyz(T, self.to(.rgb))),
+                .lch => labToLch(T, xyzToLab(T, rgbToXyz(T, self.to(.rgb)))),
                 .lms => xyzToLms(T, rgbToXyz(T, self.to(.rgb))),
-                .oklab => lmsToOklab(T, xyzToLms(T, rgbToXyz(T, self.to(.rgb)))),
-                .oklch => oklabToOklch(T, lmsToOklab(T, xyzToLms(T, rgbToXyz(T, self.to(.rgb))))),
+                .oklab => xyzToOklab(T, rgbToXyz(T, self.to(.rgb))),
+                .oklch => oklabToOklch(T, xyzToOklab(T, rgbToXyz(T, self.to(.rgb)))),
                 .rgba => self.to(.rgb).to(.rgba),
                 .rgb => hslToRgb(T, self),
-                .xyb => lmsToXyb(T, xyzToLms(T, rgbToXyz(T, self.to(.rgb)))),
+                .xyb => rgbToXyb(T, self.to(.rgb)),
                 .xyz => rgbToXyz(T, self.to(.rgb)),
-                .ycbcr => @compileError("YCbCr only supported for u8"),
+                .ycbcr => rgbToYcbcr(T, self.to(.rgb)),
             };
         }
 
@@ -381,16 +381,16 @@ pub fn Xyz(comptime T: type) type {
                 .gray => rgbToGray(T, self.to(.rgb)),
                 .hsl => rgbToHsl(T, self.to(.rgb)),
                 .hsv => rgbToHsv(T, self.to(.rgb)),
-                .lab => rgbToLab(T, self.to(.rgb)),
-                .lch => labToLch(T, rgbToLab(T, self.to(.rgb))),
+                .lab => xyzToLab(T, self),
+                .lch => labToLch(T, xyzToLab(T, self)),
                 .lms => xyzToLms(T, self),
-                .oklab => lmsToOklab(T, xyzToLms(T, self)),
-                .oklch => oklabToOklch(T, lmsToOklab(T, xyzToLms(T, self))),
+                .oklab => xyzToOklab(T, self),
+                .oklch => oklabToOklch(T, xyzToOklab(T, self)),
                 .rgba => self.to(.rgb).to(.rgba),
                 .rgb => xyzToRgb(T, self),
-                .xyb => lmsToXyb(T, xyzToLms(T, self)),
+                .xyb => xyzToXyb(T, self),
                 .xyz => self,
-                .ycbcr => @compileError("YCbCr only supported for u8"),
+                .ycbcr => rgbToYcbcr(T, xyzToRgb(T, self)),
             };
         }
 
@@ -424,14 +424,14 @@ pub fn Lab(comptime T: type) type {
                 .hsv => rgbToHsv(T, self.to(.rgb)),
                 .lab => self,
                 .lch => labToLch(T, self),
-                .lms => xyzToLms(T, rgbToXyz(T, self.to(.rgb))),
-                .oklab => lmsToOklab(T, xyzToLms(T, rgbToXyz(T, self.to(.rgb)))),
-                .oklch => oklabToOklch(T, lmsToOklab(T, xyzToLms(T, rgbToXyz(T, self.to(.rgb))))),
+                .lms => xyzToLms(T, labToXyz(T, self)),
+                .oklab => xyzToOklab(T, labToXyz(T, self)),
+                .oklch => oklabToOklch(T, xyzToOklab(T, labToXyz(T, self))),
                 .rgba => self.to(.rgb).to(.rgba),
-                .rgb => labToRgb(T, self),
-                .xyb => lmsToXyb(T, xyzToLms(T, rgbToXyz(T, self.to(.rgb)))),
-                .xyz => rgbToXyz(T, self.to(.rgb)),
-                .ycbcr => @compileError("YCbCr only supported for u8"),
+                .rgb => xyzToRgb(T, labToXyz(T, self)),
+                .xyb => xyzToXyb(T, labToXyz(T, self)),
+                .xyz => labToXyz(T, self),
+                .ycbcr => rgbToYcbcr(T, xyzToRgb(T, labToXyz(T, self))),
             };
         }
 
@@ -464,14 +464,14 @@ pub fn Lch(comptime T: type) type {
                 .hsv => rgbToHsv(T, self.to(.rgb)),
                 .lab => lchToLab(T, self),
                 .lch => self,
-                .lms => xyzToLms(T, rgbToXyz(T, self.to(.rgb))),
-                .oklab => lmsToOklab(T, xyzToLms(T, rgbToXyz(T, self.to(.rgb)))),
-                .oklch => oklabToOklch(T, lmsToOklab(T, xyzToLms(T, rgbToXyz(T, self.to(.rgb))))),
+                .lms => xyzToLms(T, labToXyz(T, lchToLab(T, self))),
+                .oklab => xyzToOklab(T, labToXyz(T, lchToLab(T, self))),
+                .oklch => oklabToOklch(T, xyzToOklab(T, labToXyz(T, lchToLab(T, self)))),
                 .rgba => self.to(.rgb).to(.rgba),
-                .rgb => labToRgb(T, lchToLab(T, self)),
-                .xyb => lmsToXyb(T, xyzToLms(T, rgbToXyz(T, self.to(.rgb)))),
-                .xyz => rgbToXyz(T, self.to(.rgb)),
-                .ycbcr => @compileError("YCbCr only supported for u8"),
+                .rgb => xyzToRgb(T, labToXyz(T, lchToLab(T, self))),
+                .xyb => xyzToXyb(T, labToXyz(T, lchToLab(T, self))),
+                .xyz => labToXyz(T, lchToLab(T, self)),
+                .ycbcr => rgbToYcbcr(T, xyzToRgb(T, labToXyz(T, lchToLab(T, self)))),
             };
         }
 
@@ -501,16 +501,16 @@ pub fn Lms(comptime T: type) type {
                 .gray => rgbToGray(T, self.to(.rgb)),
                 .hsl => rgbToHsl(T, self.to(.rgb)),
                 .hsv => rgbToHsv(T, self.to(.rgb)),
-                .lab => rgbToLab(T, self.to(.rgb)),
-                .lch => labToLch(T, rgbToLab(T, self.to(.rgb))),
+                .lab => xyzToLab(T, lmsToXyz(T, self)),
+                .lch => labToLch(T, xyzToLab(T, lmsToXyz(T, self))),
                 .lms => self,
-                .oklab => lmsToOklab(T, self),
-                .oklch => oklabToOklch(T, lmsToOklab(T, self)),
+                .oklab => xyzToOklab(T, lmsToXyz(T, self)),
+                .oklch => oklabToOklch(T, xyzToOklab(T, lmsToXyz(T, self))),
                 .rgba => self.to(.rgb).to(.rgba),
                 .rgb => xyzToRgb(T, lmsToXyz(T, self)),
-                .xyb => lmsToXyb(T, self),
+                .xyb => xyzToXyb(T, lmsToXyz(T, self)),
                 .xyz => lmsToXyz(T, self),
-                .ycbcr => @compileError("YCbCr only supported for u8"),
+                .ycbcr => rgbToYcbcr(T, xyzToRgb(T, lmsToXyz(T, self))),
             };
         }
 
@@ -542,16 +542,16 @@ pub fn Oklab(comptime T: type) type {
                 .gray => rgbToGray(T, self.to(.rgb)),
                 .hsl => rgbToHsl(T, self.to(.rgb)),
                 .hsv => rgbToHsv(T, self.to(.rgb)),
-                .lab => rgbToLab(T, self.to(.rgb)),
-                .lch => labToLch(T, rgbToLab(T, self.to(.rgb))),
-                .lms => oklabToLms(T, self),
+                .lab => xyzToLab(T, oklabToXyz(T, self)),
+                .lch => labToLch(T, xyzToLab(T, oklabToXyz(T, self))),
+                .lms => xyzToLms(T, oklabToXyz(T, self)),
                 .oklab => self,
                 .oklch => oklabToOklch(T, self),
                 .rgba => self.to(.rgb).to(.rgba),
-                .rgb => xyzToRgb(T, lmsToXyz(T, oklabToLms(T, self))),
-                .xyb => lmsToXyb(T, oklabToLms(T, self)),
-                .xyz => lmsToXyz(T, oklabToLms(T, self)),
-                .ycbcr => @compileError("YCbCr only supported for u8"),
+                .rgb => xyzToRgb(T, oklabToXyz(T, self)),
+                .xyb => xyzToXyb(T, oklabToXyz(T, self)),
+                .xyz => oklabToXyz(T, self),
+                .ycbcr => rgbToYcbcr(T, xyzToRgb(T, oklabToXyz(T, self))),
             };
         }
 
@@ -583,16 +583,16 @@ pub fn Oklch(comptime T: type) type {
                 .gray => rgbToGray(T, self.to(.rgb)),
                 .hsl => rgbToHsl(T, self.to(.rgb)),
                 .hsv => rgbToHsv(T, self.to(.rgb)),
-                .lab => rgbToLab(T, self.to(.rgb)),
-                .lch => labToLch(T, rgbToLab(T, self.to(.rgb))),
-                .lms => oklabToLms(T, oklchToOklab(T, self)),
+                .lab => xyzToLab(T, oklabToXyz(T, oklchToOklab(T, self))),
+                .lch => labToLch(T, xyzToLab(T, oklabToXyz(T, oklchToOklab(T, self)))),
+                .lms => xyzToLms(T, oklabToXyz(T, oklchToOklab(T, self))),
                 .oklab => oklchToOklab(T, self),
                 .oklch => self,
                 .rgba => self.to(.rgb).to(.rgba),
-                .rgb => xyzToRgb(T, lmsToXyz(T, oklabToLms(T, oklchToOklab(T, self)))),
-                .xyb => lmsToXyb(T, oklabToLms(T, oklchToOklab(T, self))),
-                .xyz => lmsToXyz(T, oklabToLms(T, oklchToOklab(T, self))),
-                .ycbcr => @compileError("YCbCr only supported for u8"),
+                .rgb => xyzToRgb(T, oklabToXyz(T, oklchToOklab(T, self))),
+                .xyb => xyzToXyb(T, oklabToXyz(T, oklchToOklab(T, self))),
+                .xyz => oklabToXyz(T, oklchToOklab(T, self)),
+                .ycbcr => rgbToYcbcr(T, xyzToRgb(T, oklabToXyz(T, oklchToOklab(T, self)))),
             };
         }
 
@@ -618,23 +618,23 @@ pub fn Xyb(comptime T: type) type {
     return struct {
         x: T,
         y: T,
-        z: T,
+        b: T,
 
         pub fn to(self: Xyb(T), comptime color_space: ColorSpace) color_space.Color(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
                 .hsl => rgbToHsl(T, self.to(.rgb)),
                 .hsv => rgbToHsv(T, self.to(.rgb)),
-                .lab => rgbToLab(T, self.to(.rgb)),
-                .lch => labToLch(T, rgbToLab(T, self.to(.rgb))),
-                .lms => xybToLms(T, self),
-                .oklab => lmsToOklab(T, xybToLms(T, self)),
-                .oklch => oklabToOklch(T, lmsToOklab(T, xybToLms(T, self))),
+                .lab => xyzToLab(T, xybToXyz(T, self)),
+                .lch => labToLch(T, xyzToLab(T, xybToXyz(T, self))),
+                .lms => xyzToLms(T, xybToXyz(T, self)),
+                .oklab => xyzToOklab(T, xybToXyz(T, self)),
+                .oklch => oklabToOklch(T, xyzToOklab(T, xybToXyz(T, self))),
                 .rgba => self.to(.rgb).to(.rgba),
-                .rgb => xyzToRgb(T, lmsToXyz(T, xybToLms(T, self))),
+                .rgb => xybToRgb(T, self),
                 .xyb => self,
-                .xyz => lmsToXyz(T, xybToLms(T, self)),
-                .ycbcr => @compileError("YCbCr only supported for u8"),
+                .xyz => xybToXyz(T, self),
+                .ycbcr => rgbToYcbcr(T, xybToRgb(T, self)),
             };
         }
 
@@ -668,14 +668,14 @@ pub fn Ycbcr(comptime T: type) type {
                 .gray => rgbToGray(T, self.to(.rgb)),
                 .hsl => rgbToHsl(T, self.to(.rgb)),
                 .hsv => rgbToHsv(T, self.to(.rgb)),
-                .lab => rgbToLab(T, self.to(.rgb)),
-                .lch => labToLch(T, rgbToLab(T, self.to(.rgb))),
+                .lab => xyzToLab(T, rgbToXyz(T, self.to(.rgb))),
+                .lch => labToLch(T, xyzToLab(T, rgbToXyz(T, self.to(.rgb)))),
                 .lms => xyzToLms(T, rgbToXyz(T, self.to(.rgb))),
-                .oklab => lmsToOklab(T, xyzToLms(T, rgbToXyz(T, self.to(.rgb)))),
-                .oklch => oklabToOklch(T, lmsToOklab(T, xyzToLms(T, rgbToXyz(T, self.to(.rgb))))),
+                .oklab => xyzToOklab(T, rgbToXyz(T, self.to(.rgb))),
+                .oklch => oklabToOklch(T, xyzToOklab(T, rgbToXyz(T, self.to(.rgb)))),
                 .rgb => ycbcrToRgb(T, self),
                 .rgba => self.to(.rgb).to(.rgba),
-                .xyb => lmsToXyb(T, xyzToLms(T, rgbToXyz(T, self.to(.rgb)))),
+                .xyb => rgbToXyb(T, self.to(.rgb)),
                 .xyz => rgbToXyz(T, self.to(.rgb)),
                 .ycbcr => self,
             };
@@ -927,6 +927,34 @@ fn hsvToRgb(comptime T: type, hsv: Hsv(T)) Rgb(T) {
     };
 }
 
+fn hsvToHsl(comptime T: type, hsv: Hsv(T)) Hsl(T) {
+    const s_v = hsv.s / 100.0;
+    const v = hsv.v / 100.0;
+
+    const l = v * (1.0 - s_v / 2.0);
+    const s_l = if (l == 0 or l == 1) 0 else (v - l) / @min(l, 1 - l);
+
+    return .{
+        .h = hsv.h,
+        .s = s_l * 100.0,
+        .l = l * 100.0,
+    };
+}
+
+fn hslToHsv(comptime T: type, hsl: Hsl(T)) Hsv(T) {
+    const s_l = hsl.s / 100.0;
+    const l = hsl.l / 100.0;
+
+    const v = l + s_l * @min(l, 1 - l);
+    const s_v = if (v == 0) 0 else 2.0 * (1.0 - l / v);
+
+    return .{
+        .h = hsl.h,
+        .s = s_v * 100.0,
+        .v = v * 100.0,
+    };
+}
+
 fn linearToGamma(comptime T: type, c: T) T {
     return if (c > 0.0031308) 1.055 * pow(T, c, (1.0 / 2.4)) - 0.055 else c * 12.92;
 }
@@ -936,9 +964,9 @@ fn gammaToLinear(comptime T: type, c: T) T {
 }
 
 pub fn rgbToXyz(comptime T: type, rgb: Rgb(T)) Xyz(T) {
-    const r = gammaToLinear(rgb.r);
-    const g = gammaToLinear(rgb.g);
-    const b = gammaToLinear(rgb.b);
+    const r = gammaToLinear(T, rgb.r);
+    const g = gammaToLinear(T, rgb.g);
+    const b = gammaToLinear(T, rgb.b);
 
     return .{
         .x = (r * 0.4124 + g * 0.3576 + b * 0.1805) * 100,
@@ -953,27 +981,16 @@ pub fn xyzToRgb(comptime T: type, xyz: Xyz(T)) Rgb(T) {
     const b = (xyz.x * 0.0557 + xyz.y * -0.2040 + xyz.z * 1.0570) / 100;
 
     return .{
-        .r = clamp(linearToGamma(r), 0, 1),
-        .g = clamp(linearToGamma(g), 0, 1),
-        .b = clamp(linearToGamma(b), 0, 1),
+        .r = clamp(linearToGamma(T, r), 0, 1),
+        .g = clamp(linearToGamma(T, g), 0, 1),
+        .b = clamp(linearToGamma(T, b), 0, 1),
     };
 }
 
-pub fn rgbToLab(comptime T: type, rgb: Rgb(T)) Lab(T) {
-
-    // Convert to XYZ first
-    const r = gammaToLinear(rgb.r);
-    const g = gammaToLinear(rgb.g);
-    const b = gammaToLinear(rgb.b);
-
-    const x = (r * 0.4124 + g * 0.3576 + b * 0.1805) * 100;
-    const y = (r * 0.2126 + g * 0.7152 + b * 0.0722) * 100;
-    const z = (r * 0.0193 + g * 0.1192 + b * 0.9505) * 100;
-
-    // Convert XYZ to Lab
-    var xn = x / 95.047;
-    var yn = y / 100.000;
-    var zn = z / 108.883;
+pub fn xyzToLab(comptime T: type, xyz: Xyz(T)) Lab(T) {
+    var xn = xyz.x / 95.047;
+    var yn = xyz.y / 100.000;
+    var zn = xyz.z / 108.883;
 
     if (xn > 0.008856) {
         xn = pow(T, xn, 1.0 / 3.0);
@@ -1000,8 +1017,7 @@ pub fn rgbToLab(comptime T: type, rgb: Rgb(T)) Lab(T) {
     };
 }
 
-pub fn labToRgb(comptime T: type, lab: Lab(T)) Rgb(T) {
-    // Convert Lab to XYZ first
+pub fn labToXyz(comptime T: type, lab: Lab(T)) Xyz(T) {
     var y: f64 = (@max(0, @min(100, lab.l)) + 16.0) / 116.0;
     var x: f64 = (@max(-128, @min(127, lab.a)) / 500.0) + y;
     var z: f64 = y - (@max(-128, @min(127, lab.b)) / 200.0);
@@ -1024,20 +1040,10 @@ pub fn labToRgb(comptime T: type, lab: Lab(T)) Rgb(T) {
         z = (z - 16.0 / 116.0) / 7.787;
     }
 
-    // Observer. = 2°, illuminant = D65.
-    x *= 95.047;
-    y *= 100.000;
-    z *= 108.883;
-
-    // Convert XYZ to RGB
-    const r = (x * 3.2406 + y * -1.5372 + z * -0.4986) / 100;
-    const g = (x * -0.9689 + y * 1.8758 + z * 0.0415) / 100;
-    const b = (x * 0.0557 + y * -0.2040 + z * 1.0570) / 100;
-
     return .{
-        .r = clamp(linearToGamma(r), 0, 1),
-        .g = clamp(linearToGamma(g), 0, 1),
-        .b = clamp(linearToGamma(b), 0, 1),
+        .x = @floatCast(x * 95.047),
+        .y = @floatCast(y * 100.000),
+        .z = @floatCast(z * 108.883),
     };
 }
 
@@ -1080,22 +1086,39 @@ fn lmsToXyz(comptime T: type, lms: Lms(T)) Xyz(T) {
     };
 }
 
-fn lmsToOklab(comptime T: type, lms: Lms(T)) Oklab(T) {
-    const lp = std.math.cbrt(lms.l);
-    const mp = std.math.cbrt(lms.m);
-    const sp = std.math.cbrt(lms.s);
+fn xyzToOklab(comptime T: type, xyz: Xyz(T)) Oklab(T) {
+    const x = xyz.x / 100.0;
+    const y = xyz.y / 100.0;
+    const z = xyz.z / 100.0;
+
+    const l_linear = 0.8189330101 * x + 0.3618667424 * y - 0.1288597137 * z;
+    const m_linear = 0.0329845436 * x + 0.9293118715 * y + 0.0361456387 * z;
+    const s_linear = 0.0482003018 * x + 0.2643662691 * y + 0.6338517070 * z;
+
+    const l_dash = std.math.cbrt(l_linear);
+    const m_dash = std.math.cbrt(m_linear);
+    const s_dash = std.math.cbrt(s_linear);
+
     return .{
-        .l = 0.2104542553 * lp + 0.7936177850 * mp - 0.0040720468 * sp,
-        .a = 1.9779984951 * lp - 2.4285922050 * mp + 0.4505937099 * sp,
-        .b = 0.0259040371 * lp + 0.7827717662 * mp - 0.8086757660 * sp,
+        .l = 0.2104542553 * l_dash + 0.7936177850 * m_dash - 0.0040720468 * s_dash,
+        .a = 1.9779984951 * l_dash - 2.4285922050 * m_dash + 0.4505937099 * s_dash,
+        .b = 0.0259040371 * l_dash + 0.7827717662 * m_dash - 0.8086757660 * s_dash,
     };
 }
 
-fn oklabToLms(comptime T: type, oklab: Oklab(T)) Lms(T) {
+fn oklabToXyz(comptime T: type, oklab: Oklab(T)) Xyz(T) {
+    const l_dash = oklab.l + 0.3963377774 * oklab.a + 0.2158037573 * oklab.b;
+    const m_dash = oklab.l - 0.1055613458 * oklab.a - 0.0638541728 * oklab.b;
+    const s_dash = oklab.l - 0.0894841775 * oklab.a - 1.2914855480 * oklab.b;
+
+    const l_linear = l_dash * l_dash * l_dash;
+    const m_linear = m_dash * m_dash * m_dash;
+    const s_linear = s_dash * s_dash * s_dash;
+
     return .{
-        .l = std.math.pow(f64, 0.9999999985 * oklab.l + 0.3963377922 * oklab.a + 0.2158037581 * oklab.b, 3),
-        .m = std.math.pow(f64, 1.000000009 * oklab.l - 0.1055613423 * oklab.a - 0.06385417477 * oklab.b, 3),
-        .s = std.math.pow(f64, 1.000000055 * oklab.l - 0.08948418209 * oklab.a - 1.291485538 * oklab.b, 3),
+        .x = 100.0 * (1.2270138511 * l_linear - 0.5577999807 * m_linear + 0.2812561490 * s_linear),
+        .y = 100.0 * (-0.0405801784 * l_linear + 1.1122568696 * m_linear - 0.0716766787 * s_linear),
+        .z = 100.0 * (-0.0763812845 * l_linear - 0.4214819784 * m_linear + 1.5861632204 * s_linear),
     };
 }
 
@@ -1125,15 +1148,103 @@ fn oklchToOklab(comptime T: type, oklch: Oklch(T)) Oklab(T) {
     };
 }
 
-fn lmsToXyb(comptime T: type, lms: Lms(T)) Xyb(T) {
-    return .{ .x = lms.l - lms.m, .y = lms.l + lms.m, .b = lms.s };
+fn xyzToXyb(comptime T: type, xyz: Xyz(T)) Xyb(T) {
+    const r = (xyz.x * 3.2406 + xyz.y * -1.5372 + xyz.z * -0.4986) / 100;
+    const g = (xyz.x * -0.9689 + xyz.y * 1.8758 + xyz.z * 0.0415) / 100;
+    const b = (xyz.x * 0.0557 + xyz.y * -0.2040 + xyz.z * 1.0570) / 100;
+
+    const bias = 0.96723368009523958;
+    const cbrt_bias = 0.988945892534436;
+
+    const l = 0.30 * r + 0.622 * g + 0.078 * b + bias;
+    const m = 0.23 * r + 0.692 * g + 0.078 * b + bias;
+    const s = 0.24342268924547819 * r + 0.20476744424496821 * g + 0.5518098665095536 * b + bias;
+
+    const l_dash = std.math.cbrt(l) - cbrt_bias;
+    const m_dash = std.math.cbrt(m) - cbrt_bias;
+    const s_dash = std.math.cbrt(s) - cbrt_bias;
+
+    return .{
+        .x = 0.5 * (l_dash - m_dash),
+        .y = 0.5 * (l_dash + m_dash),
+        .b = s_dash,
+    };
 }
 
-fn xybToLms(comptime T: type, xyb: Xyb(T)) Lms(T) {
+fn xybToXyz(comptime T: type, xyb: Xyb(T)) Xyz(T) {
+    const cbrt_bias = 0.988945892534436;
+    const bias = 0.96723368009523958;
+
+    const l_dash = xyb.y + xyb.x;
+    const m_dash = xyb.y - xyb.x;
+    const s_dash = xyb.b;
+
+    const l_cbrt = l_dash + cbrt_bias;
+    const m_cbrt = m_dash + cbrt_bias;
+    const s_cbrt = s_dash + cbrt_bias;
+
+    const l = (l_cbrt * l_cbrt * l_cbrt) - bias;
+    const m = (m_cbrt * m_cbrt * m_cbrt) - bias;
+    const s = (s_cbrt * s_cbrt * s_cbrt) - bias;
+
+    const r = 11.03156690196 * l - 9.86694392157 * m - 0.16462300039 * s;
+    const g = -3.25414738039 * l + 4.41877039216 * m - 0.16462300039 * s;
+    const b = -3.65885128627 * l + 2.71292304706 * m + 1.94592823922 * s;
+
     return .{
-        .l = 0.5 * (xyb.x + xyb.y),
-        .m = 0.5 * (xyb.y - xyb.x),
-        .s = xyb.b,
+        .x = (r * 0.4124 + g * 0.3576 + b * 0.1805) * 100,
+        .y = (r * 0.2126 + g * 0.7152 + b * 0.0722) * 100,
+        .z = (r * 0.0193 + g * 0.1192 + b * 0.9505) * 100,
+    };
+}
+
+fn rgbToXyb(comptime T: type, rgb: Rgb(T)) Xyb(T) {
+    const r = gammaToLinear(T, rgb.r);
+    const g = gammaToLinear(T, rgb.g);
+    const b = gammaToLinear(T, rgb.b);
+
+    const bias = 0.96723368009523958;
+    const cbrt_bias = 0.988945892534436;
+
+    const l = 0.30 * r + 0.622 * g + 0.078 * b + bias;
+    const m = 0.23 * r + 0.692 * g + 0.078 * b + bias;
+    const s = 0.24342268924547819 * r + 0.20476744424496821 * g + 0.5518098665095536 * b + bias;
+
+    const l_dash = std.math.cbrt(l) - cbrt_bias;
+    const m_dash = std.math.cbrt(m) - cbrt_bias;
+    const s_dash = std.math.cbrt(s) - cbrt_bias;
+
+    return .{
+        .x = 0.5 * (l_dash - m_dash),
+        .y = 0.5 * (l_dash + m_dash),
+        .b = s_dash,
+    };
+}
+
+fn xybToRgb(comptime T: type, xyb: Xyb(T)) Rgb(T) {
+    const cbrt_bias = 0.988945892534436;
+    const bias = 0.96723368009523958;
+
+    const l_dash = xyb.y + xyb.x;
+    const m_dash = xyb.y - xyb.x;
+    const s_dash = xyb.b;
+
+    const l_cbrt = l_dash + cbrt_bias;
+    const m_cbrt = m_dash + cbrt_bias;
+    const s_cbrt = s_dash + cbrt_bias;
+
+    const l = (l_cbrt * l_cbrt * l_cbrt) - bias;
+    const m = (m_cbrt * m_cbrt * m_cbrt) - bias;
+    const s = (s_cbrt * s_cbrt * s_cbrt) - bias;
+
+    const r = 11.03156690196 * l - 9.86694392157 * m - 0.16462300039 * s;
+    const g = -3.25414738039 * l + 4.41877039216 * m - 0.16462300039 * s;
+    const b = -3.65885128627 * l + 2.71292304706 * m + 1.94592823922 * s;
+
+    return .{
+        .r = clamp(linearToGamma(T, r), 0, 1),
+        .g = clamp(linearToGamma(T, g), 0, 1),
+        .b = clamp(linearToGamma(T, b), 0, 1),
     };
 }
 
