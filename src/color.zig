@@ -40,12 +40,12 @@ pub const ColorSpace = enum {
         };
         inline for (std.meta.fields(ColorSpace)) |field| {
             const space: ColorSpace = @enumFromInt(field.value);
-            if (S == space.Color(T)) return space;
+            if (S == space.Type(T)) return space;
         }
         @compileError("Unknown color type " ++ @typeName(S));
     }
 
-    pub fn Color(self: ColorSpace, comptime T: type) type {
+    pub fn Type(self: ColorSpace, comptime T: type) type {
         return switch (self) {
             .gray => Gray(T),
             .hsl => Hsl(T),
@@ -63,7 +63,7 @@ pub const ColorSpace = enum {
         };
     }
 
-    pub fn convert(comptime self: ColorSpace, comptime T: type, color: anytype) self.Color(T) {
+    pub fn convert(comptime self: ColorSpace, comptime T: type, color: anytype) self.Type(T) {
         const InputType = @TypeOf(color);
         const input_space = ColorSpace.tag(InputType);
 
@@ -88,6 +88,33 @@ pub const ColorSpace = enum {
         }
     }
 };
+
+/// A tagged union capable of holding any color in the library with component type T.
+/// Useful for APIs that need to accept dynamic color types at runtime.
+pub fn Color(comptime T: type) type {
+    return union(ColorSpace) {
+        gray: Gray(T),
+        hsl: Hsl(T),
+        hsv: Hsv(T),
+        lab: Lab(T),
+        lch: Lch(T),
+        lms: Lms(T),
+        oklab: Oklab(T),
+        oklch: Oklch(T),
+        rgb: Rgb(T),
+        rgba: Rgba(T),
+        xyb: Xyb(T),
+        xyz: Xyz(T),
+        ycbcr: Ycbcr(T),
+
+        /// Converts this dynamic color to a specific target color space.
+        pub fn to(self: @This(), comptime target_space: ColorSpace) target_space.Type(T) {
+            return switch (self) {
+                inline else => |c| c.to(target_space),
+            };
+        }
+    };
+}
 
 /// A color in the [sRGB](https://en.wikipedia.org/wiki/SRGB) colorspace, with all components
 /// within the range 0-255 when `T` is `u8` and within 0-1 when `T` is float.
@@ -136,7 +163,7 @@ pub fn Rgb(comptime T: type) type {
             return .{ .r = self.r, .g = self.g, .b = self.b, .a = alpha };
         }
 
-        pub fn to(self: Rgb(T), comptime color_space: ColorSpace) color_space.Color(T) {
+        pub fn to(self: Rgb(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self),
                 .hsl => rgbToHsl(T, self),
@@ -233,7 +260,7 @@ pub fn Rgba(comptime T: type) type {
             return (@as(u32, r) << 24) | (@as(u32, g) << 16) | (@as(u32, b) << 8) | @as(u32, a);
         }
 
-        pub fn to(self: Rgba(T), comptime color_space: ColorSpace) color_space.Color(T) {
+        pub fn to(self: Rgba(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
                 .hsl => rgbToHsl(T, self.to(.rgb)),
@@ -298,7 +325,7 @@ pub fn Gray(comptime T: type) type {
     return struct {
         y: T,
 
-        pub fn to(self: Gray(T), comptime color_space: ColorSpace) color_space.Color(T) {
+        pub fn to(self: Gray(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => self,
                 else => grayToRgb(T, self).to(color_space),
@@ -341,7 +368,7 @@ pub fn Hsv(comptime T: type) type {
         s: T,
         v: T,
 
-        pub fn to(self: Hsv(T), comptime color_space: ColorSpace) color_space.Color(T) {
+        pub fn to(self: Hsv(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
                 .hsl => hsvToHsl(T, self),
@@ -381,7 +408,7 @@ pub fn Hsl(comptime T: type) type {
         s: T,
         l: T,
 
-        pub fn to(self: Hsl(T), comptime color_space: ColorSpace) color_space.Color(T) {
+        pub fn to(self: Hsl(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
                 .hsl => self,
@@ -423,7 +450,7 @@ pub fn Xyz(comptime T: type) type {
         y: T,
         z: T,
 
-        pub fn to(self: Xyz(T), comptime color_space: ColorSpace) color_space.Color(T) {
+        pub fn to(self: Xyz(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
                 .hsl => rgbToHsl(T, self.to(.rgb)),
@@ -464,7 +491,7 @@ pub fn Lab(comptime T: type) type {
         a: T,
         b: T,
 
-        pub fn to(self: Lab(T), comptime color_space: ColorSpace) color_space.Color(T) {
+        pub fn to(self: Lab(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
                 .hsl => rgbToHsl(T, self.to(.rgb)),
@@ -504,7 +531,7 @@ pub fn Lch(comptime T: type) type {
         l: T,
         m: T,
         s: T,
-        pub fn to(self: Lch(T), comptime color_space: ColorSpace) color_space.Color(T) {
+        pub fn to(self: Lch(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
                 .hsl => rgbToHsl(T, self.to(.rgb)),
@@ -543,7 +570,7 @@ pub fn Lms(comptime T: type) type {
         m: T,
         s: T,
 
-        pub fn to(self: Lms(T), comptime color_space: ColorSpace) color_space.Color(T) {
+        pub fn to(self: Lms(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
                 .hsl => rgbToHsl(T, self.to(.rgb)),
@@ -584,7 +611,7 @@ pub fn Oklab(comptime T: type) type {
         a: T,
         b: T,
 
-        pub fn to(self: Oklab(T), comptime color_space: ColorSpace) color_space.Color(T) {
+        pub fn to(self: Oklab(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
                 .hsl => rgbToHsl(T, self.to(.rgb)),
@@ -625,7 +652,7 @@ pub fn Oklch(comptime T: type) type {
         c: T,
         h: T,
 
-        pub fn to(self: Oklch(T), comptime color_space: ColorSpace) color_space.Color(T) {
+        pub fn to(self: Oklch(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
                 .hsl => rgbToHsl(T, self.to(.rgb)),
@@ -667,7 +694,7 @@ pub fn Xyb(comptime T: type) type {
         y: T,
         b: T,
 
-        pub fn to(self: Xyb(T), comptime color_space: ColorSpace) color_space.Color(T) {
+        pub fn to(self: Xyb(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
                 .hsl => rgbToHsl(T, self.to(.rgb)),
@@ -710,7 +737,7 @@ pub fn Ycbcr(comptime T: type) type {
         cb: T,
         cr: T,
 
-        pub fn to(self: Ycbcr(T), comptime color_space: ColorSpace) color_space.Color(T) {
+        pub fn to(self: Ycbcr(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
                 .hsl => rgbToHsl(T, self.to(.rgb)),
