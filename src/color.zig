@@ -1488,7 +1488,7 @@ test "vivid colors" {
 }
 
 // test "color formatting" {
-//     const red = Rgb{ .r = 255, .g = 0, .b = 0 };
+//     const red: Rgb(u8) = .{ .r = 255, .g = 0, .b = 0 };
 
 //     // Test plain format with {any}
 //     var plain_buffer: [100]u8 = undefined;
@@ -1503,22 +1503,22 @@ test "vivid colors" {
 //     try std.testing.expect(std.mem.indexOf(u8, color_result, "\x1b[") != null); // Has SGR codes
 // }
 
-// test "100 random colors" {
-//     const seed: u64 = std.crypto.random.int(u64);
-//     var prng: std.Random.DefaultPrng = .init(seed);
-//     var random = prng.random();
-//     for (0..100) |_| {
-//         const rgb: Rgb = .{ .r = random.int(u8), .g = random.int(u8), .b = random.int(u8) };
-//         const rgb_from_hsl = rgb.toHsl().toRgb();
-//         try expectEqualDeep(rgb, rgb_from_hsl);
-//         const rgb_from_hsv = rgb.toHsv().toRgb();
-//         try expectEqualDeep(rgb, rgb_from_hsv);
-//         const rgb_from_xyz = rgb.toXyz().toRgb();
-//         try expectEqualDeep(rgb, rgb_from_xyz);
-//         const rgb_from_lab = rgb.toLab().toRgb();
-//         try expectEqualDeep(rgb, rgb_from_lab);
-//     }
-// }
+test "100 random colors" {
+    const seed: u64 = std.crypto.random.int(u64);
+    var prng: std.Random.DefaultPrng = .init(seed);
+    var random = prng.random();
+    for (0..100) |_| {
+        const rgb: Rgb(u8) = .{ .r = random.int(u8), .g = random.int(u8), .b = random.int(u8) };
+        const rgb_from_hsl = rgb.as(f64).to(.hsl).to(.rgb).as(u8);
+        try expectEqualDeep(rgb, rgb_from_hsl);
+        const rgb_from_hsv = rgb.as(f64).to(.hsv).to(.rgb).as(u8);
+        try expectEqualDeep(rgb, rgb_from_hsv);
+        const rgb_from_xyz = rgb.as(f64).to(.xyz).to(.rgb).as(u8);
+        try expectEqualDeep(rgb, rgb_from_xyz);
+        const rgb_from_lab = rgb.as(f64).to(.lab).to(.rgb).as(u8);
+        try expectEqualDeep(rgb, rgb_from_lab);
+    }
+}
 
 // test "color type validation" {
 //     try expectEqual(isColor(u8), true);
