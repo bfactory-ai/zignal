@@ -102,6 +102,31 @@ pub fn Rgb(comptime T: type) type {
         g: T,
         b: T,
 
+        /// Creates RGB from 24-bit hexadecimal value (0xRRGGBB format).
+        pub fn initHex(hex_code: u24) Rgb(T) {
+            const r: u8 = @intCast((hex_code >> 16) & 0xFF);
+            const g: u8 = @intCast((hex_code >> 8) & 0xFF);
+            const b: u8 = @intCast(hex_code & 0xFF);
+
+            if (T == u8) {
+                return .{ .r = r, .g = g, .b = b };
+            } else {
+                return .{
+                    .r = @as(T, @floatFromInt(r)) / 255.0,
+                    .g = @as(T, @floatFromInt(g)) / 255.0,
+                    .b = @as(T, @floatFromInt(b)) / 255.0,
+                };
+            }
+        }
+
+        /// Converts RGB to 24-bit hexadecimal representation (0xRRGGBB format).
+        pub fn hex(self: Rgb(T)) u24 {
+            const r: u8 = if (T == u8) self.r else @intFromFloat(@round(clamp(self.r, 0, 1) * 255));
+            const g: u8 = if (T == u8) self.g else @intFromFloat(@round(clamp(self.g, 0, 1) * 255));
+            const b: u8 = if (T == u8) self.b else @intFromFloat(@round(clamp(self.b, 0, 1) * 255));
+            return (@as(u24, r) << 16) | (@as(u24, g) << 8) | @as(u24, b);
+        }
+
         pub fn withAlpha(self: Rgb(T), alpha: T) Rgba(T) {
             return .{ .r = self.r, .g = self.g, .b = self.b, .a = alpha };
         }
@@ -169,6 +194,33 @@ pub fn Rgba(comptime T: type) type {
         g: T,
         b: T,
         a: T,
+
+        /// Creates RGBA from 32-bit hexadecimal value (0xRRGGBBAA format).
+        pub fn initHex(hex_code: u32) Rgba(T) {
+            const r: u8 = @intCast((hex_code >> 24) & 0xFF);
+            const g: u8 = @intCast((hex_code >> 16) & 0xFF);
+            const b: u8 = @intCast((hex_code >> 8) & 0xFF);
+            const a: u8 = @intCast(hex_code & 0xFF);
+            if (T == u8) {
+                return .{ .r = r, .g = g, .b = b, .a = a };
+            } else {
+                return .{
+                    .r = @as(T, @floatFromInt(r)) / 255.0,
+                    .g = @as(T, @floatFromInt(g)) / 255.0,
+                    .b = @as(T, @floatFromInt(b)) / 255.0,
+                    .a = @as(T, @floatFromInt(a)) / 255.0,
+                };
+            }
+        }
+
+        /// Converts RGBA to 32-bit hexadecimal representation (0xRRGGBBAA format).
+        pub fn hex(self: Rgba(T)) u32 {
+            const r: u8 = if (T == u8) self.r else @intFromFloat(@round(clamp(self.r, 0, 1) * 255));
+            const g: u8 = if (T == u8) self.g else @intFromFloat(@round(clamp(self.g, 0, 1) * 255));
+            const b: u8 = if (T == u8) self.b else @intFromFloat(@round(clamp(self.b, 0, 1) * 255));
+            const a: u8 = if (T == u8) self.a else @intFromFloat(@round(clamp(self.a, 0, 1) * 255));
+            return (@as(u32, r) << 24) | (@as(u32, g) << 16) | (@as(u32, b) << 8) | @as(u32, a);
+        }
 
         pub fn to(self: Rgba(T), comptime color_space: ColorSpace) color_space.Color(T) {
             return switch (color_space) {
@@ -1268,37 +1320,31 @@ test "convert grayscale" {
     try expectEqual((Lab(f64){ .l = 50, .a = 0, .b = 0 }).to(.gray).as(u8), Gray(u8){ .y = 119 });
 }
 
-// test "Rgb fromHex and toHex" {
-//     // Test fromHex with various colors
-//     try expectEqualDeep(Rgb.fromHex(0x4e008e), Rgb{ .r = 78, .g = 0, .b = 142 });
-//     try expectEqualDeep(Rgb.fromHex(0x000000), Rgb{ .r = 0, .g = 0, .b = 0 });
-//     try expectEqualDeep(Rgb.fromHex(0xffffff), Rgb{ .r = 255, .g = 255, .b = 255 });
-//     try expectEqualDeep(Rgb.fromHex(0xff0000), Rgb{ .r = 255, .g = 0, .b = 0 });
-//     try expectEqualDeep(Rgb.fromHex(0x00ff00), Rgb{ .r = 0, .g = 255, .b = 0 });
-//     try expectEqualDeep(Rgb.fromHex(0x0000ff), Rgb{ .r = 0, .g = 0, .b = 255 });
-//     try expectEqualDeep(Rgb.fromHex(0x808080), Rgb{ .r = 128, .g = 128, .b = 128 });
+test "Rgb fromHex and toHex" {
+    try expectEqualDeep(Rgb(u8).initHex(0x4e008e), Rgb(u8){ .r = 78, .g = 0, .b = 142 });
+    try expectEqualDeep(Rgb(u8).initHex(0x000000), Rgb(u8){ .r = 0, .g = 0, .b = 0 });
+    try expectEqualDeep(Rgb(u8).initHex(0xffffff), Rgb(u8){ .r = 255, .g = 255, .b = 255 });
+    try expectEqualDeep(Rgb(u8).initHex(0xff0000), Rgb(u8){ .r = 255, .g = 0, .b = 0 });
+    try expectEqualDeep(Rgb(u8).initHex(0x00ff00), Rgb(u8){ .r = 0, .g = 255, .b = 0 });
+    try expectEqualDeep(Rgb(u8).initHex(0x0000ff), Rgb(u8){ .r = 0, .g = 0, .b = 255 });
+    try expectEqualDeep(Rgb(u8).initHex(0x808080), Rgb(u8){ .r = 128, .g = 128, .b = 128 });
 
-//     // Test toHex converts back correctly
-//     const purple = Rgb{ .r = 78, .g = 0, .b = 142 };
-//     try expectEqual(purple.toHex(), 0x4e008e);
+    const black: Rgb(u8) = .{ .r = 0, .g = 0, .b = 0 };
+    try expectEqual(black.hex(), 0x000000);
+    const white: Rgb(u8) = .{ .r = 255, .g = 255, .b = 255 };
+    try expectEqual(white.hex(), 0xffffff);
+    const red: Rgb(u8) = .{ .r = 255, .g = 0, .b = 0 };
+    try expectEqual(red.hex(), 0xff0000);
+    const purple: Rgb(u8) = .{ .r = 78, .g = 0, .b = 142 };
+    try expectEqual(purple.hex(), 0x4e008e);
 
-//     const black = Rgb{ .r = 0, .g = 0, .b = 0 };
-//     try expectEqual(black.toHex(), 0x000000);
-
-//     const white = Rgb{ .r = 255, .g = 255, .b = 255 };
-//     try expectEqual(white.toHex(), 0xffffff);
-
-//     const red = Rgb{ .r = 255, .g = 0, .b = 0 };
-//     try expectEqual(red.toHex(), 0xff0000);
-
-//     // Test round-trip conversion
-//     const test_colors = [_]u24{ 0x123456, 0xabcdef, 0x987654, 0xfedcba, 0x111111, 0xeeeeee };
-//     for (test_colors) |hex_color| {
-//         const rgb = Rgb.fromHex(hex_color);
-//         const converted_back = rgb.toHex();
-//         try expectEqual(converted_back, hex_color);
-//     }
-// }
+    const test_colors = [_]u24{ 0x123456, 0xabcdef, 0x987654, 0xfedcba, 0x111111, 0xeeeeee };
+    for (test_colors) |hex_color| {
+        const rgb: Rgb(u8) = .initHex(hex_color);
+        const converted_back = rgb.hex();
+        try expectEqual(converted_back, hex_color);
+    }
+}
 
 // test "Rgba fromHex and toHex" {
 //     // Test fromHex with various colors (RGBA format)
