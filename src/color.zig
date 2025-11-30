@@ -223,8 +223,8 @@ pub fn Rgba(comptime T: type) type {
     };
 }
 
-/// A grayscale color using the same luminance definition as YCbCr (BT.601):
-/// Y = 0.299 R + 0.587 G + 0.114 B. Supports `u8` and float backings.
+/// A grayscale color using sRGB Luminance (BT.709):
+/// Y = 0.2126 R + 0.7152 G + 0.0722 B. Supports `u8` and float backings.
 pub fn Gray(comptime T: type) type {
     switch (@typeInfo(T)) {
         .float => {},
@@ -740,9 +740,11 @@ pub fn rgbToGray(comptime T: type, rgb: Rgb(T)) Gray(T) {
         const r: i32 = rgb.r;
         const g: i32 = rgb.g;
         const b: i32 = rgb.b;
-        return .{ .y = @intCast(clamp((19595 * r + 38470 * g + 7471 * b + 32768) >> 16, 0, 255)) };
+        // BT.709 coefficients scaled by 65536 (2^16) for fixed-point
+        // Y = 0.2126*R + 0.7152*G + 0.0722*B
+        return .{ .y = @intCast(clamp((13933 * r + 46871 * g + 4732 * b + 32768) >> 16, 0, 255)) };
     } else {
-        const y = 0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b;
+        const y = 0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b;
         return .{ .y = clamp(y, 0, 1) };
     }
 }
@@ -1258,12 +1260,13 @@ fn testColorConversion(from: Rgb(u8), to: anytype) !void {
     try expectEqualDeep(recovered, from);
 }
 
-// test "convert grayscale" {
-//     try expectEqual(convertColor(u8, Rgb{ .r = 128, .g = 128, .b = 128 }), 128);
-//     try expectEqual(convertColor(u8, Hsl{ .h = 0, .s = 100, .l = 50 }), 54);
-//     try expectEqual(convertColor(u8, Hsv{ .h = 0, .s = 100, .v = 50 }), 27);
-//     try expectEqual(convertColor(u8, Lab{ .l = 50, .a = 0, .b = 0 }), 119);
-// }
+test "convert grayscale" {
+    try expectEqual((Rgb(u8){ .r = 128, .g = 128, .b = 128 }).to(.gray), Gray(u8){ .y = 128 });
+    try expectEqual((Rgb(u8){ .r = 255, .g = 0, .b = 0 }).to(.gray), Gray(u8){ .y = 54 });
+    try expectEqual((Hsl(f64){ .h = 0, .s = 100, .l = 50 }).to(.gray).as(u8), Gray(u8){ .y = 54 });
+    try expectEqual((Hsv(f64){ .h = 0, .s = 100, .v = 50 }).to(.gray).as(u8), Gray(u8){ .y = 27 });
+    try expectEqual((Lab(f64){ .l = 50, .a = 0, .b = 0 }).to(.gray).as(u8), Gray(u8){ .y = 119 });
+}
 
 // test "Rgb fromHex and toHex" {
 //     // Test fromHex with various colors
