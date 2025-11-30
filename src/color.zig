@@ -101,6 +101,11 @@ pub fn Rgb(comptime T: type) type {
         r: T,
         g: T,
         b: T,
+        pub const black = Rgb(T).initHex(0x000000);
+        pub const white = Rgb(T).initHex(0xffffff);
+        pub const red = Rgb(T).initHex(0xff0000);
+        pub const green = Rgb(T).initHex(0x00ff00);
+        pub const blue = Rgb(T).initHex(0x0000ff);
 
         /// Creates RGB from 24-bit hexadecimal value (0xRRGGBB format).
         pub fn initHex(hex_code: u24) Rgb(T) {
@@ -194,6 +199,12 @@ pub fn Rgba(comptime T: type) type {
         g: T,
         b: T,
         a: T,
+        pub const transparent = Rgba(T).initHex(0x00000000);
+        pub const white = Rgba(T).initHex(0xffffffff);
+        pub const black = Rgba(T).initHex(0x000000ff);
+        pub const red = Rgba(T).initHex(0xff0000ff);
+        pub const green = Rgba(T).initHex(0x00ff00ff);
+        pub const blue = Rgba(T).initHex(0x0000ffff);
 
         /// Creates RGBA from 32-bit hexadecimal value (0xRRGGBBAA format).
         pub fn initHex(hex_code: u32) Rgba(T) {
@@ -1341,43 +1352,40 @@ test "Rgb fromHex and toHex" {
     const test_colors = [_]u24{ 0x123456, 0xabcdef, 0x987654, 0xfedcba, 0x111111, 0xeeeeee };
     for (test_colors) |hex_color| {
         const rgb: Rgb(u8) = .initHex(hex_color);
-        const converted_back = rgb.hex();
-        try expectEqual(converted_back, hex_color);
+        try expectEqual(rgb.hex(), hex_color);
     }
+
+    try expectEqualDeep(Rgb(u8).initHex(0x000000), Rgb(u8).black);
+    try expectEqualDeep(Rgb(u8).initHex(0xffffff), Rgb(u8).white);
 }
 
-// test "Rgba fromHex and toHex" {
-//     // Test fromHex with various colors (RGBA format)
-//     try expectEqualDeep(Rgba.fromHex(0x4e008eff), Rgba{ .r = 78, .g = 0, .b = 142, .a = 255 });
-//     try expectEqualDeep(Rgba.fromHex(0x000000ff), Rgba{ .r = 0, .g = 0, .b = 0, .a = 255 });
-//     try expectEqualDeep(Rgba.fromHex(0xffffff00), Rgba{ .r = 255, .g = 255, .b = 255, .a = 0 });
-//     try expectEqualDeep(Rgba.fromHex(0xff000080), Rgba{ .r = 255, .g = 0, .b = 0, .a = 128 });
-//     try expectEqualDeep(Rgba.fromHex(0x00ff00c0), Rgba{ .r = 0, .g = 255, .b = 0, .a = 192 });
-//     try expectEqualDeep(Rgba.fromHex(0x0000ff40), Rgba{ .r = 0, .g = 0, .b = 255, .a = 64 });
+test "Rgba fromHex and toHex" {
+    try expectEqualDeep(Rgba(u8).initHex(0x4e008eff), Rgba(u8){ .r = 78, .g = 0, .b = 142, .a = 255 });
+    try expectEqualDeep(Rgba(u8).initHex(0x000000ff), Rgba(u8){ .r = 0, .g = 0, .b = 0, .a = 255 });
+    try expectEqualDeep(Rgba(u8).initHex(0xffffff00), Rgba(u8){ .r = 255, .g = 255, .b = 255, .a = 0 });
+    try expectEqualDeep(Rgba(u8).initHex(0xff000080), Rgba(u8){ .r = 255, .g = 0, .b = 0, .a = 128 });
+    try expectEqualDeep(Rgba(u8).initHex(0x00ff00c0), Rgba(u8){ .r = 0, .g = 255, .b = 0, .a = 192 });
+    try expectEqualDeep(Rgba(u8).initHex(0x0000ff40), Rgba(u8){ .r = 0, .g = 0, .b = 255, .a = 64 });
 
-//     // Test toHex converts back correctly
-//     const purple_alpha = Rgba{ .r = 78, .g = 0, .b = 142, .a = 255 };
-//     try expectEqual(purple_alpha.toHex(), 0x4e008eff);
+    const purple_alpha: Rgba(u8) = .{ .r = 78, .g = 0, .b = 142, .a = 255 };
+    try expectEqual(purple_alpha.hex(), 0x4e008eff);
 
-//     const transparent_white = Rgba{ .r = 255, .g = 255, .b = 255, .a = 0 };
-//     try expectEqual(transparent_white.toHex(), 0xffffff00);
+    const transparent_white: Rgba(u8) = .{ .r = 255, .g = 255, .b = 255, .a = 0 };
+    try expectEqual(transparent_white.hex(), 0xffffff00);
 
-//     const semi_red = Rgba{ .r = 255, .g = 0, .b = 0, .a = 128 };
-//     try expectEqual(semi_red.toHex(), 0xff000080);
+    const semi_red: Rgba(u8) = .{ .r = 255, .g = 0, .b = 0, .a = 128 };
+    try expectEqual(semi_red.hex(), 0xff000080);
 
-//     // Test round-trip conversion
-//     const test_colors = [_]u32{ 0x12345678, 0xabcdef90, 0x98765432, 0xfedcba01, 0x11111111, 0xeeeeeeee };
-//     for (test_colors) |hex_color| {
-//         const rgba = Rgba.fromHex(hex_color);
-//         const converted_back = rgba.toHex();
-//         try expectEqual(converted_back, hex_color);
-//     }
+    const test_colors = [_]u32{ 0x12345678, 0xabcdef90, 0x98765432, 0xfedcba01, 0x11111111, 0xeeeeeeee };
+    for (test_colors) |hex_color| {
+        const rgba: Rgba(u8) = .initHex(hex_color);
+        try expectEqual(rgba.hex(), hex_color);
+    }
 
-//     // Test edge cases
-//     try expectEqualDeep(Rgba.fromHex(0x00000000), Rgba.transparent);
-//     try expectEqualDeep(Rgba.fromHex(0x000000ff), Rgba.black);
-//     try expectEqualDeep(Rgba.fromHex(0xffffffff), Rgba.white);
-// }
+    try expectEqualDeep(Rgba(u8).initHex(0x00000000), Rgba(u8).transparent);
+    try expectEqualDeep(Rgba(u8).initHex(0x000000ff), Rgba(u8).black);
+    try expectEqualDeep(Rgba(u8).initHex(0xffffffff), Rgba(u8).white);
+}
 
 // test "primary colors" {
 //     // red: 0xff0000
