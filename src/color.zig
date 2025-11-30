@@ -15,7 +15,6 @@ const blending = @import("color/blending.zig");
 pub const Blending = blending.Blending;
 pub const blendColors = blending.blendColors;
 const conversions = @import("color/conversions.zig");
-pub const convertColor = conversions.convertColor;
 pub const isColor = conversions.isColor;
 const getSimpleTypeName = @import("meta.zig").getSimpleTypeName;
 
@@ -34,23 +33,16 @@ pub const ColorSpace = enum {
     xyz,
     ycbcr,
 
-    pub fn fromSource(comptime S: type, comptime T: type) ColorSpace {
-        return switch (S) {
-            Gray(T) => .gray,
-            Hsl(T) => .hsl,
-            Hsv(T) => .hsv,
-            Lab(T) => .lab,
-            Lch(T) => .lch,
-            Lms(T) => .lms,
-            Oklab(T) => .oklab,
-            Oklch(T) => .oklch,
-            Rgba(T) => .rgba,
-            Rgb(T) => .rgb,
-            Xyb(T) => .xyb,
-            Xyz(T) => .xyz,
-            Ycbcr(T) => .ycbcr,
+    pub fn tag(comptime S: type) ColorSpace {
+        const T = switch (@typeInfo(S)) {
+            .@"struct" => |info| info.fields[0].type,
             else => @compileError("Unknown color type " ++ @typeName(S)),
         };
+        inline for (std.meta.fields(ColorSpace)) |field| {
+            const space: ColorSpace = @enumFromInt(field.value);
+            if (S == space.Color(T)) return space;
+        }
+        @compileError("Unknown color type " ++ @typeName(S));
     }
 
     pub fn Color(self: ColorSpace, comptime T: type) type {
@@ -73,8 +65,7 @@ pub const ColorSpace = enum {
 
     pub fn convert(comptime self: ColorSpace, comptime T: type, color: anytype) self.Color(T) {
         const InputType = @TypeOf(color);
-        const C = ComponentType(InputType);
-        const input_space = ColorSpace.fromSource(InputType, C);
+        const input_space = ColorSpace.tag(InputType);
 
         const input_supports_int = switch (input_space) {
             .rgb, .rgba, .ycbcr, .gray => true,
@@ -95,13 +86,6 @@ pub const ColorSpace = enum {
             // Convert type first (for better precision if promoting to float), then space.
             return color.as(T).to(self);
         }
-    }
-
-    fn ComponentType(comptime C: type) type {
-        return switch (@typeInfo(C)) {
-            .@"struct" => |info| info.fields[0].type,
-            else => @compileError("Unknown color type " ++ @typeName(C)),
-        };
     }
 };
 
@@ -1259,9 +1243,18 @@ fn xybToRgb(comptime T: type, xyb: Xyb(T)) Rgb(T) {
 
 // Helper function for testing round-trip conversions
 fn testColorConversion(from: Rgb(u8), to: anytype) !void {
-    const converted = convertColor(@TypeOf(to), from);
+    const Dest = @TypeOf(to);
+    const T = @typeInfo(Dest).@"struct".fields[0].type;
+    const target_space = ColorSpace.tag(Dest);
+
+    const converted = target_space.convert(T, from);
     try expectEqualDeep(converted, to);
-    const recovered = convertColor(Rgb, converted);
+
+    const Source = @TypeOf(from);
+    const U = @typeInfo(Source).@"struct".fields[0].type;
+    const source_space = ColorSpace.tag(Source);
+
+    const recovered = source_space.convert(U, converted);
     try expectEqualDeep(recovered, from);
 }
 
