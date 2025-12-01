@@ -10,6 +10,16 @@ const expectEqualDeep = std.testing.expectEqualDeep;
 const clamp = std.math.clamp;
 const lerp = std.math.lerp;
 const pow = std.math.pow;
+// Fixed-point Rec.601 coefficients scaled by 2^16.
+const CB_R: i32 = -11059;
+const CB_G: i32 = -21710;
+const CB_B: i32 = 32768;
+const CR_R: i32 = 32768;
+const CR_G: i32 = -27439;
+const CR_B: i32 = -5329;
+const Y_R: i32 = 19595;
+const Y_G: i32 = 38470;
+const Y_B: i32 = 7471;
 
 const blending = @import("color/blending.zig");
 pub const Blending = blending.Blending;
@@ -773,24 +783,18 @@ pub fn Ycbcr(comptime T: type) type {
 /// Uses 16-bit fixed-point arithmetic for precision when T is u8.
 fn rgbToYcbcr(comptime T: type, rgb: Rgb(T)) Ycbcr(T) {
     if (T == u8) {
+        // Integer (fixed-point) BT.601: 16-bit fractional precision, rounding at +32768.
         const r: i32 = rgb.r;
         const g: i32 = rgb.g;
         const b: i32 = rgb.b;
 
-        // BT.601 coefficients scaled by 65536 (2^16) for fixed-point
-        // Y = 0.299*R + 0.587*G + 0.114*B
-        const y: u8 = @intCast(clamp((19595 * r + 38470 * g + 7471 * b + 32768) >> 16, 0, 255));
-
-        // Cb = -0.169*R - 0.331*G + 0.5*B + 128
-        const cb: u8 = @intCast(clamp(((-11059 * r - 21710 * g + 32768 * b + 32768) >> 16) + 128, 0, 255));
-
-        // Cr = 0.5*R - 0.419*G - 0.081*B + 128
-        const cr: u8 = @intCast(clamp(((32768 * r - 27439 * g - 5329 * b + 32768) >> 16) + 128, 0, 255));
-
+        const y: u8 = @intCast(clamp((@as(i64, Y_R) * r + @as(i64, Y_G) * g + @as(i64, Y_B) * b + 32768) >> 16, 0, 255));
+        const cb_tmp: i64 = ((@as(i64, CB_R) * r + @as(i64, CB_G) * g + @as(i64, CB_B) * b + 32768) >> 16) + 128;
+        const cr_tmp: i64 = ((@as(i64, CR_R) * r + @as(i64, CR_G) * g + @as(i64, CR_B) * b + 32768) >> 16) + 128;
         return .{
             .y = y,
-            .cb = cb,
-            .cr = cr,
+            .cb = @intCast(clamp(cb_tmp, 0, 255)),
+            .cr = @intCast(clamp(cr_tmp, 0, 255)),
         };
     } else {
         const y = 0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b;
@@ -830,25 +834,15 @@ pub fn grayToRgb(comptime T: type, gray: Gray(T)) Rgb(T) {
 /// Uses 16-bit fixed-point arithmetic for precision when T is u8.
 pub fn ycbcrToRgb(comptime T: type, ycbcr: Ycbcr(T)) Rgb(T) {
     if (T == u8) {
-        const y = @as(i32, ycbcr.y);
-        const cb = @as(i32, ycbcr.cb) - 128;
-        const cr = @as(i32, ycbcr.cr) - 128;
+        const y: i64 = ycbcr.y;
+        const cb: i64 = @as(i64, ycbcr.cb) - 128;
+        const cr: i64 = @as(i64, ycbcr.cr) - 128;
 
-        // BT.601 inverse coefficients scaled by 65536 (2^16) for fixed-point
-        // R = Y + 1.402 * Cr
         const r: u8 = @intCast(clamp(y + ((91881 * cr + 32768) >> 16), 0, 255));
-
-        // G = Y - 0.344136 * Cb - 0.714136 * Cr
         const g: u8 = @intCast(clamp(y - ((22554 * cb + 46802 * cr + 32768) >> 16), 0, 255));
-
-        // B = Y + 1.772 * Cb
         const b: u8 = @intCast(clamp(y + ((116130 * cb + 32768) >> 16), 0, 255));
 
-        return .{
-            .r = r,
-            .g = g,
-            .b = b,
-        };
+        return .{ .r = r, .g = g, .b = b };
     } else {
         // Float implementation
         const y = ycbcr.y;
@@ -1337,6 +1331,17 @@ inline fn testColorConversion(from: Rgb(u8), to: anytype) !void {
     try expectEqualDeep(recovered, from);
 }
 
+fn expectRgbClose(expected: Rgb(u8), actual: Rgb(u8)) !void {
+    const diff = struct { r: i16, g: i16, b: i16 }{
+        .r = @as(i16, expected.r) - @as(i16, actual.r),
+        .g = @as(i16, expected.g) - @as(i16, actual.g),
+        .b = @as(i16, expected.b) - @as(i16, actual.b),
+    };
+    try expect(@abs(diff.r) <= 1);
+    try expect(@abs(diff.g) <= 1);
+    try expect(@abs(diff.b) <= 1);
+}
+
 test "convert grayscale" {
     try expectEqual((Rgb(u8){ .r = 128, .g = 128, .b = 128 }).to(.gray), Gray(u8){ .y = 128 });
     try expectEqual((Rgb(u8){ .r = 255, .g = 0, .b = 0 }).to(.gray), Gray(u8){ .y = 54 });
@@ -1529,6 +1534,8 @@ test "100 random colors" {
         try expectEqualDeep(rgb, rgb_from_lms);
         const rgb_from_ycbcr = rgb.as(f64).to(.ycbcr).to(.rgb).as(u8);
         try expectEqualDeep(rgb, rgb_from_ycbcr);
+        const rgb_from_ycbcr2 = rgb.to(.ycbcr).to(.rgb);
+        try expectRgbClose(rgb, rgb_from_ycbcr2);
     }
 }
 
