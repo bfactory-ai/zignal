@@ -505,8 +505,8 @@ pub fn Lch(comptime T: type) type {
     return struct {
         pub const space = ColorSpace.lch;
         l: T,
-        m: T,
-        s: T,
+        c: T,
+        h: T,
         pub fn to(self: Lch(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
@@ -565,12 +565,12 @@ pub fn Lms(comptime T: type) type {
             };
         }
 
-        pub fn as(self: Lms(T), comptime U: type) Lms(U) {
+        pub fn as(self: Lch(T), comptime U: type) Lch(U) {
             if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
             return .{
                 .l = @floatCast(self.l),
-                .m = @floatCast(self.m),
-                .s = @floatCast(self.s),
+                .c = @floatCast(self.c),
+                .h = @floatCast(self.h),
             };
         }
     };
