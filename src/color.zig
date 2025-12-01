@@ -1517,8 +1517,18 @@ test "100 random colors" {
         try expectEqualDeep(rgb, rgb_from_xyz);
         const rgb_from_lab = rgb.as(f64).to(.lab).to(.rgb).as(u8);
         try expectEqualDeep(rgb, rgb_from_lab);
+        const rgb_from_lch = rgb.as(f64).to(.lch).to(.rgb).as(u8);
+        try expectEqualDeep(rgb, rgb_from_lch);
         const rgb_from_oklab = rgb.as(f64).to(.oklab).to(.rgb).as(u8);
         try expectEqualDeep(rgb, rgb_from_oklab);
+        const rgb_from_oklch = rgb.as(f64).to(.oklch).to(.rgb).as(u8);
+        try expectEqualDeep(rgb, rgb_from_oklch);
+        const rgb_from_xyb = rgb.as(f64).to(.xyb).to(.rgb).as(u8);
+        try expectEqualDeep(rgb, rgb_from_xyb);
+        const rgb_from_lms = rgb.as(f64).to(.lms).to(.rgb).as(u8);
+        try expectEqualDeep(rgb, rgb_from_lms);
+        const rgb_from_ycbcr = rgb.as(f64).to(.ycbcr).to(.rgb).as(u8);
+        try expectEqualDeep(rgb, rgb_from_ycbcr);
     }
 }
 
