@@ -53,7 +53,7 @@ pub fn convertColor(comptime DestType: type, source: anytype) DestType {
         };
         const gray = Gray(SrcType){ .y = source };
         if (DestType.space == .gray) return gray.as(DestT);
-        return gray.to(DestType.space).as(DestT);
+        return gray.as(DestT).to(DestType.space).as(DestT);
     }
 
     // Color -> Scalar (Luminance)
@@ -66,6 +66,13 @@ pub fn convertColor(comptime DestType: type, source: anytype) DestType {
         .@"struct" => |info| info.fields[0].type,
         else => @compileError("Destination type must be a color struct"),
     };
+
+    // If destination expects floats and the source supports casting, coerce before converting.
+    if (@hasDecl(SrcType, "as") and @typeInfo(DestT) == .float) {
+        const coerced = source.as(DestT);
+        return coerced.to(DestType.space).as(DestT);
+    }
+
     return source.to(DestType.space).as(DestT);
 }
 
@@ -716,11 +723,11 @@ pub fn Lms(comptime T: type) type {
             };
         }
 
-        pub fn as(self: Lch(T), comptime U: type) Lch(U) {
+        pub fn as(self: Lms(T), comptime U: type) Lms(U) {
             return .{
                 .l = @floatCast(self.l),
-                .c = @floatCast(self.c),
-                .h = @floatCast(self.h),
+                .m = @floatCast(self.m),
+                .s = @floatCast(self.s),
             };
         }
     };
