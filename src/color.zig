@@ -229,6 +229,11 @@ pub fn Rgb(comptime T: type) type {
             return .{ .r = max - self.r, .g = max - self.g, .b = max - self.b };
         }
 
+        /// Calculates the perceptual luminance using ITU-R BT.709 coefficients.
+        pub fn luma(self: Rgb(T)) f64 {
+            return rgbLuma(self.r, self.g, self.b);
+        }
+
         pub fn blend(self: Rgb(T), overlay: Rgba(T), mode: Blending) Rgb(T) {
             const blended = blendColors(T, self.withAlpha(if (T == u8) 255 else 1.0), overlay, mode);
             return .{ .r = blended.r, .g = blended.g, .b = blended.b };
@@ -334,6 +339,11 @@ pub fn Rgba(comptime T: type) type {
         pub fn invert(self: Rgba(T)) Rgba(T) {
             const max = if (T == u8) 255 else 1.0;
             return .{ .r = max - self.r, .g = max - self.g, .b = max - self.b, .a = self.a };
+        }
+
+        /// Calculates the perceptual luminance using ITU-R BT.709 coefficients (ignores alpha).
+        pub fn luma(self: Rgba(T)) f64 {
+            return rgbLuma(self.r, self.g, self.b);
         }
 
         pub fn blend(self: Rgba(T), overlay: Rgba(T), mode: Blending) Rgba(T) {
@@ -946,7 +956,7 @@ fn rgbToYcbcr(comptime T: type, rgb: Rgb(T)) Ycbcr(T) {
 /// For `u8`, uses 16-bit fixed-point arithmetic for consistency with the YCbCr path.
 /// Calculates the perceptual luminance using ITU-R BT.709 coefficients.
 /// Returns a value in the range [0.0, 1.0].
-pub fn rgbLuma(r: anytype, g: anytype, b: anytype) f64 {
+fn rgbLuma(r: anytype, g: anytype, b: anytype) f64 {
     const T = @TypeOf(r);
     const r_f: f64 = if (T == u8) @as(f64, @floatFromInt(r)) / 255.0 else @floatCast(r);
     const g_f: f64 = if (T == u8) @as(f64, @floatFromInt(g)) / 255.0 else @floatCast(g);
