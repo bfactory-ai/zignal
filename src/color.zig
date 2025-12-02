@@ -1787,37 +1787,37 @@ test "ColorSpace.convert" {
     try expectEqualDeep(red_hsv_recovered, red_hsv);
 }
 
-// test "color conversion accuracy with reference values" {
-//     // Test with well-known reference values to verify conversion accuracy
+test "color conversion accuracy with reference values" {
+    // Test with well-known reference values to verify conversion accuracy
 
-//     // Pure red: RGB(255,0,0) should convert to specific known values
-//     try expectEqualDeep(Hsl{ .h = 0, .s = 100, .l = 50 }, (Rgb{ .r = 255, .g = 0, .b = 0 }).toHsl());
-//     try expectEqualDeep(Hsv{ .h = 0, .s = 100, .v = 100 }, (Rgb{ .r = 255, .g = 0, .b = 0 }).toHsv());
+    // Pure red: RGB(255,0,0) should convert to specific known values
+    try expectEqualDeep(Hsl(f64){ .h = 0, .s = 100, .l = 50 }, (Rgb(u8){ .r = 255, .g = 0, .b = 0 }).as(f64).to(.hsl));
+    try expectEqualDeep(Hsv(f64){ .h = 0, .s = 100, .v = 100 }, (Rgb(u8){ .r = 255, .g = 0, .b = 0 }).as(f64).to(.hsv));
 
-//     // Pure green: RGB(0,255,0) should have hue=120
-//     try expectEqualDeep(Hsl{ .h = 120, .s = 100, .l = 50 }, (Rgb{ .r = 0, .g = 255, .b = 0 }).toHsl());
-//     try expectEqualDeep(Hsv{ .h = 120, .s = 100, .v = 100 }, (Rgb{ .r = 0, .g = 255, .b = 0 }).toHsv());
+    // Pure green: RGB(0,255,0) should have hue=120
+    try expectEqualDeep(Hsl(f64){ .h = 120, .s = 100, .l = 50 }, (Rgb(u8){ .r = 0, .g = 255, .b = 0 }).as(f64).to(.hsl));
+    try expectEqualDeep(Hsv(f64){ .h = 120, .s = 100, .v = 100 }, (Rgb(u8){ .r = 0, .g = 255, .b = 0 }).as(f64).to(.hsv));
 
-//     // Pure blue: RGB(0,0,255) should have hue=240
-//     try expectEqualDeep(Hsl{ .h = 240, .s = 100, .l = 50 }, (Rgb{ .r = 0, .g = 0, .b = 255 }).toHsl());
-//     try expectEqualDeep(Hsv{ .h = 240, .s = 100, .v = 100 }, (Rgb{ .r = 0, .g = 0, .b = 255 }).toHsv());
+    // Pure blue: RGB(0,0,255) should have hue=240
+    try expectEqualDeep(Hsl(f64){ .h = 240, .s = 100, .l = 50 }, (Rgb(u8){ .r = 0, .g = 0, .b = 255 }).as(f64).to(.hsl));
+    try expectEqualDeep(Hsv(f64){ .h = 240, .s = 100, .v = 100 }, (Rgb(u8){ .r = 0, .g = 0, .b = 255 }).as(f64).to(.hsv));
 
-//     // White should have L=100 in Lab space (with small tolerance for floating point)
-//     const white_lab = (Rgb{ .r = 255, .g = 255, .b = 255 }).toLab();
-//     try expectEqualDeep(Lab{ .l = 100, .a = 0.00526049995830391, .b = -0.010408184525267927 }, white_lab);
+    // White should have L=100 in Lab space (with small tolerance for floating point)
+    const white_lab = (Rgb(u8){ .r = 255, .g = 255, .b = 255 }).as(f64).to(.lab);
+    try expectEqualDeep(Lab(f64){ .l = 100, .a = 0.00526049995830391, .b = -0.010408184525267927 }, white_lab);
 
-//     // Black should have L=0 in Lab space
-//     try expectEqualDeep(Lab{ .l = 0, .a = 0, .b = 0 }, (Rgb{ .r = 0, .g = 0, .b = 0 }).toLab());
+    // Black should have L=0 in Lab space
+    try expectEqualDeep(Lab(f64){ .l = 0, .a = 0, .b = 0 }, (Rgb(u8){ .r = 0, .g = 0, .b = 0 }).as(f64).to(.lab));
 
-//     // Gray should have saturation=0 in HSL
-//     try expectEqualDeep(Hsl{ .h = 0, .s = 0, .l = 50.19607843137255 }, (Rgb{ .r = 128, .g = 128, .b = 128 }).toHsl());
+    // Gray should have saturation=0 in HSL
+    try expectEqualDeep(Hsl(f64){ .h = 0, .s = 0, .l = 50.19607843137255 }, (Rgb(u8){ .r = 128, .g = 128, .b = 128 }).as(f64).to(.hsl));
 
-//     // Cyan: RGB(0,255,255) should have hue=180
-//     try expectEqualDeep(Hsl{ .h = 180, .s = 100, .l = 50 }, (Rgb{ .r = 0, .g = 255, .b = 255 }).toHsl());
+    // Cyan: RGB(0,255,255) should have hue=180
+    try expectEqualDeep(Hsl(f64){ .h = 180, .s = 100, .l = 50 }, (Rgb(u8){ .r = 0, .g = 255, .b = 255 }).as(f64).to(.hsl));
 
-//     // Magenta: RGB(255,0,255) should have hue=300
-//     try expectEqualDeep(Hsl{ .h = 300, .s = 100, .l = 50 }, (Rgb{ .r = 255, .g = 0, .b = 255 }).toHsl());
+    // Magenta: RGB(255,0,255) should have hue=300
+    try expectEqualDeep(Hsl(f64){ .h = 300, .s = 100, .l = 50 }, (Rgb(u8){ .r = 255, .g = 0, .b = 255 }).as(f64).to(.hsl));
 
-//     // Yellow: RGB(255,255,0) should have hue=60
-//     try expectEqualDeep(Hsl{ .h = 60, .s = 100, .l = 50 }, (Rgb{ .r = 255, .g = 255, .b = 0 }).toHsl());
-// }
+    // Yellow: RGB(255,255,0) should have hue=60
+    try expectEqualDeep(Hsl(f64){ .h = 60, .s = 100, .l = 50 }, (Rgb(u8){ .r = 255, .g = 255, .b = 0 }).as(f64).to(.hsl));
+}
