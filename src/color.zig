@@ -12,6 +12,12 @@ const expectEqualStrings = std.testing.expectEqualStrings;
 const clamp = std.math.clamp;
 const lerp = std.math.lerp;
 const pow = std.math.pow;
+
+const blending = @import("blending.zig");
+pub const Blending = blending.Blending;
+pub const blendColors = blending.blendColors;
+const getSimpleTypeName = @import("meta.zig").getSimpleTypeName;
+
 // Fixed-point Rec.601 coefficients scaled by 2^16.
 const CB_R: i32 = -11059;
 const CB_G: i32 = -21710;
@@ -22,10 +28,6 @@ const CR_B: i32 = -5329;
 const Y_R: i32 = 19595;
 const Y_G: i32 = 38470;
 const Y_B: i32 = 7471;
-
-const blending = @import("blending.zig");
-pub const Blending = blending.Blending;
-pub const blendColors = blending.blendColors;
 
 pub fn isColor(comptime T: type) bool {
     if (T == u8) return true;
@@ -103,8 +105,6 @@ fn formatColor(comptime T: type, self: T, writer: *std.Io.Writer) !void {
     // Close and reset
     try writer.print(" }}\x1b[0m", .{});
 }
-
-const getSimpleTypeName = @import("meta.zig").getSimpleTypeName;
 
 pub const ColorSpace = enum {
     gray,
@@ -960,7 +960,7 @@ fn rgbLuma(r: anytype, g: anytype, b: anytype) f64 {
     return 0.2126 * r_f + 0.7152 * g_f + 0.0722 * b_f;
 }
 
-pub fn rgbToGray(comptime T: type, rgb: Rgb(T)) Gray(T) {
+fn rgbToGray(comptime T: type, rgb: Rgb(T)) Gray(T) {
     if (T == u8) {
         const r: i32 = rgb.r;
         const g: i32 = rgb.g;
@@ -975,14 +975,14 @@ pub fn rgbToGray(comptime T: type, rgb: Rgb(T)) Gray(T) {
 }
 
 /// Converts grayscale to RGB by replicating the Y component across channels.
-pub fn grayToRgb(comptime T: type, gray: Gray(T)) Rgb(T) {
+fn grayToRgb(comptime T: type, gray: Gray(T)) Rgb(T) {
     return .{ .r = gray.y, .g = gray.y, .b = gray.y };
 }
 
 /// Converts Ycbcr to RGB using ITU-R BT.601 coefficients.
 /// Expects all components in [0, 255] range for u8, with Cb/Cr having 128 as neutral.
 /// Uses 16-bit fixed-point arithmetic for precision when T is u8.
-pub fn ycbcrToRgb(comptime T: type, ycbcr: Ycbcr(T)) Rgb(T) {
+fn ycbcrToRgb(comptime T: type, ycbcr: Ycbcr(T)) Rgb(T) {
     if (T == u8) {
         const y: i64 = ycbcr.y;
         const cb: i64 = @as(i64, ycbcr.cb) - 128;
@@ -1034,7 +1034,7 @@ fn rgbToHsv(comptime T: type, rgb: Rgb(T)) Hsv(T) {
     };
 }
 
-pub fn hslToRgb(comptime T: type, hsl: Hsl(T)) Rgb(T) {
+fn hslToRgb(comptime T: type, hsl: Hsl(T)) Rgb(T) {
     const h = @max(0, @min(360, hsl.h));
     const s = @max(0, @min(1, hsl.s / 100));
     const l = @max(0, @min(1, hsl.l / 100));
@@ -1164,7 +1164,7 @@ fn gammaToLinear(comptime T: type, c: T) T {
     return if (c > 0.04045) pow(T, (c + 0.055) / 1.055, 2.4) else c / 12.92;
 }
 
-pub fn rgbToXyz(comptime T: type, rgb: Rgb(T)) Xyz(T) {
+fn rgbToXyz(comptime T: type, rgb: Rgb(T)) Xyz(T) {
     const r = gammaToLinear(T, rgb.r);
     const g = gammaToLinear(T, rgb.g);
     const b = gammaToLinear(T, rgb.b);
@@ -1176,7 +1176,7 @@ pub fn rgbToXyz(comptime T: type, rgb: Rgb(T)) Xyz(T) {
     };
 }
 
-pub fn xyzToRgb(comptime T: type, xyz: Xyz(T)) Rgb(T) {
+fn xyzToRgb(comptime T: type, xyz: Xyz(T)) Rgb(T) {
     const r = (xyz.x * 3.2406 + xyz.y * -1.5372 + xyz.z * -0.4986) / 100;
     const g = (xyz.x * -0.9689 + xyz.y * 1.8758 + xyz.z * 0.0415) / 100;
     const b = (xyz.x * 0.0557 + xyz.y * -0.2040 + xyz.z * 1.0570) / 100;
@@ -1188,7 +1188,7 @@ pub fn xyzToRgb(comptime T: type, xyz: Xyz(T)) Rgb(T) {
     };
 }
 
-pub fn xyzToLab(comptime T: type, xyz: Xyz(T)) Lab(T) {
+fn xyzToLab(comptime T: type, xyz: Xyz(T)) Lab(T) {
     var xn = xyz.x / 95.047;
     var yn = xyz.y / 100.000;
     var zn = xyz.z / 108.883;
@@ -1218,7 +1218,7 @@ pub fn xyzToLab(comptime T: type, xyz: Xyz(T)) Lab(T) {
     };
 }
 
-pub fn labToXyz(comptime T: type, lab: Lab(T)) Xyz(T) {
+fn labToXyz(comptime T: type, lab: Lab(T)) Xyz(T) {
     var y: f64 = (@max(0, @min(100, lab.l)) + 16.0) / 116.0;
     var x: f64 = (@max(-128, @min(127, lab.a)) / 500.0) + y;
     var z: f64 = y - (@max(-128, @min(127, lab.b)) / 200.0);
@@ -1453,13 +1453,7 @@ fn xybToRgb(comptime T: type, xyb: Xyb(T)) Rgb(T) {
 // TESTS
 // ============================================================================
 
-// Import tests from sub-modules
-// test {
-//     _ = @import("color/blending.zig");
-// }
-
-// Helper function for testing round-trip conversions
-inline fn testColorConversion(from: Rgb(u8), to: anytype) !void {
+fn testRoundTripConversion(from: Rgb(u8), to: anytype) !void {
     const Dest = @TypeOf(to);
     const T = switch (@typeInfo(Dest)) {
         .@"struct" => |info| info.fields[0].type, // Assumes first field is component type, consistent with rest of file
@@ -1467,7 +1461,6 @@ inline fn testColorConversion(from: Rgb(u8), to: anytype) !void {
     };
     const target_space = comptime ColorSpace.tag(Dest);
 
-    // Convert using .to() method instead of removed convert function
     const converted = from.as(f64).to(target_space).as(T);
     try expectEqualDeep(converted, to);
 
@@ -1476,7 +1469,7 @@ inline fn testColorConversion(from: Rgb(u8), to: anytype) !void {
         .@"struct" => |info| info.fields[0].type,
         else => @compileError("Invalid test source type"),
     };
-    // Convert back
+
     const recovered = converted.as(f64).to(ColorSpace.tag(Source)).as(U);
     try expectEqualDeep(recovered, from);
 }
@@ -1547,105 +1540,100 @@ test "Rgba fromHex and toHex" {
 
 test "primary colors" {
     // red: 0xff0000
-    try testColorConversion(.{ .r = 255, .g = 0, .b = 0 }, Hsl(f64){ .h = 0, .s = 100, .l = 50 });
-    try testColorConversion(.{ .r = 255, .g = 0, .b = 0 }, Hsv(f64){ .h = 0, .s = 100, .v = 100 });
-    try testColorConversion(.{ .r = 255, .g = 0, .b = 0 }, Lab(f64){ .l = 53.23288178584245, .a = 80.10930952982204, .b = 67.22006831026425 });
+    try testRoundTripConversion(.{ .r = 255, .g = 0, .b = 0 }, Hsl(f64){ .h = 0, .s = 100, .l = 50 });
+    try testRoundTripConversion(.{ .r = 255, .g = 0, .b = 0 }, Hsv(f64){ .h = 0, .s = 100, .v = 100 });
+    try testRoundTripConversion(.{ .r = 255, .g = 0, .b = 0 }, Lab(f64){ .l = 53.23288178584245, .a = 80.10930952982204, .b = 67.22006831026425 });
     // green: 0x00ff00
-    try testColorConversion(.{ .r = 0, .g = 255, .b = 0 }, Hsl(f64){ .h = 120, .s = 100, .l = 50 });
-    try testColorConversion(.{ .r = 0, .g = 255, .b = 0 }, Hsv(f64){ .h = 120, .s = 100, .v = 100 });
-    try testColorConversion(.{ .r = 0, .g = 255, .b = 0 }, Lab(f64){ .l = 87.73703347354422, .a = -86.1846364976253, .b = 83.18116474777855 });
+    try testRoundTripConversion(.{ .r = 0, .g = 255, .b = 0 }, Hsl(f64){ .h = 120, .s = 100, .l = 50 });
+    try testRoundTripConversion(.{ .r = 0, .g = 255, .b = 0 }, Hsv(f64){ .h = 120, .s = 100, .v = 100 });
+    try testRoundTripConversion(.{ .r = 0, .g = 255, .b = 0 }, Lab(f64){ .l = 87.73703347354422, .a = -86.1846364976253, .b = 83.18116474777855 });
     // blue: 0x0000ff
-    try testColorConversion(.{ .r = 0, .g = 0, .b = 255 }, Hsl(f64){ .h = 240, .s = 100, .l = 50 });
-    try testColorConversion(.{ .r = 0, .g = 0, .b = 255 }, Hsv(f64){ .h = 240, .s = 100, .v = 100 });
-    try testColorConversion(.{ .r = 0, .g = 0, .b = 255 }, Lab(f64){ .l = 32.302586667249486, .a = 79.19666178930935, .b = -107.86368104495168 });
+    try testRoundTripConversion(.{ .r = 0, .g = 0, .b = 255 }, Hsl(f64){ .h = 240, .s = 100, .l = 50 });
+    try testRoundTripConversion(.{ .r = 0, .g = 0, .b = 255 }, Hsv(f64){ .h = 240, .s = 100, .v = 100 });
+    try testRoundTripConversion(.{ .r = 0, .g = 0, .b = 255 }, Lab(f64){ .l = 32.302586667249486, .a = 79.19666178930935, .b = -107.86368104495168 });
 }
 
 test "secondary colors" {
     // cyan: 0x00ffff
-    try testColorConversion(.{ .r = 0, .g = 255, .b = 255 }, Hsl(f64){ .h = 180, .s = 100, .l = 50 });
-    try testColorConversion(.{ .r = 0, .g = 255, .b = 255 }, Hsv(f64){ .h = 180, .s = 100, .v = 100 });
-    try testColorConversion(.{ .r = 0, .g = 255, .b = 255 }, Lab(f64){ .l = 91.11652110946342, .a = -48.079618466228716, .b = -14.138127754846131 });
+    try testRoundTripConversion(.{ .r = 0, .g = 255, .b = 255 }, Hsl(f64){ .h = 180, .s = 100, .l = 50 });
+    try testRoundTripConversion(.{ .r = 0, .g = 255, .b = 255 }, Hsv(f64){ .h = 180, .s = 100, .v = 100 });
+    try testRoundTripConversion(.{ .r = 0, .g = 255, .b = 255 }, Lab(f64){ .l = 91.11652110946342, .a = -48.079618466228716, .b = -14.138127754846131 });
     // magenta: 0xff00ff
-    try testColorConversion(.{ .r = 255, .g = 0, .b = 255 }, Hsl(f64){ .h = 300, .s = 100, .l = 50 });
-    try testColorConversion(.{ .r = 255, .g = 0, .b = 255 }, Hsv(f64){ .h = 300, .s = 100, .v = 100 });
-    try testColorConversion(.{ .r = 255, .g = 0, .b = 255 }, Lab(f64){ .l = 60.319933664076004, .a = 98.25421868616108, .b = -60.84298422386232 });
+    try testRoundTripConversion(.{ .r = 255, .g = 0, .b = 255 }, Hsl(f64){ .h = 300, .s = 100, .l = 50 });
+    try testRoundTripConversion(.{ .r = 255, .g = 0, .b = 255 }, Hsv(f64){ .h = 300, .s = 100, .v = 100 });
+    try testRoundTripConversion(.{ .r = 255, .g = 0, .b = 255 }, Lab(f64){ .l = 60.319933664076004, .a = 98.25421868616108, .b = -60.84298422386232 });
     // yellow: 0xffff00
-    try testColorConversion(.{ .r = 255, .g = 255, .b = 0 }, Hsl(f64){ .h = 60, .s = 100, .l = 50 });
-    try testColorConversion(.{ .r = 255, .g = 255, .b = 0 }, Hsv(f64){ .h = 60, .s = 100, .v = 100 });
-    try testColorConversion(.{ .r = 255, .g = 255, .b = 0 }, Lab(f64){ .l = 97.13824698129729, .a = -21.555908334832285, .b = 94.48248544644461 });
+    try testRoundTripConversion(.{ .r = 255, .g = 255, .b = 0 }, Hsl(f64){ .h = 60, .s = 100, .l = 50 });
+    try testRoundTripConversion(.{ .r = 255, .g = 255, .b = 0 }, Hsv(f64){ .h = 60, .s = 100, .v = 100 });
+    try testRoundTripConversion(.{ .r = 255, .g = 255, .b = 0 }, Lab(f64){ .l = 97.13824698129729, .a = -21.555908334832285, .b = 94.48248544644461 });
 }
 
 test "complementary colors" {
     // orange: 0xff8800
-    try testColorConversion(.{ .r = 255, .g = 136, .b = 0 }, Hsl(f64){ .h = 32, .s = 100, .l = 50 });
-    try testColorConversion(.{ .r = 255, .g = 136, .b = 0 }, Hsv(f64){ .h = 32, .s = 100, .v = 100 });
-    try testColorConversion(.{ .r = 255, .g = 136, .b = 0 }, Lab(f64){ .l = 68.65577208167872, .a = 38.85052375564019, .b = 74.99022544139406 });
+    try testRoundTripConversion(.{ .r = 255, .g = 136, .b = 0 }, Hsl(f64){ .h = 32, .s = 100, .l = 50 });
+    try testRoundTripConversion(.{ .r = 255, .g = 136, .b = 0 }, Hsv(f64){ .h = 32, .s = 100, .v = 100 });
+    try testRoundTripConversion(.{ .r = 255, .g = 136, .b = 0 }, Lab(f64){ .l = 68.65577208167872, .a = 38.85052375564019, .b = 74.99022544139406 });
     // purple: 0x800080
-    try testColorConversion(.{ .r = 128, .g = 0, .b = 128 }, Hsl(f64){ .h = 300, .s = 100, .l = 25.098039215686274 });
-    try testColorConversion(.{ .r = 128, .g = 0, .b = 128 }, Hsv(f64){ .h = 300, .s = 100, .v = 50.19607843137255 });
-    try testColorConversion(.{ .r = 128, .g = 0, .b = 128 }, Lab(f64){ .l = 29.782100092098077, .a = 58.93983731904206, .b = -36.49792996282386 });
+    try testRoundTripConversion(.{ .r = 128, .g = 0, .b = 128 }, Hsl(f64){ .h = 300, .s = 100, .l = 25.098039215686274 });
+    try testRoundTripConversion(.{ .r = 128, .g = 0, .b = 128 }, Hsv(f64){ .h = 300, .s = 100, .v = 50.19607843137255 });
+    try testRoundTripConversion(.{ .r = 128, .g = 0, .b = 128 }, Lab(f64){ .l = 29.782100092098077, .a = 58.93983731904206, .b = -36.49792996282386 });
 }
 
 test "neutral colors" {
     // white: 0xffffff
-    try testColorConversion(.{ .r = 255, .g = 255, .b = 255 }, Hsl(f64){ .h = 0, .s = 0, .l = 100 });
-    try testColorConversion(.{ .r = 255, .g = 255, .b = 255 }, Hsv(f64){ .h = 0, .s = 0, .v = 100 });
-    try testColorConversion(.{ .r = 255, .g = 255, .b = 255 }, Lab(f64){ .l = 100, .a = 0.00526049995830391, .b = -0.010408184525267927 });
+    try testRoundTripConversion(.{ .r = 255, .g = 255, .b = 255 }, Hsl(f64){ .h = 0, .s = 0, .l = 100 });
+    try testRoundTripConversion(.{ .r = 255, .g = 255, .b = 255 }, Hsv(f64){ .h = 0, .s = 0, .v = 100 });
+    try testRoundTripConversion(.{ .r = 255, .g = 255, .b = 255 }, Lab(f64){ .l = 100, .a = 0.00526049995830391, .b = -0.010408184525267927 });
     // gray: 0x808080
-    try testColorConversion(.{ .r = 128, .g = 128, .b = 128 }, Hsl(f64){ .h = 0, .s = 0, .l = 50.19607843137255 });
-    try testColorConversion(.{ .r = 128, .g = 128, .b = 128 }, Hsv(f64){ .h = 0, .s = 0, .v = 50.19607843137255 });
-    try testColorConversion(.{ .r = 128, .g = 128, .b = 128 }, Lab(f64){ .l = 53.58501345216902, .a = 0.003155620347972121, .b = -0.006243566036268078 });
+    try testRoundTripConversion(.{ .r = 128, .g = 128, .b = 128 }, Hsl(f64){ .h = 0, .s = 0, .l = 50.19607843137255 });
+    try testRoundTripConversion(.{ .r = 128, .g = 128, .b = 128 }, Hsv(f64){ .h = 0, .s = 0, .v = 50.19607843137255 });
+    try testRoundTripConversion(.{ .r = 128, .g = 128, .b = 128 }, Lab(f64){ .l = 53.58501345216902, .a = 0.003155620347972121, .b = -0.006243566036268078 });
     // black: 0x000000
-    try testColorConversion(.{ .r = 0, .g = 0, .b = 0 }, Hsl(f64){ .h = 0, .s = 0, .l = 0 });
-    try testColorConversion(.{ .r = 0, .g = 0, .b = 0 }, Hsv(f64){ .h = 0, .s = 0, .v = 0 });
-    try testColorConversion(.{ .r = 0, .g = 0, .b = 0 }, Lab(f64){ .l = 0, .a = 0, .b = 0 });
+    try testRoundTripConversion(.{ .r = 0, .g = 0, .b = 0 }, Hsl(f64){ .h = 0, .s = 0, .l = 0 });
+    try testRoundTripConversion(.{ .r = 0, .g = 0, .b = 0 }, Hsv(f64){ .h = 0, .s = 0, .v = 0 });
+    try testRoundTripConversion(.{ .r = 0, .g = 0, .b = 0 }, Lab(f64){ .l = 0, .a = 0, .b = 0 });
 }
 
 test "pastel colors" {
     // pale_pink: 0xffd3ba
-    try testColorConversion(.{ .r = 255, .g = 211, .b = 186 }, Hsl(f64){ .h = 21.739130434782602, .s = 100, .l = 86.47058823529412 });
-    try testColorConversion(.{ .r = 255, .g = 211, .b = 186 }, Hsv(f64){ .h = 21.739130434782602, .s = 27.058823529411768, .v = 100 });
-    try testColorConversion(.{ .r = 255, .g = 211, .b = 186 }, Lab(f64){ .l = 87.67593388241974, .a = 11.843797404960165, .b = 18.16236917854479 });
+    try testRoundTripConversion(.{ .r = 255, .g = 211, .b = 186 }, Hsl(f64){ .h = 21.739130434782602, .s = 100, .l = 86.47058823529412 });
+    try testRoundTripConversion(.{ .r = 255, .g = 211, .b = 186 }, Hsv(f64){ .h = 21.739130434782602, .s = 27.058823529411768, .v = 100 });
+    try testRoundTripConversion(.{ .r = 255, .g = 211, .b = 186 }, Lab(f64){ .l = 87.67593388241974, .a = 11.843797404960165, .b = 18.16236917854479 });
     // mint_green: 0x96fa96
-    try testColorConversion(.{ .r = 150, .g = 250, .b = 150 }, Hsl(f64){ .h = 120, .s = 90.90909090909089, .l = 78.43137254901961 });
-    try testColorConversion(.{ .r = 150, .g = 250, .b = 150 }, Hsv(f64){ .h = 120, .s = 40, .v = 98.0392156862745 });
-    try testColorConversion(.{ .r = 150, .g = 250, .b = 150 }, Lab(f64){ .l = 90.34795996024553, .a = -48.75545372512652, .b = 38.96689290268498 });
+    try testRoundTripConversion(.{ .r = 150, .g = 250, .b = 150 }, Hsl(f64){ .h = 120, .s = 90.90909090909089, .l = 78.43137254901961 });
+    try testRoundTripConversion(.{ .r = 150, .g = 250, .b = 150 }, Hsv(f64){ .h = 120, .s = 40, .v = 98.0392156862745 });
+    try testRoundTripConversion(.{ .r = 150, .g = 250, .b = 150 }, Lab(f64){ .l = 90.34795996024553, .a = -48.75545372512652, .b = 38.96689290268498 });
     // sky_blue: #8ad1ed
-    try testColorConversion(.{ .r = 138, .g = 209, .b = 237 }, Hsl(f64){ .h = 196.96969696969697, .s = 73.33333333333336, .l = 73.52941176470588 });
-    try testColorConversion(.{ .r = 138, .g = 209, .b = 237 }, Hsv(f64){ .h = 196.96969696969697, .s = 41.77215189873419, .v = 92.94117647058823 });
-    try testColorConversion(.{ .r = 138, .g = 209, .b = 237 }, Lab(f64){ .l = 80.24627015828005, .a = -15.11865203941365, .b = -20.767024460106565 });
+    try testRoundTripConversion(.{ .r = 138, .g = 209, .b = 237 }, Hsl(f64){ .h = 196.96969696969697, .s = 73.33333333333336, .l = 73.52941176470588 });
+    try testRoundTripConversion(.{ .r = 138, .g = 209, .b = 237 }, Hsv(f64){ .h = 196.96969696969697, .s = 41.77215189873419, .v = 92.94117647058823 });
+    try testRoundTripConversion(.{ .r = 138, .g = 209, .b = 237 }, Lab(f64){ .l = 80.24627015828005, .a = -15.11865203941365, .b = -20.767024460106565 });
 }
 
 test "vivid colors" {
     // hot_pink: #ff66b3
-    try testColorConversion(.{ .r = 255, .g = 102, .b = 179 }, Hsl(f64){ .h = 329.80392156862746, .s = 99.99999999999997, .l = 70 });
-    try testColorConversion(.{ .r = 255, .g = 102, .b = 179 }, Hsv(f64){ .h = 329.80392156862746, .s = 60, .v = 100 });
-    try testColorConversion(.{ .r = 255, .g = 102, .b = 179 }, Lab(f64){ .l = 64.9763931162809, .a = 65.40669278373645, .b = -10.847761988977656 });
+    try testRoundTripConversion(.{ .r = 255, .g = 102, .b = 179 }, Hsl(f64){ .h = 329.80392156862746, .s = 99.99999999999997, .l = 70 });
+    try testRoundTripConversion(.{ .r = 255, .g = 102, .b = 179 }, Hsv(f64){ .h = 329.80392156862746, .s = 60, .v = 100 });
+    try testRoundTripConversion(.{ .r = 255, .g = 102, .b = 179 }, Lab(f64){ .l = 64.9763931162809, .a = 65.40669278373645, .b = -10.847761988977656 });
     // lime_green:#31cc31
-    try testColorConversion(.{ .r = 49, .g = 204, .b = 49 }, Hsl(f64){ .h = 120, .s = 61.26482213438735, .l = 49.6078431372549 });
-    try testColorConversion(.{ .r = 49, .g = 204, .b = 49 }, Hsv(f64){ .h = 120, .s = 75.98039215686275, .v = 80 });
-    try testColorConversion(.{ .r = 49, .g = 204, .b = 49 }, Lab(f64){ .l = 72.26888334336961, .a = -67.03378336285304, .b = 61.425460443480894 });
+    try testRoundTripConversion(.{ .r = 49, .g = 204, .b = 49 }, Hsl(f64){ .h = 120, .s = 61.26482213438735, .l = 49.6078431372549 });
+    try testRoundTripConversion(.{ .r = 49, .g = 204, .b = 49 }, Hsv(f64){ .h = 120, .s = 75.98039215686275, .v = 80 });
+    try testRoundTripConversion(.{ .r = 49, .g = 204, .b = 49 }, Lab(f64){ .l = 72.26888334336961, .a = -67.03378336285304, .b = 61.425460443480894 });
     // electric_blue: #80dfff
-    try testColorConversion(.{ .r = 128, .g = 223, .b = 255 }, Hsl(f64){ .h = 195.11811023622047, .s = 100, .l = 75.09803921568627 });
-    try testColorConversion(.{ .r = 128, .g = 223, .b = 255 }, Hsv(f64){ .h = 195.11811023622047, .s = 49.80392156862745, .v = 100 });
-    try testColorConversion(.{ .r = 128, .g = 223, .b = 255 }, Lab(f64){ .l = 84.26919487615707, .a = -19.773688316136685, .b = -24.252061008370738 });
+    try testRoundTripConversion(.{ .r = 128, .g = 223, .b = 255 }, Hsl(f64){ .h = 195.11811023622047, .s = 100, .l = 75.09803921568627 });
+    try testRoundTripConversion(.{ .r = 128, .g = 223, .b = 255 }, Hsv(f64){ .h = 195.11811023622047, .s = 49.80392156862745, .v = 100 });
+    try testRoundTripConversion(.{ .r = 128, .g = 223, .b = 255 }, Lab(f64){ .l = 84.26919487615707, .a = -19.773688316136685, .b = -24.252061008370738 });
 }
 
-// test "color formatting" {
-//     const red: Rgb(u8) = .{ .r = 255, .g = 0, .b = 0 };
+test "Color formatting" {
+    const red: Rgb(u8) = .{ .r = 255, .g = 0, .b = 0 };
+    var buffer: [512]u8 = undefined;
+    var stream: std.Io.Writer = .fixed(&buffer);
 
-//     // Test plain format with {any}
-//     var plain_buffer: [100]u8 = undefined;
-//     const plain_result = try std.fmt.bufPrint(&plain_buffer, "{any}", .{red});
-//     try std.testing.expect(std.mem.indexOf(u8, plain_result, ".r = 255, .g = 0, .b = 0") != null);
-//     try std.testing.expect(std.mem.indexOf(u8, plain_result, "\x1b[") == null); // No SGR codes
-
-//     // Test colored format with {f}
-//     var color_buffer: [200]u8 = undefined;
-//     const color_result = try std.fmt.bufPrint(&color_buffer, "{f}", .{red});
-//     try std.testing.expect(std.mem.indexOf(u8, color_result, "Rgb{ .r = 255, .g = 0, .b = 0 }") != null);
-//     try std.testing.expect(std.mem.indexOf(u8, color_result, "\x1b[") != null); // Has SGR codes
-// }
+    try red.format(&stream);
+    const result_red = buffer[0..stream.end];
+    const expected_red = "\x1b[1m\x1b[38;2;0;0;0m\x1b[48;2;255;0;0mRgb(u8){ .r = 255, .g = 0, .b = 0 }\x1b[0m";
+    try expectEqualStrings(expected_red, result_red);
+}
 
 test "100 random colors" {
     const seed: u64 = std.crypto.random.int(u64);
@@ -1694,92 +1682,6 @@ test "Xyz blend matches RGB blend" {
     try expectApproxEqAbs(blended_rgb.b, blended_xyz.to(.rgb).b, 0.001);
 }
 
-test "Color formatting" {
-    const red = Rgb(u8){ .r = 255, .g = 0, .b = 0 };
-    var buffer: [512]u8 = undefined;
-    var stream = std.Io.Writer.fixed(&buffer);
-
-    try red.format(&stream);
-    const result_red = buffer[0..stream.end];
-    const expected_red = "\x1b[1m\x1b[38;2;0;0;0m\x1b[48;2;255;0;0mRgb(u8){ .r = 255, .g = 0, .b = 0 }\x1b[0m";
-    try expectEqualStrings(expected_red, result_red);
-}
-
-// /// List of color types to test. This is the only thing to update when adding a new color space.
-// const color_types = .{ Rgb, Rgba, Hsl, Hsv, Lab, Lch, Xyz, Lms, Oklab, Oklch, Xyb, Ycbcr };
-
-// /// Generates the list of conversion methods based on the color type names.
-// fn generateConversionMethods() [color_types.len][]const u8 {
-//     var methods: [color_types.len][]const u8 = undefined;
-//     inline for (color_types, 0..) |ColorType, i| {
-//         const simple_name = getSimpleTypeName(ColorType);
-//         methods[i] = "to" ++ simple_name;
-//     }
-//     return methods;
-// }
-
-// /// Skip self-conversion methods (e.g., Rgb.toRgb doesn't exist)
-// fn shouldSkipMethod(comptime ColorType: type, comptime method_name: []const u8) bool {
-//     if (method_name.len < 3 or !std.mem.startsWith(u8, method_name, "to")) return false;
-
-//     const target_type_name = method_name[2..]; // Remove "to" prefix
-//     const current_type_name = getSimpleTypeName(ColorType);
-
-//     return std.mem.eql(u8, current_type_name, target_type_name);
-// }
-
-// test "comprehensive color conversion method validation and round-trip testing" {
-//     @setEvalBranchQuota(10000);
-//     // Test colors for round-trip validation
-//     const test_colors = [_]Rgb{
-//         .{ .r = 255, .g = 0, .b = 0 }, // Pure red
-//         .{ .r = 0, .g = 255, .b = 0 }, // Pure green
-//         .{ .r = 0, .g = 0, .b = 255 }, // Pure blue
-//         .{ .r = 255, .g = 255, .b = 255 }, // White
-//         .{ .r = 128, .g = 128, .b = 128 }, // Gray
-//         .{ .r = 255, .g = 64, .b = 32 }, // Orange-red
-//         .{ .r = 64, .g = 192, .b = 128 }, // Teal-green
-//     };
-
-//     // Use metaprogramming to verify all color types have expected conversion methods
-//     // and test round-trip accuracy for each conversion
-//     inline for (color_types) |ColorType| {
-//         inline for (comptime generateConversionMethods()) |method_name| {
-//             // Skip self-conversion and special cases
-//             if (comptime shouldSkipMethod(ColorType, method_name)) continue;
-
-//             // Verify method exists using @hasDecl
-//             try expect(@hasDecl(ColorType, method_name));
-
-//             // Test round-trip conversion accuracy for this specific method
-//             if (comptime std.mem.eql(u8, method_name, "toRgb")) {
-//                 // For toRgb methods, test conversion from each test color
-//                 for (test_colors) |test_rgb| {
-//                     const intermediate_color = convertColor(ColorType, test_rgb);
-//                     const recovered_rgb = intermediate_color.toRgb();
-//                     // Allow small differences for integer-based color spaces like YCbCr
-//                     if (ColorType == Ycbcr) {
-//                         // Integer YCbCr conversion can have rounding errors
-//                         try expect(@abs(@as(i16, test_rgb.r) - @as(i16, recovered_rgb.r)) <= 1);
-//                         try expect(@abs(@as(i16, test_rgb.g) - @as(i16, recovered_rgb.g)) <= 1);
-//                         try expect(@abs(@as(i16, test_rgb.b) - @as(i16, recovered_rgb.b)) <= 1);
-//                     } else {
-//                         try expectEqualDeep(test_rgb, recovered_rgb);
-//                     }
-//                 }
-//             }
-
-//             // Special case: test RGBA round-trip
-//             if (comptime ColorType == Rgba and std.mem.eql(u8, method_name, "toRgb")) {
-//                 for (test_colors) |test_rgb| {
-//                     const rgba = test_rgb.toRgba(255);
-//                     try expectEqualDeep(test_rgb, rgba.toRgb());
-//                 }
-//             }
-//         }
-//     }
-// }
-
 test "ColorSpace.convert" {
     const red_hsv: Hsv(f32) = .{ .h = 0, .s = 100, .v = 100 };
     const red_rgb_u8: Rgb(u8) = red_hsv.to(.rgb).as(u8);
@@ -1794,8 +1696,6 @@ test "ColorSpace.convert" {
 }
 
 test "color conversion accuracy with reference values" {
-    // Test with well-known reference values to verify conversion accuracy
-
     // Pure red: RGB(255,0,0) should convert to specific known values
     try expectEqualDeep(Hsl(f64){ .h = 0, .s = 100, .l = 50 }, (Rgb(u8){ .r = 255, .g = 0, .b = 0 }).as(f64).to(.hsl));
     try expectEqualDeep(Hsv(f64){ .h = 0, .s = 100, .v = 100 }, (Rgb(u8){ .r = 255, .g = 0, .b = 0 }).as(f64).to(.hsv));
