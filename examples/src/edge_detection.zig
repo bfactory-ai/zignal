@@ -4,6 +4,7 @@ const zignal = @import("zignal");
 
 const Image = zignal.Image;
 const Rgb = zignal.Rgb;
+const Gray = zignal.Gray;
 const Canvas = zignal.Canvas;
 const p = zignal.Point(2, f32).init;
 

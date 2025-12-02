@@ -7,6 +7,7 @@ const zignal = @import("zignal");
 const Image = zignal.Image;
 const Rgba = zignal.Rgba;
 const Rgb = zignal.Rgb;
+const Gray = zignal.Gray;
 const DisplayFormat = zignal.DisplayFormat;
 
 const color_bindings = @import("color.zig");

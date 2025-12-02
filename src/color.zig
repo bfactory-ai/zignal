@@ -337,6 +337,18 @@ pub fn Rgba(comptime T: type) type {
             return .{ .r = max - self.r, .g = max - self.g, .b = max - self.b, .a = self.a };
         }
 
+        /// Returns a copy with alpha scaled by `alpha` in [0,1].
+        pub fn fade(self: Rgba(T), alpha: f32) Rgba(T) {
+            const scale = clamp(alpha, 0, 1);
+            if (T == u8) {
+                const new_a: u8 = @intFromFloat(@as(f32, @floatFromInt(self.a)) * scale);
+                return .{ .r = self.r, .g = self.g, .b = self.b, .a = new_a };
+            } else {
+                const s: T = @as(T, scale);
+                return .{ .r = self.r, .g = self.g, .b = self.b, .a = self.a * s };
+            }
+        }
+
         /// Calculates the perceptual luminance using ITU-R BT.709 coefficients (ignores alpha).
         pub fn luma(self: Rgba(T)) f64 {
             return rgbLuma(self.r, self.g, self.b);
@@ -952,7 +964,7 @@ fn rgbToYcbcr(comptime T: type, rgb: Rgb(T)) Ycbcr(T) {
 /// For `u8`, uses 16-bit fixed-point arithmetic for consistency with the YCbCr path.
 /// Calculates the perceptual luminance using ITU-R BT.709 coefficients.
 /// Returns a value in the range [0.0, 1.0].
-fn rgbLuma(r: anytype, g: anytype, b: anytype) f64 {
+pub fn rgbLuma(r: anytype, g: anytype, b: anytype) f64 {
     const T = @TypeOf(r);
     const r_f: f64 = if (T == u8) @as(f64, @floatFromInt(r)) / 255.0 else @floatCast(r);
     const g_f: f64 = if (T == u8) @as(f64, @floatFromInt(g)) / 255.0 else @floatCast(g);

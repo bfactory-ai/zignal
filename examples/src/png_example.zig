@@ -4,6 +4,7 @@ const zignal = @import("zignal");
 const Image = zignal.Image;
 const Rgb = zignal.Rgb;
 const Rgba = zignal.Rgba;
+const Gray = zignal.Gray;
 const Hsl = zignal.Hsl;
 const savePng = zignal.png.save;
 fn loadPng(comptime T: type, allocator: std.mem.Allocator, path: []const u8) !Image(T) {

@@ -5,6 +5,7 @@ const zignal = @import("zignal");
 const Image = zignal.Image;
 const Rgba = zignal.Rgba;
 const Rgb = zignal.Rgb;
+const Gray = zignal.Gray;
 const ImageFormat = zignal.ImageFormat;
 const default_png_limits: zignal.png.DecodeLimits = .{};
 const file_png_limits: zignal.png.DecodeLimits = .{ .max_png_bytes = 100 * 1024 * 1024 };

@@ -6,6 +6,7 @@ const Image = @import("zignal").Image;
 const isColor = @import("zignal").color.isColor;
 const Rgb = @import("zignal").Rgb;
 const Rgba = @import("zignal").Rgba;
+const Gray = @import("zignal").Gray;
 
 pub const std_options: std.Options = .{
     .logFn = if (builtin.cpu.arch.isWasm()) @import("js.zig").logFn else std.log.defaultLog,

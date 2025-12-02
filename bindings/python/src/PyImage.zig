@@ -4,6 +4,7 @@ const zignal = @import("zignal");
 const Image = zignal.Image;
 const Rgb = zignal.Rgb;
 const Rgba = zignal.Rgba;
+const Gray = zignal.Gray;
 
 /// PyImage is a Python-facing dynamic image wrapper used only by the Python bindings.
 /// Internally it stores one of Image(u8), Image(Rgb), or Image(Rgba) and centralizes

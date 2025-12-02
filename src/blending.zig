@@ -44,24 +44,20 @@ fn compositePixel(
 /// Accepts any Rgba(T) types (e.g., Rgba(u8), Rgba(f32)).
 /// Returns Rgba(T) matching the base color's type.
 pub fn blendColors(comptime T: type, base: Rgba(T), overlay: Rgba(T), mode: Blending) Rgba(T) {
-    // Convert to f32 normalized
-    const base_f = base.as(f32);
-    const overlay_f = overlay.as(f32);
-
-    const result_f = blendColorsF32(base_f, overlay_f, mode);
-
-    return result_f.as(T);
-}
-
-/// Internal implementation using normalized f32 values.
-fn blendColorsF32(base: Rgba(f32), overlay: Rgba(f32), mode: Blending) Rgba(f32) {
+    switch (@typeInfo(T)) {
+        .float => {},
+        .int => if (T != u8) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
+        else => @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
+    }
+    const base_f = if (T == u8) base.as(f32) else base;
+    const overlay_f = if (T == u8) overlay.as(f32) else overlay;
     // Early return for fully transparent overlay
-    if (overlay.a <= 0) return base;
+    if (overlay_f.a <= 0) return base;
 
     // Hidden base color should not influence blending
-    if (base.a <= 0) return overlay;
+    if (base_f.a <= 0) return overlay;
 
-    const result_a = compositeAlpha(base.a, overlay.a);
+    const result_a = compositeAlpha(base_f.a, overlay_f.a);
     if (result_a <= 0) return .{ .r = 0, .g = 0, .b = 0, .a = 0 };
 
     var blended: Rgba(f32) = undefined;
@@ -69,74 +65,76 @@ fn blendColorsF32(base: Rgba(f32), overlay: Rgba(f32), mode: Blending) Rgba(f32)
     switch (mode) {
         .none => return overlay,
         .normal => {
-            blended.r = overlay.r;
-            blended.g = overlay.g;
-            blended.b = overlay.b;
+            blended.r = overlay_f.r;
+            blended.g = overlay_f.g;
+            blended.b = overlay_f.b;
         },
         .multiply => {
-            blended.r = base.r * overlay.r;
-            blended.g = base.g * overlay.g;
-            blended.b = base.b * overlay.b;
+            blended.r = base_f.r * overlay_f.r;
+            blended.g = base_f.g * overlay_f.g;
+            blended.b = base_f.b * overlay_f.b;
         },
         .screen => {
-            blended.r = 1.0 - (1.0 - base.r) * (1.0 - overlay.r);
-            blended.g = 1.0 - (1.0 - base.g) * (1.0 - overlay.g);
-            blended.b = 1.0 - (1.0 - base.b) * (1.0 - overlay.b);
+            blended.r = 1.0 - (1.0 - base_f.r) * (1.0 - overlay_f.r);
+            blended.g = 1.0 - (1.0 - base_f.g) * (1.0 - overlay_f.g);
+            blended.b = 1.0 - (1.0 - base_f.b) * (1.0 - overlay_f.b);
         },
         .overlay => {
-            blended.r = overlayChannel(base.r, overlay.r);
-            blended.g = overlayChannel(base.g, overlay.g);
-            blended.b = overlayChannel(base.b, overlay.b);
+            blended.r = overlayChannel(base_f.r, overlay_f.r);
+            blended.g = overlayChannel(base_f.g, overlay_f.g);
+            blended.b = overlayChannel(base_f.b, overlay_f.b);
         },
         .soft_light => {
-            blended.r = softLightChannel(base.r, overlay.r);
-            blended.g = softLightChannel(base.g, overlay.g);
-            blended.b = softLightChannel(base.b, overlay.b);
+            blended.r = softLightChannel(base_f.r, overlay_f.r);
+            blended.g = softLightChannel(base_f.g, overlay_f.g);
+            blended.b = softLightChannel(base_f.b, overlay_f.b);
         },
         .hard_light => {
             // Hard light is overlay with base and overlay swapped
-            blended.r = overlayChannel(overlay.r, base.r);
-            blended.g = overlayChannel(overlay.g, base.g);
-            blended.b = overlayChannel(overlay.b, base.b);
+            blended.r = overlayChannel(overlay_f.r, base_f.r);
+            blended.g = overlayChannel(overlay_f.g, base_f.g);
+            blended.b = overlayChannel(overlay_f.b, base_f.b);
         },
         .color_dodge => {
-            blended.r = colorDodgeChannel(base.r, overlay.r);
-            blended.g = colorDodgeChannel(base.g, overlay.g);
-            blended.b = colorDodgeChannel(base.b, overlay.b);
+            blended.r = colorDodgeChannel(base_f.r, overlay_f.r);
+            blended.g = colorDodgeChannel(base_f.g, overlay_f.g);
+            blended.b = colorDodgeChannel(base_f.b, overlay_f.b);
         },
         .color_burn => {
-            blended.r = colorBurnChannel(base.r, overlay.r);
-            blended.g = colorBurnChannel(base.g, overlay.g);
-            blended.b = colorBurnChannel(base.b, overlay.b);
+            blended.r = colorBurnChannel(base_f.r, overlay_f.r);
+            blended.g = colorBurnChannel(base_f.g, overlay_f.g);
+            blended.b = colorBurnChannel(base_f.b, overlay_f.b);
         },
         .darken => {
-            blended.r = @min(base.r, overlay.r);
-            blended.g = @min(base.g, overlay.g);
-            blended.b = @min(base.b, overlay.b);
+            blended.r = @min(base_f.r, overlay_f.r);
+            blended.g = @min(base_f.g, overlay_f.g);
+            blended.b = @min(base_f.b, overlay_f.b);
         },
         .lighten => {
-            blended.r = @max(base.r, overlay.r);
-            blended.g = @max(base.g, overlay.g);
-            blended.b = @max(base.b, overlay.b);
+            blended.r = @max(base_f.r, overlay_f.r);
+            blended.g = @max(base_f.g, overlay_f.g);
+            blended.b = @max(base_f.b, overlay_f.b);
         },
         .difference => {
-            blended.r = @abs(base.r - overlay.r);
-            blended.g = @abs(base.g - overlay.g);
-            blended.b = @abs(base.b - overlay.b);
+            blended.r = @abs(base_f.r - overlay_f.r);
+            blended.g = @abs(base_f.g - overlay_f.g);
+            blended.b = @abs(base_f.b - overlay_f.b);
         },
         .exclusion => {
-            blended.r = exclusionChannel(base.r, overlay.r);
-            blended.g = exclusionChannel(base.g, overlay.g);
-            blended.b = exclusionChannel(base.b, overlay.b);
+            blended.r = exclusionChannel(base_f.r, overlay_f.r);
+            blended.g = exclusionChannel(base_f.g, overlay_f.g);
+            blended.b = exclusionChannel(base_f.b, overlay_f.b);
         },
     }
 
-    return Rgba(f32){
-        .r = compositePixel(base.r, base.a, blended.r, overlay.a, result_a),
-        .g = compositePixel(base.g, base.a, blended.g, overlay.a, result_a),
-        .b = compositePixel(base.b, base.a, blended.b, overlay.a, result_a),
+    const out = Rgba(if (T == u8) f32 else T){
+        .r = compositePixel(base_f.r, base_f.a, blended.r, overlay_f.a, result_a),
+        .g = compositePixel(base_f.g, base_f.a, blended.g, overlay_f.a, result_a),
+        .b = compositePixel(base_f.b, base_f.a, blended.b, overlay_f.a, result_a),
         .a = result_a,
     };
+
+    return if (T == u8) out.as(T) else out;
 }
 
 // Channel implementations (f32)

@@ -5,6 +5,7 @@ const std = @import("std");
 const zignal = @import("zignal");
 const Image = zignal.Image;
 const Rgb = zignal.Rgb;
+const Gray = zignal.Gray;
 const MotionBlur = zignal.MotionBlur;
 
 const moveImageToPython = @import("../image.zig").moveImageToPython;

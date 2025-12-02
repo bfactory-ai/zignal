@@ -2,6 +2,7 @@ const std = @import("std");
 const zignal = @import("zignal");
 const Image = zignal.Image;
 const Rgba = zignal.Rgba;
+const Gray = zignal.Gray;
 
 pub fn main() !void {
     var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
