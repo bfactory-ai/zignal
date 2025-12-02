@@ -4,6 +4,7 @@
 //! Each color type is implemented as a separate file using Zig's file-as-struct pattern.
 
 const std = @import("std");
+const assert = std.debug.assert;
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const expectEqualDeep = std.testing.expectEqualDeep;
@@ -981,6 +982,7 @@ fn rgbToGray(comptime T: type, rgb: Rgb(T)) Gray(T) {
         // Y = 0.2126*R + 0.7152*G + 0.0722*B
         return .{ .y = @intCast(clamp((13933 * r + 46871 * g + 4732 * b + 32768) >> 16, 0, 255)) };
     } else {
+        comptime assert(@typeInfo(T) == .float);
         const y = 0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b;
         return .{ .y = clamp(y, 0, 1) };
     }
@@ -1006,7 +1008,7 @@ fn ycbcrToRgb(comptime T: type, ycbcr: Ycbcr(T)) Rgb(T) {
 
         return .{ .r = r, .g = g, .b = b };
     } else {
-        // Float implementation
+        comptime assert(@typeInfo(T) == .float);
         const y = ycbcr.y;
         const cb = ycbcr.cb;
         const cr = ycbcr.cr;
@@ -1027,6 +1029,7 @@ fn ycbcrToRgb(comptime T: type, ycbcr: Ycbcr(T)) Rgb(T) {
 }
 
 fn rgbToHsv(comptime T: type, rgb: Rgb(T)) Hsv(T) {
+    comptime assert(@typeInfo(T) == .float);
     const min = @min(rgb.r, @min(rgb.g, rgb.b));
     const max = @max(rgb.r, @max(rgb.g, rgb.b));
     const delta = max - min;
@@ -1047,15 +1050,16 @@ fn rgbToHsv(comptime T: type, rgb: Rgb(T)) Hsv(T) {
 }
 
 fn hslToRgb(comptime T: type, hsl: Hsl(T)) Rgb(T) {
+    comptime assert(@typeInfo(T) == .float);
     const h = @max(0, @min(360, hsl.h));
     const s = @max(0, @min(1, hsl.s / 100));
     const l = @max(0, @min(1, hsl.l / 100));
 
-    const hue_sector = h / 60.0;
+    const hue_sector: T = h / 60.0;
     const sector: usize = @intFromFloat(hue_sector);
-    const fractional = hue_sector - @as(f64, @floatFromInt(sector));
+    const fractional: T = hue_sector - @as(T, @floatFromInt(sector));
 
-    const hue_factors = [_][3]f64{
+    const hue_factors = [_][3]T{
         .{ 1, fractional, 0 },
         .{ 1 - fractional, 1, 0 },
         .{ 0, 1, fractional },
@@ -1084,6 +1088,7 @@ fn hslToRgb(comptime T: type, hsl: Hsl(T)) Rgb(T) {
 }
 
 fn rgbToHsl(comptime T: type, rgb: Rgb(T)) Hsl(T) {
+    comptime assert(@typeInfo(T) == .float);
     const min = @min(rgb.r, @min(rgb.g, rgb.b));
     const max = @max(rgb.r, @max(rgb.g, rgb.b));
     const delta = max - min;
@@ -1109,6 +1114,7 @@ fn rgbToHsl(comptime T: type, rgb: Rgb(T)) Hsl(T) {
 }
 
 fn hsvToRgb(comptime T: type, hsv: Hsv(T)) Rgb(T) {
+    comptime assert(@typeInfo(T) == .float);
     const hue = @max(0, @min(1, hsv.h / 360));
     const sat = @max(0, @min(1, hsv.s / 100));
     const val = @max(0, @min(1, hsv.v / 100));
@@ -1141,6 +1147,7 @@ fn hsvToRgb(comptime T: type, hsv: Hsv(T)) Rgb(T) {
 }
 
 fn hsvToHsl(comptime T: type, hsv: Hsv(T)) Hsl(T) {
+    comptime assert(@typeInfo(T) == .float);
     const s_v = hsv.s / 100.0;
     const v = hsv.v / 100.0;
 
@@ -1155,6 +1162,7 @@ fn hsvToHsl(comptime T: type, hsv: Hsv(T)) Hsl(T) {
 }
 
 fn hslToHsv(comptime T: type, hsl: Hsl(T)) Hsv(T) {
+    comptime assert(@typeInfo(T) == .float);
     const s_l = hsl.s / 100.0;
     const l = hsl.l / 100.0;
 
@@ -1169,14 +1177,17 @@ fn hslToHsv(comptime T: type, hsl: Hsl(T)) Hsv(T) {
 }
 
 fn linearToGamma(comptime T: type, c: T) T {
+    comptime assert(@typeInfo(T) == .float);
     return if (c > 0.0031308) 1.055 * pow(T, c, (1.0 / 2.4)) - 0.055 else c * 12.92;
 }
 
 fn gammaToLinear(comptime T: type, c: T) T {
+    comptime assert(@typeInfo(T) == .float);
     return if (c > 0.04045) pow(T, (c + 0.055) / 1.055, 2.4) else c / 12.92;
 }
 
 fn rgbToXyz(comptime T: type, rgb: Rgb(T)) Xyz(T) {
+    comptime assert(@typeInfo(T) == .float);
     const r = gammaToLinear(T, rgb.r);
     const g = gammaToLinear(T, rgb.g);
     const b = gammaToLinear(T, rgb.b);
@@ -1189,6 +1200,7 @@ fn rgbToXyz(comptime T: type, rgb: Rgb(T)) Xyz(T) {
 }
 
 fn xyzToRgb(comptime T: type, xyz: Xyz(T)) Rgb(T) {
+    comptime assert(@typeInfo(T) == .float);
     const r = (xyz.x * 3.2406 + xyz.y * -1.5372 + xyz.z * -0.4986) / 100;
     const g = (xyz.x * -0.9689 + xyz.y * 1.8758 + xyz.z * 0.0415) / 100;
     const b = (xyz.x * 0.0557 + xyz.y * -0.2040 + xyz.z * 1.0570) / 100;
@@ -1201,6 +1213,7 @@ fn xyzToRgb(comptime T: type, xyz: Xyz(T)) Rgb(T) {
 }
 
 fn xyzToLab(comptime T: type, xyz: Xyz(T)) Lab(T) {
+    comptime assert(@typeInfo(T) == .float);
     var xn = xyz.x / 95.047;
     var yn = xyz.y / 100.000;
     var zn = xyz.z / 108.883;
@@ -1231,6 +1244,7 @@ fn xyzToLab(comptime T: type, xyz: Xyz(T)) Lab(T) {
 }
 
 fn labToXyz(comptime T: type, lab: Lab(T)) Xyz(T) {
+    comptime assert(@typeInfo(T) == .float);
     var y: f64 = (@max(0, @min(100, lab.l)) + 16.0) / 116.0;
     var x: f64 = (@max(-128, @min(127, lab.a)) / 500.0) + y;
     var z: f64 = y - (@max(-128, @min(127, lab.b)) / 200.0);
@@ -1261,6 +1275,7 @@ fn labToXyz(comptime T: type, lab: Lab(T)) Xyz(T) {
 }
 
 fn labToLch(comptime T: type, lab: Lab(T)) Lch(T) {
+    comptime assert(@typeInfo(T) == .float);
     const c = @sqrt(lab.a * lab.a + lab.b * lab.b);
     var h = std.math.atan2(lab.b, lab.a) * 180.0 / std.math.pi;
     // Ensure hue is in range [0, 360)
@@ -1275,6 +1290,7 @@ fn labToLch(comptime T: type, lab: Lab(T)) Lch(T) {
 }
 
 fn lchToLab(comptime T: type, lch: Lch(T)) Lab(T) {
+    comptime assert(@typeInfo(T) == .float);
     const h_rad = lch.h * std.math.pi / 180.0;
     return .{
         .l = lch.l,
@@ -1284,6 +1300,7 @@ fn lchToLab(comptime T: type, lch: Lch(T)) Lab(T) {
 }
 
 fn xyzToLms(comptime T: type, xyz: Xyz(T)) Lms(T) {
+    comptime assert(@typeInfo(T) == .float);
     return .{
         .l = (0.8951 * xyz.x + 0.2664 * xyz.y - 0.1614 * xyz.z) / 100,
         .m = (-0.7502 * xyz.x + 1.7135 * xyz.y + 0.0367 * xyz.z) / 100,
@@ -1292,6 +1309,7 @@ fn xyzToLms(comptime T: type, xyz: Xyz(T)) Lms(T) {
 }
 
 fn lmsToXyz(comptime T: type, lms: Lms(T)) Xyz(T) {
+    comptime assert(@typeInfo(T) == .float);
     return .{
         .x = 100 * (0.9869929 * lms.l - 0.1470543 * lms.m + 0.1599627 * lms.s),
         .y = 100 * (0.4323053 * lms.l + 0.5183603 * lms.m + 0.0492912 * lms.s),
@@ -1300,6 +1318,7 @@ fn lmsToXyz(comptime T: type, lms: Lms(T)) Xyz(T) {
 }
 
 fn xyzToOklab(comptime T: type, xyz: Xyz(T)) Oklab(T) {
+    comptime assert(@typeInfo(T) == .float);
     const x = xyz.x / 100.0;
     const y = xyz.y / 100.0;
     const z = xyz.z / 100.0;
@@ -1320,6 +1339,7 @@ fn xyzToOklab(comptime T: type, xyz: Xyz(T)) Oklab(T) {
 }
 
 fn oklabToXyz(comptime T: type, oklab: Oklab(T)) Xyz(T) {
+    comptime assert(@typeInfo(T) == .float);
     const l_dash = oklab.l + 0.3963377774 * oklab.a + 0.2158037573 * oklab.b;
     const m_dash = oklab.l - 0.1055613458 * oklab.a - 0.0638541728 * oklab.b;
     const s_dash = oklab.l - 0.0894841775 * oklab.a - 1.2914855480 * oklab.b;
@@ -1336,6 +1356,7 @@ fn oklabToXyz(comptime T: type, oklab: Oklab(T)) Xyz(T) {
 }
 
 fn oklabToOklch(comptime T: type, oklab: Oklab(T)) Oklch(T) {
+    comptime assert(@typeInfo(T) == .float);
     const c = @sqrt(oklab.a * oklab.a + oklab.b * oklab.b);
     var h = std.math.atan2(oklab.b, oklab.a) * 180.0 / std.math.pi;
 
@@ -1352,6 +1373,7 @@ fn oklabToOklch(comptime T: type, oklab: Oklab(T)) Oklch(T) {
 }
 
 fn oklchToOklab(comptime T: type, oklch: Oklch(T)) Oklab(T) {
+    comptime assert(@typeInfo(T) == .float);
     const h_rad = oklch.h * std.math.pi / 180.0;
 
     return .{
@@ -1362,6 +1384,7 @@ fn oklchToOklab(comptime T: type, oklch: Oklch(T)) Oklab(T) {
 }
 
 fn xyzToXyb(comptime T: type, xyz: Xyz(T)) Xyb(T) {
+    comptime assert(@typeInfo(T) == .float);
     const r = (xyz.x * 3.2406 + xyz.y * -1.5372 + xyz.z * -0.4986) / 100;
     const g = (xyz.x * -0.9689 + xyz.y * 1.8758 + xyz.z * 0.0415) / 100;
     const b = (xyz.x * 0.0557 + xyz.y * -0.2040 + xyz.z * 1.0570) / 100;
@@ -1385,6 +1408,7 @@ fn xyzToXyb(comptime T: type, xyz: Xyz(T)) Xyb(T) {
 }
 
 fn xybToXyz(comptime T: type, xyb: Xyb(T)) Xyz(T) {
+    comptime assert(@typeInfo(T) == .float);
     const cbrt_bias = 0.988945892534436;
     const bias = 0.96723368009523958;
 
@@ -1412,6 +1436,7 @@ fn xybToXyz(comptime T: type, xyb: Xyb(T)) Xyz(T) {
 }
 
 fn rgbToXyb(comptime T: type, rgb: Rgb(T)) Xyb(T) {
+    comptime assert(@typeInfo(T) == .float);
     const r = gammaToLinear(T, rgb.r);
     const g = gammaToLinear(T, rgb.g);
     const b = gammaToLinear(T, rgb.b);
@@ -1435,6 +1460,7 @@ fn rgbToXyb(comptime T: type, rgb: Rgb(T)) Xyb(T) {
 }
 
 fn xybToRgb(comptime T: type, xyb: Xyb(T)) Rgb(T) {
+    comptime assert(@typeInfo(T) == .float);
     const cbrt_bias = 0.988945892534436;
     const bias = 0.96723368009523958;
 

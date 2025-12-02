@@ -112,12 +112,17 @@ fn generateConversionMethod(stub: *GeneratedStub, comptime SourceType: type, com
 fn getClassNameFromType(comptime T: type) []const u8 {
     const type_name = @typeName(T);
 
-    if (std.mem.lastIndexOf(u8, type_name, ".")) |dot_index| {
-        return type_name[dot_index + 1 ..];
-    } else {
-        // For types without dots, return the full name
-        return type_name;
+    // Strip module path
+    const base = if (std.mem.lastIndexOf(u8, type_name, ".")) |dot_index|
+        type_name[dot_index + 1 ..]
+    else
+        type_name;
+
+    // Drop generic instantiation suffix like "Hsl(f64)"
+    if (std.mem.indexOfScalar(u8, base, '(')) |paren| {
+        return base[0..paren];
     }
+    return base;
 }
 
 /// Generate complete color class stub
@@ -143,41 +148,30 @@ fn generateColorClass(stub: *GeneratedStub, comptime ColorType: type) !void {
         try generatePropertySetter(stub, field.name, field.type);
     }
 
-    // Auto-discover conversion methods by checking which methods exist
-    inline for (color_registry.color_types) |TargetType| {
-        if (TargetType != ColorType) {
-            // Use the same method checking logic as the color factory
-            const method_name = comptime blk: {
-                const target_name = getClassNameFromType(TargetType);
-                break :blk "to" ++ target_name;
-            };
-
-            if (@hasDecl(ColorType, method_name)) {
-                try generateConversionMethod(stub, ColorType, TargetType);
-            }
-        }
-    }
-
     try stub.write(
-        \\    def to_gray(self) -> int:
-        \\        """Convert to a grayscale value representing the luminance/lightness as an integer between 0 and 255."""
+        \\    def to(self, space: ColorSpace) -> Gray | Rgb | Rgba | Hsl | Hsv | Lab | Lch | Lms | Oklab | Oklch | Xyb | Xyz | Ycbcr :
+        \\        """Convert to the given color space."""
         \\    ...
         \\
     );
 
-    try stub.writef(
-        \\    def invert(self) -> {s}:
-        \\        """Return a new color with inverted RGB channels while preserving alpha (if present)."""
-        \\    ...
-        \\
-    , .{class_name});
+    if (@hasDecl(ColorType, "invert")) {
+        try stub.writef(
+            \\    def invert(self) -> {s}:
+            \\        """Return a new color with inverted RGB channels while preserving alpha (if present)."""
+            \\    ...
+            \\
+        , .{class_name});
+    }
 
-    try stub.writef(
-        \\    def blend(self, overlay: Rgba | tuple[int, int, int, int], mode: Blending = Blending.NORMAL) -> {s}:
-        \\        """Blend with `overlay` (tuple interpreted as RGBA) using the specified `mode`."""
-        \\    ...
-        \\
-    , .{class_name});
+    if (@hasDecl(ColorType, "blend")) {
+        try stub.writef(
+            \\    def blend(self, overlay: Rgba | tuple[int, int, int, int], mode: Blending = Blending.NORMAL) -> {s}:
+            \\        """Blend with `overlay` (tuple interpreted as RGBA) using the specified `mode`."""
+            \\    ...
+            \\
+        , .{class_name});
+    }
 
     // Standard Python methods
     try stub.write("    def __repr__(self) -> str: ...\n");
@@ -421,6 +415,29 @@ fn generateStubFile(gpa: std.mem.Allocator) ![]u8 {
         .value_docs = &blending_module.blending_values,
     });
 
+    // Generate ColorSpace enum
+    try generateEnumFromMetadata(&stub, .{
+        .name = "ColorSpace",
+        .base = "IntEnum",
+        .doc = @import("color_space.zig").color_space_doc,
+        .zig_type = zignal.ColorSpace,
+        .value_docs = &[_]stub_metadata.EnumValueDoc{
+            .{ .name = "GRAY", .doc = "Grayscale" },
+            .{ .name = "HSL", .doc = "Hue/Saturation/Lightness" },
+            .{ .name = "HSV", .doc = "Hue/Saturation/Value" },
+            .{ .name = "LAB", .doc = "CIELAB" },
+            .{ .name = "LCH", .doc = "CIELCH (cylindrical Lab)" },
+            .{ .name = "LMS", .doc = "Long/Medium/Short cone responses" },
+            .{ .name = "OKLAB", .doc = "Oklab perceptual space" },
+            .{ .name = "OKLCH", .doc = "Oklch cylindrical space" },
+            .{ .name = "RGB", .doc = "sRGB" },
+            .{ .name = "RGBA", .doc = "sRGB with alpha" },
+            .{ .name = "XYB", .doc = "JPEG XL XYB space" },
+            .{ .name = "XYZ", .doc = "CIE XYZ" },
+            .{ .name = "YCBCR", .doc = "YCbCr luma/chroma" },
+        },
+    });
+
     // Generate BorderMode enum
     try generateEnumFromMetadata(&stub, .{
         .name = "BorderMode",
@@ -650,6 +667,7 @@ fn generateInitStub(gpa: std.mem.Allocator) ![]u8 {
     try stub.write("    Matrix as Matrix,\n");
     try stub.write("    Canvas as Canvas,\n");
     try stub.write("    Interpolation as Interpolation,\n");
+    try stub.write("    ColorSpace as ColorSpace,\n");
     try stub.write("    Blending as Blending,\n");
     try stub.write("    DrawMode as DrawMode,\n");
     try stub.write("    MotionBlur as MotionBlur,\n");

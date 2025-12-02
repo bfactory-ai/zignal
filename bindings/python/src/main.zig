@@ -4,6 +4,7 @@ const zignal = @import("zignal");
 
 const bitmap_font = @import("bitmap_font.zig");
 const blending = @import("blending.zig");
+const color_space = @import("color_space.zig");
 const canvas = @import("canvas.zig");
 const color = @import("color.zig");
 const grayscale_format = @import("grayscale_format.zig");
@@ -109,6 +110,7 @@ pub export fn PyInit__zignal() ?*c.PyObject {
     const enum_registrations = [_]EnumReg{
         .{ .type = zignal.DrawMode, .doc = canvas.draw_mode_doc },
         .{ .type = zignal.Blending, .doc = blending.blending_doc },
+        .{ .type = zignal.ColorSpace, .doc = color_space.color_space_doc },
         .{ .type = zignal.Interpolation, .doc = interpolation.interpolation_doc },
         .{ .type = zignal.BorderMode, .doc = border_mode.border_mode_doc },
         .{ .type = zignal.optimization.OptimizationPolicy, .doc = optimization.optimization_policy_doc },
