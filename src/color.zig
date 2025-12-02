@@ -22,11 +22,49 @@ const Y_R: i32 = 19595;
 const Y_G: i32 = 38470;
 const Y_B: i32 = 7471;
 
-const blending = @import("color/blending.zig");
+const blending = @import("blending.zig");
 pub const Blending = blending.Blending;
 pub const blendColors = blending.blendColors;
-const conversions = @import("color/conversions.zig");
-pub const isColor = conversions.isColor;
+
+pub fn isColor(comptime T: type) bool {
+    if (T == u8) return true;
+    if (@typeInfo(T) != .@"struct") return false;
+    if (!@hasDecl(T, "space")) return false;
+    return @TypeOf(T.space) == ColorSpace;
+}
+
+pub fn convertColor(comptime DestType: type, source: anytype) DestType {
+    const SrcType = @TypeOf(source);
+    if (DestType == SrcType) return source;
+
+    // Scalar <-> Scalar
+    if (SrcType == u8 and DestType == f32) return @as(f32, @floatFromInt(source)) / 255.0;
+    if (SrcType == f32 and DestType == u8) return @intFromFloat(@round(clamp(source, 0.0, 1.0) * 255.0));
+
+    // Scalar -> Color
+    if (SrcType == u8 or SrcType == f32) {
+        const DestT = switch (@typeInfo(DestType)) {
+            .@"struct" => |info| info.fields[0].type,
+            else => @compileError("Destination type must be a color struct"),
+        };
+        const gray = Gray(SrcType){ .y = source };
+        if (DestType.space == .gray) return gray.as(DestT);
+        return gray.to(DestType.space).as(DestT);
+    }
+
+    // Color -> Scalar (Luminance)
+    if (DestType == u8 or DestType == f32) {
+        return source.to(.gray).as(DestType).y;
+    }
+
+    // Color -> Color
+    const DestT = switch (@typeInfo(DestType)) {
+        .@"struct" => |info| info.fields[0].type,
+        else => @compileError("Destination type must be a color struct"),
+    };
+    return source.to(DestType.space).as(DestT);
+}
+
 const getSimpleTypeName = @import("meta.zig").getSimpleTypeName;
 
 pub const ColorSpace = enum {
@@ -148,6 +186,11 @@ pub fn Rgb(comptime T: type) type {
             return .{ .r = max - self.r, .g = max - self.g, .b = max - self.b };
         }
 
+        pub fn blend(self: Rgb(T), overlay: Rgba(T), mode: Blending) Rgb(T) {
+            const blended = blendColors(T, self.withAlpha(if (T == u8) 255 else 1.0), overlay, mode);
+            return .{ .r = blended.r, .g = blended.g, .b = blended.b };
+        }
+
         pub fn to(self: Rgb(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self),
@@ -241,9 +284,13 @@ pub fn Rgba(comptime T: type) type {
             return (@as(u32, r) << 24) | (@as(u32, g) << 16) | (@as(u32, b) << 8) | @as(u32, a);
         }
 
-        pub fn invert(self: Rgb(T)) Rgb(T) {
+        pub fn invert(self: Rgba(T)) Rgba(T) {
             const max = if (T == u8) 255 else 1.0;
             return .{ .r = max - self.r, .g = max - self.g, .b = max - self.b, .a = self.a };
+        }
+
+        pub fn blend(self: Rgba(T), overlay: Rgba(T), mode: Blending) Rgba(T) {
+            return blendColors(T, self, overlay, mode);
         }
 
         pub fn to(self: Rgba(T), comptime color_space: ColorSpace) color_space.Type(T) {
@@ -802,6 +849,16 @@ fn rgbToYcbcr(comptime T: type, rgb: Rgb(T)) Ycbcr(T) {
 
 /// Converts RGB to grayscale using BT.601 luminance coefficients, matching the Y component of YCbCr.
 /// For `u8`, uses 16-bit fixed-point arithmetic for consistency with the YCbCr path.
+/// Calculates the perceptual luminance using ITU-R BT.709 coefficients.
+/// Returns a value in the range [0.0, 1.0].
+pub fn rgbLuma(r: anytype, g: anytype, b: anytype) f64 {
+    const T = @TypeOf(r);
+    const r_f: f64 = if (T == u8) @as(f64, @floatFromInt(r)) / 255.0 else @floatCast(r);
+    const g_f: f64 = if (T == u8) @as(f64, @floatFromInt(g)) / 255.0 else @floatCast(g);
+    const b_f: f64 = if (T == u8) @as(f64, @floatFromInt(b)) / 255.0 else @floatCast(b);
+    return 0.2126 * r_f + 0.7152 * g_f + 0.0722 * b_f;
+}
+
 pub fn rgbToGray(comptime T: type, rgb: Rgb(T)) Gray(T) {
     if (T == u8) {
         const r: i32 = rgb.r;
@@ -1524,15 +1581,17 @@ test "100 random colors" {
     }
 }
 
-// test "Xyz blend matches RGB blend" {
-//     const base_rgb = Rgb{ .r = 120, .g = 100, .b = 80 };
-//     const overlay = Rgba{ .r = 200, .g = 50, .b = 150, .a = 128 };
+test "Xyz blend matches RGB blend" {
+    const base_rgb = Rgb(f32){ .r = 0.47, .g = 0.39, .b = 0.31 };
+    const overlay = Rgba(f32){ .r = 0.78, .g = 0.20, .b = 0.59, .a = 0.5 };
 
-//     const blended_xyz = base_rgb.toXyz().blend(overlay, Blending.normal);
-//     const blended_rgb = base_rgb.blend(overlay, Blending.normal);
+    const blended_xyz = base_rgb.to(.xyz).to(.rgba).blend(overlay, Blending.normal);
+    const blended_rgb = base_rgb.blend(overlay, Blending.normal);
 
-//     try expectEqualDeep(blended_rgb, blended_xyz.toRgb());
-// }
+    try expectApproxEqAbs(blended_rgb.r, blended_xyz.to(.rgb).r, 0.001);
+    try expectApproxEqAbs(blended_rgb.g, blended_xyz.to(.rgb).g, 0.001);
+    try expectApproxEqAbs(blended_rgb.b, blended_xyz.to(.rgb).b, 0.001);
+}
 
 // /// List of color types to test. This is the only thing to update when adding a new color space.
 // const color_types = .{ Rgb, Rgba, Hsl, Hsv, Lab, Lch, Xyz, Lms, Oklab, Oklch, Xyb, Ycbcr };
