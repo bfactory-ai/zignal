@@ -8,6 +8,7 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const expectEqualDeep = std.testing.expectEqualDeep;
 const expectApproxEqAbs = std.testing.expectApproxEqAbs;
+const expectEqualStrings = std.testing.expectEqualStrings;
 const clamp = std.math.clamp;
 const lerp = std.math.lerp;
 const pow = std.math.pow;
@@ -63,6 +64,48 @@ pub fn convertColor(comptime DestType: type, source: anytype) DestType {
         else => @compileError("Destination type must be a color struct"),
     };
     return source.to(DestType.space).as(DestT);
+}
+
+fn formatColor(
+    comptime T: type,
+    self: T,
+    writer: anytype,
+) !void {
+    // Get the short type name
+    const type_name = comptime getSimpleTypeName(T);
+
+    // Convert to RGB for terminal display
+    const rgb = convertColor(Rgb(u8), self);
+
+    // Determine text color based on background darkness
+    const fg: u8 = if (rgb.as(f32).to(.oklab).l < 0.5) 255 else 0;
+
+    // Start with the SGR sequence
+    try writer.print(
+        "\x1b[1m\x1b[38;2;{d};{d};{d}m\x1b[48;2;{d};{d};{d}m{s}{{ ",
+        .{ fg, fg, fg, rgb.r, rgb.g, rgb.b, type_name },
+    );
+
+    // Print each field
+    const fields = std.meta.fields(T);
+    inline for (fields, 0..) |field, i| {
+        try writer.print(".{s} = ", .{field.name});
+
+        // Format the field value appropriately
+        const value = @field(self, field.name);
+        switch (field.type) {
+            u8 => try writer.print("{d}", .{value}),
+            f64, f32 => try writer.print("{d:.2}", .{value}), // 2 decimal places for floats
+            else => try writer.print("{any}", .{value}),
+        }
+
+        if (i < fields.len - 1) {
+            try writer.print(", ", .{});
+        }
+    }
+
+    // Close and reset
+    try writer.print(" }}\x1b[0m", .{});
 }
 
 const getSimpleTypeName = @import("meta.zig").getSimpleTypeName;
@@ -191,6 +234,10 @@ pub fn Rgb(comptime T: type) type {
             return .{ .r = blended.r, .g = blended.g, .b = blended.b };
         }
 
+        pub fn format(self: Rgb(T), writer: anytype) !void {
+            return formatColor(Rgb(T), self, writer);
+        }
+
         pub fn to(self: Rgb(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self),
@@ -293,6 +340,10 @@ pub fn Rgba(comptime T: type) type {
             return blendColors(T, self, overlay, mode);
         }
 
+        pub fn format(self: Rgba(T), writer: anytype) !void {
+            return formatColor(Rgba(T), self, writer);
+        }
+
         pub fn to(self: Rgba(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
@@ -354,6 +405,10 @@ pub fn Gray(comptime T: type) type {
         pub const space = ColorSpace.gray;
         y: T,
 
+        pub fn format(self: Gray(T), writer: anytype) !void {
+            return formatColor(Gray(T), self, writer);
+        }
+
         pub fn to(self: Gray(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => self,
@@ -398,6 +453,10 @@ pub fn Hsv(comptime T: type) type {
         s: T,
         v: T,
 
+        pub fn format(self: Hsv(T), writer: anytype) !void {
+            return formatColor(Hsv(T), self, writer);
+        }
+
         pub fn to(self: Hsv(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
@@ -437,6 +496,10 @@ pub fn Hsl(comptime T: type) type {
         h: T,
         s: T,
         l: T,
+
+        pub fn format(self: Hsl(T), writer: anytype) !void {
+            return formatColor(Hsl(T), self, writer);
+        }
 
         pub fn to(self: Hsl(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
@@ -480,6 +543,10 @@ pub fn Xyz(comptime T: type) type {
         y: T,
         z: T,
 
+        pub fn format(self: Xyz(T), writer: anytype) !void {
+            return formatColor(Xyz(T), self, writer);
+        }
+
         pub fn to(self: Xyz(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
@@ -521,6 +588,10 @@ pub fn Lab(comptime T: type) type {
         a: T,
         b: T,
 
+        pub fn format(self: Lab(T), writer: anytype) !void {
+            return formatColor(Lab(T), self, writer);
+        }
+
         pub fn to(self: Lab(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
@@ -561,6 +632,10 @@ pub fn Lch(comptime T: type) type {
         l: T,
         c: T,
         h: T,
+        pub fn format(self: Lch(T), writer: anytype) !void {
+            return formatColor(Lch(T), self, writer);
+        }
+
         pub fn to(self: Lch(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
@@ -599,6 +674,10 @@ pub fn Lms(comptime T: type) type {
         l: T,
         m: T,
         s: T,
+
+        pub fn format(self: Lms(T), writer: anytype) !void {
+            return formatColor(Lms(T), self, writer);
+        }
 
         pub fn to(self: Lms(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
@@ -641,6 +720,10 @@ pub fn Oklab(comptime T: type) type {
         a: T,
         b: T,
 
+        pub fn format(self: Oklab(T), writer: anytype) !void {
+            return formatColor(Oklab(T), self, writer);
+        }
+
         pub fn to(self: Oklab(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
@@ -681,6 +764,10 @@ pub fn Oklch(comptime T: type) type {
         l: T,
         c: T,
         h: T,
+
+        pub fn format(self: Oklch(T), writer: anytype) !void {
+            return formatColor(Oklch(T), self, writer);
+        }
 
         pub fn to(self: Oklch(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
@@ -724,6 +811,10 @@ pub fn Xyb(comptime T: type) type {
         y: T,
         b: T,
 
+        pub fn format(self: Xyb(T), writer: anytype) !void {
+            return formatColor(Xyb(T), self, writer);
+        }
+
         pub fn to(self: Xyb(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
@@ -766,6 +857,10 @@ pub fn Ycbcr(comptime T: type) type {
         y: T,
         cb: T,
         cr: T,
+
+        pub fn format(self: Ycbcr(T), writer: anytype) !void {
+            return formatColor(Ycbcr(T), self, writer);
+        }
 
         pub fn to(self: Ycbcr(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
@@ -1591,6 +1686,17 @@ test "Xyz blend matches RGB blend" {
     try expectApproxEqAbs(blended_rgb.r, blended_xyz.to(.rgb).r, 0.001);
     try expectApproxEqAbs(blended_rgb.g, blended_xyz.to(.rgb).g, 0.001);
     try expectApproxEqAbs(blended_rgb.b, blended_xyz.to(.rgb).b, 0.001);
+}
+
+test "Color formatting" {
+    const red = Rgb(u8){ .r = 255, .g = 0, .b = 0 };
+    var buffer: [512]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buffer);
+
+    try red.format(&stream);
+    const result_red = buffer[0..stream.end];
+    const expected_red = "\x1b[1m\x1b[38;2;0;0;0m\x1b[48;2;255;0;0mRgb(u8){ .r = 255, .g = 0, .b = 0 }\x1b[0m";
+    try expectEqualStrings(expected_red, result_red);
 }
 
 // /// List of color types to test. This is the only thing to update when adding a new color space.
