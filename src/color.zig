@@ -7,6 +7,7 @@ const std = @import("std");
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const expectEqualDeep = std.testing.expectEqualDeep;
+const expectApproxEqAbs = std.testing.expectApproxEqAbs;
 const clamp = std.math.clamp;
 const lerp = std.math.lerp;
 const pow = std.math.pow;
@@ -99,7 +100,7 @@ pub fn Color(comptime T: type) type {
 pub fn Rgb(comptime T: type) type {
     switch (@typeInfo(T)) {
         .float => {},
-        .int => |info| if (info.bits != 8 or info.signedness != .unsigned) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
+        .int => if (T != u8) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
         else => @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
     }
     return struct {
@@ -142,6 +143,11 @@ pub fn Rgb(comptime T: type) type {
             return .{ .r = self.r, .g = self.g, .b = self.b, .a = alpha };
         }
 
+        pub fn invert(self: Rgb(T)) Rgb(T) {
+            const max = if (T == u8) 255 else 1.0;
+            return .{ .r = max - self.r, .g = max - self.g, .b = max - self.b };
+        }
+
         pub fn to(self: Rgb(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self),
@@ -161,11 +167,6 @@ pub fn Rgb(comptime T: type) type {
         }
 
         pub fn as(self: Rgb(T), comptime U: type) Rgb(U) {
-            switch (@typeInfo(U)) {
-                .float => {},
-                .int => |info| if (info.bits != 8 or info.signedness != .unsigned) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
-                else => @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
-            }
             return switch (T) {
                 u8 => switch (U) {
                     u8 => self,
@@ -197,7 +198,7 @@ pub fn Rgb(comptime T: type) type {
 pub fn Rgba(comptime T: type) type {
     switch (@typeInfo(T)) {
         .float => {},
-        .int => |info| if (info.bits != 8 or info.signedness != .unsigned) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
+        .int => if (T != u8) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
         else => @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
     }
     return packed struct {
@@ -240,6 +241,11 @@ pub fn Rgba(comptime T: type) type {
             return (@as(u32, r) << 24) | (@as(u32, g) << 16) | (@as(u32, b) << 8) | @as(u32, a);
         }
 
+        pub fn invert(self: Rgb(T)) Rgb(T) {
+            const max = if (T == u8) 255 else 1.0;
+            return .{ .r = max - self.r, .g = max - self.g, .b = max - self.b, .a = self.a };
+        }
+
         pub fn to(self: Rgba(T), comptime color_space: ColorSpace) color_space.Type(T) {
             return switch (color_space) {
                 .gray => rgbToGray(T, self.to(.rgb)),
@@ -259,11 +265,6 @@ pub fn Rgba(comptime T: type) type {
         }
 
         pub fn as(self: Rgba(T), comptime U: type) Rgba(U) {
-            switch (@typeInfo(U)) {
-                .float => {},
-                .int => |info| if (info.bits != 8 or info.signedness != .unsigned) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
-                else => @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
-            }
             return switch (T) {
                 u8 => switch (U) {
                     u8 => self,
@@ -298,7 +299,7 @@ pub fn Rgba(comptime T: type) type {
 pub fn Gray(comptime T: type) type {
     switch (@typeInfo(T)) {
         .float => {},
-        .int => |info| if (info.bits != 8 or info.signedness != .unsigned) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
+        .int => if (T != u8) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
         else => @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space"),
     }
 
@@ -369,7 +370,6 @@ pub fn Hsv(comptime T: type) type {
         }
 
         pub fn as(self: Hsv(T), comptime U: type) Hsv(U) {
-            if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
             return .{
                 .h = @floatCast(self.h),
                 .s = @floatCast(self.s),
@@ -410,7 +410,6 @@ pub fn Hsl(comptime T: type) type {
         }
 
         pub fn as(self: Hsl(T), comptime U: type) Hsl(U) {
-            if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
             return .{
                 .h = @floatCast(self.h),
                 .s = @floatCast(self.s),
@@ -453,7 +452,6 @@ pub fn Xyz(comptime T: type) type {
         }
 
         pub fn as(self: Xyz(T), comptime U: type) Xyz(U) {
-            if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
             return .{
                 .x = @floatCast(self.x),
                 .y = @floatCast(self.y),
@@ -495,7 +493,6 @@ pub fn Lab(comptime T: type) type {
         }
 
         pub fn as(self: Lab(T), comptime U: type) Lab(U) {
-            if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
             return .{
                 .l = @floatCast(self.l),
                 .a = @floatCast(self.a),
@@ -536,7 +533,6 @@ pub fn Lch(comptime T: type) type {
         }
 
         pub fn as(self: Lch(T), comptime U: type) Lch(U) {
-            if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
             return .{
                 .l = @floatCast(self.l),
                 .c = @floatCast(self.c),
@@ -576,7 +572,6 @@ pub fn Lms(comptime T: type) type {
         }
 
         pub fn as(self: Lch(T), comptime U: type) Lch(U) {
-            if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
             return .{
                 .l = @floatCast(self.l),
                 .c = @floatCast(self.c),
@@ -618,7 +613,6 @@ pub fn Oklab(comptime T: type) type {
         }
 
         pub fn as(self: Oklab(T), comptime U: type) Oklab(U) {
-            if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
             return .{
                 .l = @floatCast(self.l),
                 .a = @floatCast(self.a),
@@ -660,7 +654,6 @@ pub fn Oklch(comptime T: type) type {
         }
 
         pub fn as(self: Oklch(T), comptime U: type) Oklch(U) {
-            if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
             return .{
                 .l = @floatCast(self.l),
                 .c = @floatCast(self.c),
@@ -703,7 +696,6 @@ pub fn Xyb(comptime T: type) type {
         }
 
         pub fn as(self: Xyb(T), comptime U: type) Xyb(U) {
-            if (@typeInfo(T) != .float) @compileError("Unsupported backing type " ++ @typeName(T) ++ " for color space");
             return .{
                 .x = @floatCast(self.x),
                 .y = @floatCast(self.y),
@@ -1331,17 +1323,6 @@ inline fn testColorConversion(from: Rgb(u8), to: anytype) !void {
     try expectEqualDeep(recovered, from);
 }
 
-fn expectRgbClose(expected: Rgb(u8), actual: Rgb(u8)) !void {
-    const diff = struct { r: i16, g: i16, b: i16 }{
-        .r = @as(i16, expected.r) - @as(i16, actual.r),
-        .g = @as(i16, expected.g) - @as(i16, actual.g),
-        .b = @as(i16, expected.b) - @as(i16, actual.b),
-    };
-    try expect(@abs(diff.r) <= 1);
-    try expect(@abs(diff.g) <= 1);
-    try expect(@abs(diff.b) <= 1);
-}
-
 test "convert grayscale" {
     try expectEqual((Rgb(u8){ .r = 128, .g = 128, .b = 128 }).to(.gray), Gray(u8){ .y = 128 });
     try expectEqual((Rgb(u8){ .r = 255, .g = 0, .b = 0 }).to(.gray), Gray(u8){ .y = 54 });
@@ -1535,60 +1516,13 @@ test "100 random colors" {
         const rgb_from_ycbcr = rgb.as(f64).to(.ycbcr).to(.rgb).as(u8);
         try expectEqualDeep(rgb, rgb_from_ycbcr);
         const rgb_from_ycbcr2 = rgb.to(.ycbcr).to(.rgb);
-        try expectRgbClose(rgb, rgb_from_ycbcr2);
+        try expectApproxEqAbs(@as(f32, @floatFromInt(rgb.r)), @as(f32, @floatFromInt(rgb_from_ycbcr2.r)), 1);
+        try expectApproxEqAbs(@as(f32, @floatFromInt(rgb.g)), @as(f32, @floatFromInt(rgb_from_ycbcr2.g)), 1);
+        try expectApproxEqAbs(@as(f32, @floatFromInt(rgb.b)), @as(f32, @floatFromInt(rgb_from_ycbcr2.b)), 1);
+        const rgb_from_inv = rgb.invert().invert();
+        try expectEqualDeep(rgb, rgb_from_inv);
     }
 }
-
-// test "extended color space round trips" {
-//     const colors = [_]Rgb{
-//         .{ .r = 255, .g = 0, .b = 0 }, // Red
-//         .{ .r = 0, .g = 255, .b = 0 }, // Green
-//         .{ .r = 0, .g = 0, .b = 255 }, // Blue
-//         .{ .r = 255, .g = 255, .b = 255 }, // White
-//         .{ .r = 128, .g = 128, .b = 128 }, // Gray
-//     };
-
-//     for (colors) |original| {
-//         // Test all round-trip conversions
-//         try expectEqualDeep(original, original.toXyz().toRgb());
-//         try expectEqualDeep(original, original.toLms().toRgb());
-//         try expectEqualDeep(original, original.toOklab().toRgb());
-//         try expectEqualDeep(original, original.toOklch().toRgb());
-//         try expectEqualDeep(original, original.toXyb().toRgb());
-//     }
-// }
-
-// test "color invert matches RGB inversion" {
-//     const samples = [_]Rgb{
-//         .{ .r = 0, .g = 0, .b = 0 },
-//         .{ .r = 255, .g = 255, .b = 255 },
-//         .{ .r = 12, .g = 34, .b = 56 },
-//         .{ .r = 128, .g = 64, .b = 32 },
-//         .{ .r = 5, .g = 200, .b = 150 },
-//     };
-
-//     inline for (color_types) |ColorType| {
-//         for (samples) |rgb| {
-//             const typed: ColorType = if (comptime ColorType == Rgb) rgb else convertColor(ColorType, rgb);
-//             const inverted = typed.invert();
-//             const recovered_rgb: Rgb = if (comptime ColorType == Rgb) inverted else inverted.toRgb();
-//             const expected = rgb.invert();
-
-//             if (comptime ColorType == Ycbcr) {
-//                 try expect(@abs(@as(i16, expected.r) - @as(i16, recovered_rgb.r)) <= 1);
-//                 try expect(@abs(@as(i16, expected.g) - @as(i16, recovered_rgb.g)) <= 1);
-//                 try expect(@abs(@as(i16, expected.b) - @as(i16, recovered_rgb.b)) <= 1);
-//             } else {
-//                 try expectEqualDeep(expected, recovered_rgb);
-//             }
-
-//             if (comptime ColorType == Rgba) {
-//                 const original_rgba = convertColor(Rgba, rgb);
-//                 try expectEqual(original_rgba.a, inverted.a);
-//             }
-//         }
-//     }
-// }
 
 // test "Xyz blend matches RGB blend" {
 //     const base_rgb = Rgb{ .r = 120, .g = 100, .b = 80 };
