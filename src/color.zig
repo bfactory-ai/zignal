@@ -66,11 +66,7 @@ pub fn convertColor(comptime DestType: type, source: anytype) DestType {
     return source.to(DestType.space).as(DestT);
 }
 
-fn formatColor(
-    comptime T: type,
-    self: T,
-    writer: anytype,
-) !void {
+fn formatColor(comptime T: type, self: T, writer: *std.Io.Writer) !void {
     // Get the short type name
     const type_name = comptime getSimpleTypeName(T);
 
@@ -239,7 +235,7 @@ pub fn Rgb(comptime T: type) type {
             return .{ .r = blended.r, .g = blended.g, .b = blended.b };
         }
 
-        pub fn format(self: Rgb(T), writer: anytype) !void {
+        pub fn format(self: Rgb(T), writer: *std.Io.Writer) !void {
             return formatColor(Rgb(T), self, writer);
         }
 
@@ -350,7 +346,7 @@ pub fn Rgba(comptime T: type) type {
             return blendColors(T, self, overlay, mode);
         }
 
-        pub fn format(self: Rgba(T), writer: anytype) !void {
+        pub fn format(self: Rgba(T), writer: *std.Io.Writer) !void {
             return formatColor(Rgba(T), self, writer);
         }
 
@@ -415,7 +411,7 @@ pub fn Gray(comptime T: type) type {
         pub const space = ColorSpace.gray;
         y: T,
 
-        pub fn format(self: Gray(T), writer: anytype) !void {
+        pub fn format(self: Gray(T), writer: *std.Io.Writer) !void {
             return formatColor(Gray(T), self, writer);
         }
 
@@ -463,7 +459,7 @@ pub fn Hsv(comptime T: type) type {
         s: T,
         v: T,
 
-        pub fn format(self: Hsv(T), writer: anytype) !void {
+        pub fn format(self: Hsv(T), writer: *std.Io.Writer) !void {
             return formatColor(Hsv(T), self, writer);
         }
 
@@ -507,7 +503,7 @@ pub fn Hsl(comptime T: type) type {
         s: T,
         l: T,
 
-        pub fn format(self: Hsl(T), writer: anytype) !void {
+        pub fn format(self: Hsl(T), writer: *std.Io.Writer) !void {
             return formatColor(Hsl(T), self, writer);
         }
 
@@ -553,7 +549,7 @@ pub fn Xyz(comptime T: type) type {
         y: T,
         z: T,
 
-        pub fn format(self: Xyz(T), writer: anytype) !void {
+        pub fn format(self: Xyz(T), writer: *std.Io.Writer) !void {
             return formatColor(Xyz(T), self, writer);
         }
 
@@ -598,7 +594,7 @@ pub fn Lab(comptime T: type) type {
         a: T,
         b: T,
 
-        pub fn format(self: Lab(T), writer: anytype) !void {
+        pub fn format(self: Lab(T), writer: *std.Io.Writer) !void {
             return formatColor(Lab(T), self, writer);
         }
 
@@ -642,7 +638,7 @@ pub fn Lch(comptime T: type) type {
         l: T,
         c: T,
         h: T,
-        pub fn format(self: Lch(T), writer: anytype) !void {
+        pub fn format(self: Lch(T), writer: *std.Io.Writer) !void {
             return formatColor(Lch(T), self, writer);
         }
 
@@ -685,7 +681,7 @@ pub fn Lms(comptime T: type) type {
         m: T,
         s: T,
 
-        pub fn format(self: Lms(T), writer: anytype) !void {
+        pub fn format(self: Lms(T), writer: *std.Io.Writer) !void {
             return formatColor(Lms(T), self, writer);
         }
 
@@ -730,7 +726,7 @@ pub fn Oklab(comptime T: type) type {
         a: T,
         b: T,
 
-        pub fn format(self: Oklab(T), writer: anytype) !void {
+        pub fn format(self: Oklab(T), writer: *std.Io.Writer) !void {
             return formatColor(Oklab(T), self, writer);
         }
 
@@ -775,7 +771,7 @@ pub fn Oklch(comptime T: type) type {
         c: T,
         h: T,
 
-        pub fn format(self: Oklch(T), writer: anytype) !void {
+        pub fn format(self: Oklch(T), writer: *std.Io.Writer) !void {
             return formatColor(Oklch(T), self, writer);
         }
 
@@ -821,7 +817,7 @@ pub fn Xyb(comptime T: type) type {
         y: T,
         b: T,
 
-        pub fn format(self: Xyb(T), writer: anytype) !void {
+        pub fn format(self: Xyb(T), writer: *std.Io.Writer) !void {
             return formatColor(Xyb(T), self, writer);
         }
 
@@ -868,7 +864,7 @@ pub fn Ycbcr(comptime T: type) type {
         cb: T,
         cr: T,
 
-        pub fn format(self: Ycbcr(T), writer: anytype) !void {
+        pub fn format(self: Ycbcr(T), writer: *std.Io.Writer) !void {
             return formatColor(Ycbcr(T), self, writer);
         }
 
