@@ -1,5 +1,17 @@
 const std = @import("std");
-pub const allocator = std.heap.c_allocator;
+const builtin = @import("builtin");
+
+// Use a debug-friendly allocator in debug-ish builds to catch leaks/overflows; fall back to libc allocator otherwise.
+const use_debug_allocator = builtin.mode == .Debug or builtin.mode == .ReleaseSafe;
+var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+pub const allocator = if (use_debug_allocator) debug_allocator.allocator() else std.heap.c_allocator;
+
+pub fn deinitAllocator() void {
+    if (use_debug_allocator) {
+        // Ignore LeakSummary; we just want to surface problems during shutdown.
+        _ = debug_allocator.deinit();
+    }
+}
 
 const zignal = @import("zignal");
 const Point = zignal.Point;
