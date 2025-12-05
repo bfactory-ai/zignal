@@ -46,7 +46,6 @@ test "invert" {
     rgba.at(0, 0).* = Rgba{ .r = 0, .g = 128, .b = 255, .a = 64 };
     rgba.invert();
     try expectEqualDeep(Rgba{ .r = 255, .g = 127, .b = 0, .a = 64 }, rgba.at(0, 0).*);
-
 }
 
 test "boxBlur radius 0 with views" {

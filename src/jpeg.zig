@@ -2559,7 +2559,7 @@ fn ycbcrToRgbAllBlocks(state: *JpegState) !void {
                     .cb = @intCast(@min(255, @max(0, Cb + 128))),
                     .cr = @intCast(@min(255, @max(0, Cr + 128))),
                 };
-        const rgb = ycbcr.to(.rgb);
+                const rgb = ycbcr.to(.rgb);
 
                 state.rgb_storage.?[idx][0][i] = rgb.r;
                 state.rgb_storage.?[idx][1][i] = rgb.g;
