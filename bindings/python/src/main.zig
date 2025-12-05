@@ -39,12 +39,8 @@ var zignal_module = c.PyModuleDef{
     .m_slots = null,
     .m_traverse = null,
     .m_clear = null,
-    .m_free = module_free,
+    .m_free = null,
 };
-
-fn module_free(_: ?*anyopaque) callconv(.c) void {
-    py_utils.deinitAllocator();
-}
 
 // Module function metadata - combines functions from various modules
 pub const module_functions_metadata = blk: {

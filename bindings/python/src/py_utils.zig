@@ -1,8 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-// Use a debug-friendly allocator in debug-ish builds to catch leaks/overflows; fall back to libc allocator otherwise.
-const use_debug_allocator = builtin.mode == .Debug or builtin.mode == .ReleaseSafe;
+// Python embeds long-lived objects (module singletons, pytest fixtures), so
+// running the DebugAllocator at shutdown produces noisy "leaks". Use c_allocator
+// for the Python bindings to keep teardown clean.
+const use_debug_allocator = false;
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 pub const allocator = if (use_debug_allocator) debug_allocator.allocator() else std.heap.c_allocator;
 
