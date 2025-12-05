@@ -130,7 +130,19 @@ pub fn parseColor(comptime T: type, color_obj: ?*c.PyObject) !T {
             }
         },
         Rgb => extractRgbFromObject(color_obj.?),
-        Rgba => extractRgbaFromObject(color_obj.?),
+        Rgba => blk: {
+            if (extractRgbaFromObject(color_obj.?)) |rgba| {
+                break :blk rgba;
+            } else |_| {
+                c.PyErr_Clear();
+                // Accept RGB-like objects by adding full alpha
+                const rgb = extractRgbFromObject(color_obj.?) catch {
+                    c.PyErr_Clear();
+                    break :blk error.InvalidColor;
+                };
+                break :blk Rgba{ .r = rgb.r, .g = rgb.g, .b = rgb.b, .a = 255 };
+            }
+        },
         else => unreachable,
     };
 

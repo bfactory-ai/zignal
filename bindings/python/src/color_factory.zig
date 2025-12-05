@@ -24,7 +24,8 @@ const ConversionError = @import("py_utils.zig").ConversionError;
 const convertFromPython = @import("py_utils.zig").convertFromPython;
 const convertToPython = @import("py_utils.zig").convertToPython;
 const convertWithValidation = @import("py_utils.zig").convertWithValidation;
-const createColorPyObject = @import("color.zig").createColorPyObject;
+const color_bindings = @import("color.zig");
+const createColorPyObject = color_bindings.createColorPyObject;
 const getValidationErrorMessage = @import("color_registry.zig").getValidationErrorMessage;
 const validateColorComponent = @import("color_registry.zig").validateColorComponent;
 const enum_utils = @import("enum_utils.zig");
@@ -251,7 +252,7 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
                 .ml_name = "to",
                 .ml_meth = @ptrCast(&toMethod),
                 .ml_flags = c.METH_VARARGS,
-                .ml_doc = "Convert to the specified ColorSpace enum value.",
+                .ml_doc = "Convert to the given color type (pass the class, e.g. zignal.Rgb).",
             };
             index += 1;
 
@@ -713,13 +714,40 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
             return createPyObject(blended, type_obj);
         }
 
-        /// to(space) method implementation using ColorSpace enum
+        /// Map a Python color class object to the underlying ColorSpace
+        fn colorSpaceFromPyType(type_obj: *c.PyTypeObject) ?zignal.ColorSpace {
+            if (type_obj == &color_bindings.GrayType) return .gray;
+            if (type_obj == &color_bindings.RgbType) return .rgb;
+            if (type_obj == &color_bindings.RgbaType) return .rgba;
+            if (type_obj == &color_bindings.HslType) return .hsl;
+            if (type_obj == &color_bindings.HsvType) return .hsv;
+            if (type_obj == &color_bindings.LabType) return .lab;
+            if (type_obj == &color_bindings.LchType) return .lch;
+            if (type_obj == &color_bindings.LmsType) return .lms;
+            if (type_obj == &color_bindings.OklabType) return .oklab;
+            if (type_obj == &color_bindings.OklchType) return .oklch;
+            if (type_obj == &color_bindings.XybType) return .xyb;
+            if (type_obj == &color_bindings.XyzType) return .xyz;
+            if (type_obj == &color_bindings.YcbcrType) return .ycbcr;
+            return null;
+        }
+
+        /// to(space) method implementation using Python color classes
         pub fn toMethod(self_obj: [*c]c.PyObject, args: ?*c.PyObject) callconv(.c) [*c]c.PyObject {
             const self: *ObjectType = @ptrCast(self_obj);
-            var space_obj: ?*c.PyObject = null;
-            if (args == null or c.PyArg_ParseTuple(args.?, "O", &space_obj) == 0) return null;
+            var target_type_obj: ?*c.PyObject = null;
+            if (args == null or c.PyArg_ParseTuple(args.?, "O", &target_type_obj) == 0) return null;
 
-            const space = enum_utils.pyToEnum(zignal.ColorSpace, space_obj.?) catch return null;
+            if (c.PyType_Check(target_type_obj) == 0) {
+                c.PyErr_SetString(c.PyExc_TypeError, "Expected a zignal color type (e.g., zignal.Rgb)");
+                return null;
+            }
+
+            const target_space = colorSpaceFromPyType(@ptrCast(target_type_obj.?)) orelse {
+                c.PyErr_SetString(c.PyExc_TypeError, "Unsupported target color type");
+                return null;
+            };
+
             const zig_color = objectToZigColor(self);
 
             const ColorType = @TypeOf(zig_color);
@@ -729,7 +757,7 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
             };
             const float_color = if (is_u8_backed) zig_color.as(f64) else zig_color;
 
-            const result_obj = switch (space) {
+            const result_obj = switch (target_space) {
                 .gray => createColorPyObject(float_color.to(.gray).as(u8)),
                 .rgb => createColorPyObject(float_color.to(.rgb).as(u8)),
                 .rgba => createColorPyObject(float_color.to(.rgba).as(u8)),

@@ -342,7 +342,7 @@ fn PixelProxyBinding(comptime ColorType: type, comptime ProxyObjectType: type) t
                 .ml_name = "to",
                 .ml_meth = @ptrCast(&toMethod),
                 .ml_flags = c.METH_VARARGS,
-                .ml_doc = "Convert to the specified ColorSpace enum value",
+                .ml_doc = "Convert to the given color type (pass the class, e.g. zignal.Rgb)",
             };
             index += 1;
 
