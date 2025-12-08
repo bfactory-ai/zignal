@@ -7,6 +7,7 @@ const expectEqualDeep = std.testing.expectEqualDeep;
 const expectApproxEqAbs = std.testing.expectApproxEqAbs;
 
 const Point = @import("../geometry/Point.zig").Point;
+const meta = @import("../meta.zig");
 const formatting = @import("formatting.zig");
 const svd_module = @import("svd_static.zig");
 
@@ -44,10 +45,20 @@ pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) typ
         }
 
         /// Retrieves a pointer to the element at position row, col in the matrix.
-        pub inline fn at(self: anytype, row_idx: usize, col_idx: usize) @TypeOf(&self.items[row_idx][col_idx]) {
+        pub fn at(self: anytype, row_idx: usize, col_idx: usize) @TypeOf(&self.items[row_idx][col_idx]) {
             assert(row_idx < rows);
             assert(col_idx < cols);
             return &self.items[row_idx][col_idx];
+        }
+
+        pub fn as(self: Self, comptime U: type) SMatrix(U, self.rows, self.cols) {
+            var result: SMatrix(U, self.rows, self.cols) = .{};
+            for (0..self.rows) |r| {
+                for (0..self.cols) |c| {
+                    result.items[r][c] = meta.as(T, self.items[r][c]);
+                }
+            }
+            return result;
         }
 
         /// Returns a matrix with all elements set to value.
@@ -737,6 +748,17 @@ test "SMatrix shape" {
     const shape = matrix.shape();
     try expectEqual(shape[0], 4);
     try expectEqual(shape[1], 5);
+}
+
+test "SMatrix as" {
+    const seed: u64 = std.crypto.random.int(u64);
+    const a: SMatrix(f32, 4, 3) = .random(seed);
+    const b = a.as(f64);
+    for (0..a.rows) |r| {
+        for (0..a.cols) |c| {
+            try expectEqual(@as(f64, @floatCast(a.at(r, c).*)), b.at(r, c).*);
+        }
+    }
 }
 
 test "SMatrix scale" {
