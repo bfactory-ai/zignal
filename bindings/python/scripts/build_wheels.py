@@ -28,10 +28,12 @@ def get_native_platform():
         elif machine in ["aarch64", "arm64"]:
             return ("aarch64-linux-gnu", "manylinux1_aarch64", ".so")
     elif system == "windows":
+        # Use native on Windows to avoid header parsing issues with explicit triples,
+        # while relying on a baseline CPU to keep binaries portable.
         if machine in ["x86_64", "amd64"]:
-            return ("x86_64-windows-msvc", "win_amd64", ".pyd")
+            return ("native", "win_amd64", ".pyd")
         elif machine in ["aarch64", "arm64"]:
-            return ("aarch64-windows-msvc", "win_arm64", ".pyd")
+            return ("native", "win_arm64", ".pyd")
     elif system == "darwin":
         # Python extension modules are packaged as .so files even on macOS wheels
         if machine in ["x86_64", "amd64"]:
@@ -168,6 +170,8 @@ def create_wheel(
     env = os.environ.copy()
     env["PLAT_NAME"] = platform_tag
     env["ZIG_TARGET"] = zig_target
+    # Enforce baseline CPU for portability (avoids -mcpu=native).
+    env["ZIG_CPU"] = env.get("ZIG_CPU", "baseline")
     env["ZIG_OPTIMIZE"] = env.get("ZIG_OPTIMIZE", "ReleaseFast")  # Default to ReleaseFast
 
     # Use python setup.py directly to build and create wheel
