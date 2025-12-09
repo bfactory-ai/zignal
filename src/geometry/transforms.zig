@@ -15,7 +15,7 @@ pub fn SimilarityTransform(comptime T: type) type {
         matrix: SMatrix(T, 2, 2),
         bias: SMatrix(T, 2, 1),
 
-        /// Returns an `SimilarityTransform` that performs the identity transformation.
+        /// Returns a `SimilarityTransform` that performs the identity transformation.
         pub const identity: Self = .{ .matrix = .identity(), .bias = .initAll(0) };
 
         /// Finds the best similarity transform that maps between the two given sets of points.
@@ -145,7 +145,6 @@ pub fn AffineTransform(comptime T: type) type {
             return .{
                 .matrix = self.matrix.as(U),
                 .bias = self.bias.as(U),
-                .allocator = self.allocator,
             };
         }
 
@@ -208,7 +207,7 @@ pub fn ProjectiveTransform(comptime T: type) type {
         const Self = @This();
         matrix: SMatrix(T, 3, 3),
 
-        /// Returns an `ProjectiveTransform` that performs the identity transformation.
+        /// Returns a `ProjectiveTransform` that performs the identity transformation.
         pub const identity: Self = .{ .matrix = .identity() };
 
         /// Finds the best projective transform that maps between the two given sets of points.
