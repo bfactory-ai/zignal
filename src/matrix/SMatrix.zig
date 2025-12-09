@@ -51,11 +51,12 @@ pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) typ
             return &self.items[row_idx][col_idx];
         }
 
+        /// Cast the underlying items of the matrix from T to U.
         pub fn as(self: Self, comptime U: type) SMatrix(U, self.rows, self.cols) {
             var result: SMatrix(U, self.rows, self.cols) = .{};
             for (0..self.rows) |r| {
                 for (0..self.cols) |c| {
-                    result.items[r][c] = meta.as(T, self.items[r][c]);
+                    result.items[r][c] = meta.as(U, self.items[r][c]);
                 }
             }
             return result;
@@ -751,8 +752,7 @@ test "SMatrix shape" {
 }
 
 test "SMatrix as" {
-    const seed: u64 = std.crypto.random.int(u64);
-    const a: SMatrix(f32, 4, 3) = .random(seed);
+    const a: SMatrix(f32, 4, 3) = .random(1234);
     const b = a.as(f64);
     for (0..a.rows) |r| {
         for (0..a.cols) |c| {
