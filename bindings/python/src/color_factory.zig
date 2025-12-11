@@ -716,19 +716,20 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
 
         /// Map a Python color class object to the underlying ColorSpace
         fn colorSpaceFromPyType(type_obj: *c.PyTypeObject) ?zignal.ColorSpace {
-            if (type_obj == &color_bindings.GrayType) return .gray;
-            if (type_obj == &color_bindings.RgbType) return .rgb;
-            if (type_obj == &color_bindings.RgbaType) return .rgba;
-            if (type_obj == &color_bindings.HslType) return .hsl;
-            if (type_obj == &color_bindings.HsvType) return .hsv;
-            if (type_obj == &color_bindings.LabType) return .lab;
-            if (type_obj == &color_bindings.LchType) return .lch;
-            if (type_obj == &color_bindings.LmsType) return .lms;
-            if (type_obj == &color_bindings.OklabType) return .oklab;
-            if (type_obj == &color_bindings.OklchType) return .oklch;
-            if (type_obj == &color_bindings.XybType) return .xyb;
-            if (type_obj == &color_bindings.XyzType) return .xyz;
-            if (type_obj == &color_bindings.YcbcrType) return .ycbcr;
+            const type_name_str = std.mem.span(type_obj.tp_name);
+            if (std.mem.eql(u8, type_name_str, "zignal.Gray")) return .gray;
+            if (std.mem.eql(u8, type_name_str, "zignal.Rgb")) return .rgb;
+            if (std.mem.eql(u8, type_name_str, "zignal.Rgba")) return .rgba;
+            if (std.mem.eql(u8, type_name_str, "zignal.Hsl")) return .hsl;
+            if (std.mem.eql(u8, type_name_str, "zignal.Hsv")) return .hsv;
+            if (std.mem.eql(u8, type_name_str, "zignal.Lab")) return .lab;
+            if (std.mem.eql(u8, type_name_str, "zignal.Lch")) return .lch;
+            if (std.mem.eql(u8, type_name_str, "zignal.Lms")) return .lms;
+            if (std.mem.eql(u8, type_name_str, "zignal.Oklab")) return .oklab;
+            if (std.mem.eql(u8, type_name_str, "zignal.Oklch")) return .oklch;
+            if (std.mem.eql(u8, type_name_str, "zignal.Xyb")) return .xyb;
+            if (std.mem.eql(u8, type_name_str, "zignal.Xyz")) return .xyz;
+            if (std.mem.eql(u8, type_name_str, "zignal.Ycbcr")) return .ycbcr;
             return null;
         }
 
