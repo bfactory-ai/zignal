@@ -717,19 +717,14 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
         /// Map a Python color class object to the underlying ColorSpace
         fn colorSpaceFromPyType(type_obj: *c.PyTypeObject) ?zignal.ColorSpace {
             const type_name_str = std.mem.span(type_obj.tp_name);
-            if (std.mem.eql(u8, type_name_str, "zignal.Gray")) return .gray;
-            if (std.mem.eql(u8, type_name_str, "zignal.Rgb")) return .rgb;
-            if (std.mem.eql(u8, type_name_str, "zignal.Rgba")) return .rgba;
-            if (std.mem.eql(u8, type_name_str, "zignal.Hsl")) return .hsl;
-            if (std.mem.eql(u8, type_name_str, "zignal.Hsv")) return .hsv;
-            if (std.mem.eql(u8, type_name_str, "zignal.Lab")) return .lab;
-            if (std.mem.eql(u8, type_name_str, "zignal.Lch")) return .lch;
-            if (std.mem.eql(u8, type_name_str, "zignal.Lms")) return .lms;
-            if (std.mem.eql(u8, type_name_str, "zignal.Oklab")) return .oklab;
-            if (std.mem.eql(u8, type_name_str, "zignal.Oklch")) return .oklch;
-            if (std.mem.eql(u8, type_name_str, "zignal.Xyb")) return .xyb;
-            if (std.mem.eql(u8, type_name_str, "zignal.Xyz")) return .xyz;
-            if (std.mem.eql(u8, type_name_str, "zignal.Ycbcr")) return .ycbcr;
+            inline for (color_types) |ColorType| {
+                const type_name = comptime getSimpleTypeName(ColorType);
+                const full_name = comptime "zignal." ++ type_name;
+
+                if (std.mem.eql(u8, type_name_str, full_name)) {
+                    return ColorType.space;
+                }
+            }
             return null;
         }
 
