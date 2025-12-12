@@ -48,14 +48,19 @@ pub inline fn isPacked(comptime T: type) bool {
     return type_info == .@"struct" and type_info.@"struct".layout == .@"packed";
 }
 
-/// Strips all type names to their unqualified base names.
-/// e.g., "zignal.Rgb" -> "Rgb", "std.builtin.Type" -> "Type"
+/// Strips all type names to their unqualified base names, without type parameters.
+/// e.g., "zignal.Rgb(u8)" -> "Rgb", "std.builtin.Type" -> "Type"
 pub inline fn getSimpleTypeName(comptime T: type) []const u8 {
     const full_name = @typeName(T);
-    if (std.mem.lastIndexOf(u8, full_name, ".")) |dot_index| {
-        return full_name[dot_index + 1 ..];
+    const name = if (std.mem.findLast(u8, full_name, ".")) |dot_index|
+        full_name[dot_index + 1 ..]
+    else
+        full_name;
+
+    if (std.mem.findScalar(u8, name, '(')) |idx| {
+        return name[0..idx];
     }
-    return full_name;
+    return name;
 }
 
 /// Converts a comptime string to lowercase.
