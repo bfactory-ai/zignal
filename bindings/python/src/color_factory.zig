@@ -718,7 +718,7 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
         fn colorSpaceFromPyType(type_obj: *c.PyTypeObject) ?zignal.ColorSpace {
             const type_name_str = std.mem.span(type_obj.tp_name);
             inline for (color_types) |ColorType| {
-                const type_name = comptime getSimpleTypeName(ColorType);
+                const type_name = comptime zignal.meta.getGenericBaseName(ColorType);
                 const full_name = comptime "zignal." ++ type_name;
 
                 if (std.mem.eql(u8, type_name_str, full_name)) {
