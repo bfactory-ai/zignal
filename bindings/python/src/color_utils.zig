@@ -49,20 +49,14 @@ fn extractRgbFromObject(obj: *c.PyObject) !Rgb {
 /// or if the attribute values cannot be converted to integers.
 /// Returns error.OutOfRange if values are not in 0-255 range.
 fn extractRgbaFromObject(obj: *c.PyObject) !Rgba {
-    const r_val = extractColorAttribute(obj, "r") orelse return error.InvalidColor;
-    const g_val = extractColorAttribute(obj, "g") orelse return error.InvalidColor;
-    const b_val = extractColorAttribute(obj, "b") orelse return error.InvalidColor;
+    const rgb = try extractRgbFromObject(obj);
     const a_val = extractColorAttribute(obj, "a") orelse return error.InvalidColor;
-
-    const r = py_utils.validateRange(u8, r_val, 0, 255, "r") catch return error.OutOfRange;
-    const g = py_utils.validateRange(u8, g_val, 0, 255, "g") catch return error.OutOfRange;
-    const b = py_utils.validateRange(u8, b_val, 0, 255, "b") catch return error.OutOfRange;
-    const a = py_utils.validateRange(u8, a_val, 0, 255, "a") catch return error.OutOfRange;
+    const a = try py_utils.validateRange(u8, a_val, 0, 255, "a");
 
     return .{
-        .r = r,
-        .g = g,
-        .b = b,
+        .r = rgb.r,
+        .g = rgb.g,
+        .b = rgb.b,
         .a = a,
     };
 }
