@@ -389,7 +389,20 @@ pub const ConversionError = error{
 };
 
 /// Convert a Python sequence (list/tuple) to a Zig ArrayList(T).
-/// Caller owns the memory and must deinit the ArrayList.
+///
+/// Arguments:
+/// - T: The target element type.
+/// - seq_obj: A Python object implementing the sequence protocol (list, tuple).
+///
+/// Returns:
+/// - A std.ArrayList(T) containing the converted elements.
+/// - The caller owns the memory and is responsible for calling `deinit()` on the returned list.
+///
+/// Errors:
+/// - error.InvalidType: If `seq_obj` is null or not a sequence.
+/// - error.PythonError: If a Python C-API call fails (e.g., getting an item).
+/// - error.OutOfMemory: If memory allocation fails.
+/// - ConversionError: If an element cannot be converted to type T.
 pub fn listFromPython(comptime T: type, seq_obj: ?*c.PyObject) !std.ArrayList(T) {
     if (seq_obj == null) return error.InvalidType;
 
@@ -407,11 +420,12 @@ pub fn listFromPython(comptime T: type, seq_obj: ?*c.PyObject) !std.ArrayList(T)
 
     var i: usize = 0;
     while (i < size) : (i += 1) {
-        const item = c.PySequence_GetItem(seq_obj, @intCast(i)); // New reference
-        if (item == null) return error.PythonError;
-        defer c.Py_DECREF(item);
-
-        const val = try convertFromPython(T, item);
+        const val = blk: {
+            const item = c.PySequence_GetItem(seq_obj, @intCast(i)); // New reference
+            if (item == null) return error.PythonError;
+            defer c.Py_DECREF(item);
+            break :blk try convertFromPython(T, item);
+        };
         list.appendAssumeCapacity(val);
     }
 
