@@ -49,7 +49,11 @@ pub fn convertColor(comptime DestType: type, source: anytype) DestType {
 
     // Scalar <-> Scalar
     if (SrcType == u8 and @typeInfo(DestType) == .float) return @as(DestType, @floatFromInt(source)) / @as(DestType, 255.0);
-    if (@typeInfo(SrcType) == .float and DestType == u8) return @intFromFloat(@round(clamp(@as(f64, source), 0.0, 1.0) * 255.0));
+    if (@typeInfo(SrcType) == .float and DestType == u8) {
+        // Use f64 for precision with smaller floats, but SrcType if it's larger.
+        const P = if (@typeInfo(SrcType).float.bits < 64) f64 else SrcType;
+        return @intFromFloat(@round(clamp(@as(P, source), 0.0, 1.0) * @as(P, 255.0)));
+    }
     if (@typeInfo(SrcType) == .float and @typeInfo(DestType) == .float) return @floatCast(source);
 
     // Scalar -> Color
