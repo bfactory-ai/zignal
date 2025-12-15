@@ -33,12 +33,7 @@ class TestCanvas:
         rgba_canvas.fill(hsl)
         expected_rgba = hsl.to(zignal.Rgba)
         got_rgba = rgba_img[1, 1].item()
-        assert (got_rgba.r, got_rgba.g, got_rgba.b, got_rgba.a) == (
-            expected_rgba.r,
-            expected_rgba.g,
-            expected_rgba.b,
-            expected_rgba.a,
-        )
+        assert got_rgba == expected_rgba
 
         # Rgb canvas fill should accept float-backed colors too.
         rgb_img = zignal.Image(3, 3, (0, 0, 0), dtype=zignal.Rgb)
@@ -47,7 +42,7 @@ class TestCanvas:
         rgb_canvas.fill(lab)
         expected_rgb = lab.to(zignal.Rgb)
         got_rgb = rgb_img[0, 0].item()
-        assert (got_rgb.r, got_rgb.g, got_rgb.b) == (expected_rgb.r, expected_rgb.g, expected_rgb.b)
+        assert got_rgb == expected_rgb
 
         # Gray canvas should accept non-gray colors and convert to luminance.
         gray_img = zignal.Image(3, 3, 0, dtype=zignal.Gray)
