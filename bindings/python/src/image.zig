@@ -173,7 +173,7 @@ fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) ca
     }
 
     // Determine target dtype based on color type and explicit dtype parameter
-    const ImageFormat = enum { grayscale, rgb, rgba };
+    const ImageFormat = enum { gray, rgb, rgba };
     var target_format: ImageFormat = undefined;
 
     if (params.dtype) |fmt_obj| {
@@ -182,7 +182,7 @@ fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) ca
         const is_type_obj = c.PyObject_TypeCheck(fmt_obj, @as([*c]c.PyTypeObject, @ptrCast(&c.PyType_Type))) != 0;
         if (is_type_obj) {
             if (fmt_obj == @as(*c.PyObject, @ptrCast(&color_bindings.GrayType))) {
-                target_format = .grayscale;
+                target_format = .gray;
             } else if (fmt_obj == @as(*c.PyObject, @ptrCast(&color_bindings.RgbType))) {
                 target_format = .rgb;
             } else if (fmt_obj == @as(*c.PyObject, @ptrCast(&color_bindings.RgbaType))) {
@@ -194,7 +194,7 @@ fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) ca
         } else {
             // Instances: allow Rgb/Rgba instances for convenience
             if (c.PyObject_IsInstance(fmt_obj, @ptrCast(&color_bindings.GrayType)) == 1) {
-                target_format = .grayscale;
+                target_format = .gray;
             } else if (c.PyObject_IsInstance(fmt_obj, @ptrCast(&color_bindings.RgbType)) == 1) {
                 target_format = .rgb;
             } else if (c.PyObject_IsInstance(fmt_obj, @ptrCast(&color_bindings.RgbaType)) == 1) {
@@ -208,7 +208,7 @@ fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) ca
         // Auto-detect dtype based on color type
         target_format = switch (color_type) {
             .none => .rgb, // Default to RGB for no color
-            .grayscale => .grayscale,
+            .grayscale => .gray,
             .rgb_tuple => .rgb,
             .rgba_tuple => .rgba,
             .rgb_object => .rgb,
@@ -219,7 +219,7 @@ fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) ca
 
     // Create image with appropriate dtype and fill with color
     switch (target_format) {
-        .grayscale => {
+        .gray => {
             var gimg = Image(u8).init(allocator, validated_rows, validated_cols) catch {
                 py_utils.setMemoryError("image data");
                 return -1;
