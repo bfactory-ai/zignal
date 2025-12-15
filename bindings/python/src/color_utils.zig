@@ -18,6 +18,22 @@ const Xyb = zignal.Xyb(f64);
 const Xyz = zignal.Xyz(f64);
 const Ycbcr = zignal.Ycbcr(u8);
 
+const zignalColorTypes = .{
+    .{ .py_type = &color_bindings.GrayType, .zig_type = Gray, .binding = color_bindings.GrayBinding },
+    .{ .py_type = &color_bindings.RgbType, .zig_type = Rgb, .binding = color_bindings.RgbBinding },
+    .{ .py_type = &color_bindings.RgbaType, .zig_type = Rgba, .binding = color_bindings.RgbaBinding },
+    .{ .py_type = &color_bindings.HslType, .zig_type = Hsl, .binding = color_bindings.HslBinding },
+    .{ .py_type = &color_bindings.HsvType, .zig_type = Hsv, .binding = color_bindings.HsvBinding },
+    .{ .py_type = &color_bindings.LabType, .zig_type = Lab, .binding = color_bindings.LabBinding },
+    .{ .py_type = &color_bindings.LchType, .zig_type = Lch, .binding = color_bindings.LchBinding },
+    .{ .py_type = &color_bindings.LmsType, .zig_type = Lms, .binding = color_bindings.LmsBinding },
+    .{ .py_type = &color_bindings.OklabType, .zig_type = Oklab, .binding = color_bindings.OklabBinding },
+    .{ .py_type = &color_bindings.OklchType, .zig_type = Oklch, .binding = color_bindings.OklchBinding },
+    .{ .py_type = &color_bindings.XybType, .zig_type = Xyb, .binding = color_bindings.XybBinding },
+    .{ .py_type = &color_bindings.XyzType, .zig_type = Xyz, .binding = color_bindings.XyzBinding },
+    .{ .py_type = &color_bindings.YcbcrType, .zig_type = Ycbcr, .binding = color_bindings.YcbcrBinding },
+};
+
 fn objectToZigColor(comptime ColorType: type, comptime Binding: type, obj: *c.PyObject) ColorType {
     const py_obj: *Binding.PyObjectType = @ptrCast(@alignCast(obj));
     const fields = @typeInfo(ColorType).@"struct".fields;
@@ -56,82 +72,12 @@ fn objectToZigColor(comptime ColorType: type, comptime Binding: type, obj: *c.Py
 fn parseFromZignalColorTypes(comptime T: type, color_obj: *c.PyObject) ?T {
     const obj_c = @as([*c]c.PyObject, @ptrCast(color_obj));
 
-    const type_ptr_gray = @as([*c]c.PyTypeObject, @ptrCast(&color_bindings.GrayType));
-    if (c.PyObject_TypeCheck(obj_c, type_ptr_gray) != 0) {
-        const gray = objectToZigColor(Gray, color_bindings.GrayBinding, color_obj);
-        return zignal.convertColor(T, gray);
-    }
-
-    const type_ptr_rgb = @as([*c]c.PyTypeObject, @ptrCast(&color_bindings.RgbType));
-    if (c.PyObject_TypeCheck(obj_c, type_ptr_rgb) != 0) {
-        const rgb = objectToZigColor(Rgb, color_bindings.RgbBinding, color_obj);
-        return zignal.convertColor(T, rgb);
-    }
-
-    const type_ptr_rgba = @as([*c]c.PyTypeObject, @ptrCast(&color_bindings.RgbaType));
-    if (c.PyObject_TypeCheck(obj_c, type_ptr_rgba) != 0) {
-        const rgba = objectToZigColor(Rgba, color_bindings.RgbaBinding, color_obj);
-        return zignal.convertColor(T, rgba);
-    }
-
-    const type_ptr_hsl = @as([*c]c.PyTypeObject, @ptrCast(&color_bindings.HslType));
-    if (c.PyObject_TypeCheck(obj_c, type_ptr_hsl) != 0) {
-        const hsl = objectToZigColor(Hsl, color_bindings.HslBinding, color_obj);
-        return zignal.convertColor(T, hsl);
-    }
-
-    const type_ptr_hsv = @as([*c]c.PyTypeObject, @ptrCast(&color_bindings.HsvType));
-    if (c.PyObject_TypeCheck(obj_c, type_ptr_hsv) != 0) {
-        const hsv = objectToZigColor(Hsv, color_bindings.HsvBinding, color_obj);
-        return zignal.convertColor(T, hsv);
-    }
-
-    const type_ptr_lab = @as([*c]c.PyTypeObject, @ptrCast(&color_bindings.LabType));
-    if (c.PyObject_TypeCheck(obj_c, type_ptr_lab) != 0) {
-        const lab = objectToZigColor(Lab, color_bindings.LabBinding, color_obj);
-        return zignal.convertColor(T, lab);
-    }
-
-    const type_ptr_lch = @as([*c]c.PyTypeObject, @ptrCast(&color_bindings.LchType));
-    if (c.PyObject_TypeCheck(obj_c, type_ptr_lch) != 0) {
-        const lch = objectToZigColor(Lch, color_bindings.LchBinding, color_obj);
-        return zignal.convertColor(T, lch);
-    }
-
-    const type_ptr_lms = @as([*c]c.PyTypeObject, @ptrCast(&color_bindings.LmsType));
-    if (c.PyObject_TypeCheck(obj_c, type_ptr_lms) != 0) {
-        const lms = objectToZigColor(Lms, color_bindings.LmsBinding, color_obj);
-        return zignal.convertColor(T, lms);
-    }
-
-    const type_ptr_oklab = @as([*c]c.PyTypeObject, @ptrCast(&color_bindings.OklabType));
-    if (c.PyObject_TypeCheck(obj_c, type_ptr_oklab) != 0) {
-        const oklab = objectToZigColor(Oklab, color_bindings.OklabBinding, color_obj);
-        return zignal.convertColor(T, oklab);
-    }
-
-    const type_ptr_oklch = @as([*c]c.PyTypeObject, @ptrCast(&color_bindings.OklchType));
-    if (c.PyObject_TypeCheck(obj_c, type_ptr_oklch) != 0) {
-        const oklch = objectToZigColor(Oklch, color_bindings.OklchBinding, color_obj);
-        return zignal.convertColor(T, oklch);
-    }
-
-    const type_ptr_xyb = @as([*c]c.PyTypeObject, @ptrCast(&color_bindings.XybType));
-    if (c.PyObject_TypeCheck(obj_c, type_ptr_xyb) != 0) {
-        const xyb = objectToZigColor(Xyb, color_bindings.XybBinding, color_obj);
-        return zignal.convertColor(T, xyb);
-    }
-
-    const type_ptr_xyz = @as([*c]c.PyTypeObject, @ptrCast(&color_bindings.XyzType));
-    if (c.PyObject_TypeCheck(obj_c, type_ptr_xyz) != 0) {
-        const xyz = objectToZigColor(Xyz, color_bindings.XyzBinding, color_obj);
-        return zignal.convertColor(T, xyz);
-    }
-
-    const type_ptr_ycbcr = @as([*c]c.PyTypeObject, @ptrCast(&color_bindings.YcbcrType));
-    if (c.PyObject_TypeCheck(obj_c, type_ptr_ycbcr) != 0) {
-        const ycbcr = objectToZigColor(Ycbcr, color_bindings.YcbcrBinding, color_obj);
-        return zignal.convertColor(T, ycbcr);
+    inline for (zignalColorTypes) |color_info| {
+        const type_ptr = @as([*c]c.PyTypeObject, @ptrCast(color_info.py_type));
+        if (c.PyObject_TypeCheck(obj_c, type_ptr) != 0) {
+            const zig_color = objectToZigColor(color_info.zig_type, color_info.binding, color_obj);
+            return zignal.convertColor(T, zig_color);
+        }
     }
 
     return null;
