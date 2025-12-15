@@ -404,7 +404,10 @@ pub const ConversionError = error{
 /// - error.OutOfMemory: If memory allocation fails.
 /// - ConversionError: If an element cannot be converted to type T.
 pub fn listFromPython(comptime T: type, seq_obj: ?*c.PyObject) !std.ArrayList(T) {
-    if (seq_obj == null) return error.InvalidType;
+    if (seq_obj == null) {
+        c.PyErr_SetString(c.PyExc_TypeError, "Expected a sequence, got None");
+        return error.InvalidType;
+    }
 
     if (c.PySequence_Check(seq_obj) == 0) {
         c.PyErr_SetString(c.PyExc_TypeError, "Expected a sequence (list or tuple)");
