@@ -791,16 +791,18 @@ pub fn image_ssim(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
     }
 
     const other_pimg = other.py_image.?;
+
+    if (self.py_image.?.rows() != other_pimg.rows() or self.py_image.?.cols() != other_pimg.cols()) {
+        py_utils.setValueError("Images must have the same dimensions", .{});
+        return null;
+    }
+
     const ssim_value = self.py_image.?.dispatch(.{other_pimg}, struct {
         fn apply(img1: anytype, img2_p: *PyImage) ?f64 {
             const img2 = switch (img2_p.data) {
                 inline else => |*img| if (@TypeOf(img) == @TypeOf(img1)) img else unreachable,
             };
 
-            if (img1.rows != img2.rows or img1.cols != img2.cols) {
-                py_utils.setValueError("Images must have the same dimensions", .{});
-                return null;
-            }
             if (img1.rows < 11 or img1.cols < 11) {
                 py_utils.setValueError("Images must be at least 11x11 for SSIM", .{});
                 return null;
@@ -863,6 +865,12 @@ pub fn image_mean_pixel_error(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
     }
 
     const other_pimg = other.py_image.?;
+
+    if (self.py_image.?.rows() != other_pimg.rows() or self.py_image.?.cols() != other_pimg.cols()) {
+        py_utils.setValueError("Images must have the same dimensions", .{});
+        return null;
+    }
+
     const error_value = self.py_image.?.dispatch(.{other_pimg}, struct {
         fn apply(img1: anytype, img2_p: *PyImage) ?f64 {
             const img2 = switch (img2_p.data) {
