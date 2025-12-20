@@ -701,7 +701,7 @@ pub fn image_psnr(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
         fn apply(img1: anytype, img2_p: *PyImage) f64 {
             const T = @TypeOf(img1.data[0]);
             const img2 = switch (img2_p.data) {
-                inline else => |img| if (@TypeOf(img) == @TypeOf(img1.*)) img else unreachable,
+                inline else => |*img| if (@TypeOf(img) == @TypeOf(img1)) img else unreachable,
             };
 
             const channels: f64 = comptime if (T == u8) 1.0 else if (T == Rgb) 3.0 else 4.0;
@@ -794,7 +794,7 @@ pub fn image_ssim(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
     const ssim_value = self.py_image.?.dispatch(.{other_pimg}, struct {
         fn apply(img1: anytype, img2_p: *PyImage) ?f64 {
             const img2 = switch (img2_p.data) {
-                inline else => |img| if (@TypeOf(img) == @TypeOf(img1.*)) img else unreachable,
+                inline else => |*img| if (@TypeOf(img) == @TypeOf(img1)) img else unreachable,
             };
 
             if (img1.rows != img2.rows or img1.cols != img2.cols) {
@@ -806,7 +806,7 @@ pub fn image_ssim(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
                 return null;
             }
 
-            return img1.ssim(img2) catch |err| {
+            return img1.ssim(img2.*) catch |err| {
                 py_utils.setZigError(err);
                 return null;
             };
@@ -866,9 +866,9 @@ pub fn image_mean_pixel_error(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
     const error_value = self.py_image.?.dispatch(.{other_pimg}, struct {
         fn apply(img1: anytype, img2_p: *PyImage) ?f64 {
             const img2 = switch (img2_p.data) {
-                inline else => |img| if (@TypeOf(img) == @TypeOf(img1.*)) img else unreachable,
+                inline else => |*img| if (@TypeOf(img) == @TypeOf(img1)) img else unreachable,
             };
-            return img1.meanPixelError(img2) catch |err| {
+            return img1.meanPixelError(img2.*) catch |err| {
                 if (err == error.DimensionMismatch) {
                     py_utils.setValueError("Images must have the same dimensions", .{});
                 } else {
