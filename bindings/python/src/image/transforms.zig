@@ -724,66 +724,79 @@ pub fn image_insert(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     // Variant-aware in-place insert
     switch (self.py_image.?.data) {
         .gray => |*dst| {
-            var src_u8: Image(u8) = undefined;
-            if (source.py_image == null) {
+            const src_pimg = source.py_image orelse {
                 py_utils.setTypeError("initialized Image", source_obj);
                 return null;
-            }
-            const src_pimg = source.py_image.?;
+            };
             switch (src_pimg.data) {
-                .gray => |img| src_u8 = img,
-                .rgb => |img| src_u8 = img.convert(u8, allocator) catch {
-                    py_utils.setMemoryError("source image conversion");
-                    return null;
+                .gray => |img| dst.insert(img, rect, @floatCast(angle), method, blend_mode),
+                .rgb => |img| {
+                    var src_converted = img.convert(u8, allocator) catch {
+                        py_utils.setMemoryError("source image conversion");
+                        return null;
+                    };
+                    defer src_converted.deinit(allocator);
+                    dst.insert(src_converted, rect, @floatCast(angle), method, blend_mode);
                 },
-                .rgba => |img| src_u8 = img.convert(u8, allocator) catch {
-                    py_utils.setMemoryError("source image conversion");
-                    return null;
+                .rgba => |img| {
+                    var src_converted = img.convert(u8, allocator) catch {
+                        py_utils.setMemoryError("source image conversion");
+                        return null;
+                    };
+                    defer src_converted.deinit(allocator);
+                    dst.insert(src_converted, rect, @floatCast(angle), method, blend_mode);
                 },
             }
-            defer src_u8.deinit(allocator);
-            dst.insert(src_u8, rect, @floatCast(angle), method, blend_mode);
         },
         .rgb => |*dst| {
-            var src_rgb: Image(Rgb) = undefined;
-            if (source.py_image == null) {
+            const src_pimg = source.py_image orelse {
                 py_utils.setTypeError("initialized Image", source_obj);
                 return null;
-            }
-            const src_pimg = source.py_image.?;
+            };
             switch (src_pimg.data) {
-                .rgb => |img| src_rgb = img,
-                .gray => |img| src_rgb = img.convert(Rgb, allocator) catch {
-                    py_utils.setMemoryError("source image conversion");
-                    return null;
+                .gray => |img| {
+                    var src_converted = img.convert(Rgb, allocator) catch {
+                        py_utils.setMemoryError("source image conversion");
+                        return null;
+                    };
+                    defer src_converted.deinit(allocator);
+                    dst.insert(src_converted, rect, @floatCast(angle), method, blend_mode);
                 },
-                .rgba => |img| src_rgb = img.convert(Rgb, allocator) catch {
-                    py_utils.setMemoryError("source image conversion");
-                    return null;
+                .rgb => |img| dst.insert(img, rect, @floatCast(angle), method, blend_mode),
+                .rgba => |img| {
+                    var src_converted = img.convert(Rgb, allocator) catch {
+                        py_utils.setMemoryError("source image conversion");
+                        return null;
+                    };
+                    defer src_converted.deinit(allocator);
+                    dst.insert(src_converted, rect, @floatCast(angle), method, blend_mode);
                 },
             }
-            defer src_rgb.deinit(allocator);
-            dst.insert(src_rgb, rect, @floatCast(angle), method, blend_mode);
         },
         .rgba => |*dst| {
-            var src_rgba: Image(Rgba) = undefined;
-            if (source.py_image == null) {
+            const src_pimg = source.py_image orelse {
                 py_utils.setTypeError("initialized Image", source_obj);
                 return null;
-            }
-            const src_pimg = source.py_image.?;
+            };
             switch (src_pimg.data) {
-                .rgba => |img| src_rgba = img,
-                .gray => |img| src_rgba = img.convert(Rgba, allocator) catch {
-                    py_utils.setMemoryError("source image conversion");
-                    return null;
+                .gray => |img| {
+                    var src_converted = img.convert(Rgba, allocator) catch {
+                        py_utils.setMemoryError("source image conversion");
+                        return null;
+                    };
+                    defer src_converted.deinit(allocator);
+                    dst.insert(src_converted, rect, @floatCast(angle), method, blend_mode);
                 },
-                .rgb => |img| src_rgba = img.convert(Rgba, allocator) catch {
-                    py_utils.setMemoryError("source image conversion");
-                    return null;
+                .rgb => |img| {
+                    var src_converted = img.convert(Rgba, allocator) catch {
+                        py_utils.setMemoryError("source image conversion");
+                        return null;
+                    };
+                    defer src_converted.deinit(allocator);
+                    dst.insert(src_converted, rect, @floatCast(angle), method, blend_mode);
                 },
+                .rgba => |img| dst.insert(img, rect, @floatCast(angle), method, blend_mode),
             }
-            dst.insert(src_rgba, rect, @floatCast(angle), method, blend_mode);
         },
     }
     const none = c.Py_None();
