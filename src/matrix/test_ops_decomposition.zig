@@ -48,7 +48,7 @@ test "Matrix LU decomposition" {
     // Apply permutation: PA[i,j] = A[p[i],j]
     for (0..3) |i| {
         for (0..3) |j| {
-            pa.at(i, j).* = mat.at(@intFromFloat(lu_result.p.items[i]), j).*;
+            pa.at(i, j).* = mat.at(lu_result.p.indices[i], j).*;
         }
     }
 
@@ -97,7 +97,7 @@ test "Matrix QR decomposition simple" {
     // Remove debug print
 
     // The largest column (column 2) should be first
-    try expectEqual(@as(usize, 2), qr_result.perm[0]);
+    try expectEqual(@as(usize, 2), qr_result.perm.indices[0]);
 }
 
 test "Matrix QR decomposition" {
@@ -176,7 +176,7 @@ test "Matrix QR decomposition" {
     // So we directly copy column perm[j] of A to position j of AP
     for (0..3) |i| {
         for (0..3) |j| {
-            ap.at(i, j).* = mat.at(i, qr_result.perm[j]).*;
+            ap.at(i, j).* = mat.at(i, qr_result.perm.indices[j]).*;
         }
     }
 
@@ -203,7 +203,7 @@ test "Matrix QR decomposition" {
     const relative_error = frobenius_error / a_norm;
     if (relative_error >= 1e-8) {
         std.debug.print("\nQR test failing with relative error: {}\n", .{relative_error});
-        std.debug.print("Permutation: {} {} {}\n", .{ qr_result.perm[0], qr_result.perm[1], qr_result.perm[2] });
+        std.debug.print("Permutation: {} {} {}\n", .{ qr_result.perm.indices[0], qr_result.perm.indices[1], qr_result.perm.indices[2] });
 
         // Let's check if it's an issue with our test by computing Q*R directly
         std.debug.print("\nDirect check - Q*R:\n", .{});
@@ -274,7 +274,7 @@ test "Matrix QR decomposition" {
 
     for (0..4) |i| {
         for (0..3) |j| {
-            rect_ap.at(i, j).* = rect_mat.at(i, rect_qr.perm[j]).*;
+            rect_ap.at(i, j).* = rect_mat.at(i, rect_qr.perm.indices[j]).*;
         }
     }
 
@@ -345,7 +345,7 @@ test "Matrix QR decomposition with rank-deficient matrix" {
 
     for (0..4) |i| {
         for (0..3) |j| {
-            ap.at(i, j).* = mat.at(i, qr_result.perm[j]).*;
+            ap.at(i, j).* = mat.at(i, qr_result.perm.indices[j]).*;
         }
     }
 
