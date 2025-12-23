@@ -641,11 +641,8 @@ pub fn Matrix(comptime T: type) type {
             // This requires:
             // 1. Both base pointers are aligned to VecType.
             // 2. The row stride (a_cols) is a multiple of the alignment (in elements).
-            const a_base_aligned = @intFromPtr(matrix_a.items.ptr) % alignment == 0;
-            const b_base_aligned = @intFromPtr(matrix_b.items.ptr) % alignment == 0;
             const row_stride_aligned = (a_cols * @sizeOf(T)) % alignment == 0;
-
-            const all_aligned = a_base_aligned and b_base_aligned and row_stride_aligned;
+            const all_aligned = row_stride_aligned;
 
             // Both matrices are now guaranteed to be accessed row-wise
             for (0..a_rows) |i| {
