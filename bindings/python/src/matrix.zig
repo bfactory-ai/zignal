@@ -485,7 +485,12 @@ fn matrix_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
     };
 
     // Create a Matrix that uses the numpy buffer's memory
-    const data_slice = @as([*]f64, @ptrCast(@alignCast(buffer.buf)))[0 .. rows * cols];
+    // Note: numpy buffers are not guaranteed to be 64-byte aligned, so we must @alignCast
+    // which may cause runtime safety errors if the alignment is not met.
+    // However, since we use alignedAlloc(64) in zignal's Matrix.zig, and we want to allow
+    // zero-copy from numpy, we must assume the user provides aligned data or use unaligned access.
+    // Given the current architecture, we force the alignment cast here.
+    const data_slice = @as([*]align(64) f64, @ptrCast(@alignCast(buffer.buf)))[0 .. rows * cols];
     matrix_ptr.* = Matrix(f64){
         .items = data_slice,
         .rows = rows,
