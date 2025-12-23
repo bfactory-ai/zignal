@@ -71,6 +71,8 @@ pub fn Matrix(comptime T: type) type {
         pub const SvdResult = svd_module.SvdResult;
 
         pub const Permutation = struct {
+            pub const Mode = enum { row, column };
+
             indices: []usize,
             allocator: std.mem.Allocator,
 
@@ -79,12 +81,23 @@ pub fn Matrix(comptime T: type) type {
             }
 
             /// Returns the permutation as a square matrix P.
-            /// For LU, PA = LU. For QR, AP = QR.
-            pub fn toMatrix(self: *const @This()) !Matrix(T) {
+            /// For LU, PA = LU (use .row). For QR, AP = QR (use .column).
+            pub fn toMatrix(self: *const @This(), mode: Mode) !Matrix(T) {
                 const n = self.indices.len;
                 var p_mat = try Matrix(T).initAll(self.allocator, n, n, 0);
-                for (0..n) |i| {
-                    p_mat.at(i, self.indices[i]).* = 1;
+                switch (mode) {
+                    .row => {
+                        // For PA = LU
+                        for (0..n) |i| {
+                            p_mat.at(i, self.indices[i]).* = 1;
+                        }
+                    },
+                    .column => {
+                        // For AP = QR
+                        for (0..n) |j| {
+                            p_mat.at(self.indices[j], j).* = 1;
+                        }
+                    },
                 }
                 return p_mat;
             }
@@ -1201,7 +1214,7 @@ pub fn Matrix(comptime T: type) type {
 
             /// Returns the permutation as a matrix P such that PA = LU.
             pub fn permutationMatrix(self: *const @This()) !Matrix(T) {
-                return self.p.toMatrix();
+                return self.p.toMatrix(.row);
             }
         };
 
@@ -1361,16 +1374,7 @@ pub fn Matrix(comptime T: type) type {
 
             /// Get the permutation as a matrix P such that AP = QR.
             pub fn permutationMatrix(self: *const @This()) !Matrix(T) {
-                const n = self.perm.indices.len;
-                var p_mat = try Matrix(T).initAll(self.allocator, n, n, 0);
-
-                // For a column permutation AP, the permutation matrix P should have
-                // P[perm[j], j] = 1, where perm[j] is the original column index
-                // that is moved to position j.
-                for (0..n) |j| {
-                    p_mat.at(self.perm.indices[j], j).* = 1;
-                }
-                return p_mat;
+                return self.perm.toMatrix(.column);
             }
         };
 
