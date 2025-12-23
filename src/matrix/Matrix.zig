@@ -137,7 +137,7 @@ pub fn Matrix(comptime T: type) type {
         }
 
         pub fn deinit(self: *Self) void {
-            if (self.err == null and self.rows > 0 and self.cols > 0) {
+            if (self.err == null and self.items.len > 0) {
                 self.allocator.free(self.items);
             }
         }
@@ -956,7 +956,7 @@ pub fn Matrix(comptime T: type) type {
         /// Helper to create an error matrix
         fn errorMatrix(allocator: std.mem.Allocator, err: MatrixError) Self {
             return Self{
-                .items = undefined, // Items should not be used if err is set
+                .items = @as([*]align(simd_alignment) T, undefined)[0..0],
                 .rows = 0,
                 .cols = 0,
                 .allocator = allocator,
