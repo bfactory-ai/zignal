@@ -484,14 +484,14 @@ fn matrix_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
         return null;
     };
 
-        // Create a Matrix that uses the numpy buffer's memory.
+    // Create a Matrix that uses the numpy buffer's memory.
     // NumPy buffers are not guaranteed to be 64-byte aligned.
     // We check alignment and fallback to a copy if it doesn't meet our requirements.
     const simd_align = 64;
-    const is_aligned = (@intFromPtr(buffer.buf) % simd_align == 0);
+    const is_aligned = if (buffer.buf) |ptr| (@intFromPtr(ptr) % simd_align == 0) else false;
 
     if (is_aligned) {
-        const data_slice = @as([*]align(simd_align) f64, @ptrCast(@alignCast(buffer.buf)))[0 .. rows * cols];
+        const data_slice = @as([*]align(simd_align) f64, @ptrCast(@alignCast(buffer.buf.?)))[0 .. rows * cols];
         matrix_ptr.* = Matrix(f64){
             .items = data_slice,
             .rows = rows,
@@ -513,9 +513,11 @@ fn matrix_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
             py_utils.setMemoryError("Matrix");
             return null;
         };
-        const src_ptr: [*]const u8 = @ptrCast(buffer.buf.?);
-        const src_bytes = src_ptr[0 .. rows * cols * @sizeOf(f64)];
-        @memcpy(std.mem.sliceAsBytes(matrix_ptr.items), src_bytes);
+        if (buffer.buf) |src_buf| {
+            const src_ptr: [*]const u8 = @ptrCast(src_buf);
+            const src_bytes = src_ptr[0 .. rows * cols * @sizeOf(f64)];
+            @memcpy(std.mem.sliceAsBytes(matrix_ptr.items), src_bytes);
+        }
 
         self.?.matrix_ptr = matrix_ptr;
         self.?.numpy_ref = null;
