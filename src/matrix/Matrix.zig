@@ -124,7 +124,7 @@ pub fn Matrix(comptime T: type) type {
 
         pub fn init(allocator: std.mem.Allocator, rows: usize, cols: usize) !Self {
             const alignment = comptime blk: {
-                const log2_align = std.math.log2(simd_alignment);
+                const log2_align = std.math.log2_int(usize, simd_alignment);
                 break :blk @as(std.mem.Alignment, @enumFromInt(log2_align));
             };
             const data = try allocator.alignedAlloc(T, alignment, rows * cols);
