@@ -73,6 +73,21 @@ test "Matrix LU decomposition" {
             try std.testing.expect(diff < eps);
         }
     }
+
+    // Verify permutationMatrix() returns correct P such that PA = LU
+    var p_mat = try lu_result.permutationMatrix();
+    defer p_mat.deinit();
+
+    // Compute P * A
+    var pa_from_mat = try p_mat.dot(mat).eval();
+    defer pa_from_mat.deinit();
+
+    // Re-verify that rows of PA match rows of L*U (or permuted rows of A)
+    for (0..3) |i| {
+        for (0..3) |j| {
+            try std.testing.expectApproxEqAbs(pa.at(i, j).*, pa_from_mat.at(i, j).*, eps);
+        }
+    }
 }
 
 test "Matrix QR decomposition simple" {
@@ -226,6 +241,21 @@ test "Matrix QR decomposition" {
 
     // Verify rank is computed correctly (should be 3 for this full-rank matrix)
     try expectEqual(@as(usize, 3), qr_result.rank);
+
+    // Verify permutationMatrix() returns correct P such that AP = QR
+    var p_mat = try qr_result.permutationMatrix();
+    defer p_mat.deinit();
+
+    // Compute A * P
+    var ap_from_mat = try mat.dot(p_mat).eval();
+    defer ap_from_mat.deinit();
+
+    // Re-verify that columns of AP match permuted columns of A
+    for (0..3) |i| {
+        for (0..3) |j| {
+            try std.testing.expectApproxEqAbs(ap.at(i, j).*, ap_from_mat.at(i, j).*, 1e-10);
+        }
+    }
 
     // Verify columns are ordered by decreasing diagonal values in R (skip for now due to permutation complexity)
     // try std.testing.expect(@abs(qr_result.r.at(0, 0).*) >= @abs(qr_result.r.at(1, 1).*));

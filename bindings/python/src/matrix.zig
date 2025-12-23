@@ -1707,7 +1707,7 @@ const matrix_lu_doc =
     \\dict: Dictionary with keys:
     \\  - 'l': Lower triangular matrix
     \\  - 'u': Upper triangular matrix
-    \\  - 'p': Permutation vector (as Matrix)
+    \\  - 'p': Permutation vector (list of int)
     \\  - 'sign': Determinant sign (+1.0 or -1.0)
     \\
     \\## Raises

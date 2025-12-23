@@ -1361,10 +1361,16 @@ pub fn Matrix(comptime T: type) type {
 
             /// Get the permutation as a matrix P such that AP = QR.
             pub fn permutationMatrix(self: *const @This()) !Matrix(T) {
-                var p_mat = try self.perm.toMatrix();
-                defer p_mat.deinit();
-                // For AP = QR, we need the transpose of the row-permutation matrix
-                return p_mat.transpose().eval();
+                const n = self.perm.indices.len;
+                var p_mat = try Matrix(T).initAll(self.allocator, n, n, 0);
+
+                // For a column permutation AP, the permutation matrix P should have
+                // P[perm[j], j] = 1, where perm[j] is the original column index
+                // that is moved to position j.
+                for (0..n) |j| {
+                    p_mat.at(self.perm.indices[j], j).* = 1;
+                }
+                return p_mat;
             }
         };
 
