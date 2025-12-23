@@ -484,29 +484,43 @@ fn matrix_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
         return null;
     };
 
-    // Create a Matrix that uses the numpy buffer's memory
+        // Create a Matrix that uses the numpy buffer's memory.
     // NumPy buffers are not guaranteed to be 64-byte aligned.
-    // We check alignment and raise a ValueError if it doesn't meet our requirements
-    // to avoid crashing with a safety panic.
+    // We check alignment and fallback to a copy if it doesn't meet our requirements.
     const simd_align = 64;
-    if (@intFromPtr(buffer.buf) % simd_align != 0) {
-        py_utils.setValueError("NumPy array buffer must be {d}-byte aligned for zero-copy. Use np.empty(..., align={d}) or a copy.", .{ simd_align, simd_align });
-        return null;
+    const is_aligned = (@intFromPtr(buffer.buf) % simd_align == 0);
+
+    if (is_aligned) {
+        const data_slice = @as([*]align(simd_align) f64, @ptrCast(@alignCast(buffer.buf)))[0 .. rows * cols];
+        matrix_ptr.* = Matrix(f64){
+            .items = data_slice,
+            .rows = rows,
+            .cols = cols,
+            .allocator = allocator,
+        };
+
+        self.?.matrix_ptr = matrix_ptr;
+        self.?.numpy_ref = array_obj;
+        self.?.owns_memory = false;
+
+        // Increment reference to numpy array to keep it alive
+        c.Py_INCREF(array_obj);
+    } else {
+        // Fallback: copy unaligned data to an aligned buffer
+        matrix_ptr.* = Matrix(f64).init(allocator, rows, cols) catch {
+            allocator.destroy(matrix_ptr);
+            c.Py_DECREF(@as(?*c.PyObject, @ptrCast(self)));
+            py_utils.setMemoryError("Matrix");
+            return null;
+        };
+        const src_ptr: [*]const u8 = @ptrCast(buffer.buf.?);
+        const src_bytes = src_ptr[0 .. rows * cols * @sizeOf(f64)];
+        @memcpy(std.mem.sliceAsBytes(matrix_ptr.items), src_bytes);
+
+        self.?.matrix_ptr = matrix_ptr;
+        self.?.numpy_ref = null;
+        self.?.owns_memory = true;
     }
-    const data_slice = @as([*]align(simd_align) f64, @ptrCast(@alignCast(buffer.buf)))[0 .. rows * cols];
-    matrix_ptr.* = Matrix(f64){
-        .items = data_slice,
-        .rows = rows,
-        .cols = cols,
-        .allocator = allocator,
-    };
-
-    self.?.matrix_ptr = matrix_ptr;
-    self.?.numpy_ref = array_obj;
-    self.?.owns_memory = false;
-
-    // Increment reference to numpy array to keep it alive
-    c.Py_INCREF(array_obj);
 
     return @ptrCast(self);
 }
