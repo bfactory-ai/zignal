@@ -31,11 +31,13 @@ pub const ImageFormat = enum {
 
     /// Detect image format from file path by reading the first few bytes
     pub fn detectFromPath(_: Allocator, file_path: []const u8) !?ImageFormat {
-        const file = try std.fs.cwd().openFile(file_path, .{});
-        defer file.close();
+        const io = std.Options.debug_io;
+        const file = try std.Io.Dir.cwd().openFile(io, file_path, .{});
+        defer file.close(io);
 
         var header: [8]u8 = undefined;
-        const bytes_read = try file.read(&header);
+        var iov = [_][]u8{header[0..]};
+        const bytes_read = try file.readStreaming(io, &iov);
 
         return detectFromBytes(header[0..bytes_read]);
     }
