@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const zignal = @import("zignal");
+const py_utils = @import("py_utils.zig");
 const color_registry = @import("color_registry.zig");
 const stub_metadata = @import("stub_metadata.zig");
 const color_factory = @import("color_factory.zig");
@@ -723,7 +724,7 @@ pub fn main() !void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
-    const io = std.Options.debug_io;
+    const io = py_utils.io;
 
     // Generate main comprehensive stub file
     const main_stub_content = try generateStubFile(allocator);

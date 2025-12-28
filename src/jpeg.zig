@@ -83,8 +83,7 @@ pub const EncodeOptions = struct {
 };
 
 /// Save Image to JPEG file with baseline encoding.
-pub fn save(comptime T: type, allocator: Allocator, image: Image(T), file_path: []const u8) !void {
-    const io = std.Options.debug_io;
+pub fn save(comptime T: type, io: std.Io, allocator: Allocator, image: Image(T), file_path: []const u8) !void {
     const bytes = try encode(T, allocator, image, .{ .subsampling = .yuv420 });
     defer allocator.free(bytes);
 
@@ -2873,9 +2872,8 @@ pub fn loadFromBytes(comptime T: type, allocator: Allocator, data: []const u8, l
     }
 }
 
-pub fn load(comptime T: type, allocator: Allocator, file_path: []const u8, limits: DecodeLimits) !Image(T) {
+pub fn load(comptime T: type, io: std.Io, allocator: Allocator, file_path: []const u8, limits: DecodeLimits) !Image(T) {
     const read_limit = if (limits.max_jpeg_bytes == 0) std.math.maxInt(usize) else limits.max_jpeg_bytes;
-    const io = std.Options.debug_io;
     const jpeg_data = try std.Io.Dir.cwd().readFileAlloc(io, file_path, allocator, .limited(read_limit));
     defer allocator.free(jpeg_data);
     return loadFromBytes(T, allocator, jpeg_data, limits);

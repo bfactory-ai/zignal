@@ -35,7 +35,7 @@ pub const FontFormat = enum {
 
     /// Detect font format from file path by reading the first few bytes
     pub fn detectFromPath(_: Allocator, file_path: []const u8) !?FontFormat {
-        const io = std.Options.debug_io;
+        const io = std.Io.Threaded.global_single_threaded.ioBasic();
         // Check if file is gzip compressed based on extension
         if (std.mem.endsWith(u8, file_path, ".pcf.gz")) {
             return .pcf;

@@ -48,7 +48,7 @@ pub const DetectionOptions = struct {
 
 /// Check if stdout is connected to a TTY
 pub fn isStdoutTty() bool {
-    const io = std.Options.debug_io;
+    const io = std.Io.Threaded.global_single_threaded.ioBasic();
     return std.Io.File.stdout().isTty(io) catch |err| switch (err) {
         error.Canceled => {
             io.recancel();
@@ -140,7 +140,7 @@ const State = struct {
     ///
     /// Returns an error if terminal initialization fails.
     fn init() !State {
-        const io = std.Options.debug_io;
+        const io = std.Io.Threaded.global_single_threaded.ioBasic();
         const stdin = std.Io.File.stdin();
         const stdout = std.Io.File.stdout();
         const stderr = std.Io.File.stderr();

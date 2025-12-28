@@ -131,11 +131,10 @@ pub fn image_load(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
         std.mem.endsWith(u8, path_slice, ".JPG") or
         std.mem.endsWith(u8, path_slice, ".JPEG");
 
-    const io = std.Options.debug_io;
 
     if (is_jpeg) {
         // Read file and decode JPEG
-        const data = std.Io.Dir.cwd().readFileAlloc(io, path_slice, allocator, .limited(readLimit(file_jpeg_limits.max_jpeg_bytes))) catch |err| {
+        const data = std.Io.Dir.cwd().readFileAlloc(py_utils.io, path_slice, allocator, .limited(readLimit(file_jpeg_limits.max_jpeg_bytes))) catch |err| {
             py_utils.setErrorWithPath(err, path_slice);
             return null;
         };
@@ -160,7 +159,7 @@ pub fn image_load(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
 
     // PNG: load native dtype (Gray, RGB, RGBA)
     if (std.mem.endsWith(u8, path_slice, ".png") or std.mem.endsWith(u8, path_slice, ".PNG")) {
-        const data = std.Io.Dir.cwd().readFileAlloc(io, path_slice, allocator, .limited(readLimit(file_png_limits.max_png_bytes))) catch |err| {
+        const data = std.Io.Dir.cwd().readFileAlloc(py_utils.io, path_slice, allocator, .limited(readLimit(file_png_limits.max_png_bytes))) catch |err| {
             py_utils.setErrorWithPath(err, path_slice);
             return null;
         };
@@ -182,7 +181,7 @@ pub fn image_load(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
     }
 
     // Default: Try to load as RGB
-    const image = Image(Rgb).load(allocator, path_slice) catch |err| {
+    const image = Image(Rgb).load(py_utils.io, allocator, path_slice) catch |err| {
         py_utils.setErrorWithPath(err, path_slice);
         return null;
     };
@@ -296,7 +295,7 @@ pub fn image_save(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
 
     return self.py_image.?.dispatch(.{path_slice}, struct {
         fn apply(img: anytype, path: []const u8) ?*c.PyObject {
-            img.save(allocator, path) catch |err| {
+            img.save(py_utils.io, allocator, path) catch |err| {
                 if (err == error.UnsupportedImageFormat) {
                     py_utils.setValueError("Unsupported image format. File must have a valid PNG or JPEG extension.", .{});
                     return null;

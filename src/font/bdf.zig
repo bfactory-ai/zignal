@@ -65,7 +65,7 @@ const BdfParseState = struct {
 /// - path: Path to BDF file
 /// - filter: Filter for which characters to load
 pub fn load(gpa: std.mem.Allocator, path: []const u8, filter: LoadFilter) !BitmapFont {
-    const io = std.Options.debug_io;
+    const io = std.Io.Threaded.global_single_threaded.ioBasic();
     // Check if file is gzip compressed
     const is_compressed = std.ascii.endsWithIgnoreCase(path, ".gz");
 
@@ -848,7 +848,7 @@ pub fn save(gpa: Allocator, font: BitmapFont, path: []const u8) !void {
     const is_compressed = std.ascii.endsWithIgnoreCase(path, ".gz");
 
     // Write to file
-    const io = std.Options.debug_io;
+    const io = std.Io.Threaded.global_single_threaded.ioBasic();
     const file = if (std.fs.path.isAbsolute(path))
         try std.Io.Dir.createFileAbsolute(io, path, .{})
     else

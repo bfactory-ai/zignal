@@ -7,6 +7,7 @@ const builtin = @import("builtin");
 const use_debug_allocator = false;
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 pub const allocator = if (use_debug_allocator) debug_allocator.allocator() else std.heap.c_allocator;
+pub const io = std.Io.Threaded.global_single_threaded.ioBasic();
 
 pub fn deinitAllocator() void {
     if (use_debug_allocator) {
