@@ -723,8 +723,9 @@ fn generateInitStub(gpa: std.mem.Allocator) ![]u8 {
 pub fn main() !void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-    const io = py_utils.io;
+    const ctx = py_utils.ctx;
+    const allocator = ctx.allocator;
+    const io = ctx.io;
 
     // Generate main comprehensive stub file
     const main_stub_content = try generateStubFile(allocator);
