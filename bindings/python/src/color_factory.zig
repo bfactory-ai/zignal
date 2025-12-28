@@ -1,6 +1,22 @@
 const std = @import("std");
 
 const zignal = @import("zignal");
+const isPacked = zignal.meta.isPacked;
+const getSimpleTypeName = zignal.meta.getSimpleTypeName;
+const comptimeLowercase = zignal.meta.comptimeLowercase;
+
+const c = @import("py_utils.zig").c;
+const color = @import("color.zig");
+const createColorPyObject = color.createColorPyObject;
+const color_types = @import("color_registry.zig").color_types;
+const ConversionError = @import("py_utils.zig").ConversionError;
+const convertFromPython = @import("py_utils.zig").convertFromPython;
+const convertToPython = @import("py_utils.zig").convertToPython;
+const convertWithValidation = @import("py_utils.zig").convertWithValidation;
+const enum_utils = @import("enum_utils.zig");
+const getValidationErrorMessage = @import("color_registry.zig").getValidationErrorMessage;
+const validateColorComponent = @import("color_registry.zig").validateColorComponent;
+
 const Rgb = zignal.Rgb(u8);
 const Rgba = zignal.Rgba(u8);
 const Gray = zignal.Gray(u8);
@@ -14,21 +30,6 @@ const Oklch = zignal.Oklch(f64);
 const Xyb = zignal.Xyb(f64);
 const Xyz = zignal.Xyz(f64);
 const Ycbcr = zignal.Ycbcr(u8);
-const isPacked = zignal.meta.isPacked;
-const getSimpleTypeName = zignal.meta.getSimpleTypeName;
-const comptimeLowercase = zignal.meta.comptimeLowercase;
-
-const c = @import("py_utils.zig").c;
-const color_types = @import("color_registry.zig").color_types;
-const ConversionError = @import("py_utils.zig").ConversionError;
-const convertFromPython = @import("py_utils.zig").convertFromPython;
-const convertToPython = @import("py_utils.zig").convertToPython;
-const convertWithValidation = @import("py_utils.zig").convertWithValidation;
-const color_bindings = @import("color.zig");
-const createColorPyObject = color_bindings.createColorPyObject;
-const getValidationErrorMessage = @import("color_registry.zig").getValidationErrorMessage;
-const validateColorComponent = @import("color_registry.zig").validateColorComponent;
-const enum_utils = @import("enum_utils.zig");
 
 /// Automatically generate documentation from type name for color conversion methods
 pub fn getConversionMethodDoc(comptime TargetColorType: type) []const u8 {
@@ -194,8 +195,8 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
         }
 
         /// Generate methods array - __format__, blend, to, invert, luma, hex, from_hex, with_alpha
-        pub fn generateMethods() [10]c.PyMethodDef {
-            var methods: [10]c.PyMethodDef = undefined;
+        pub fn generateMethods() [9]c.PyMethodDef {
+            var methods: [9]c.PyMethodDef = undefined;
             var index: usize = 0;
 
             // Add __format__ method
@@ -350,29 +351,58 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
             if (c.PyArg_ParseTuple(args, "O", &alpha_obj) == 0) return null;
 
             const field_type = @typeInfo(ZigColorType).@"struct".fields[0].type;
-            const alpha = convertFromPython(field_type, @ptrCast(alpha_obj.?)) catch |err| {
-                switch (err) {
-                    ConversionError.not_integer => c.PyErr_SetString(c.PyExc_TypeError, "Expected integer value for alpha"),
-                    ConversionError.not_float => c.PyErr_SetString(c.PyExc_TypeError, "Expected float value for alpha"),
-                    ConversionError.integer_out_of_range => c.PyErr_SetString(c.PyExc_ValueError, "Alpha value for integer colors must be between 0 and 255"),
-                    else => c.PyErr_SetString(c.PyExc_TypeError, "Unsupported value type for alpha"),
-                }
-                return null;
-            };
+            var alpha: field_type = undefined;
 
             if (@typeInfo(field_type) == .float) {
-                if (alpha < 0.0 or alpha > 1.0) {
+                var val: f64 = undefined;
+                if (c.PyFloat_Check(@as(*c.PyObject, @ptrCast(alpha_obj.?))) != 0) {
+                    val = c.PyFloat_AsDouble(@as(*c.PyObject, @ptrCast(alpha_obj.?)));
+                } else if (c.PyLong_Check(@as(*c.PyObject, @ptrCast(alpha_obj.?))) != 0) {
+                    val = @as(f64, @floatFromInt(c.PyLong_AsLong(@as(*c.PyObject, @ptrCast(alpha_obj.?)))));
+                } else {
+                    c.PyErr_SetString(c.PyExc_TypeError, "alpha must be an int or float");
+                    return null;
+                }
+
+                if (val < 0.0 or val > 1.0) {
                     c.PyErr_SetString(c.PyExc_ValueError, "Alpha value for float colors must be between 0.0 and 1.0");
                     return null;
                 }
+                alpha = @floatCast(val);
+            } else if (field_type == u8) {
+                if (c.PyFloat_Check(@as(*c.PyObject, @ptrCast(alpha_obj.?))) != 0) {
+                    const val = c.PyFloat_AsDouble(@as(*c.PyObject, @ptrCast(alpha_obj.?)));
+                    if (val < 0.0 or val > 1.0) {
+                        c.PyErr_SetString(c.PyExc_ValueError, "Alpha float value for integer colors must be between 0.0 and 1.0");
+                        return null;
+                    }
+                    alpha = @intFromFloat(@round(val * 255.0));
+                } else if (c.PyLong_Check(@as(*c.PyObject, @ptrCast(alpha_obj.?))) != 0) {
+                    const val = c.PyLong_AsLong(@as(*c.PyObject, @ptrCast(alpha_obj.?)));
+                    if (val < 0 or val > 255) {
+                        c.PyErr_SetString(c.PyExc_ValueError, "Alpha integer value must be between 0 and 255");
+                        return null;
+                    }
+                    alpha = @intCast(val);
+                } else {
+                    c.PyErr_SetString(c.PyExc_TypeError, "alpha must be an int or float");
+                    return null;
+                }
+            } else {
+                @compileError("unsupported field type for with_alpha");
             }
 
             const zig_color = objectToZigColor(self);
             const with_alpha = zig_color.withAlpha(alpha);
 
             // Need to find RgbaType to create the correct object
-            const rgba_module = @import("color.zig");
-            return @ptrCast(rgba_module.createColorPyObject(with_alpha));
+            const color_module = @import("color.zig");
+            const result = color_module.createColorPyObject(with_alpha);
+            if (result == null) {
+                c.PyErr_SetString(c.PyExc_RuntimeError, "Failed to create color object");
+                return null;
+            }
+            return @ptrCast(result);
         }
 
         /// Blend method implementation
@@ -391,16 +421,13 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
             const overlay_obj = params.overlay;
             const mode_obj = params.mode;
 
-            // Import Rgba type to check instance
-            const rgba_module = @import("color.zig");
-
             // Convert overlay to Zig Rgba
             var overlay: Rgba = undefined;
 
             // Check if overlay is an Rgba instance
-            if (c.PyObject_IsInstance(overlay_obj, @ptrCast(&rgba_module.RgbaType)) == 1) {
+            if (c.PyObject_IsInstance(overlay_obj, @ptrCast(&color.rgba)) == 1) {
                 // It's an Rgba object, extract directly
-                const overlay_pyobj: *rgba_module.RgbaBinding.PyObjectType = @ptrCast(overlay_obj);
+                const overlay_pyobj: *color.RgbaBinding.PyObjectType = @ptrCast(overlay_obj);
                 overlay = .{
                     .r = overlay_pyobj.field0,
                     .g = overlay_pyobj.field1,
@@ -494,16 +521,8 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
                 .gray => createColorPyObject(float_color.to(.gray).as(u8)),
                 .rgb => createColorPyObject(float_color.to(.rgb).as(u8)),
                 .rgba => createColorPyObject(float_color.to(.rgba).as(u8)),
-                .hsl => createColorPyObject(float_color.to(.hsl)),
-                .hsv => createColorPyObject(float_color.to(.hsv)),
-                .lab => createColorPyObject(float_color.to(.lab)),
-                .lch => createColorPyObject(float_color.to(.lch)),
-                .lms => createColorPyObject(float_color.to(.lms)),
-                .oklab => createColorPyObject(float_color.to(.oklab)),
-                .oklch => createColorPyObject(float_color.to(.oklch)),
-                .xyb => createColorPyObject(float_color.to(.xyb)),
-                .xyz => createColorPyObject(float_color.to(.xyz)),
-                .ycbcr => createColorPyObject(float_color.to(.ycbcr)),
+                .ycbcr => createColorPyObject(float_color.to(.ycbcr).as(u8)),
+                inline else => |s| createColorPyObject(float_color.to(s)),
             };
 
             return @ptrCast(result_obj);
