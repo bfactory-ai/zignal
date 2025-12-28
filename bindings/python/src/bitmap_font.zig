@@ -94,7 +94,7 @@ fn bitmap_font_load(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     self.font = font_ptr;
 
     // Load font from file (loading all characters)
-    font_ptr.* = BitmapFont.load(allocator, path_slice, .all) catch |err| {
+    font_ptr.* = BitmapFont.load(py_utils.io, allocator, path_slice, .all) catch |err| {
         // Clean up on error
         allocator.destroy(font_ptr);
         self.font = null; // Clear the pointer

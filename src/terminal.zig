@@ -47,8 +47,7 @@ pub const DetectionOptions = struct {
 };
 
 /// Check if stdout is connected to a TTY
-pub fn isStdoutTty() bool {
-    const io = std.Io.Threaded.global_single_threaded.ioBasic();
+pub fn isStdoutTty(io: std.Io) bool {
     return std.Io.File.stdout().isTty(io) catch |err| switch (err) {
         error.Canceled => {
             io.recancel();
@@ -58,8 +57,8 @@ pub fn isStdoutTty() bool {
 }
 
 /// Detect if the terminal supports sixel graphics protocol
-pub fn isSixelSupported() !bool {
-    var state: State = try .init();
+pub fn isSixelSupported(io: std.Io) !bool {
+    var state: State = try .init(io);
     defer state.deinit();
 
     // Try DECRQSS - Request Status String (no visible output)
@@ -72,8 +71,8 @@ pub fn isSixelSupported() !bool {
 }
 
 /// Detect if the terminal supports Kitty graphics protocol
-pub fn isKittySupported() !bool {
-    var state: State = try .init();
+pub fn isKittySupported(io: std.Io) !bool {
+    var state: State = try .init(io);
     defer state.deinit();
 
     var response_buf: [response_buffer_size]u8 = undefined;
@@ -139,8 +138,7 @@ const State = struct {
     /// On POSIX systems, saves the current termios settings.
     ///
     /// Returns an error if terminal initialization fails.
-    fn init() !State {
-        const io = std.Io.Threaded.global_single_threaded.ioBasic();
+    fn init(io: std.Io) !State {
         const stdin = std.Io.File.stdin();
         const stdout = std.Io.File.stdout();
         const stderr = std.Io.File.stderr();

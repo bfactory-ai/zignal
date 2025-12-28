@@ -834,7 +834,7 @@ fn image_format(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) 
 
         switch (pimg.data) {
             .gray => |*img| {
-                const formatted = std.fmt.allocPrint(allocator, "{f}", .{img.display(display_format)}) catch |err| {
+                const formatted = std.fmt.allocPrint(allocator, "{f}", .{img.display(py_utils.io, display_format)}) catch |err| {
                     if (err == error.OutOfMemory) c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory");
                     return null;
                 };
@@ -845,7 +845,7 @@ fn image_format(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) 
                 };
             },
             .rgb => |*img| {
-                const formatted = std.fmt.allocPrint(allocator, "{f}", .{img.display(display_format)}) catch |err| {
+                const formatted = std.fmt.allocPrint(allocator, "{f}", .{img.display(py_utils.io, display_format)}) catch |err| {
                     if (err == error.OutOfMemory) c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory");
                     return null;
                 };
@@ -856,7 +856,7 @@ fn image_format(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) 
                 };
             },
             .rgba => |*img| {
-                const formatted = std.fmt.allocPrint(allocator, "{f}", .{img.display(display_format)}) catch |err| {
+                const formatted = std.fmt.allocPrint(allocator, "{f}", .{img.display(py_utils.io, display_format)}) catch |err| {
                     if (err == error.OutOfMemory) c.PyErr_SetString(c.PyExc_MemoryError, "Out of memory");
                     return null;
                 };

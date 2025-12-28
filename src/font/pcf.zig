@@ -188,8 +188,7 @@ const PropertiesInfo = struct {
 /// - allocator: Memory allocator
 /// - path: Path to PCF file
 /// - filter: Filter for which characters to load
-pub fn load(allocator: std.mem.Allocator, path: []const u8, filter: LoadFilter) !BitmapFont {
-    const io = std.Io.Threaded.global_single_threaded.ioBasic();
+pub fn load(io: std.Io, allocator: std.mem.Allocator, path: []const u8, filter: LoadFilter) !BitmapFont {
     // Check if file is gzip compressed
     const is_compressed = std.mem.endsWith(u8, path, ".gz");
 

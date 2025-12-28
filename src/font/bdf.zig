@@ -64,8 +64,7 @@ const BdfParseState = struct {
 /// - allocator: Memory allocator
 /// - path: Path to BDF file
 /// - filter: Filter for which characters to load
-pub fn load(gpa: std.mem.Allocator, path: []const u8, filter: LoadFilter) !BitmapFont {
-    const io = std.Io.Threaded.global_single_threaded.ioBasic();
+pub fn load(io: std.Io, gpa: std.mem.Allocator, path: []const u8, filter: LoadFilter) !BitmapFont {
     // Check if file is gzip compressed
     const is_compressed = std.ascii.endsWithIgnoreCase(path, ".gz");
 
@@ -608,7 +607,7 @@ test "BDF parses glyph rows wider than 32 bits" {
 
     try tmp_dir.dir.writeFile(testing.io, .{ .sub_path = "wide_font.bdf", .data = wide_bdf });
 
-    var font = try load(testing.allocator, file_path, .all);
+    var font = try load(testing.io, testing.allocator, file_path, .all);
     defer font.deinit(testing.allocator);
 
     try testing.expectEqual(@as(u8, 40), font.char_width);
@@ -676,7 +675,7 @@ test "BDF save and load compressed roundtrip" {
     defer testing.allocator.free(test_path);
 
     // Save compressed
-    try font.save(testing.allocator, test_path);
+    try font.save(testing.io, testing.allocator, test_path);
 
     // Verify the file is compressed by checking magic number
     const file = try std.Io.Dir.openFileAbsolute(testing.io, test_path, .{});
@@ -688,7 +687,7 @@ test "BDF save and load compressed roundtrip" {
     try testing.expectEqual(@as(u8, 0x8b), header[1]);
 
     // Load it back
-    var loaded_font = try BitmapFont.load(testing.allocator, test_path, .all);
+    var loaded_font = try BitmapFont.load(testing.io, testing.allocator, test_path, .all);
     defer loaded_font.deinit(testing.allocator);
 
     // Verify metadata
@@ -781,10 +780,10 @@ test "BDF save and load roundtrip" {
     const test_path = try std.fs.path.join(testing.allocator, &.{ full_path, test_filename });
     defer testing.allocator.free(test_path);
 
-    try font.save(testing.allocator, test_path);
+    try font.save(testing.io, testing.allocator, test_path);
 
     // Load it back
-    var loaded_font = try BitmapFont.load(testing.allocator, test_path, .all);
+    var loaded_font = try BitmapFont.load(testing.io, testing.allocator, test_path, .all);
     defer loaded_font.deinit(testing.allocator);
 
     // Verify metadata
@@ -805,7 +804,7 @@ test "BDF save and load roundtrip" {
 }
 
 /// Save a BitmapFont to a BDF file
-pub fn save(gpa: Allocator, font: BitmapFont, path: []const u8) !void {
+pub fn save(io: std.Io, gpa: Allocator, font: BitmapFont, path: []const u8) !void {
     // Create buffer for BDF content
     var bdf_content: std.ArrayList(u8) = .empty;
     defer bdf_content.deinit(gpa);
@@ -848,7 +847,6 @@ pub fn save(gpa: Allocator, font: BitmapFont, path: []const u8) !void {
     const is_compressed = std.ascii.endsWithIgnoreCase(path, ".gz");
 
     // Write to file
-    const io = std.Io.Threaded.global_single_threaded.ioBasic();
     const file = if (std.fs.path.isAbsolute(path))
         try std.Io.Dir.createFileAbsolute(io, path, .{})
     else

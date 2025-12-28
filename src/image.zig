@@ -471,15 +471,16 @@ pub fn Image(comptime T: type) type {
         /// Example:
         /// ```zig
         /// const img = try Image(Rgb).load(io, allocator, "test.png");
-        /// std.debug.print("{f}", .{img.display(.sgr)});           // SGR with unicode half blocks
-        /// std.debug.print("{f}", .{img.display(.{ .braille = .{ .threshold = 0.5 } })}); // 2x4 monochrome
-        /// std.debug.print("{f}", .{img.display(.{ .sixel = .{ .palette_mode = .adaptive } })});
-        /// std.debug.print("{f}", .{img.display(.{ .kitty = .default })});  // Kitty graphics protocol
+        /// std.debug.print("{f}", .{img.display(io, .sgr)});           // SGR with unicode half blocks
+        /// std.debug.print("{f}", .{img.display(io, .{ .braille = .{ .threshold = 0.5 } })}); // 2x4 monochrome
+        /// std.debug.print("{f}", .{img.display(io, .{ .sixel = .{ .palette_mode = .adaptive } })});
+        /// std.debug.print("{f}", .{img.display(io, .{ .kitty = .default })});  // Kitty graphics protocol
         /// ```
-        pub fn display(self: *const Self, display_format: DisplayFormat) DisplayFormatter(T) {
+        pub fn display(self: *const Self, io: std.Io, display_format: DisplayFormat) DisplayFormatter(T) {
             return DisplayFormatter(T){
                 .image = self,
                 .display_format = display_format,
+                .io = io,
             };
         }
 
