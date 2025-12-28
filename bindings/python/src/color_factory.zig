@@ -193,9 +193,9 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
             }.setter;
         }
 
-        /// Generate methods array - __format__, blend, to, invert
-        pub fn generateMethods() [5]c.PyMethodDef {
-            var methods: [5]c.PyMethodDef = undefined;
+        /// Generate methods array - __format__, blend, to, invert, luma, hex, from_hex, with_alpha
+        pub fn generateMethods() [10]c.PyMethodDef {
+            var methods: [10]c.PyMethodDef = undefined;
             var index: usize = 0;
 
             // Add __format__ method
@@ -261,16 +261,244 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
                     .ml_name = "invert",
                     .ml_meth = @ptrCast(&invertMethod),
                     .ml_flags = c.METH_NOARGS,
-                    .ml_doc =
-                    \\Return a new color with inverted RGB channels while preserving alpha (if present).
-                    \\Values are converted through RGB space to ensure consistency across color models.
-                    ,
+                    .ml_doc = "Return a new color with inverted components while preserving alpha (if present).",
+                };
+                index += 1;
+            }
+
+            if (@hasDecl(ZigColorType, "luma")) {
+                methods[index] = c.PyMethodDef{
+                    .ml_name = "luma",
+                    .ml_meth = @ptrCast(&lumaMethod),
+                    .ml_flags = c.METH_NOARGS,
+                    .ml_doc = "Calculate the perceptual luminance (0.0 to 1.0) using ITU-R BT.709 coefficients.",
+                };
+                index += 1;
+            }
+
+            if (@hasDecl(ZigColorType, "hex")) {
+                methods[index] = c.PyMethodDef{
+                    .ml_name = "hex",
+                    .ml_meth = @ptrCast(&hexMethod),
+                    .ml_flags = c.METH_NOARGS,
+                    .ml_doc = "Return the hexadecimal representation of the color (e.g. 0xRRGGBB or 0xRRGGBBAA).",
+                };
+                index += 1;
+            }
+
+            if (@hasDecl(ZigColorType, "initHex")) {
+                methods[index] = c.PyMethodDef{
+                    .ml_name = "from_hex",
+                    .ml_meth = @ptrCast(&fromHexMethod),
+                    .ml_flags = c.METH_VARARGS | c.METH_STATIC,
+                    .ml_doc = "Create a color from a hexadecimal value (e.g. 0xRRGGBB or 0xRRGGBBAA).",
+                };
+                index += 1;
+            }
+
+            if (@hasDecl(ZigColorType, "withAlpha")) {
+                methods[index] = c.PyMethodDef{
+                    .ml_name = "with_alpha",
+                    .ml_meth = @ptrCast(&withAlphaMethod),
+                    .ml_flags = c.METH_VARARGS,
+                    .ml_doc = "Return a new Rgba color with the specified alpha channel value.",
                 };
                 index += 1;
             }
 
             methods[index] = c.PyMethodDef{ .ml_name = null, .ml_meth = null, .ml_flags = 0, .ml_doc = null };
             return methods;
+        }
+
+        /// invert method implementation
+        pub fn invertMethod(self_obj: [*c]c.PyObject, _: ?*c.PyObject) callconv(.c) [*c]c.PyObject {
+            const self: *ObjectType = @ptrCast(self_obj);
+            const inverted = objectToZigColor(self).invert();
+            const result = createPyObject(inverted, c.Py_TYPE(self_obj)) orelse return null;
+            return @ptrCast(result);
+        }
+
+        /// luma method implementation
+        pub fn lumaMethod(self_obj: [*c]c.PyObject, _: ?*c.PyObject) callconv(.c) [*c]c.PyObject {
+            const self: *ObjectType = @ptrCast(self_obj);
+            const luma_val = objectToZigColor(self).luma();
+            return @ptrCast(convertToPython(luma_val));
+        }
+
+        /// hex method implementation
+        pub fn hexMethod(self_obj: [*c]c.PyObject, _: ?*c.PyObject) callconv(.c) [*c]c.PyObject {
+            const self: *ObjectType = @ptrCast(self_obj);
+            const hex_val = objectToZigColor(self).hex();
+            return @ptrCast(convertToPython(hex_val));
+        }
+
+        /// from_hex method implementation (static)
+        pub fn fromHexMethod(_: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) [*c]c.PyObject {
+            var hex_code: c_ulong = 0;
+            if (c.PyArg_ParseTuple(args, "k", &hex_code) == 0) return null;
+
+            const zig_color = ZigColorType.initHex(@intCast(hex_code));
+
+            const color_module = @import("color.zig");
+            return @ptrCast(color_module.createColorPyObject(zig_color));
+        }
+
+        /// with_alpha method implementation
+        pub fn withAlphaMethod(self_obj: [*c]c.PyObject, args: ?*c.PyObject) callconv(.c) [*c]c.PyObject {
+            const self: *ObjectType = @ptrCast(self_obj);
+            var alpha_obj: ?*c.PyObject = null;
+            if (c.PyArg_ParseTuple(args, "O", &alpha_obj) == 0) return null;
+
+            const field_type = @typeInfo(ZigColorType).@"struct".fields[0].type;
+            const alpha = convertFromPython(field_type, @ptrCast(alpha_obj.?)) catch |err| {
+                switch (err) {
+                    ConversionError.not_integer => c.PyErr_SetString(c.PyExc_TypeError, "Expected integer value for alpha"),
+                    ConversionError.not_float => c.PyErr_SetString(c.PyExc_TypeError, "Expected float value for alpha"),
+                    else => c.PyErr_SetString(c.PyExc_TypeError, "Unsupported value type for alpha"),
+                }
+                return null;
+            };
+
+            const zig_color = objectToZigColor(self);
+            const with_alpha = zig_color.withAlpha(alpha);
+
+            // Need to find RgbaType to create the correct object
+            const rgba_module = @import("color.zig");
+            return @ptrCast(rgba_module.createColorPyObject(with_alpha));
+        }
+
+        /// Blend method implementation
+        pub fn blendMethod(self_obj: [*c]c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) [*c]c.PyObject {
+            const self: *ObjectType = @ptrCast(self_obj);
+
+            // Parse arguments: overlay (required) and mode (optional keyword, defaults to NORMAL)
+            const py_utils_local = @import("py_utils.zig");
+            const Params = struct {
+                overlay: ?*c.PyObject,
+                mode: ?*c.PyObject = null,
+            };
+            var params: Params = undefined;
+            py_utils_local.parseArgs(Params, args, kwds, &params) catch return null;
+
+            const overlay_obj = params.overlay;
+            const mode_obj = params.mode;
+
+            // Import Rgba type to check instance
+            const rgba_module = @import("color.zig");
+
+            // Convert overlay to Zig Rgba
+            var overlay: Rgba = undefined;
+
+            // Check if overlay is an Rgba instance
+            if (c.PyObject_IsInstance(overlay_obj, @ptrCast(&rgba_module.RgbaType)) == 1) {
+                // It's an Rgba object, extract directly
+                const overlay_pyobj: *rgba_module.RgbaBinding.PyObjectType = @ptrCast(overlay_obj);
+                overlay = .{
+                    .r = overlay_pyobj.field0,
+                    .g = overlay_pyobj.field1,
+                    .b = overlay_pyobj.field2,
+                    .a = overlay_pyobj.field3,
+                };
+            } else if (c.PyTuple_Check(overlay_obj) == 1) {
+                // It's a tuple, parse RGBA values using PyArg_ParseTuple
+                var r: c_long = undefined;
+                var g: c_long = undefined;
+                var b: c_long = undefined;
+                var a: c_long = undefined;
+
+                if (c.PyArg_ParseTuple(overlay_obj, "llll", &r, &g, &b, &a) == 0) {
+                    c.PyErr_SetString(c.PyExc_TypeError, "overlay tuple must contain 4 integers (r, g, b, a)");
+                    return null;
+                }
+
+                // Validate ranges using py_utils helper (it sets appropriate error messages)
+                const py_utils = @import("py_utils.zig");
+                const r_val = py_utils.validateRange(u8, r, 0, 255, "r") catch return null;
+                const g_val = py_utils.validateRange(u8, g, 0, 255, "g") catch return null;
+                const b_val = py_utils.validateRange(u8, b, 0, 255, "b") catch return null;
+                const a_val = py_utils.validateRange(u8, a, 0, 255, "a") catch return null;
+
+                overlay = .{
+                    .r = r_val,
+                    .g = g_val,
+                    .b = b_val,
+                    .a = a_val,
+                };
+            } else {
+                c.PyErr_SetString(c.PyExc_TypeError, "overlay must be an Rgba color or a tuple of 4 integers (r, g, b, a)");
+                return null;
+            }
+
+            // Convert mode to Zig Blending (use NORMAL if not provided), in case of failure the error set by enum_utils
+            const mode = if (mode_obj) |obj| enum_utils.pyToEnum(zignal.Blending, obj) catch return null else .normal;
+
+            // Convert self to Zig color
+            const zig_color = objectToZigColor(self);
+
+            // Perform the blend
+            const blended = zig_color.blend(overlay, mode);
+
+            // Create and return new Python object with the blended result
+            const type_obj: *c.PyTypeObject = @ptrCast(self_obj.*.ob_type);
+            return createPyObject(blended, type_obj);
+        }
+
+        /// Map a Python color class object to the underlying ColorSpace
+        fn colorSpaceFromPyType(type_obj: *c.PyTypeObject) ?zignal.ColorSpace {
+            const type_name_str = std.mem.span(type_obj.tp_name);
+            inline for (color_types) |ColorType| {
+                const type_name = comptime zignal.meta.getGenericBaseName(ColorType);
+                const full_name = comptime "zignal." ++ type_name;
+
+                if (std.mem.eql(u8, type_name_str, full_name)) {
+                    return ColorType.space;
+                }
+            }
+            return null;
+        }
+
+        /// to(space) method implementation using Python color classes
+        pub fn toMethod(self_obj: [*c]c.PyObject, args: ?*c.PyObject) callconv(.c) [*c]c.PyObject {
+            const self: *ObjectType = @ptrCast(self_obj);
+            var target_type_obj: ?*c.PyObject = null;
+            if (args == null or c.PyArg_ParseTuple(args.?, "O", &target_type_obj) == 0) return null;
+
+            if (c.PyType_Check(target_type_obj) == 0) {
+                c.PyErr_SetString(c.PyExc_TypeError, "Expected a zignal color type (e.g., zignal.Rgb)");
+                return null;
+            }
+
+            const target_space = colorSpaceFromPyType(@ptrCast(target_type_obj.?)) orelse {
+                c.PyErr_SetString(c.PyExc_TypeError, "Unsupported target color type");
+                return null;
+            };
+
+            const zig_color = objectToZigColor(self);
+
+            const ColorType = @TypeOf(zig_color);
+            const is_u8_backed = switch (@typeInfo(ColorType)) {
+                .@"struct" => |info| info.fields[0].type == u8,
+                else => false,
+            };
+            const float_color = if (is_u8_backed) zig_color.as(f64) else zig_color;
+
+            const result_obj = switch (target_space) {
+                .gray => createColorPyObject(float_color.to(.gray).as(u8)),
+                .rgb => createColorPyObject(float_color.to(.rgb).as(u8)),
+                .rgba => createColorPyObject(float_color.to(.rgba).as(u8)),
+                .hsl => createColorPyObject(float_color.to(.hsl)),
+                .hsv => createColorPyObject(float_color.to(.hsv)),
+                .lab => createColorPyObject(float_color.to(.lab)),
+                .lch => createColorPyObject(float_color.to(.lch)),
+                .lms => createColorPyObject(float_color.to(.lms)),
+                .oklab => createColorPyObject(float_color.to(.oklab)),
+                .oklch => createColorPyObject(float_color.to(.oklch)),
+                .xyb => createColorPyObject(float_color.to(.xyb)),
+                .xyz => createColorPyObject(float_color.to(.xyz)),
+                .ycbcr => createColorPyObject(float_color.to(.ycbcr)),
+            };
+
+            return @ptrCast(result_obj);
         }
 
         /// Convert Python object to Zig color
@@ -628,148 +856,6 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
                 _ = c.PyErr_Format(c.PyExc_ValueError, "Unknown format code '%s' for object of type '%s'", format_spec, name.ptr);
                 return null;
             }
-        }
-
-        /// invert method implementation
-        pub fn invertMethod(self_obj: [*c]c.PyObject, _: ?*c.PyObject) callconv(.c) [*c]c.PyObject {
-            const self: *ObjectType = @ptrCast(self_obj);
-            const inverted = objectToZigColor(self).invert();
-            const result = createPyObject(inverted, c.Py_TYPE(self_obj)) orelse return null;
-            return @ptrCast(result);
-        }
-
-        /// Blend method implementation
-        pub fn blendMethod(self_obj: [*c]c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) [*c]c.PyObject {
-            const self: *ObjectType = @ptrCast(self_obj);
-
-            // Parse arguments: overlay (required) and mode (optional keyword, defaults to NORMAL)
-            const py_utils_local = @import("py_utils.zig");
-            const Params = struct {
-                overlay: ?*c.PyObject,
-                mode: ?*c.PyObject = null,
-            };
-            var params: Params = undefined;
-            py_utils_local.parseArgs(Params, args, kwds, &params) catch return null;
-
-            const overlay_obj = params.overlay;
-            const mode_obj = params.mode;
-
-            // Import Rgba type to check instance
-            const rgba_module = @import("color.zig");
-
-            // Convert overlay to Zig Rgba
-            var overlay: Rgba = undefined;
-
-            // Check if overlay is an Rgba instance
-            if (c.PyObject_IsInstance(overlay_obj, @ptrCast(&rgba_module.RgbaType)) == 1) {
-                // It's an Rgba object, extract directly
-                const overlay_pyobj: *rgba_module.RgbaBinding.PyObjectType = @ptrCast(overlay_obj);
-                overlay = .{
-                    .r = overlay_pyobj.field0,
-                    .g = overlay_pyobj.field1,
-                    .b = overlay_pyobj.field2,
-                    .a = overlay_pyobj.field3,
-                };
-            } else if (c.PyTuple_Check(overlay_obj) == 1) {
-                // It's a tuple, parse RGBA values using PyArg_ParseTuple
-                var r: c_long = undefined;
-                var g: c_long = undefined;
-                var b: c_long = undefined;
-                var a: c_long = undefined;
-
-                if (c.PyArg_ParseTuple(overlay_obj, "llll", &r, &g, &b, &a) == 0) {
-                    c.PyErr_SetString(c.PyExc_TypeError, "overlay tuple must contain 4 integers (r, g, b, a)");
-                    return null;
-                }
-
-                // Validate ranges using py_utils helper (it sets appropriate error messages)
-                const py_utils = @import("py_utils.zig");
-                const r_val = py_utils.validateRange(u8, r, 0, 255, "r") catch return null;
-                const g_val = py_utils.validateRange(u8, g, 0, 255, "g") catch return null;
-                const b_val = py_utils.validateRange(u8, b, 0, 255, "b") catch return null;
-                const a_val = py_utils.validateRange(u8, a, 0, 255, "a") catch return null;
-
-                overlay = .{
-                    .r = r_val,
-                    .g = g_val,
-                    .b = b_val,
-                    .a = a_val,
-                };
-            } else {
-                c.PyErr_SetString(c.PyExc_TypeError, "overlay must be an Rgba color or a tuple of 4 integers (r, g, b, a)");
-                return null;
-            }
-
-            // Convert mode to Zig Blending (use NORMAL if not provided), in case of failure the error set by enum_utils
-            const mode = if (mode_obj) |obj| enum_utils.pyToEnum(zignal.Blending, obj) catch return null else .normal;
-
-            // Convert self to Zig color
-            const zig_color = objectToZigColor(self);
-
-            // Perform the blend
-            const blended = zig_color.blend(overlay, mode);
-
-            // Create and return new Python object with the blended result
-            const type_obj: *c.PyTypeObject = @ptrCast(self_obj.*.ob_type);
-            return createPyObject(blended, type_obj);
-        }
-
-        /// Map a Python color class object to the underlying ColorSpace
-        fn colorSpaceFromPyType(type_obj: *c.PyTypeObject) ?zignal.ColorSpace {
-            const type_name_str = std.mem.span(type_obj.tp_name);
-            inline for (color_types) |ColorType| {
-                const type_name = comptime zignal.meta.getGenericBaseName(ColorType);
-                const full_name = comptime "zignal." ++ type_name;
-
-                if (std.mem.eql(u8, type_name_str, full_name)) {
-                    return ColorType.space;
-                }
-            }
-            return null;
-        }
-
-        /// to(space) method implementation using Python color classes
-        pub fn toMethod(self_obj: [*c]c.PyObject, args: ?*c.PyObject) callconv(.c) [*c]c.PyObject {
-            const self: *ObjectType = @ptrCast(self_obj);
-            var target_type_obj: ?*c.PyObject = null;
-            if (args == null or c.PyArg_ParseTuple(args.?, "O", &target_type_obj) == 0) return null;
-
-            if (c.PyType_Check(target_type_obj) == 0) {
-                c.PyErr_SetString(c.PyExc_TypeError, "Expected a zignal color type (e.g., zignal.Rgb)");
-                return null;
-            }
-
-            const target_space = colorSpaceFromPyType(@ptrCast(target_type_obj.?)) orelse {
-                c.PyErr_SetString(c.PyExc_TypeError, "Unsupported target color type");
-                return null;
-            };
-
-            const zig_color = objectToZigColor(self);
-
-            const ColorType = @TypeOf(zig_color);
-            const is_u8_backed = switch (@typeInfo(ColorType)) {
-                .@"struct" => |info| info.fields[0].type == u8,
-                else => false,
-            };
-            const float_color = if (is_u8_backed) zig_color.as(f64) else zig_color;
-
-            const result_obj = switch (target_space) {
-                .gray => createColorPyObject(float_color.to(.gray).as(u8)),
-                .rgb => createColorPyObject(float_color.to(.rgb).as(u8)),
-                .rgba => createColorPyObject(float_color.to(.rgba).as(u8)),
-                .hsl => createColorPyObject(float_color.to(.hsl)),
-                .hsv => createColorPyObject(float_color.to(.hsv)),
-                .lab => createColorPyObject(float_color.to(.lab)),
-                .lch => createColorPyObject(float_color.to(.lch)),
-                .lms => createColorPyObject(float_color.to(.lms)),
-                .oklab => createColorPyObject(float_color.to(.oklab)),
-                .oklch => createColorPyObject(float_color.to(.oklch)),
-                .xyb => createColorPyObject(float_color.to(.xyb)),
-                .xyz => createColorPyObject(float_color.to(.xyz)),
-                .ycbcr => createColorPyObject(float_color.to(.ycbcr)),
-            };
-
-            return @ptrCast(result_obj);
         }
     };
 }
