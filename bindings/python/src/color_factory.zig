@@ -354,10 +354,18 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
                 switch (err) {
                     ConversionError.not_integer => c.PyErr_SetString(c.PyExc_TypeError, "Expected integer value for alpha"),
                     ConversionError.not_float => c.PyErr_SetString(c.PyExc_TypeError, "Expected float value for alpha"),
+                    ConversionError.integer_out_of_range => c.PyErr_SetString(c.PyExc_ValueError, "Alpha value for integer colors must be between 0 and 255"),
                     else => c.PyErr_SetString(c.PyExc_TypeError, "Unsupported value type for alpha"),
                 }
                 return null;
             };
+
+            if (@typeInfo(field_type) == .float) {
+                if (alpha < 0.0 or alpha > 1.0) {
+                    c.PyErr_SetString(c.PyExc_ValueError, "Alpha value for float colors must be between 0.0 and 1.0");
+                    return null;
+                }
+            }
 
             const zig_color = objectToZigColor(self);
             const with_alpha = zig_color.withAlpha(alpha);
