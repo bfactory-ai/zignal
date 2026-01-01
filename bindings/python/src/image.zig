@@ -63,14 +63,14 @@ fn image_new(type_obj: ?*c.PyTypeObject, args: ?*c.PyObject, kwds: ?*c.PyObject)
     _ = args;
     _ = kwds;
 
-    const self = @as(?*ImageObject, @ptrCast(c.PyType_GenericAlloc(type_obj, 0)));
+    const self: ?*ImageObject = @ptrCast(c.PyType_GenericAlloc(type_obj, 0));
     if (self) |obj| {
         // Initialize to none
         obj.py_image = null;
         obj.numpy_ref = null;
         obj.parent_ref = null;
     }
-    return @as(?*c.PyObject, @ptrCast(self));
+    return @ptrCast(self);
 }
 
 const image_init_doc =
@@ -542,7 +542,7 @@ fn image_richcompare(self_obj: [*c]c.PyObject, other_obj: [*c]c.PyObject, op: c_
     }
 
     // Check if other is an Image object; if not, defer using NotImplemented
-    const image_type = @as([*c]c.PyTypeObject, @ptrCast(&ImageType));
+    const image_type: [*c]c.PyTypeObject = @ptrCast(&ImageType);
     if (c.PyObject_TypeCheck(other_obj, image_type) == 0) {
         const not_impl = c.Py_NotImplemented();
         c.Py_INCREF(not_impl);
@@ -1410,7 +1410,7 @@ pub fn moveImageToPython(owned_img: anytype) ?*ImageObject {
         c.PyErr_SetString(c.PyExc_MemoryError, "Failed to allocate Image object");
         return null;
     };
-    const result = @as(*ImageObject, @ptrCast(py_obj));
+    const result: *ImageObject = @ptrCast(py_obj);
 
     const pnew = PyImage.createFrom(allocator, owned_img, .owned) orelse {
         var tmp = owned_img;

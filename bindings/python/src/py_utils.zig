@@ -21,9 +21,9 @@ pub const c = @cImport({
 pub fn registerType(module: [*c]c.PyObject, comptime name: []const u8, type_obj: *c.PyTypeObject) !void {
     if (c.PyType_Ready(type_obj) < 0) return error.TypeInitFailed;
 
-    c.Py_INCREF(@as(?*c.PyObject, @ptrCast(type_obj)));
-    if (c.PyModule_AddObject(module, name.ptr, @as(?*c.PyObject, @ptrCast(type_obj))) < 0) {
-        c.Py_DECREF(@as(?*c.PyObject, @ptrCast(type_obj)));
+    c.Py_INCREF(@ptrCast(type_obj));
+    if (c.PyModule_AddObject(module, name.ptr, @ptrCast(type_obj)) < 0) {
+        c.Py_DECREF(@ptrCast(type_obj));
         return error.TypeAddFailed;
     }
 }
@@ -46,15 +46,9 @@ pub fn convertToPython(value: anytype) ?*c.PyObject {
 
     return switch (@typeInfo(T)) {
         .int => |info| if (info.signedness == .unsigned)
-            c.PyLong_FromUnsignedLongLong(@as(
-                @typeInfo(@TypeOf(c.PyLong_FromUnsignedLongLong)).@"fn".params[0].type.?,
-                @intCast(value),
-            ))
+            c.PyLong_FromUnsignedLongLong(@intCast(value))
         else
-            c.PyLong_FromLongLong(@as(
-                @typeInfo(@TypeOf(c.PyLong_FromLongLong)).@"fn".params[0].type.?,
-                @intCast(value),
-            )),
+            c.PyLong_FromLongLong(@intCast(value)),
         .float => c.PyFloat_FromDouble(value),
         .bool => @ptrCast(getPyBool(value)),
         .pointer => |ptr| blk: {
@@ -594,25 +588,21 @@ pub fn parseRectangleTuple(comptime T: type, tuple_obj: ?*c.PyObject) !zignal.Re
         c.PyErr_SetString(c.PyExc_TypeError, "Rectangle tuple elements must be numbers");
         return error.InvalidRectangle;
     }
-
-    // Convert to target type and return
-    const info = @typeInfo(T);
-    if (info == .float) {
-        return zignal.Rectangle(T).init(
-            @as(T, @floatCast(left)),
-            @as(T, @floatCast(top)),
-            @as(T, @floatCast(right)),
-            @as(T, @floatCast(bottom)),
-        );
-    } else {
-        // For integer types, truncate the float values
-        return zignal.Rectangle(T).init(
-            @as(T, @intFromFloat(left)),
-            @as(T, @intFromFloat(top)),
-            @as(T, @intFromFloat(right)),
-            @as(T, @intFromFloat(bottom)),
-        );
-    }
+    return switch (@typeInfo(T)) {
+        .int => .init(
+            @intFromFloat(left),
+            @intFromFloat(top),
+            @intFromFloat(right),
+            @intFromFloat(bottom),
+        ),
+        .float => .init(
+            @floatCast(left),
+            @floatCast(top),
+            @floatCast(right),
+            @floatCast(bottom),
+        ),
+        else => @compileError("Rectangle type must be integer or float"),
+    };
 }
 
 /// Parse a Rectangle object or tuple to Zignal Rectangle(T)
@@ -640,8 +630,18 @@ pub fn parseRectangle(comptime T: type, rect_obj: ?*c.PyObject) !zignal.Rectangl
     // Handle integer vs float types
     const info = @typeInfo(T);
     return switch (info) {
-        .int => zignal.Rectangle(T).init(@as(T, @intFromFloat(rect.left)), @as(T, @intFromFloat(rect.top)), @as(T, @intFromFloat(rect.right)), @as(T, @intFromFloat(rect.bottom))),
-        .float => zignal.Rectangle(T).init(@as(T, @floatCast(rect.left)), @as(T, @floatCast(rect.top)), @as(T, @floatCast(rect.right)), @as(T, @floatCast(rect.bottom))),
+        .int => .init(
+            @intFromFloat(rect.left),
+            @intFromFloat(rect.top),
+            @intFromFloat(rect.right),
+            @intFromFloat(rect.bottom),
+        ),
+        .float => .init(
+            @floatCast(rect.left),
+            @floatCast(rect.top),
+            @floatCast(rect.right),
+            @floatCast(rect.bottom),
+        ),
         else => @compileError("Rectangle type must be integer or float"),
     };
 }
@@ -1203,7 +1203,7 @@ pub fn genericDealloc(comptime T: type, comptime deinit_fn: ?fn (*T) void) fn (?
             }
 
             // Free the Python object
-            const tp = @as(*c.PyTypeObject, @ptrCast(c.Py_TYPE(self_obj)));
+            const tp: *c.PyTypeObject = @ptrCast(c.Py_TYPE(self_obj));
             tp.*.tp_free.?(self_obj);
         }
     }.dealloc;

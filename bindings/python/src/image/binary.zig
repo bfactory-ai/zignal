@@ -105,7 +105,7 @@ pub fn image_threshold_otsu(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv
     const binary_obj = moveImageToPython(out) orelse return null;
     const tuple = c.PyTuple_New(2) orelse {
         // TODO: Remove explicit cast after Python 3.10 is dropped
-        c.Py_DECREF(@as(*c.PyObject, @ptrCast(binary_obj)));
+        c.Py_DECREF(@ptrCast(binary_obj));
         py_utils.setMemoryError("return tuple");
         return null;
     };
