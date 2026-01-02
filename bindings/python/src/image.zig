@@ -182,6 +182,7 @@ fn image_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) ca
         // TODO: Remove explicit cast after Python 3.10 is dropped
         const is_type_obj = c.PyObject_TypeCheck(fmt_obj, @as([*c]c.PyTypeObject, @ptrCast(&c.PyType_Type))) != 0;
         if (is_type_obj) {
+            // TODO(py3.10): drop explicit cast once minimum Python >= 3.11
             if (fmt_obj == @as(*c.PyObject, @ptrCast(&color_bindings.gray))) {
                 target_format = .gray;
             } else if (fmt_obj == @as(*c.PyObject, @ptrCast(&color_bindings.rgb))) {

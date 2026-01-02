@@ -21,9 +21,10 @@ pub const c = @cImport({
 pub fn registerType(module: [*c]c.PyObject, comptime name: []const u8, type_obj: *c.PyTypeObject) !void {
     if (c.PyType_Ready(type_obj) < 0) return error.TypeInitFailed;
 
-    c.Py_INCREF(@ptrCast(type_obj));
-    if (c.PyModule_AddObject(module, name.ptr, @ptrCast(type_obj)) < 0) {
-        c.Py_DECREF(@ptrCast(type_obj));
+    // TODO(py3.10): drop explicit cast once minimum Python >= 3.11
+    c.Py_INCREF(@as(?*c.PyObject, @ptrCast(type_obj)));
+    if (c.PyModule_AddObject(module, name.ptr, @as(?*c.PyObject, @ptrCast(type_obj))) < 0) {
+        c.Py_DECREF(@as(?*c.PyObject, @ptrCast(type_obj)));
         return error.TypeAddFailed;
     }
 }
@@ -67,7 +68,8 @@ pub fn convertToPython(value: anytype) ?*c.PyObject {
             if (value) |v| {
                 break :blk convertToPython(v);
             } else {
-                c.Py_INCREF(c.Py_None);
+                // TODO(py3.10): drop explicit cast once minimum Python >= 3.11
+                c.Py_INCREF(@as(?*c.PyObject, @ptrCast(c.Py_None)));
                 break :blk c.Py_None;
             }
         },
@@ -1186,6 +1188,7 @@ pub fn genericNew(comptime T: type) fn (?*c.PyTypeObject, ?*c.PyObject, ?*c.PyOb
                     }
                 }
             }
+            // TODO(py3.10): drop explicit cast once minimum Python >= 3.11
             return @as(?*c.PyObject, @ptrCast(self));
         }
     }.new;
