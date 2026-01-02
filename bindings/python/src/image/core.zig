@@ -717,17 +717,15 @@ pub fn image_psnr(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
                     if (T == u8) {
                         const diff: f64 = @floatFromInt(@as(i32, p1.*) - p2.*);
                         sum += diff * diff;
-                    } else if (T == Rgb) {
+                    } else { // Rgb or Rgba
                         const dr: f64 = @floatFromInt(@as(i32, p1.r) - p2.r);
                         const dg: f64 = @floatFromInt(@as(i32, p1.g) - p2.g);
                         const db: f64 = @floatFromInt(@as(i32, p1.b) - p2.b);
                         sum += dr * dr + dg * dg + db * db;
-                    } else { // Rgba
-                        const dr: f64 = @floatFromInt(@as(i32, p1.r) - p2.r);
-                        const dg: f64 = @floatFromInt(@as(i32, p1.g) - p2.g);
-                        const db: f64 = @floatFromInt(@as(i32, p1.b) - p2.b);
-                        const da: f64 = @floatFromInt(@as(i32, p1.a) - p2.a);
-                        sum += dr * dr + dg * dg + db * db + da * da;
+                        if (T == Rgba) {
+                            const da: f64 = @floatFromInt(@as(i32, p1.a) - p2.a);
+                            sum += da * da;
+                        }
                     }
                 }
             }
