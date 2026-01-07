@@ -115,7 +115,22 @@ fn ConvolutionKernel(comptime T: type, comptime rows: usize, comptime cols: usiz
 
                 // SIMD path for interior pixels
                 if (r >= half_h and r + half_h < src.rows and src.cols >= vec_len + 2 * half_w) {
-                    c = half_w;
+                    // Process leading border pixels of this row
+                    while (c < half_w) : (c += 1) {
+                        const ir = @as(isize, @intCast(r));
+                        const ic = @as(isize, @intCast(c));
+                        var result: Scalar = 0;
+                        inline for (0..rows) |ky| {
+                            inline for (0..cols) |kx| {
+                                const iry = ir + @as(isize, @intCast(ky)) - @as(isize, @intCast(half_h));
+                                const icx = ic + @as(isize, @intCast(kx)) - @as(isize, @intCast(half_w));
+                                const pixel_val = getPixel(T, src, iry, icx, border_mode);
+                                result += pixel_val * kernel[ky * cols + kx];
+                            }
+                        }
+                        dst.data[r * dst.stride + c] = Pixels.store(result);
+                    }
+
                     const safe_end = src.cols - half_w;
 
                     while (c + vec_len <= safe_end) : (c += vec_len) {
