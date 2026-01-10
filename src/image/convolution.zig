@@ -15,6 +15,17 @@ fn absI64(x: i64) i64 {
     return if (x >= 0) x else -x;
 }
 
+fn sumAbsI64NoOverflow(values: anytype) struct { sum: i64, overflow: bool } {
+    var sum: i64 = 0;
+    for (values) |value| {
+        const addend = absI64(@as(i64, value));
+        const new_sum, const overflow = @addWithOverflow(sum, addend);
+        if (overflow != 0) return .{ .sum = new_sum, .overflow = true };
+        sum = new_sum;
+    }
+    return .{ .sum = sum, .overflow = false };
+}
+
 fn rangesOverlapBytes(a_ptr: [*]const u8, a_len: usize, b_ptr: [*]const u8, b_len: usize) bool {
     const a_start = @intFromPtr(a_ptr);
     const b_start = @intFromPtr(b_ptr);
@@ -240,11 +251,10 @@ pub fn convolve(comptime T: type, self: Image(T), allocator: Allocator, kernel: 
             const Kernel64 = ConvolutionKernel(u8, i64, kernel_height, kernel_width);
             const flat64 = Kernel64.flatten(kernel);
 
-            var sum_abs: i64 = 0;
-            for (flat64) |w| sum_abs += absI64(w);
-            const max_accum, const overflow = @mulWithOverflow(sum_abs, 255);
+            const sum_abs = sumAbsI64NoOverflow(flat64);
+            const max_accum, const overflow = @mulWithOverflow(sum_abs.sum, 255);
 
-            if (overflow == 0 and max_accum <= std.math.maxInt(i32)) {
+            if (!sum_abs.overflow and overflow == 0 and max_accum <= std.math.maxInt(i32)) {
                 const Kernel32 = ConvolutionKernel(u8, i32, kernel_height, kernel_width);
                 var flat32: [kernel_height * kernel_width]i32 = undefined;
                 for (flat64, 0..) |w, i| flat32[i] = @intCast(w);
@@ -265,10 +275,9 @@ pub fn convolve(comptime T: type, self: Image(T), allocator: Allocator, kernel: 
                     const Kernel64 = ConvolutionKernel(u8, i64, kernel_height, kernel_width);
                     const kernel64 = Kernel64.flatten(kernel);
 
-                    var sum_abs: i64 = 0;
-                    for (kernel64) |w| sum_abs += absI64(w);
-                    const max_accum, const overflow = @mulWithOverflow(sum_abs, 255);
-                    const use_i32 = overflow == 0 and max_accum <= std.math.maxInt(i32);
+                    const sum_abs = sumAbsI64NoOverflow(kernel64);
+                    const max_accum, const overflow = @mulWithOverflow(sum_abs.sum, 255);
+                    const use_i32 = !sum_abs.overflow and overflow == 0 and max_accum <= std.math.maxInt(i32);
                     const plane_size = self.rows * self.cols;
 
                     if (use_i32) {
@@ -456,14 +465,12 @@ pub fn convolveSeparable(
                 kernel_y_int[i] = @intFromFloat(@round(k * scale));
             }
 
-            var sum_abs_x: i64 = 0;
-            for (kernel_x_int) |k| sum_abs_x += absI64(@as(i64, k));
-            var sum_abs_y: i64 = 0;
-            for (kernel_y_int) |k| sum_abs_y += absI64(@as(i64, k));
-            const max_x, const overflow_x = @mulWithOverflow(sum_abs_x, 255);
-            const max_y, const overflow_y = @mulWithOverflow(sum_abs_y, 255);
+            const sum_abs_x = sumAbsI64NoOverflow(kernel_x_int);
+            const sum_abs_y = sumAbsI64NoOverflow(kernel_y_int);
+            const max_x, const overflow_x = @mulWithOverflow(sum_abs_x.sum, 255);
+            const max_y, const overflow_y = @mulWithOverflow(sum_abs_y.sum, 255);
 
-            if (overflow_x == 0 and overflow_y == 0 and max_x <= std.math.maxInt(i32) and max_y <= std.math.maxInt(i32)) {
+            if (!sum_abs_x.overflow and !sum_abs_y.overflow and overflow_x == 0 and overflow_y == 0 and max_x <= std.math.maxInt(i32) and max_y <= std.math.maxInt(i32)) {
                 convolveSeparablePlane(u8, i32, image, out, temp, kernel_x_int, kernel_y_int, border_mode);
             } else {
                 convolveSeparablePlane(u8, i64, image, out, temp, kernel_x_int, kernel_y_int, border_mode);
