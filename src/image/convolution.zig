@@ -242,9 +242,9 @@ pub fn convolve(comptime T: type, self: Image(T), allocator: Allocator, kernel: 
 
             var sum_abs: i64 = 0;
             for (flat64) |w| sum_abs += absI64(w);
-            const max_accum = sum_abs * 255;
+            const max_accum, const overflow = @mulWithOverflow(sum_abs, 255);
 
-            if (max_accum <= std.math.maxInt(i32)) {
+            if (overflow == 0 and max_accum <= std.math.maxInt(i32)) {
                 const Kernel32 = ConvolutionKernel(u8, i32, kernel_height, kernel_width);
                 var flat32: [kernel_height * kernel_width]i32 = undefined;
                 for (flat64, 0..) |w, i| flat32[i] = @intCast(w);
@@ -393,10 +393,10 @@ pub fn convolveSeparable(
             for (kernel_x_int) |k| sum_abs_x += absI64(@as(i64, k));
             var sum_abs_y: i64 = 0;
             for (kernel_y_int) |k| sum_abs_y += absI64(@as(i64, k));
-            const max_x = sum_abs_x * 255;
-            const max_y = sum_abs_y * 255;
+            const max_x, const overflow_x = @mulWithOverflow(sum_abs_x, 255);
+            const max_y, const overflow_y = @mulWithOverflow(sum_abs_y, 255);
 
-            if (max_x <= std.math.maxInt(i32) and max_y <= std.math.maxInt(i32)) {
+            if (overflow_x == 0 and overflow_y == 0 and max_x <= std.math.maxInt(i32) and max_y <= std.math.maxInt(i32)) {
                 convolveSeparablePlane(u8, i32, image, out, temp, kernel_x_int, kernel_y_int, border_mode);
             } else {
                 convolveSeparablePlane(u8, i64, image, out, temp, kernel_x_int, kernel_y_int, border_mode);
