@@ -257,9 +257,7 @@ fn PixelIO(comptime T: type, comptime Scalar: type, comptime vec_len: usize) typ
                     dst[offset + i] = meta.clamp(u8, rounded_vec[i]);
                 }
             } else {
-                inline for (0..vec_len) |i| {
-                    dst[offset + i] = accum_vec[i];
-                }
+                dst[offset..][0..vec_len].* = accum_vec;
             }
         }
     };
