@@ -18,8 +18,9 @@ fn absI64(x: i64) i64 {
 fn rangesOverlapBytes(a_ptr: [*]const u8, a_len: usize, b_ptr: [*]const u8, b_len: usize) bool {
     const a_start = @intFromPtr(a_ptr);
     const b_start = @intFromPtr(b_ptr);
-    const a_end = a_start + a_len;
-    const b_end = b_start + b_len;
+    const a_end, const a_overflow = @addWithOverflow(a_start, a_len);
+    const b_end, const b_overflow = @addWithOverflow(b_start, b_len);
+    if (a_overflow != 0 or b_overflow != 0) return true;
     return a_start < b_end and b_start < a_end;
 }
 
@@ -236,19 +237,19 @@ pub fn convolve(comptime T: type, self: Image(T), allocator: Allocator, kernel: 
 
     switch (T) {
         u8 => {
-            const Kernel32 = ConvolutionKernel(u8, i32, kernel_height, kernel_width);
-            const flat32 = Kernel32.flatten(kernel);
+            const Kernel64 = ConvolutionKernel(u8, i64, kernel_height, kernel_width);
+            const flat64 = Kernel64.flatten(kernel);
 
             var sum_abs: i64 = 0;
-            for (flat32) |w| sum_abs += absI64(@as(i64, w));
+            for (flat64) |w| sum_abs += absI64(w);
             const max_accum = sum_abs * 255;
 
             if (max_accum <= std.math.maxInt(i32)) {
+                const Kernel32 = ConvolutionKernel(u8, i32, kernel_height, kernel_width);
+                var flat32: [kernel_height * kernel_width]i32 = undefined;
+                for (flat64, 0..) |w, i| flat32[i] = @intCast(w);
                 Kernel32.convolve(self, out, flat32, border_mode);
             } else {
-                const Kernel64 = ConvolutionKernel(u8, i64, kernel_height, kernel_width);
-                var flat64: [kernel_height * kernel_width]i64 = undefined;
-                for (flat32, 0..) |w, i| flat64[i] = w;
                 Kernel64.convolve(self, out, flat64, border_mode);
             }
         },
