@@ -262,75 +262,142 @@ pub fn convolve(comptime T: type, self: Image(T), allocator: Allocator, kernel: 
             .@"struct" => {
                 // Optimized path for u8 structs (RGB, RGBA, etc.)
                 if (comptime meta.allFieldsAreU8(T)) {
-                    const Kernel = ConvolutionKernel(u8, i64, kernel_height, kernel_width);
-                    // Channel separation approach for optimal performance
-                    const kernel_int = Kernel.flatten(kernel);
-                    var kernel_sum: i64 = 0;
-                    inline for (kernel_int) |weight| {
-                        kernel_sum += weight;
-                    }
+                    const Kernel64 = ConvolutionKernel(u8, i64, kernel_height, kernel_width);
+                    const kernel64 = Kernel64.flatten(kernel);
+
+                    var sum_abs: i64 = 0;
+                    for (kernel64) |w| sum_abs += absI64(w);
+                    const max_accum, const overflow = @mulWithOverflow(sum_abs, 255);
+                    const use_i32 = overflow == 0 and max_accum <= std.math.maxInt(i32);
                     const plane_size = self.rows * self.cols;
-                    const Pixel = PixelIO(u8, i64, 1);
-                    const scale = Pixel.scale;
 
-                    // Separate channels using helper
-                    const split = try channel_ops.splitChannelsWithUniform(T, self, allocator);
-                    const channels = split.channels;
-                    const uniforms = split.uniforms;
-                    defer for (channels) |channel| allocator.free(channel);
+                    if (use_i32) {
+                        const Kernel32 = ConvolutionKernel(u8, i32, kernel_height, kernel_width);
+                        var kernel32: [kernel_height * kernel_width]i32 = undefined;
+                        for (kernel64, 0..) |w, i| kernel32[i] = @intCast(w);
 
-                    const ChannelStrategy = enum { normalized, scaled, non_uniform };
-                    var strategies: [channels.len]ChannelStrategy = undefined;
+                        // Channel separation approach for optimal performance
+                        var kernel_sum: i32 = 0;
+                        for (kernel32) |weight| kernel_sum += weight;
+                        const Pixel = PixelIO(u8, i32, 1);
+                        const scale = Pixel.scale;
 
-                    inline for (uniforms, 0..) |uniform_value, i| {
-                        if (uniform_value != null and border_mode != .zero) {
-                            strategies[i] = if (kernel_sum == scale) .normalized else .scaled;
-                        } else {
-                            strategies[i] = .non_uniform;
-                        }
-                    }
+                        const split = try channel_ops.splitChannelsWithUniform(T, self, allocator);
+                        const channels = split.channels;
+                        const uniforms = split.uniforms;
+                        defer for (channels) |channel| allocator.free(channel);
 
-                    // Allocate output planes for strategies that require storage
-                    var out_channels: [channels.len][]u8 = undefined;
-                    inline for (&out_channels, strategies, uniforms) |*out_ch, strategy, uniform_value| {
-                        switch (strategy) {
-                            .normalized => out_ch.* = &[_]u8{}, // Placeholder for merge
-                            .scaled, .non_uniform => out_ch.* = try allocator.alloc(u8, plane_size),
-                        }
-                        if (strategy == .scaled) {
-                            const value = uniform_value orelse unreachable;
-                            const accum = @as(i64, @intCast(value)) * kernel_sum;
-                            const stored = Pixel.store(accum);
-                            @memset(out_ch.*, stored);
-                        }
-                    }
-                    defer {
-                        inline for (out_channels, strategies) |ch, strategy| {
-                            switch (strategy) {
-                                .normalized => {},
-                                .scaled, .non_uniform => if (ch.len > 0) allocator.free(ch),
+                        const ChannelStrategy = enum { normalized, scaled, non_uniform };
+                        var strategies: [channels.len]ChannelStrategy = undefined;
+
+                        inline for (uniforms, 0..) |uniform_value, i| {
+                            if (uniform_value != null and border_mode != .zero) {
+                                strategies[i] = if (kernel_sum == scale) .normalized else .scaled;
+                            } else {
+                                strategies[i] = .non_uniform;
                             }
                         }
-                    }
 
-                    // Convolve only non-uniform channels
-                    inline for (channels, out_channels, strategies) |src_data, dst_data, strategy| {
-                        if (strategy == .non_uniform) {
-                            const src_plane: Image(u8) = .{ .rows = self.rows, .cols = self.cols, .stride = self.cols, .data = src_data };
-                            const dst_plane: Image(u8) = .{ .rows = self.rows, .cols = self.cols, .stride = self.cols, .data = dst_data };
-                            Kernel.convolve(src_plane, dst_plane, kernel_int, border_mode);
+                        var out_channels: [channels.len][]u8 = undefined;
+                        inline for (&out_channels, strategies, uniforms) |*out_ch, strategy, uniform_value| {
+                            switch (strategy) {
+                                .normalized => out_ch.* = &[_]u8{},
+                                .scaled, .non_uniform => out_ch.* = try allocator.alloc(u8, plane_size),
+                            }
+                            if (strategy == .scaled) {
+                                const value = uniform_value orelse unreachable;
+                                const accum = @as(i32, @intCast(value)) * kernel_sum;
+                                const stored = Pixel.store(accum);
+                                @memset(out_ch.*, stored);
+                            }
                         }
-                    }
+                        defer {
+                            inline for (out_channels, strategies) |ch, strategy| {
+                                switch (strategy) {
+                                    .normalized => {},
+                                    .scaled, .non_uniform => if (ch.len > 0) allocator.free(ch),
+                                }
+                            }
+                        }
 
-                    // Recombine channels, using original values for uniform channels
-                    var final_channels: [channels.len][]const u8 = undefined;
-                    inline for (strategies, out_channels, channels, 0..) |strategy, out_ch, src_ch, i| {
-                        switch (strategy) {
-                            .normalized => final_channels[i] = src_ch,
-                            .scaled, .non_uniform => final_channels[i] = out_ch,
+                        inline for (channels, out_channels, strategies) |src_data, dst_data, strategy| {
+                            if (strategy == .non_uniform) {
+                                const src_plane: Image(u8) = .{ .rows = self.rows, .cols = self.cols, .stride = self.cols, .data = src_data };
+                                const dst_plane: Image(u8) = .{ .rows = self.rows, .cols = self.cols, .stride = self.cols, .data = dst_data };
+                                Kernel32.convolve(src_plane, dst_plane, kernel32, border_mode);
+                            }
                         }
+
+                        var final_channels: [channels.len][]const u8 = undefined;
+                        inline for (strategies, out_channels, channels, 0..) |strategy, out_ch, src_ch, i| {
+                            switch (strategy) {
+                                .normalized => final_channels[i] = src_ch,
+                                .scaled, .non_uniform => final_channels[i] = out_ch,
+                            }
+                        }
+                        channel_ops.mergeChannels(T, final_channels, out);
+                    } else {
+                        // i64 accumulator fallback for large kernels / weights
+                        var kernel_sum: i64 = 0;
+                        for (kernel64) |weight| kernel_sum += weight;
+                        const Pixel = PixelIO(u8, i64, 1);
+                        const scale = Pixel.scale;
+
+                        const split = try channel_ops.splitChannelsWithUniform(T, self, allocator);
+                        const channels = split.channels;
+                        const uniforms = split.uniforms;
+                        defer for (channels) |channel| allocator.free(channel);
+
+                        const ChannelStrategy = enum { normalized, scaled, non_uniform };
+                        var strategies: [channels.len]ChannelStrategy = undefined;
+
+                        inline for (uniforms, 0..) |uniform_value, i| {
+                            if (uniform_value != null and border_mode != .zero) {
+                                strategies[i] = if (kernel_sum == scale) .normalized else .scaled;
+                            } else {
+                                strategies[i] = .non_uniform;
+                            }
+                        }
+
+                        var out_channels: [channels.len][]u8 = undefined;
+                        inline for (&out_channels, strategies, uniforms) |*out_ch, strategy, uniform_value| {
+                            switch (strategy) {
+                                .normalized => out_ch.* = &[_]u8{},
+                                .scaled, .non_uniform => out_ch.* = try allocator.alloc(u8, plane_size),
+                            }
+                            if (strategy == .scaled) {
+                                const value = uniform_value orelse unreachable;
+                                const accum = @as(i64, @intCast(value)) * kernel_sum;
+                                const stored = Pixel.store(accum);
+                                @memset(out_ch.*, stored);
+                            }
+                        }
+                        defer {
+                            inline for (out_channels, strategies) |ch, strategy| {
+                                switch (strategy) {
+                                    .normalized => {},
+                                    .scaled, .non_uniform => if (ch.len > 0) allocator.free(ch),
+                                }
+                            }
+                        }
+
+                        inline for (channels, out_channels, strategies) |src_data, dst_data, strategy| {
+                            if (strategy == .non_uniform) {
+                                const src_plane: Image(u8) = .{ .rows = self.rows, .cols = self.cols, .stride = self.cols, .data = src_data };
+                                const dst_plane: Image(u8) = .{ .rows = self.rows, .cols = self.cols, .stride = self.cols, .data = dst_data };
+                                Kernel64.convolve(src_plane, dst_plane, kernel64, border_mode);
+                            }
+                        }
+
+                        var final_channels: [channels.len][]const u8 = undefined;
+                        inline for (strategies, out_channels, channels, 0..) |strategy, out_ch, src_ch, i| {
+                            switch (strategy) {
+                                .normalized => final_channels[i] = src_ch,
+                                .scaled, .non_uniform => final_channels[i] = out_ch,
+                            }
+                        }
+                        channel_ops.mergeChannels(T, final_channels, out);
                     }
-                    channel_ops.mergeChannels(T, final_channels, out);
                 } else {
                     @compileError("Convolution only supports structs where all fields are u8. Type " ++ @typeName(T) ++ " is not supported.");
                 }
