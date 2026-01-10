@@ -720,6 +720,139 @@ test "convolveSeparable into view (stride-safe)" {
     }
 }
 
+test "convolve Rgb uniform with zero border matches u8" {
+    var gray: Image(u8) = try .init(std.testing.allocator, 5, 5);
+    defer gray.deinit(std.testing.allocator);
+    for (gray.data) |*p| p.* = 100;
+
+    var expected: Image(u8) = try .initLike(std.testing.allocator, gray);
+    defer expected.deinit(std.testing.allocator);
+
+    const box = [3][3]f32{
+        .{ 1.0 / 9.0, 1.0 / 9.0, 1.0 / 9.0 },
+        .{ 1.0 / 9.0, 1.0 / 9.0, 1.0 / 9.0 },
+        .{ 1.0 / 9.0, 1.0 / 9.0, 1.0 / 9.0 },
+    };
+
+    try gray.convolve(std.testing.allocator, box, .zero, expected);
+
+    var rgb: Image(Rgb) = try .init(std.testing.allocator, 5, 5);
+    defer rgb.deinit(std.testing.allocator);
+    for (rgb.data) |*p| p.* = .{ .r = 100, .g = 100, .b = 100 };
+
+    var out: Image(Rgb) = try .initLike(std.testing.allocator, rgb);
+    defer out.deinit(std.testing.allocator);
+
+    try rgb.convolve(std.testing.allocator, box, .zero, out);
+
+    for (0..out.rows) |r| {
+        for (0..out.cols) |c| {
+            const got = out.at(r, c).*;
+            const exp = expected.at(r, c).*;
+            try expectEqual(exp, got.r);
+            try expectEqual(exp, got.g);
+            try expectEqual(exp, got.b);
+        }
+    }
+}
+
+test "convolveSeparable f32 into view (stride-safe)" {
+    var base_src: Image(f32) = try .init(std.testing.allocator, 7, 9);
+    defer base_src.deinit(std.testing.allocator);
+    for (0..base_src.rows) |r| {
+        for (0..base_src.cols) |c| {
+            base_src.at(r, c).* = @as(f32, @floatFromInt(r * 11 + c * 3));
+        }
+    }
+
+    var base_dst: Image(f32) = try .init(std.testing.allocator, 7, 9);
+    defer base_dst.deinit(std.testing.allocator);
+    for (base_dst.data) |*p| p.* = -9999.0;
+
+    const rect: Rectangle(usize) = .{ .l = 1, .t = 2, .r = 6, .b = 6 }; // width=5, height=4
+    var src_view = base_src.view(rect);
+    var dst_view = base_dst.view(rect);
+
+    const k1 = [_]f32{1.0};
+    try src_view.convolveSeparable(std.testing.allocator, &k1, &k1, .zero, dst_view);
+
+    for (0..src_view.rows) |r| {
+        for (0..src_view.cols) |c| {
+            try expectEqual(src_view.at(r, c).*, dst_view.at(r, c).*);
+        }
+    }
+
+    for (0..base_dst.rows) |r| {
+        for (0..base_dst.cols) |c| {
+            const inside = r >= rect.t and r < rect.b and c >= rect.l and c < rect.r;
+            if (!inside) try expectEqual(@as(f32, -9999.0), base_dst.at(r, c).*);
+        }
+    }
+}
+
+test "convolveSeparable Rgb uniform with zero border matches u8" {
+    var gray: Image(u8) = try .init(std.testing.allocator, 6, 6);
+    defer gray.deinit(std.testing.allocator);
+    for (gray.data) |*p| p.* = 120;
+
+    var expected: Image(u8) = try .initLike(std.testing.allocator, gray);
+    defer expected.deinit(std.testing.allocator);
+
+    const k = [_]f32{ 0.25, 0.5, 0.25 };
+    try gray.convolveSeparable(std.testing.allocator, &k, &k, .zero, expected);
+
+    var rgb: Image(Rgb) = try .init(std.testing.allocator, 6, 6);
+    defer rgb.deinit(std.testing.allocator);
+    for (rgb.data) |*p| p.* = .{ .r = 120, .g = 120, .b = 120 };
+
+    var out: Image(Rgb) = try .initLike(std.testing.allocator, rgb);
+    defer out.deinit(std.testing.allocator);
+
+    try rgb.convolveSeparable(std.testing.allocator, &k, &k, .zero, out);
+
+    for (0..out.rows) |r| {
+        for (0..out.cols) |c| {
+            const got = out.at(r, c).*;
+            const exp = expected.at(r, c).*;
+            try expectEqual(exp, got.r);
+            try expectEqual(exp, got.g);
+            try expectEqual(exp, got.b);
+        }
+    }
+}
+
+test "convolveSeparable Rgb uniform scales with replicate border" {
+    var gray: Image(u8) = try .init(std.testing.allocator, 6, 6);
+    defer gray.deinit(std.testing.allocator);
+    for (gray.data) |*p| p.* = 120;
+
+    var expected: Image(u8) = try .initLike(std.testing.allocator, gray);
+    defer expected.deinit(std.testing.allocator);
+
+    const kx = [_]f32{2.0};
+    const ky = [_]f32{1.0};
+    try gray.convolveSeparable(std.testing.allocator, &kx, &ky, .replicate, expected);
+
+    var rgb: Image(Rgb) = try .init(std.testing.allocator, 6, 6);
+    defer rgb.deinit(std.testing.allocator);
+    for (rgb.data) |*p| p.* = .{ .r = 120, .g = 120, .b = 120 };
+
+    var out: Image(Rgb) = try .initLike(std.testing.allocator, rgb);
+    defer out.deinit(std.testing.allocator);
+
+    try rgb.convolveSeparable(std.testing.allocator, &kx, &ky, .replicate, out);
+
+    for (0..out.rows) |r| {
+        for (0..out.cols) |c| {
+            const got = out.at(r, c).*;
+            const exp = expected.at(r, c).*;
+            try expectEqual(exp, got.r);
+            try expectEqual(exp, got.g);
+            try expectEqual(exp, got.b);
+        }
+    }
+}
+
 test "gaussianBlur preserves color" {
     // Test that Gaussian blur on RGB images maintains color information
     var image: Image(Rgb) = try .init(std.testing.allocator, 7, 7);
