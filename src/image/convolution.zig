@@ -11,6 +11,8 @@ const border = @import("border.zig");
 /// Border handling modes for filter operations
 pub const BorderMode = border.BorderMode;
 
+const OverlapResult = struct { overlap: bool, overflow: bool };
+
 fn absI64(x: i64) i64 {
     return if (x >= 0) x else -x;
 }
@@ -106,18 +108,19 @@ fn convolveStructU8(
     channel_ops.mergeChannels(T, final_channels, out);
 }
 
-fn rangesOverlapBytes(a_ptr: [*]const u8, a_len: usize, b_ptr: [*]const u8, b_len: usize) bool {
+fn rangesOverlapBytes(a_ptr: [*]const u8, a_len: usize, b_ptr: [*]const u8, b_len: usize) OverlapResult {
     const a_start = @intFromPtr(a_ptr);
     const b_start = @intFromPtr(b_ptr);
     const a_end, const a_overflow = @addWithOverflow(a_start, a_len);
     const b_end, const b_overflow = @addWithOverflow(b_start, b_len);
-    if (a_overflow != 0 or b_overflow != 0) return true;
-    return a_start < b_end and b_start < a_end;
+    if (a_overflow != 0 or b_overflow != 0) return .{ .overlap = true, .overflow = true };
+    return .{ .overlap = a_start < b_end and b_start < a_end, .overflow = false };
 }
 
-fn imagesOverlap(comptime T: type, a: Image(T), b: Image(T)) bool {
-    const byte_len_a = a.data.len * @sizeOf(T);
-    const byte_len_b = b.data.len * @sizeOf(T);
+fn imagesOverlap(comptime T: type, a: Image(T), b: Image(T)) OverlapResult {
+    const byte_len_a, const overflow_a = @mulWithOverflow(a.data.len, @sizeOf(T));
+    const byte_len_b, const overflow_b = @mulWithOverflow(b.data.len, @sizeOf(T));
+    if (overflow_a != 0 or overflow_b != 0) return .{ .overlap = true, .overflow = true };
     return rangesOverlapBytes(@ptrCast(a.data.ptr), byte_len_a, @ptrCast(b.data.ptr), byte_len_b);
 }
 
@@ -308,7 +311,9 @@ fn ConvolutionKernel(comptime T: type, comptime Scalar: type, comptime rows: usi
 /// - `border_mode`: How to handle pixels at the image borders.
 pub fn convolve(comptime T: type, self: Image(T), allocator: Allocator, kernel: anytype, border_mode: BorderMode, out: Image(T)) !void {
     if (!self.hasSameShape(out)) return error.ShapeMismatch;
-    if (imagesOverlap(T, self, out)) {
+    const overlap = imagesOverlap(T, self, out);
+    if (overlap.overflow) return error.InvalidImageDataRange;
+    if (overlap.overlap) {
         var temp = try Image(T).initLike(allocator, out);
         defer temp.deinit(allocator);
         try convolve(T, self, allocator, kernel, border_mode, temp);
@@ -396,7 +401,9 @@ pub fn convolveSeparable(
     if (!image.hasSameShape(out)) return error.ShapeMismatch;
     if (kernel_x.len == 0 or kernel_y.len == 0) return error.EmptyKernel;
     if (kernel_x.len % 2 == 0 or kernel_y.len % 2 == 0) return error.EvenKernelNotSupported;
-    if (imagesOverlap(T, image, out)) {
+    const overlap = imagesOverlap(T, image, out);
+    if (overlap.overflow) return error.InvalidImageDataRange;
+    if (overlap.overlap) {
         var temp_out = try Image(T).initLike(allocator, out);
         defer temp_out.deinit(allocator);
         try convolveSeparable(T, image, allocator, kernel_x, kernel_y, border_mode, temp_out);
