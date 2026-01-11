@@ -49,11 +49,14 @@ fn PixelIO(comptime T: type, comptime vec_len: usize) type {
                 const half_scale_vec: @Vector(vec_len, Scalar) = @splat(scale / 2);
                 const scale_vec: @Vector(vec_len, Scalar) = @splat(scale);
                 const rounded_vec = @divTrunc(accum_vec + half_scale_vec, scale_vec);
+
                 inline for (0..vec_len) |i| {
                     dst[offset + i] = meta.clamp(u8, rounded_vec[i]);
                 }
             } else {
-                dst[offset..][0..vec_len].* = accum_vec;
+                inline for (0..vec_len) |i| {
+                    dst[offset + i] = accum_vec[i];
+                }
             }
         }
     };
@@ -99,8 +102,8 @@ fn ConvolutionKernel(comptime T: type, comptime rows: usize, comptime cols: usiz
         }
 
         fn convolvePixelWithBorder(src: Image(T), dst: Image(T), r: usize, c: usize, kernel: [size]Scalar, border_mode: BorderMode) void {
-            const ir: isize = @intCast(r);
-            const ic: isize = @intCast(c);
+            const ir = @as(isize, @intCast(r));
+            const ic = @as(isize, @intCast(c));
             var result: Scalar = 0;
             inline for (0..rows) |ky| {
                 inline for (0..cols) |kx| {
@@ -440,6 +443,7 @@ pub fn convolveSeparable(
 
 /// Generic implementation of separable convolution plane.
 /// Supports both u8 (via i32 intermediates) and f32.
+/// Uses i64 accumulators for i32 intermediates to prevent overflow.
 fn convolveSeparablePlane(
     comptime SrcT: type,
     comptime DstT: type,
@@ -456,6 +460,9 @@ fn convolveSeparablePlane(
     const half_y = kernel_y.len / 2;
     const rows = src_img.rows;
     const cols = src_img.cols;
+
+    // Use wider accumulator for integer types to prevent overflow
+    const AccumT = if (TempT == i32) i64 else TempT;
     const vec_len = std.simd.suggestVectorLength(TempT) orelse 1;
 
     const Ops = struct {
@@ -468,12 +475,12 @@ fn convolveSeparablePlane(
             }
         }
 
-        inline fn storeDstVec(val: @Vector(vec_len, TempT), ptr: [*]DstT) void {
-            if (DstT == u8 and TempT == i32) {
+        inline fn storeDstVec(val: @Vector(vec_len, AccumT), ptr: [*]DstT) void {
+            if (DstT == u8 and AccumT == i64) {
                 const SCALE_SQ = 256 * 256;
                 const HALF_SCALE_SQ = SCALE_SQ / 2;
-                const offset: @Vector(vec_len, i32) = @splat(HALF_SCALE_SQ);
-                const scale: @Vector(vec_len, i32) = @splat(SCALE_SQ);
+                const offset: @Vector(vec_len, i64) = @splat(HALF_SCALE_SQ);
+                const scale: @Vector(vec_len, i64) = @splat(SCALE_SQ);
                 const rounded = @divTrunc(val + offset, scale);
 
                 var dst_v: @Vector(vec_len, u8) = undefined;
@@ -482,15 +489,47 @@ fn convolveSeparablePlane(
                 }
                 ptr[0..vec_len].* = dst_v;
             } else {
+                if (AccumT == i64 and DstT == i32) {
+                    var dst_v: @Vector(vec_len, i32) = undefined;
+                    inline for (0..vec_len) |i| {
+                        dst_v[i] = @intCast(meta.clamp(i32, val[i]));
+                    }
+                    ptr[0..vec_len].* = dst_v;
+                } else {
+                    ptr[0..vec_len].* = val;
+                }
+            }
+        }
+
+        inline fn storeDstScalar(val: AccumT) DstT {
+            if (DstT == u8 and AccumT == i64) {
+                const SCALE_SQ = 256 * 256;
+                const HALF_SCALE_SQ = SCALE_SQ / 2;
+                return meta.clamp(u8, @divTrunc(val + HALF_SCALE_SQ, SCALE_SQ));
+            } else {
+                if (AccumT == i64 and DstT == i32) {
+                    return @intCast(meta.clamp(i32, val));
+                } else {
+                    return val;
+                }
+            }
+        }
+
+        inline fn storeTempVec(val: @Vector(vec_len, AccumT), ptr: [*]TempT) void {
+            if (TempT == i32 and AccumT == i64) {
+                var temp_v: @Vector(vec_len, i32) = undefined;
+                inline for (0..vec_len) |i| {
+                    temp_v[i] = @intCast(meta.clamp(i32, val[i]));
+                }
+                ptr[0..vec_len].* = temp_v;
+            } else {
                 ptr[0..vec_len].* = val;
             }
         }
 
-        inline fn storeDstScalar(val: TempT) DstT {
-            if (DstT == u8 and TempT == i32) {
-                const SCALE_SQ = 256 * 256;
-                const HALF_SCALE_SQ = SCALE_SQ / 2;
-                return meta.clamp(u8, @divTrunc(val + HALF_SCALE_SQ, SCALE_SQ));
+        inline fn storeTempScalar(val: AccumT) TempT {
+            if (TempT == i32 and AccumT == i64) {
+                return @intCast(meta.clamp(i32, val));
             } else {
                 return val;
             }
@@ -501,59 +540,75 @@ fn convolveSeparablePlane(
     for (0..rows) |r| {
         const row_offset = r * src_img.stride;
         const temp_offset = r * temp_img.stride;
+        var c: usize = 0;
 
-        // Process interior pixels with SIMD
+        // Process Left Border
+        const left_border_end = @min(half_x, cols);
+        while (c < left_border_end) : (c += 1) {
+            var result: AccumT = 0;
+            const ic: isize = @intCast(c);
+            for (kernel_x, 0..) |k, i| {
+                const icx = ic + @as(isize, @intCast(i)) - @as(isize, @intCast(half_x));
+                const pixel_val = getPixel(SrcT, src_img, @intCast(r), icx, border_mode);
+                const val: AccumT = if (SrcT == u8 and AccumT == i64) @as(i64, pixel_val) else pixel_val;
+                const k_val: AccumT = if (KernelT == i32 and AccumT == i64) @as(i64, k) else k;
+                result += val * k_val;
+            }
+            temp_img.data[temp_offset + c] = Ops.storeTempScalar(result);
+        }
+
+        // Process Interior
         if (cols > 2 * half_x) {
-            var c: usize = half_x;
-            const safe_end = cols - half_x;
+            const interior_end = cols - half_x;
 
-            while (c + vec_len <= safe_end) : (c += vec_len) {
-                var acc: @Vector(vec_len, TempT) = @splat(0);
+            // SIMD loop
+            while (c + vec_len <= interior_end) : (c += vec_len) {
+                var acc: @Vector(vec_len, AccumT) = @splat(0);
 
                 for (kernel_x, 0..) |k, ki| {
                     if (k != 0) {
                         const src_idx = row_offset + c + ki - half_x;
                         const src_vec = Ops.loadSrcVec(src_img.data[src_idx..].ptr);
-                        const k_vec: @Vector(vec_len, TempT) = @splat(k);
-                        acc += src_vec * k_vec;
+                        // Cast vectors to AccumT
+                        const src_vec_acc: @Vector(vec_len, AccumT) = if (TempT == i32 and AccumT == i64)
+                            @intCast(src_vec)
+                        else
+                            src_vec;
+
+                        const k_val: AccumT = if (KernelT == i32 and AccumT == i64) @as(i64, k) else k;
+                        const k_vec: @Vector(vec_len, AccumT) = @splat(k_val);
+                        acc += src_vec_acc * k_vec;
                     }
                 }
-
-                // Store temp directly (no scaling yet)
-                temp_img.data[temp_offset + c ..][0..vec_len].* = acc;
+                Ops.storeTempVec(acc, temp_img.data[temp_offset + c ..].ptr);
             }
 
-            // Handle remaining pixels scalar
-            while (c < safe_end) : (c += 1) {
-                var result: TempT = 0;
+            // Scalar cleanup
+            while (c < interior_end) : (c += 1) {
+                var result: AccumT = 0;
                 const c0 = c - half_x;
                 for (kernel_x, 0..) |k, i| {
                     const src_val = src_img.data[row_offset + c0 + i];
-                    // Convert src scalar to TempT if needed
-                    const val: TempT = if (SrcT == u8 and TempT == i32) @as(i32, src_val) else src_val;
-                    result += val * k;
+                    const val: AccumT = if (SrcT == u8 and AccumT == i64) @as(i64, src_val) else src_val;
+                    const k_val: AccumT = if (KernelT == i32 and AccumT == i64) @as(i64, k) else k;
+                    result += val * k_val;
                 }
-                temp_img.data[temp_offset + c] = result;
+                temp_img.data[temp_offset + c] = Ops.storeTempScalar(result);
             }
         }
 
-        // Handle borders scalar
-        const border_ranges = [_][2]usize{
-            .{ 0, @min(half_x, cols) },
-            .{ if (cols > half_x) cols - half_x else cols, cols },
-        };
-
-        for (border_ranges) |range| {
-            for (range[0]..range[1]) |c| {
-                var result: TempT = 0;
-                const ic: isize = @intCast(c);
-                for (kernel_x, 0..) |k, i| {
-                    const icx = ic + @as(isize, @intCast(i)) - @as(isize, @intCast(half_x));
-                    const pixel_val = getPixel(SrcT, src_img, @intCast(r), icx, border_mode);
-                    result += pixel_val * k;
-                }
-                temp_img.data[temp_offset + c] = result;
+        // Process Right Border
+        while (c < cols) : (c += 1) {
+            var result: AccumT = 0;
+            const ic: isize = @intCast(c);
+            for (kernel_x, 0..) |k, i| {
+                const icx = ic + @as(isize, @intCast(i)) - @as(isize, @intCast(half_x));
+                const pixel_val = getPixel(SrcT, src_img, @intCast(r), icx, border_mode);
+                const val: AccumT = if (SrcT == u8 and AccumT == i64) @as(i64, pixel_val) else pixel_val;
+                const k_val: AccumT = if (KernelT == i32 and AccumT == i64) @as(i64, k) else k;
+                result += val * k_val;
             }
+            temp_img.data[temp_offset + c] = Ops.storeTempScalar(result);
         }
     }
 
@@ -565,15 +620,23 @@ fn convolveSeparablePlane(
 
             // SIMD processing across columns
             while (c + vec_len <= cols) : (c += vec_len) {
-                var acc: @Vector(vec_len, TempT) = @splat(0);
+                var acc: @Vector(vec_len, AccumT) = @splat(0);
 
                 for (kernel_y, 0..) |k, ki| {
                     if (k != 0) {
                         const src_row = r + ki - half_y;
                         const src_off = src_row * temp_img.stride;
-                        const pixels_vec: @Vector(vec_len, TempT) = temp_img.data[src_off + c ..][0..vec_len].*;
-                        const k_vec: @Vector(vec_len, TempT) = @splat(k);
-                        acc += pixels_vec * k_vec;
+                        const src_vec: @Vector(vec_len, TempT) = temp_img.data[src_off + c ..][0..vec_len].*;
+
+                        // Cast vectors to AccumT
+                        const src_vec_acc: @Vector(vec_len, AccumT) = if (TempT == i32 and AccumT == i64)
+                            @intCast(src_vec)
+                        else
+                            src_vec;
+
+                        const k_val: AccumT = if (KernelT == i32 and AccumT == i64) @as(i64, k) else k;
+                        const k_vec: @Vector(vec_len, AccumT) = @splat(k_val);
+                        acc += src_vec_acc * k_vec;
                     }
                 }
 
@@ -582,12 +645,15 @@ fn convolveSeparablePlane(
 
             // Remaining columns (scalar)
             while (c < cols) : (c += 1) {
-                var result: TempT = 0;
+                var result: AccumT = 0;
                 const r0 = r - half_y;
                 for (kernel_y, 0..) |k, i| {
                     if (k == 0) continue;
                     const rr = r0 + i;
-                    result += temp_img.data[rr * temp_img.stride + c] * k;
+                    const src_val = temp_img.data[rr * temp_img.stride + c];
+                    const val: AccumT = if (TempT == i32 and AccumT == i64) @as(i64, src_val) else src_val;
+                    const k_val: AccumT = if (KernelT == i32 and AccumT == i64) @as(i64, k) else k;
+                    result += val * k_val;
                 }
                 dst_img.data[r * dst_img.stride + c] = Ops.storeDstScalar(result);
             }
@@ -603,12 +669,16 @@ fn convolveSeparablePlane(
     for (border_rows) |range| {
         for (range[0]..range[1]) |r| {
             for (0..cols) |c| {
-                var result: TempT = 0;
+                var result: AccumT = 0;
                 const ir: isize = @intCast(r);
                 for (kernel_y, 0..) |k, i| {
                     const iry = ir + @as(isize, @intCast(i)) - @as(isize, @intCast(half_y));
+                    // temp_img is of type TempT. We can use getPixel on it.
+                    // getPixel for i32/f32 returns i32/f32.
                     const pixel_val = getPixel(TempT, temp_img, iry, @intCast(c), border_mode);
-                    result += pixel_val * k;
+                    const val: AccumT = if (TempT == i32 and AccumT == i64) @as(i64, pixel_val) else pixel_val;
+                    const k_val: AccumT = if (KernelT == i32 and AccumT == i64) @as(i64, k) else k;
+                    result += val * k_val;
                 }
                 dst_img.data[r * dst_img.stride + c] = Ops.storeDstScalar(result);
             }
