@@ -1,9 +1,6 @@
 //! Geometric transformations for Image objects
 
-const std = @import("std");
-
 const zignal = @import("zignal");
-const Image = zignal.Image;
 const Interpolation = zignal.Interpolation;
 const Blending = zignal.Blending;
 
@@ -14,14 +11,12 @@ const getImageType = @import("../image.zig").getImageType;
 const py_utils = @import("../py_utils.zig");
 const allocator = py_utils.ctx.allocator;
 const c = py_utils.c;
-const PyImage = @import("../PyImage.zig");
 const transforms = @import("../transforms.zig");
 
 const Rgba = zignal.Rgba(u8);
 const Rgb = zignal.Rgb(u8);
 const Gray = zignal.Gray(u8);
-// Import the ImageObject type from parent
-// Helper: map Interpolation tag to union value (defaults for parameterized variants)
+
 const InterpTag = @typeInfo(Interpolation).@"union".tag_type.?;
 fn tagToInterpolation(tag: InterpTag) Interpolation {
     return switch (tag) {
