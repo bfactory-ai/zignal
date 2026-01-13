@@ -1212,7 +1212,7 @@ pub fn genericDealloc(comptime T: type, comptime deinit_fn: ?fn (*T) void) fn (?
             }
 
             // Free the Python object
-            const tp: *c.PyTypeObject = @ptrCast(getPyType(self_obj));
+            const tp: *c.PyTypeObject = getPyType(self_obj);
             tp.*.tp_free.?(self_obj);
         }
     }.dealloc;
