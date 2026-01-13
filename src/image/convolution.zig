@@ -364,7 +364,7 @@ pub fn convolveSeparable(
                 // Optimized path for u8 structs (RGB, RGBA, etc.)
                 if (comptime meta.allFieldsAreU8(T)) {
                     // Channel separation approach for optimal performance
-                    const SCALE = 256;
+                    const scale = 256;
                     const plane_size = image.rows * image.cols;
 
                     // Convert kernels to integer
@@ -374,10 +374,10 @@ pub fn convolveSeparable(
                     defer allocator.free(kernel_y_int);
 
                     for (kernel_x, 0..) |k, i| {
-                        kernel_x_int[i] = @intFromFloat(@round(k * SCALE));
+                        kernel_x_int[i] = @intFromFloat(@round(k * scale));
                     }
                     for (kernel_y, 0..) |k, i| {
-                        kernel_y_int[i] = @intFromFloat(@round(k * SCALE));
+                        kernel_y_int[i] = @intFromFloat(@round(k * scale));
                     }
 
                     // Separate channels using helper
@@ -513,17 +513,21 @@ fn convolveSeparablePlane(
 
         inline fn storeDstVec(val: @Vector(vec_len, AccumT), ptr: [*]DstT) void {
             if (DstT == u8 and AccumT == i64) {
-                const SCALE_SQ = 256 * 256;
-                const HALF_SCALE_SQ = SCALE_SQ / 2;
-                const offset: @Vector(vec_len, i64) = @splat(HALF_SCALE_SQ);
-                const scale: @Vector(vec_len, i64) = @splat(SCALE_SQ);
-                const rounded = @divTrunc(val + offset, scale);
+                const scale_sq: i64 = 256 * 256;
+                const half_scale_sq: i64 = scale_sq / 2;
+                const scale_vec: @Vector(vec_len, i64) = @splat(scale_sq);
+                const zero_vec: @Vector(vec_len, i64) = @splat(0);
 
-                var dst_v: @Vector(vec_len, u8) = undefined;
-                inline for (0..vec_len) |i| {
-                    dst_v[i] = meta.clamp(u8, rounded[i]);
-                }
-                ptr[0..vec_len].* = dst_v;
+                // Symmetric rounding: add half for positive, subtract for negative
+                const pos_offset: @Vector(vec_len, i64) = @splat(half_scale_sq);
+                const neg_offset: @Vector(vec_len, i64) = @splat(-half_scale_sq);
+                const rounding = @select(i64, val >= zero_vec, pos_offset, neg_offset);
+                const rounded = @divTrunc(val + rounding, scale_vec);
+
+                // Vectorized clamping and storing
+                const max_u8_vec: @Vector(vec_len, i64) = @splat(255);
+                const clamped = @max(zero_vec, @min(max_u8_vec, rounded));
+                ptr[0..vec_len].* = @as(@Vector(vec_len, u8), @intCast(clamped));
             } else {
                 if (AccumT == i64 and DstT == i32) {
                     var dst_v: @Vector(vec_len, i32) = undefined;
@@ -539,9 +543,11 @@ fn convolveSeparablePlane(
 
         inline fn storeDstScalar(val: AccumT) DstT {
             if (DstT == u8 and AccumT == i64) {
-                const SCALE_SQ = 256 * 256;
-                const HALF_SCALE_SQ = SCALE_SQ / 2;
-                return meta.clamp(u8, @divTrunc(val + HALF_SCALE_SQ, SCALE_SQ));
+                const scale_sq: i64 = 256 * 256;
+                const half_scale_sq: i64 = scale_sq / 2;
+                // Symmetric rounding: add half for positive, subtract for negative
+                const rounded = @divTrunc(val + (if (val >= 0) half_scale_sq else -half_scale_sq), scale_sq);
+                return meta.clamp(u8, rounded);
             } else {
                 if (AccumT == i64 and DstT == i32) {
                     return @intCast(meta.clamp(i32, val));
