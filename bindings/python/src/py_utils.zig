@@ -30,7 +30,6 @@ pub fn registerType(module: [*c]c.PyObject, comptime name: []const u8, type_obj:
 }
 
 /// Get the Python type object for a Python object.
-/// Replaces the Py_TYPE macro/inline function which can cause undefined symbol errors.
 pub fn getPyType(obj: ?*c.PyObject) callconv(.c) *c.PyTypeObject {
     return @ptrCast(obj.?.ob_type);
 }

@@ -47,6 +47,7 @@ pub const module_functions_metadata = optimization.module_functions_metadata ++ 
 // Generate PyMethodDef array at compile time
 var zignal_methods = stub_metadata.functionsToPyMethodDefArray(&module_functions_metadata);
 
+// Replaces the Py_TYPE macro/inline function which can cause undefined symbol errors.
 comptime {
     @export(&py_utils.getPyType, .{ .name = "Py_TYPE" });
 }
