@@ -9,7 +9,6 @@ const zignal = @import("zignal");
 const Image = zignal.Image;
 const Rgb = zignal.Rgb(u8);
 const Rgba = zignal.Rgba(u8);
-const Gray = zignal.Gray(u8);
 
 pub const PyImage = @This();
 

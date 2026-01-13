@@ -27,7 +27,6 @@ const stub_metadata = @import("stub_metadata.zig");
 
 const Rgba = zignal.Rgba(u8);
 const Rgb = zignal.Rgb(u8);
-const Gray = zignal.Gray(u8);
 
 pub const ImageVariant = union(enum) {
     grayscale: Image(u8),

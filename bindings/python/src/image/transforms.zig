@@ -15,7 +15,6 @@ const transforms = @import("../transforms.zig");
 
 const Rgba = zignal.Rgba(u8);
 const Rgb = zignal.Rgb(u8);
-const Gray = zignal.Gray(u8);
 
 const InterpTag = @typeInfo(Interpolation).@"union".tag_type.?;
 fn tagToInterpolation(tag: InterpTag) Interpolation {
