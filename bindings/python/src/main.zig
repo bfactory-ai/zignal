@@ -47,6 +47,10 @@ pub const module_functions_metadata = optimization.module_functions_metadata ++ 
 // Generate PyMethodDef array at compile time
 var zignal_methods = stub_metadata.functionsToPyMethodDefArray(&module_functions_metadata);
 
+pub export fn Py_TYPE(obj: *c.PyObject) *c.PyTypeObject {
+    return @ptrCast(obj.ob_type);
+}
+
 pub export fn PyInit__zignal() ?*c.PyObject {
     const m = c.PyModule_Create(&zignal_module);
     if (m == null) return null;
