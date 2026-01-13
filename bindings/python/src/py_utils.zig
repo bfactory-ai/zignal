@@ -23,7 +23,7 @@ pub fn registerType(module: [*c]c.PyObject, comptime name: []const u8, type_obj:
 
     // TODO(py3.10): drop explicit cast once minimum Python >= 3.11
     c.Py_INCREF(@as(?*c.PyObject, @ptrCast(type_obj)));
-    if (c.PyModule_AddObject(module, name.ptr, @as(?*c.PyObject, @ptrCast(type_obj))) < 0) {
+    if (c.PyModule_AddObject(module, name.ptr, @ptrCast(type_obj)) < 0) {
         c.Py_DECREF(@as(?*c.PyObject, @ptrCast(type_obj)));
         return error.TypeAddFailed;
     }

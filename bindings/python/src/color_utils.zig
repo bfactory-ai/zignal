@@ -105,7 +105,7 @@ fn tryParseViaToMethod(comptime T: type, color_obj: *c.PyObject) !?T {
     // PyTuple_SetItem steals a reference, so INCREF first.
     // TODO(py3.10): drop explicit cast once minimum Python >= 3.11
     c.Py_INCREF(@as(?*c.PyObject, @ptrCast(target_type_obj)));
-    if (c.PyTuple_SetItem(args, 0, @as(?*c.PyObject, @ptrCast(target_type_obj))) < 0) {
+    if (c.PyTuple_SetItem(args, 0, @ptrCast(target_type_obj)) < 0) {
         return error.InvalidColor;
     }
 
