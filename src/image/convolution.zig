@@ -515,9 +515,8 @@ fn convolveSeparablePlane(
 
     const Ops = struct {
         /// Helper to promote values or vectors to the accumulator type
-        inline fn toAccum(v: anytype) if (@typeInfo(@TypeOf(v)) == .vector) @Vector(vec_len, AccumT) else AccumT {
-            if (AccumT == i64) return @intCast(v);
-            return v;
+        inline fn promote(v: anytype) if (@typeInfo(@TypeOf(v)) == .vector) @Vector(vec_len, AccumT) else AccumT {
+            return if (AccumT == i64) @intCast(v) else v;
         }
 
         inline fn loadSrcVec(ptr: [*]const SrcT) @Vector(vec_len, TempT) {
@@ -610,7 +609,7 @@ fn convolveSeparablePlane(
             for (kernel_x, 0..) |k, i| {
                 const icx = ic + @as(isize, @intCast(i)) - @as(isize, @intCast(half_x));
                 const pixel_val = getPixel(SrcT, src_img, @intCast(r), icx, border_mode);
-                result += Ops.toAccum(pixel_val) * Ops.toAccum(k);
+                result += Ops.promote(pixel_val) * Ops.promote(k);
             }
             temp_img.data[temp_offset + c] = Ops.storeTempScalar(result);
         }
@@ -628,8 +627,8 @@ fn convolveSeparablePlane(
                         const src_idx = row_offset + c + ki - half_x;
                         const src_vec = Ops.loadSrcVec(src_img.data[src_idx..].ptr);
 
-                        const src_vec_acc = Ops.toAccum(src_vec);
-                        const k_vec: @Vector(vec_len, AccumT) = @splat(Ops.toAccum(k));
+                        const src_vec_acc = Ops.promote(src_vec);
+                        const k_vec: @Vector(vec_len, AccumT) = @splat(Ops.promote(k));
                         acc += src_vec_acc * k_vec;
                     }
                 }
@@ -642,7 +641,7 @@ fn convolveSeparablePlane(
                 const c0 = c - half_x;
                 for (kernel_x, 0..) |k, i| {
                     const src_val = src_img.data[row_offset + c0 + i];
-                    result += Ops.toAccum(src_val) * Ops.toAccum(k);
+                    result += Ops.promote(src_val) * Ops.promote(k);
                 }
                 temp_img.data[temp_offset + c] = Ops.storeTempScalar(result);
             }
@@ -655,7 +654,7 @@ fn convolveSeparablePlane(
             for (kernel_x, 0..) |k, i| {
                 const icx = ic + @as(isize, @intCast(i)) - @as(isize, @intCast(half_x));
                 const pixel_val = getPixel(SrcT, src_img, @intCast(r), icx, border_mode);
-                result += Ops.toAccum(pixel_val) * Ops.toAccum(k);
+                result += Ops.promote(pixel_val) * Ops.promote(k);
             }
             temp_img.data[temp_offset + c] = Ops.storeTempScalar(result);
         }
@@ -686,8 +685,8 @@ fn convolveSeparablePlane(
                             const src_off = src_row * temp_img.stride;
                             const src_vec: @Vector(vec_len, TempT) = temp_img.data[src_off + c ..][0..vec_len].*;
 
-                            const src_vec_acc = Ops.toAccum(src_vec);
-                            const k_vec: @Vector(vec_len, AccumT) = @splat(Ops.toAccum(k));
+                            const src_vec_acc = Ops.promote(src_vec);
+                            const k_vec: @Vector(vec_len, AccumT) = @splat(Ops.promote(k));
                             acc += src_vec_acc * k_vec;
                         }
                     }
@@ -705,7 +704,7 @@ fn convolveSeparablePlane(
                         if (isNegligible(k)) continue;
                         const rr = r0 + i;
                         const src_val = temp_img.data[rr * temp_img.stride + c];
-                        result += Ops.toAccum(src_val) * Ops.toAccum(k);
+                        result += Ops.promote(src_val) * Ops.promote(k);
                     }
                     dst_img.data[r * dst_img.stride + c] = Ops.storeDstScalar(result);
                 }
@@ -732,7 +731,7 @@ fn convolveSeparablePlane(
                     // temp_img is of type TempT. We can use getPixel on it.
                     // getPixel for i32/f32 returns i32/f32.
                     const pixel_val = getPixel(TempT, temp_img, iry, @intCast(c), border_mode);
-                    result += Ops.toAccum(pixel_val) * Ops.toAccum(k);
+                    result += Ops.promote(pixel_val) * Ops.promote(k);
                 }
                 dst_img.data[r * dst_img.stride + c] = Ops.storeDstScalar(result);
             }
