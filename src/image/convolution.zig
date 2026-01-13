@@ -256,7 +256,7 @@ pub fn convolve(comptime T: type, self: Image(T), allocator: Allocator, kernel: 
                     }
 
                     // Single contiguous allocation for all output channels
-                    const total_alloc_size = num_alloc_channels * plane_size;
+                    const total_alloc_size = try std.math.mul(usize, num_alloc_channels, plane_size);
                     var contiguous_buffer: []u8 = if (total_alloc_size > 0)
                         try allocator.alloc(u8, total_alloc_size)
                     else
@@ -405,7 +405,7 @@ pub fn convolveSeparable(
                     }
 
                     // Single contiguous allocation for all output channels, plus temp buffer
-                    const total_u8_size = num_alloc_channels * plane_size;
+                    const total_u8_size = try std.math.mul(usize, num_alloc_channels, plane_size);
                     var contiguous_u8_buffer: []u8 = if (total_u8_size > 0)
                         try allocator.alloc(u8, total_u8_size)
                     else
