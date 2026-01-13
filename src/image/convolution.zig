@@ -19,7 +19,7 @@ fn PixelIO(comptime T: type, comptime vec_len: usize) type {
     }
 
     return struct {
-        const Scalar = if (T == u8) i32 else f32;
+        const Scalar = if (T == u8) i64 else f32;
         const scale = if (T == u8) 256 else 1;
 
         inline fn load(value: T) Scalar {
@@ -79,8 +79,11 @@ fn ConvolutionKernel(comptime T: type, comptime rows: usize, comptime cols: usiz
         const half_w = cols / 2;
 
         // Type-specific definitions
-        const Scalar = if (T == u8) i32 else f32;
-        const vec_len = std.simd.suggestVectorLength(Scalar) orelse 1;
+        const KernelScalar = if (T == u8) i32 else f32; // Storage type for kernel weights
+        const Scalar = KernelScalar; // Public interface matches kernel storage
+        const AccumScalar = if (T == u8) i64 else f32; // Wide accumulator for summation
+
+        const vec_len = std.simd.suggestVectorLength(AccumScalar) orelse 1;
 
         // Use the shared pixel I/O operations
         const Pixels = PixelIO(T, vec_len);
@@ -108,23 +111,28 @@ fn ConvolutionKernel(comptime T: type, comptime rows: usize, comptime cols: usiz
         fn convolvePixelWithBorder(src: Image(T), dst: Image(T), r: usize, c: usize, kernel: [size]Scalar, border_mode: BorderMode) void {
             const ir = @as(isize, @intCast(r));
             const ic = @as(isize, @intCast(c));
-            var result: Scalar = 0;
+            var result: AccumScalar = 0;
             inline for (0..rows) |ky| {
                 inline for (0..cols) |kx| {
                     const iry = ir + @as(isize, @intCast(ky)) - @as(isize, @intCast(half_h));
                     const icx = ic + @as(isize, @intCast(kx)) - @as(isize, @intCast(half_w));
-                    const pixel_val = getPixel(T, src, iry, icx, border_mode);
-                    result += pixel_val * kernel[ky * cols + kx];
+                    // getPixel returns i32 for u8, cast to i64 accumulator
+                    const pixel_val = @as(AccumScalar, getPixel(T, src, iry, icx, border_mode));
+                    // kernel is i32, cast to i64
+                    const k_val = @as(AccumScalar, kernel[ky * cols + kx]);
+                    result += pixel_val * k_val;
                 }
             }
+            // PixelIO.store takes AccumScalar (i64 for u8)
             dst.data[r * dst.stride + c] = Pixels.store(result);
         }
 
         fn convolve(src: Image(T), dst: Image(T), kernel: [size]Scalar, border_mode: BorderMode) void {
-            // Pre-create kernel vectors for SIMD (for both f32 and u8)
-            var kernel_vecs: [size]@Vector(vec_len, Scalar) = undefined;
+            // Pre-create kernel vectors for SIMD (widen to AccumScalar)
+            var kernel_vecs: [size]@Vector(vec_len, AccumScalar) = undefined;
             inline for (0..size) |i| {
-                kernel_vecs[i] = @splat(kernel[i]);
+                const k_val = @as(AccumScalar, kernel[i]);
+                kernel_vecs[i] = @splat(k_val);
             }
 
             for (0..src.rows) |r| {
@@ -140,7 +148,7 @@ fn ConvolutionKernel(comptime T: type, comptime rows: usize, comptime cols: usiz
                     const safe_end = src.cols - half_w;
 
                     while (c + vec_len <= safe_end) : (c += vec_len) {
-                        var result_vec: @Vector(vec_len, Scalar) = @splat(0);
+                        var result_vec: @Vector(vec_len, AccumScalar) = @splat(0);
 
                         // Unroll kernel application for known sizes
                         inline for (0..rows) |ky| {
@@ -151,6 +159,7 @@ fn ConvolutionKernel(comptime T: type, comptime rows: usize, comptime cols: usiz
                                 const src_r = r + ky - half_h;
                                 const src_c = c + kx - half_w;
                                 const src_idx = src_r * src.stride + src_c;
+                                // Pixels.loadVec returns Vector(AccumScalar)
                                 const pixel_vec = Pixels.loadVec(src.data, src_idx);
                                 result_vec += pixel_vec * kernel_vec;
                             }
@@ -164,13 +173,15 @@ fn ConvolutionKernel(comptime T: type, comptime rows: usize, comptime cols: usiz
                 while (c < src.cols) : (c += 1) {
                     if (r >= half_h and r + half_h < src.rows and c >= half_w and c + half_w < src.cols) {
                         // Interior pixel - no border handling needed
-                        var result: Scalar = 0;
+                        var result: AccumScalar = 0;
                         inline for (0..rows) |ky| {
                             inline for (0..cols) |kx| {
                                 const src_r = r + ky - half_h;
                                 const src_c = c + kx - half_w;
+                                // Pixels.load returns AccumScalar
                                 const pixel_val = Pixels.load(src.data[src_r * src.stride + src_c]);
-                                result += pixel_val * kernel[ky * cols + kx];
+                                const k_val = @as(AccumScalar, kernel[ky * cols + kx]);
+                                result += pixel_val * k_val;
                             }
                         }
                         dst.data[r * dst.stride + c] = Pixels.store(result);
@@ -276,7 +287,8 @@ pub fn convolve(comptime T: type, self: Image(T), allocator: Allocator, kernel: 
                         }
                         if (strategy == .scaled) {
                             const value = uniform_value orelse unreachable;
-                            const accum = @as(Kernel.Scalar, @intCast(value)) * kernel_sum;
+                            // Calculate accumulator in i64 to match PixelIO.store and prevent overflow
+                            const accum = @as(i64, @intCast(value)) * @as(i64, kernel_sum);
                             const stored = Pixel.store(accum);
                             @memset(out_ch.*, stored);
                         }
@@ -656,7 +668,7 @@ fn convolveSeparablePlane(
 
     // Vertical pass (temp -> dst) with loop tiling for better cache locality
     // Process in column tiles to keep data in cache during strided vertical access
-    const TILE_WIDTH = 64; // Tune based on cache line size (64 bytes / sizeof(TempT))
+    const tile_width = 16; // Tune based on cache line size (64 bytes / sizeof(TempT) of 4 bytes = 16 elements)
 
     if (rows > 2 * half_y) {
         const safe_end_r = rows - half_y;
@@ -664,8 +676,8 @@ fn convolveSeparablePlane(
         // Process column tiles with column-major order for cache locality
         // For vertical convolution, consecutive rows at same column share overlapping reads
         var tile_c: usize = 0;
-        while (tile_c < cols) : (tile_c += TILE_WIDTH) {
-            const tile_end = @min(tile_c + TILE_WIDTH, cols);
+        while (tile_c < cols) : (tile_c += tile_width) {
+            const tile_end = @min(tile_c + tile_width, cols);
             var c: usize = tile_c;
 
             // SIMD processing: process all rows for each vector of columns
