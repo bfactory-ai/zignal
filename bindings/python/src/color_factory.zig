@@ -355,15 +355,16 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
             var alpha: field_type = undefined;
 
             if (@typeInfo(field_type) == .float) {
-                var val: f64 = undefined;
-                if (c.PyFloat_Check(@as(*c.PyObject, @ptrCast(alpha_obj.?))) != 0) {
-                    val = c.PyFloat_AsDouble(@as(*c.PyObject, @ptrCast(alpha_obj.?)));
-                } else if (c.PyLong_Check(@as(*c.PyObject, @ptrCast(alpha_obj.?))) != 0) {
-                    val = @as(f64, @floatFromInt(c.PyLong_AsLong(@as(*c.PyObject, @ptrCast(alpha_obj.?)))));
-                } else {
-                    c.PyErr_SetString(c.PyExc_TypeError, "alpha must be an int or float");
-                    return null;
-                }
+                const val: f64 = blk: {
+                    if (c.PyFloat_Check(@as(*c.PyObject, @ptrCast(alpha_obj.?))) != 0) {
+                        break :blk c.PyFloat_AsDouble(@as(*c.PyObject, @ptrCast(alpha_obj.?)));
+                    } else if (c.PyLong_Check(@as(*c.PyObject, @ptrCast(alpha_obj.?))) != 0) {
+                        break :blk @floatFromInt(c.PyLong_AsLong(@as(*c.PyObject, @ptrCast(alpha_obj.?))));
+                    } else {
+                        c.PyErr_SetString(c.PyExc_TypeError, "alpha must be an int or float");
+                        return null;
+                    }
+                };
 
                 if (val < 0.0 or val > 1.0) {
                     c.PyErr_SetString(c.PyExc_ValueError, "Alpha value for float colors must be between 0.0 and 1.0");
