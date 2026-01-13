@@ -316,7 +316,7 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
             const py_utils = @import("py_utils.zig");
             const self: *ObjectType = @ptrCast(self_obj);
             const inverted = objectToZigColor(self).invert();
-            const result = createPyObject(inverted, py_utils.Py_TYPE(self_obj)) orelse return null;
+            const result = createPyObject(inverted, py_utils.getPyType(self_obj)) orelse return null;
             return @ptrCast(result);
         }
 
@@ -740,7 +740,7 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
         /// Standard Python object methods
         pub fn dealloc(self_obj: [*c]c.PyObject) callconv(.c) void {
             const py_utils = @import("py_utils.zig");
-            py_utils.Py_TYPE(self_obj).*.tp_free.?(self_obj);
+            py_utils.getPyType(self_obj).*.tp_free.?(self_obj);
         }
 
         pub fn new(type_obj: [*c]c.PyTypeObject, args: [*c]c.PyObject, kwds: [*c]c.PyObject) callconv(.c) ?*c.PyObject {

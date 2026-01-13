@@ -31,9 +31,8 @@ pub fn registerType(module: [*c]c.PyObject, comptime name: []const u8, type_obj:
 
 /// Get the Python type object for a Python object.
 /// Replaces the Py_TYPE macro/inline function which can cause undefined symbol errors.
-pub fn Py_TYPE(obj: anytype) *c.PyTypeObject {
-    const base: *c.PyObject = @ptrCast(obj);
-    return @ptrCast(base.ob_type);
+pub fn getPyType(obj: ?*c.PyObject) callconv(.c) *c.PyTypeObject {
+    return @ptrCast(obj.?.ob_type);
 }
 
 /// Get Python boolean singletons using the stable Python C API
@@ -1087,7 +1086,7 @@ pub fn setTypeError(expected: []const u8, got: ?*c.PyObject) void {
     var buffer: [256]u8 = undefined;
 
     const type_name = if (got != null) blk: {
-        const tp = Py_TYPE(got);
+        const tp = getPyType(got);
         const tp_name = tp.*.tp_name;
         // Extract just the type name (after the last dot)
         var i: usize = 0;
@@ -1213,7 +1212,7 @@ pub fn genericDealloc(comptime T: type, comptime deinit_fn: ?fn (*T) void) fn (?
             }
 
             // Free the Python object
-            const tp: *c.PyTypeObject = @ptrCast(Py_TYPE(self_obj));
+            const tp: *c.PyTypeObject = @ptrCast(getPyType(self_obj));
             tp.*.tp_free.?(self_obj);
         }
     }.dealloc;
