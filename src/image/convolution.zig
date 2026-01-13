@@ -655,16 +655,16 @@ fn convolveSeparablePlane(
     if (rows > 2 * half_y) {
         const safe_end_r = rows - half_y;
 
-        // Process column tiles
+        // Process column tiles with column-major order for cache locality
+        // For vertical convolution, consecutive rows at same column share overlapping reads
         var tile_c: usize = 0;
         while (tile_c < cols) : (tile_c += TILE_WIDTH) {
             const tile_end = @min(tile_c + TILE_WIDTH, cols);
+            var c: usize = tile_c;
 
-            for (half_y..safe_end_r) |r| {
-                var c: usize = tile_c;
-
-                // SIMD processing within tile
-                while (c + vec_len <= tile_end) : (c += vec_len) {
+            // SIMD processing: process all rows for each vector of columns
+            while (c + vec_len <= tile_end) : (c += vec_len) {
+                for (half_y..safe_end_r) |r| {
                     var acc: @Vector(vec_len, AccumT) = @splat(0);
 
                     for (kernel_y, 0..) |k, ki| {
@@ -687,9 +687,11 @@ fn convolveSeparablePlane(
 
                     Ops.storeDstVec(acc, dst_img.data[r * dst_img.stride + c ..].ptr);
                 }
+            }
 
-                // Remaining columns within tile (scalar)
-                while (c < tile_end) : (c += 1) {
+            // Remaining columns within tile (scalar): process all rows for each column
+            while (c < tile_end) : (c += 1) {
+                for (half_y..safe_end_r) |r| {
                     var result: AccumT = 0;
                     const r0 = r - half_y;
                     for (kernel_y, 0..) |k, i| {
