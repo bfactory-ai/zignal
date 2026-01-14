@@ -467,7 +467,7 @@ const MomentComputer = struct {
                 const dist_sq = @as(f32, @floatFromInt(dx * dx + dy * dy));
                 if (dist_sq > ctx.radius_sq) continue;
 
-                // Gaussian weight
+                // Gaussian weight for better stability (optional, can use 1.0 for uniform)
                 const weight = @exp(-dist_sq / (2.0 * ctx.radius_sq / 4.0));
 
                 const intensity = @as(f32, @floatFromInt(ctx.image.at(@intCast(py), @intCast(px)).*)) * weight;
