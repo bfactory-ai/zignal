@@ -159,16 +159,14 @@ const rectangle_contains_doc =
     \\Uses exclusive bounds for right and bottom edges.
     \\
     \\## Parameters
-    \\- `x` (float): X coordinate to check
-    \\- `y` (float): Y coordinate to check
+    \\- `point` (tuple[float, float]): (x, y) coordinates of the point to check.
     \\
     \\## Examples
     \\```python
     \\rect = Rectangle(0, 0, 100, 100)
-    \\print(rect.contains(50, 50))   # True - inside
-    \\print(rect.contains(100, 50))  # False - on right edge (exclusive)
-    \\print(rect.contains(99.9, 99.9))  # True - just inside
-    \\print(rect.contains(150, 50))  # False - outside
+    \\print(rect.contains((50, 50)))   # True - inside
+    \\print(rect.contains((100, 50)))  # False - on right edge (exclusive)
+    \\print(rect.contains((150, 50)))  # False - outside
     \\```
 ;
 
@@ -176,19 +174,15 @@ fn rectangle_contains(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyOb
     const self = py_utils.safeCast(RectangleObject, self_obj);
 
     const Params = struct {
-        x: f64,
-        y: f64,
+        point: ?*c.PyObject,
     };
     var params: Params = undefined;
     py_utils.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const x_f32: f32 = @floatCast(params.x);
-    const y_f32: f32 = @floatCast(params.y);
+    const p = py_utils.parsePointTuple(f64, params.point) catch return null;
 
-    const contains = x_f32 >= self.left and x_f32 < self.right and
-        y_f32 >= self.top and y_f32 < self.bottom;
-
-    return @ptrCast(py_utils.getPyBool(contains));
+    const rect = Rectangle(f64){ .l = self.left, .t = self.top, .r = self.right, .b = self.bottom };
+    return @ptrCast(py_utils.getPyBool(rect.contains(p)));
 }
 
 const rectangle_center_doc =
@@ -601,6 +595,78 @@ fn rectangle_covers(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     return @ptrCast(py_utils.getPyBool(covers));
 }
 
+const rectangle_merge_doc =
+    \\Return the bounding box containing both rectangles.
+    \\
+    \\## Parameters
+    \\- `other` (Rectangle | tuple[float, float, float, float]): The other rectangle to merge with.
+    \\
+    \\## Returns
+    \\- `Rectangle`: The merged bounding box.
+;
+
+fn rectangle_merge(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    const self = py_utils.safeCast(RectangleObject, self_obj);
+
+    const Params = struct {
+        other: ?*c.PyObject,
+    };
+    var params: Params = undefined;
+    py_utils.parseArgs(Params, args, kwds, &params) catch return null;
+
+    const other = py_utils.parseRectangle(f64, params.other) catch return null;
+    const self_rect = Rectangle(f64){ .l = self.left, .t = self.top, .r = self.right, .b = self.bottom };
+    const merged = self_rect.merge(other);
+
+    const new_args = c.Py_BuildValue("(dddd)", merged.l, merged.t, merged.r, merged.b) orelse return null;
+    defer c.Py_DECREF(new_args);
+
+    return c.PyObject_CallObject(@ptrCast(&RectangleType), new_args);
+}
+
+const rectangle_reorder_doc =
+    \\Return a new rectangle with coordinates re-ordered such that `left` <= `right` and `top` <= `bottom`.
+    \\
+    \\## Returns
+    \\- `Rectangle`: A new rectangle with ordered coordinates.
+;
+
+fn rectangle_reorder(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    _ = args;
+    const self = py_utils.safeCast(RectangleObject, self_obj);
+    const rect = (Rectangle(f64){ .l = self.left, .t = self.top, .r = self.right, .b = self.bottom }).reorder();
+
+    const new_args = c.Py_BuildValue("(dddd)", rect.l, rect.t, rect.r, rect.b) orelse return null;
+    defer c.Py_DECREF(new_args);
+
+    return c.PyObject_CallObject(@ptrCast(&RectangleType), new_args);
+}
+
+const rectangle_aspect_ratio_doc =
+    \\Return the aspect ratio (width / height).
+    \\
+    \\Returns `inf` if height is 0 and width is non-zero.
+    \\Returns `NaN` if both width and height are 0.
+;
+
+fn rectangle_aspect_ratio(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    _ = args;
+    const self = py_utils.safeCast(RectangleObject, self_obj);
+    const rect = Rectangle(f64){ .l = self.left, .t = self.top, .r = self.right, .b = self.bottom };
+    return c.PyFloat_FromDouble(rect.aspectRatio());
+}
+
+const rectangle_perimeter_doc =
+    \\Return the perimeter of the rectangle.
+;
+
+fn rectangle_perimeter(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    _ = args;
+    const self = py_utils.safeCast(RectangleObject, self_obj);
+    const rect = Rectangle(f64){ .l = self.left, .t = self.top, .r = self.right, .b = self.bottom };
+    return c.PyFloat_FromDouble(rect.perimeter());
+}
+
 // Property getters
 
 fn rectangle_get_width(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
@@ -647,7 +713,7 @@ pub const rectangle_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .meth = @ptrCast(&rectangle_contains),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = rectangle_contains_doc,
-        .params = "self, x: float, y: float",
+        .params = "self, point: tuple[float, float]",
         .returns = "bool",
     },
     .{
@@ -755,6 +821,38 @@ pub const rectangle_methods_metadata = [_]stub_metadata.MethodWithMetadata{
         .returns = "bool",
     },
     .{
+        .name = "merge",
+        .meth = @ptrCast(&rectangle_merge),
+        .flags = c.METH_VARARGS | c.METH_KEYWORDS,
+        .doc = rectangle_merge_doc,
+        .params = "self, other: Rectangle | tuple[float, float, float, float]",
+        .returns = "Rectangle",
+    },
+    .{
+        .name = "reorder",
+        .meth = @ptrCast(&rectangle_reorder),
+        .flags = c.METH_NOARGS,
+        .doc = rectangle_reorder_doc,
+        .params = "self",
+        .returns = "Rectangle",
+    },
+    .{
+        .name = "aspect_ratio",
+        .meth = @ptrCast(&rectangle_aspect_ratio),
+        .flags = c.METH_NOARGS,
+        .doc = rectangle_aspect_ratio_doc,
+        .params = "self",
+        .returns = "float",
+    },
+    .{
+        .name = "perimeter",
+        .meth = @ptrCast(&rectangle_perimeter),
+        .flags = c.METH_NOARGS,
+        .doc = rectangle_perimeter_doc,
+        .params = "self",
+        .returns = "float",
+    },
+    .{
         .name = "diagonal",
         .meth = @ptrCast(&rectangle_diagonal),
         .flags = c.METH_NOARGS,
@@ -799,14 +897,14 @@ pub const rectangle_properties_metadata = [_]stub_metadata.PropertyWithMetadata{
         .name = "width",
         .get = @ptrCast(&rectangle_get_width),
         .set = null,
-        .doc = "Width of the rectangle (right - left)",
+        .doc = "Width of the rectangle (`right` - `left`)",
         .type = "float",
     },
     .{
         .name = "height",
         .get = @ptrCast(&rectangle_get_height),
         .set = null,
-        .doc = "Height of the rectangle (bottom - top)",
+        .doc = "Height of the rectangle (`bottom` - `top`)",
         .type = "float",
     },
 };
@@ -820,29 +918,29 @@ var rectangle_getset = py_utils.autoGetSetCustom(
             .name = "width".ptr,
             .get = @ptrCast(@alignCast(&rectangle_get_width)),
             .set = null,
-            .doc = "Width of the rectangle (right - left)".ptr,
+            .doc = "Width of the rectangle (`right` - `left`)".ptr,
             .closure = null,
         },
         .{
             .name = "height".ptr,
             .get = @ptrCast(@alignCast(&rectangle_get_height)),
             .set = null,
-            .doc = "Height of the rectangle (bottom - top)".ptr,
+            .doc = "Height of the rectangle (`bottom` - `top`)".ptr,
             .closure = null,
         },
     },
 );
 
 // Class documentation - keep it simple
-const rectangle_class_doc = "A rectangle defined by its left, top, right, and bottom coordinates.";
+const rectangle_class_doc = "A rectangle defined by its `left`, `top`, `right`, and `bottom` coordinates.";
 
 // Init documentation - detailed explanation
 pub const rectangle_init_doc =
     \\Initialize a Rectangle with specified coordinates.
     \\
     \\Creates a rectangle from its bounding coordinates. The rectangle is defined
-    \\by four values: left (x-min), top (y-min), right (x-max), and bottom (y-max).
-    \\The right and bottom bounds are exclusive.
+    \\by four values: `left` (x-min), `top` (y-min), `right` (x-max), and `bottom` (y-max).
+    \\The `right` and `bottom` bounds are exclusive.
     \\
     \\## Parameters
     \\- `left` (float): Left edge x-coordinate (inclusive)
@@ -856,8 +954,8 @@ pub const rectangle_init_doc =
     \\rect = Rectangle(10, 20, 110, 70)
     \\print(rect.width)  # 100.0 (110 - 10)
     \\print(rect.height)  # 50.0 (70 - 20)
-    \\print(rect.contains(109.9, 69.9))  # True
-    \\print(rect.contains(110, 70))  # False
+    \\print(rect.contains((109.9, 69.9)))  # True
+    \\print(rect.contains((110, 70)))  # False
     \\
     \\# Create a square
     \\square = Rectangle(0, 0, 50, 50)
@@ -865,10 +963,10 @@ pub const rectangle_init_doc =
     \\```
     \\
     \\## Notes
-    \\- The constructor validates that right >= left and bottom >= top
+    \\- The constructor validates that `right` >= `left` and `bottom` >= `top`
     \\- Use Rectangle.init_center() for center-based construction
     \\- Coordinates follow image convention: origin at top-left, y increases downward
-    \\- Right and bottom bounds are exclusive
+    \\- The `right` and `bottom` bounds are exclusive
 ;
 
 // Special methods metadata for stub generation
