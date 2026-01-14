@@ -442,9 +442,9 @@ const MomentComputer = struct {
     y: isize,
     radius_sq: f32,
     safe_margin: isize,
-    m00: *f32,
-    m10: *f32,
-    m01: *f32,
+    m00: *f32, // Zeroth moment
+    m10: *f32, // First moment in x
+    m01: *f32, // First moment in y
 
     fn run(ctx: @This(), comptime check_bounds: bool) void {
         for (0..ctx.patch_size) |v| {
