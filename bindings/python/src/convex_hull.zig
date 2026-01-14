@@ -27,24 +27,19 @@ fn convex_hull_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
         points: ?*c.PyObject = null,
     };
     var params: Params = undefined;
-    if (py_utils.parseArgs(Params, args, kwds, &params)) |_| {
-        if (params.points) |points_obj| {
-            // Parse the point list
-            if (py_utils.parsePointList(f64, points_obj)) |points| {
-                defer py_utils.ctx.allocator.free(points);
-                // Find convex hull
-                _ = self.hull.?.find(points) catch |err| {
-                    py_utils.setRuntimeError("Failed to compute convex hull: {s}", .{@errorName(err)});
-                    return -1;
-                };
-            } else |_| {
-                // Error already set by parsePointList
-                return -1;
-            }
-        }
-    } else |_| {
+    py_utils.parseArgs(Params, args, kwds, &params) catch return -1;
+
+    const points_obj = params.points orelse return 0;
+
+    // Parse the point list
+    const points = py_utils.parsePointList(f64, points_obj) catch return -1;
+    defer py_utils.ctx.allocator.free(points);
+
+    // Find convex hull
+    _ = self.hull.?.find(points) catch |err| {
+        py_utils.mapZigError(err, "ConvexHull");
         return -1;
-    }
+    };
 
     return 0;
 }

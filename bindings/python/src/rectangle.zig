@@ -126,10 +126,8 @@ const rectangle_is_empty_doc =
 fn rectangle_is_empty(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
     const self = py_utils.safeCast(RectangleObject, self_obj);
-
-    // For floats, use >= comparison (matches Rectangle.zig logic)
-    const is_empty = self.top >= self.bottom or self.left >= self.right;
-    return @ptrCast(py_utils.getPyBool(is_empty));
+    const rect: Rectangle(f64) = .{ .l = self.left, .t = self.top, .r = self.right, .b = self.bottom };
+    return @ptrCast(py_utils.getPyBool(rect.isEmpty()));
 }
 
 const rectangle_area_doc =
@@ -145,12 +143,8 @@ const rectangle_area_doc =
 fn rectangle_area(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
     const self = py_utils.safeCast(RectangleObject, self_obj);
-
-    const width = self.right - self.left;
-    const height = self.bottom - self.top;
-    const area = if (width < 0 or height < 0) 0 else width * height;
-
-    return c.PyFloat_FromDouble(area);
+    const rect: Rectangle(f64) = .{ .l = self.left, .t = self.top, .r = self.right, .b = self.bottom };
+    return c.PyFloat_FromDouble(rect.area());
 }
 
 const rectangle_contains_doc =
@@ -181,7 +175,7 @@ fn rectangle_contains(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyOb
 
     const p = py_utils.parsePointTuple(f64, params.point) catch return null;
 
-    const rect = Rectangle(f64){ .l = self.left, .t = self.top, .r = self.right, .b = self.bottom };
+    const rect: Rectangle(f64) = .{ .l = self.left, .t = self.top, .r = self.right, .b = self.bottom };
     return @ptrCast(py_utils.getPyBool(rect.contains(p)));
 }
 
@@ -663,7 +657,7 @@ const rectangle_perimeter_doc =
 fn rectangle_perimeter(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
     const self = py_utils.safeCast(RectangleObject, self_obj);
-    const rect = Rectangle(f64){ .l = self.left, .t = self.top, .r = self.right, .b = self.bottom };
+    const rect: Rectangle(f64) = .{ .l = self.left, .t = self.top, .r = self.right, .b = self.bottom };
     return c.PyFloat_FromDouble(rect.perimeter());
 }
 
@@ -672,15 +666,15 @@ fn rectangle_perimeter(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) 
 fn rectangle_get_width(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
     _ = closure;
     const self = py_utils.safeCast(RectangleObject, self_obj);
-    const width = self.right - self.left;
-    return c.PyFloat_FromDouble(width);
+    const rect = Rectangle(f64){ .l = self.left, .t = self.top, .r = self.right, .b = self.bottom };
+    return c.PyFloat_FromDouble(rect.width());
 }
 
 fn rectangle_get_height(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
     _ = closure;
     const self = py_utils.safeCast(RectangleObject, self_obj);
-    const height = self.bottom - self.top;
-    return c.PyFloat_FromDouble(height);
+    const rect: Rectangle(f64) = .{ .l = self.left, .t = self.top, .r = self.right, .b = self.bottom };
+    return c.PyFloat_FromDouble(rect.height());
 }
 
 pub const rectangle_methods_metadata = [_]stub_metadata.MethodWithMetadata{
