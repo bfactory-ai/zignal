@@ -445,30 +445,65 @@ fn computeOrientation(self: Orb, image: Image(u8), kp: KeyPoint) f32 {
     var m10: f32 = 0; // First moment in x
     var m01: f32 = 0; // First moment in y
 
-    // Compute moments with circular mask
-    for (0..self.patch_size) |v| {
-        const dy = @as(isize, @intCast(v)) - half_patch;
-        const py = y + dy;
+    // Check if patch is fully inside image
+    const safe_margin = @as(isize, @intCast(half_patch));
+    const is_safe = x >= safe_margin and x < @as(isize, @intCast(image.cols)) - safe_margin and
+        y >= safe_margin and y < @as(isize, @intCast(image.rows)) - safe_margin;
 
-        if (py < 0 or py >= image.rows) continue;
+    if (is_safe) {
+        // Safe path: no bounds checking needed for pixels
+        // Using direct data access would be faster but breaks encapsulation.
+        // We rely on the fact that indices are within bounds.
+        for (0..self.patch_size) |v| {
+            const dy = @as(isize, @intCast(v)) - safe_margin;
+            const py = y + dy;
 
-        for (0..self.patch_size) |u| {
-            const dx = @as(isize, @intCast(u)) - half_patch;
-            const px = x + dx;
+            for (0..self.patch_size) |u| {
+                const dx = @as(isize, @intCast(u)) - safe_margin;
 
-            if (px < 0 or px >= image.cols) continue;
+                // Apply circular mask
+                const dist_sq = @as(f32, @floatFromInt(dx * dx + dy * dy));
+                if (dist_sq > radius_sq) continue;
 
-            // Apply circular mask
-            const dist_sq = @as(f32, @floatFromInt(dx * dx + dy * dy));
-            if (dist_sq > radius_sq) continue;
+                // Gaussian weight
+                const weight = @exp(-dist_sq / (2.0 * radius_sq / 4.0));
 
-            // Gaussian weight for better stability (optional, can use 1.0 for uniform)
-            const weight = @exp(-dist_sq / (2.0 * radius_sq / 4.0));
+                const px = x + dx;
+                // We know coordinates are safe, but Image.at still does assert.
+                // In ReleaseFast, assertions are disabled.
+                const intensity = @as(f32, @floatFromInt(image.at(@intCast(py), @intCast(px)).*)) * weight;
 
-            const intensity = @as(f32, @floatFromInt(image.at(@intCast(py), @intCast(px)).*)) * weight;
-            m00 += intensity;
-            m10 += intensity * @as(f32, @floatFromInt(dx));
-            m01 += intensity * @as(f32, @floatFromInt(dy));
+                m00 += intensity;
+                m10 += intensity * @as(f32, @floatFromInt(dx));
+                m01 += intensity * @as(f32, @floatFromInt(dy));
+            }
+        }
+    } else {
+        // Unsafe path: full bounds checking
+        for (0..self.patch_size) |v| {
+            const dy = @as(isize, @intCast(v)) - safe_margin;
+            const py = y + dy;
+
+            if (py < 0 or py >= image.rows) continue;
+
+            for (0..self.patch_size) |u| {
+                const dx = @as(isize, @intCast(u)) - safe_margin;
+                const px = x + dx;
+
+                if (px < 0 or px >= image.cols) continue;
+
+                // Apply circular mask
+                const dist_sq = @as(f32, @floatFromInt(dx * dx + dy * dy));
+                if (dist_sq > radius_sq) continue;
+
+                // Gaussian weight
+                const weight = @exp(-dist_sq / (2.0 * radius_sq / 4.0));
+
+                const intensity = @as(f32, @floatFromInt(image.at(@intCast(py), @intCast(px)).*)) * weight;
+                m00 += intensity;
+                m10 += intensity * @as(f32, @floatFromInt(dx));
+                m01 += intensity * @as(f32, @floatFromInt(dy));
+            }
         }
     }
 
