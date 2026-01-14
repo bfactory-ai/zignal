@@ -153,13 +153,14 @@ pub fn getTextBounds(self: BitmapFont, text: []const u8, scale: f32) Rectangle(f
 
     const char_height_scaled = @as(f32, @floatFromInt(self.char_height)) * scale;
 
-    for (text) |char| {
-        if (char == '\n') {
+    var utf8_iter = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
+    while (utf8_iter.nextCodepoint()) |codepoint| {
+        if (codepoint == '\n') {
             width = @max(width, current_line_width);
             current_line_width = 0;
             lines += 1;
         } else {
-            const char_advance = self.getCharAdvanceWidth(char);
+            const char_advance = self.getCharAdvanceWidth(codepoint);
             current_line_width += @as(f32, @floatFromInt(char_advance)) * scale;
         }
     }
@@ -190,15 +191,16 @@ pub fn getTextBoundsTight(self: BitmapFont, text: []const u8, scale: f32) Rectan
     var y: f32 = 0;
     const char_height_scaled = @as(f32, @floatFromInt(self.char_height)) * scale;
 
-    for (text) |char| {
-        if (char == '\n') {
+    var utf8_iter = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
+    while (utf8_iter.nextCodepoint()) |codepoint| {
+        if (codepoint == '\n') {
             x = 0;
             y += char_height_scaled;
             continue;
         }
 
         // Get tight bounds for this character
-        const tight = self.getCharTightBounds(char);
+        const tight = self.getCharTightBounds(codepoint);
 
         if (tight.has_pixels) {
             has_any_pixels = true;
@@ -213,7 +215,7 @@ pub fn getTextBoundsTight(self: BitmapFont, text: []const u8, scale: f32) Rectan
             max_y = @max(max_y, bottom);
         }
 
-        const char_advance = self.getCharAdvanceWidth(char);
+        const char_advance = self.getCharAdvanceWidth(codepoint);
         x += @as(f32, @floatFromInt(char_advance)) * scale;
     }
 
@@ -339,4 +341,24 @@ pub fn deinit(self: *BitmapFont, allocator: std.mem.Allocator) void {
         allocator.free(data);
     }
     allocator.free(self.data);
+}
+
+test "getTextBounds with Unicode" {
+    const testing = std.testing;
+    const font = BitmapFont{
+        .name = "Test",
+        .char_width = 8,
+        .char_height = 8,
+        .first_char = 0,
+        .last_char = 255,
+        .data = &([_]u8{0} ** (256 * 8)),
+    };
+
+    // "A" is 1 byte, "©" is 2 bytes in UTF-8
+    const text = "A©";
+    const bounds = font.getTextBounds(text, 1.0);
+
+    // Both should be treated as 8px wide characters
+    try testing.expectEqual(@as(f32, 16.0), bounds.r);
+    try testing.expectEqual(@as(f32, 8.0), bounds.b);
 }
