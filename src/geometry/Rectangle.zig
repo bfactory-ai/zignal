@@ -59,33 +59,42 @@ pub fn Rectangle(comptime T: type) type {
 
         /// Checks if a rectangle is ill-formed.
         pub fn isEmpty(self: Self) bool {
-            return switch (@typeInfo(T)) {
-                .int => self.t >= self.b or self.l >= self.r,
-                .float => self.t >= self.b or self.l >= self.r,
-                else => @compileError("Unsupported type " ++ @typeName(T) ++ " for Rectangle"),
+            return self.t >= self.b or self.l >= self.r;
+        }
+
+        /// Returns a new rectangle with coordinates re-ordered such that l <= r and t <= b.
+        pub fn reorder(self: Self) Self {
+            return .{
+                .l = @min(self.l, self.r),
+                .t = @min(self.t, self.b),
+                .r = @max(self.l, self.r),
+                .b = @max(self.t, self.b),
             };
         }
 
         /// Returns the width of the rectangle.
         pub fn width(self: Self) if (@typeInfo(T) == .int) usize else T {
-            return if (self.isEmpty()) 0 else switch (@typeInfo(T)) {
+            if (self.l >= self.r) return 0;
+            return switch (@typeInfo(T)) {
                 .int => @intCast(self.r - self.l),
                 .float => self.r - self.l,
-                else => @compileError("Unsupported type " ++ @typeName(T) ++ " for Rectangle"),
+                else => unreachable,
             };
         }
 
         /// Returns the height of the rectangle.
         pub fn height(self: Self) if (@typeInfo(T) == .int) usize else T {
-            return if (self.isEmpty()) 0 else switch (@typeInfo(T)) {
+            if (self.t >= self.b) return 0;
+            return switch (@typeInfo(T)) {
                 .int => @intCast(self.b - self.t),
                 .float => self.b - self.t,
-                else => @compileError("Unsupported type " ++ @typeName(T) ++ " for Rectangle"),
+                else => unreachable,
             };
         }
 
         /// Returns the area of the rectangle
         pub fn area(self: Self) if (@typeInfo(T) == .int) usize else T {
+            if (self.isEmpty()) return 0;
             return self.height() * self.width();
         }
 
@@ -341,15 +350,20 @@ pub fn Rectangle(comptime T: type) type {
         }
 
         /// Returns the aspect ratio (width / height).
+        /// Returns `inf` if height is 0 and width is non-zero.
+        /// Returns `NaN` if both width and height are 0.
         pub fn aspectRatio(self: Self) f64 {
             const w = self.width();
             const h = self.height();
-            if (h == 0) return 0.0;
+            if (h == 0) {
+                if (w == 0) return std.math.nan(f64);
+                return std.math.inf(f64);
+            }
 
             return switch (@typeInfo(T)) {
                 .int => @as(f64, @floatFromInt(w)) / @as(f64, @floatFromInt(h)),
                 .float => @as(f64, w) / @as(f64, h),
-                else => @compileError("Unsupported type"),
+                else => unreachable,
             };
         }
 
@@ -533,13 +547,30 @@ test "Rectangle perimeter and aspect ratio" {
     const square = Rectangle(f32){ .l = 0, .t = 0, .r = 10.0, .b = 10.0 };
     try expectEqual(square.perimeter(), 40.0);
     try std.testing.expectApproxEqAbs(square.aspectRatio(), 1.0, 1e-9);
+
+    const horizontal_line = Rectangle(i32){ .l = 0, .t = 0, .r = 10, .b = 0 };
+    try expectEqual(std.math.inf(f64), horizontal_line.aspectRatio());
+
+    const point = Rectangle(i32){ .l = 0, .t = 0, .r = 0, .b = 0 };
+    try expectEqual(true, std.math.isNan(point.aspectRatio()));
+}
+
+test "Rectangle reorder" {
+    const flipped = Rectangle(i32){ .l = 100, .t = 100, .r = 0, .b = 0 };
+    try expectEqual(flipped.isEmpty(), true);
+    try expectEqual(flipped.width(), 0);
+    
+    const fixed = flipped.reorder();
+    try expectEqual(fixed.isEmpty(), false);
+    try expectEqualDeep(fixed, Rectangle(i32){ .l = 0, .t = 0, .r = 100, .b = 100 });
+    try expectEqual(fixed.width(), 100);
 }
 
 test "Rectangle contains with Point" {
     const rect = Rectangle(f32){ .l = 0, .t = 0, .r = 10, .b = 10 };
     const p_in = Point(2, f32).init(.{ 5.0, 5.0 });
     const p_out = Point(2, f32).init(.{ 15.0, 5.0 });
-    
+
     try expectEqual(rect.contains(p_in), true);
     try expectEqual(rect.contains(p_out), false);
 }
