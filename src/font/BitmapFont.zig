@@ -253,10 +253,19 @@ pub fn getGlyphInfo(self: BitmapFont, codepoint: u21) ?GlyphData {
 
 /// Get the visible bounds of a character (excluding padding)
 fn getCharTightBounds(self: BitmapFont, codepoint: u21) struct { bounds: Rectangle(u8), has_pixels: bool } {
+    const glyph_info = self.getGlyphInfo(codepoint) orelse return .{
+        .bounds = Rectangle(u8){ .l = 0, .t = 0, .r = 0, .b = 0 },
+        .has_pixels = false,
+    };
     const char_data = self.getCharData(codepoint) orelse return .{
         .bounds = Rectangle(u8){ .l = 0, .t = 0, .r = 0, .b = 0 },
         .has_pixels = false,
     };
+
+    const bytes_per_row = if (self.glyph_map != null)
+        (@as(usize, glyph_info.width) + 7) / 8
+    else
+        self.bytesPerRow();
 
     var min_x: u8 = 255;
     var max_x: u8 = 0;
@@ -264,17 +273,20 @@ fn getCharTightBounds(self: BitmapFont, codepoint: u21) struct { bounds: Rectang
     var max_y: u8 = 0;
     var has_pixels = false;
 
-    for (char_data, 0..) |row_data, row| {
-        var bits = row_data;
-        for (0..self.char_width) |col| {
-            if (bits & 1 != 0) {
+    for (0..glyph_info.height) |row| {
+        for (0..glyph_info.width) |col| {
+            const byte_idx = col / 8;
+            const bit_idx = col % 8;
+            const row_byte_offset = row * bytes_per_row + byte_idx;
+            const bit = (char_data[row_byte_offset] >> @intCast(bit_idx)) & 1;
+
+            if (bit != 0) {
                 has_pixels = true;
                 min_x = @min(min_x, @as(u8, @intCast(col)));
                 max_x = @max(max_x, @as(u8, @intCast(col)));
                 min_y = @min(min_y, @as(u8, @intCast(row)));
                 max_y = @max(max_y, @as(u8, @intCast(row)));
             }
-            bits >>= 1;
         }
     }
 
@@ -361,4 +373,28 @@ test "getTextBounds with Unicode" {
     // Both should be treated as 8px wide characters
     try testing.expectEqual(@as(f32, 16.0), bounds.r);
     try testing.expectEqual(@as(f32, 8.0), bounds.b);
+}
+
+test "getTextBoundsTight with Wide Font" {
+    const testing = std.testing;
+    // 16x8 font, 2 bytes per row
+    var data = [_]u8{0} ** (2 * 8);
+    // Set a pixel at (10, 2) - this is in the second byte of the 3rd row
+    data[2 * 2 + 1] = 1 << 2; // (10-8) = bit 2 of the second byte
+
+    const font = BitmapFont{
+        .name = "WideTest",
+        .char_width = 16,
+        .char_height = 8,
+        .first_char = 'A',
+        .last_char = 'A',
+        .data = &data,
+    };
+
+    const bounds = font.getTextBoundsTight("A", 1.0);
+    // Pixel is at (10, 2), so bounds should be (10, 2) to (11, 3)
+    try testing.expectEqual(@as(f32, 10.0), bounds.l);
+    try testing.expectEqual(@as(f32, 2.0), bounds.t);
+    try testing.expectEqual(@as(f32, 11.0), bounds.r);
+    try testing.expectEqual(@as(f32, 3.0), bounds.b);
 }
