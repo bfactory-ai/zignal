@@ -398,3 +398,36 @@ test "getTextBoundsTight with Wide Font" {
     try testing.expectEqual(@as(f32, 11.0), bounds.r);
     try testing.expectEqual(@as(f32, 3.0), bounds.b);
 }
+
+test "getTextBoundsTight with Unicode" {
+    const testing = std.testing;
+    // Create a font where '©' (codepoint 0xA9) has a specific pattern
+    var data = [_]u8{0} ** (256 * 8);
+    // '©' at index 0xA9
+    const offset = 0xA9 * 8;
+    data[offset + 2] = 0x18; // 00011000 in row 2
+
+    const font = BitmapFont{
+        .name = "Test",
+        .char_width = 8,
+        .char_height = 8,
+        .first_char = 0,
+        .last_char = 255,
+        .data = &data,
+    };
+
+    // "©" is 2 bytes in UTF-8.
+    // Advance for 'A' (8px) + tight bounds of '©' (bits 3,4 at row 2)
+    // x position: 8 (from 'A') + 3 (min_x of '©') = 11
+    const text = "A©";
+    const bounds = font.getTextBoundsTight(text, 1.0);
+
+    // 'A' has no pixels in this test font. '©' has pixels at x=3,4 in its local space.
+    // 'A' is at x=0, '©' is at x=8.
+    // '©' pixels are at x=11 and x=12.
+    // Tight bounds: l=11, r=13, t=2, b=3.
+    try testing.expectEqual(@as(f32, 11.0), bounds.l);
+    try testing.expectEqual(@as(f32, 13.0), bounds.r);
+    try testing.expectEqual(@as(f32, 2.0), bounds.t);
+    try testing.expectEqual(@as(f32, 3.0), bounds.b);
+}
