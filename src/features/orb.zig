@@ -433,6 +433,52 @@ fn computeFeaturesPerLevel(self: Orb, allocator: Allocator) ![]usize {
     return n_features_per_level;
 }
 
+/// Helper for computing keypoint moments with optional bounds checking.
+/// Used by computeOrientation to provide an optimized safe-path.
+const MomentComputer = struct {
+    patch_size: usize,
+    image: Image(u8),
+    x: isize,
+    y: isize,
+    radius_sq: f32,
+    safe_margin: isize,
+    m00: *f32,
+    m10: *f32,
+    m01: *f32,
+
+    fn run(ctx: @This(), comptime check_bounds: bool) void {
+        for (0..ctx.patch_size) |v| {
+            const dy = @as(isize, @intCast(v)) - ctx.safe_margin;
+            const py = ctx.y + dy;
+
+            if (check_bounds) {
+                if (py < 0 or py >= ctx.image.rows) continue;
+            }
+
+            for (0..ctx.patch_size) |u| {
+                const dx = @as(isize, @intCast(u)) - ctx.safe_margin;
+                const px = ctx.x + dx;
+
+                if (check_bounds) {
+                    if (px < 0 or px >= ctx.image.cols) continue;
+                }
+
+                // Apply circular mask
+                const dist_sq = @as(f32, @floatFromInt(dx * dx + dy * dy));
+                if (dist_sq > ctx.radius_sq) continue;
+
+                // Gaussian weight
+                const weight = @exp(-dist_sq / (2.0 * ctx.radius_sq / 4.0));
+
+                const intensity = @as(f32, @floatFromInt(ctx.image.at(@intCast(py), @intCast(px)).*)) * weight;
+                ctx.m00.* += intensity;
+                ctx.m10.* += intensity * @as(f32, @floatFromInt(dx));
+                ctx.m01.* += intensity * @as(f32, @floatFromInt(dy));
+            }
+        }
+    }
+};
+
 /// Compute keypoint orientation using intensity centroid with circular mask
 fn computeOrientation(self: Orb, image: Image(u8), kp: KeyPoint) f32 {
     const half_patch = self.patch_size / 2;
@@ -450,52 +496,8 @@ fn computeOrientation(self: Orb, image: Image(u8), kp: KeyPoint) f32 {
     const is_safe = x >= safe_margin and x < @as(isize, @intCast(image.cols)) - safe_margin and
         y >= safe_margin and y < @as(isize, @intCast(image.rows)) - safe_margin;
 
-    const MomentComputer = struct {
-        orb: Orb,
-        image: Image(u8),
-        x: isize,
-        y: isize,
-        radius_sq: f32,
-        safe_margin: isize,
-        m00: *f32,
-        m10: *f32,
-        m01: *f32,
-
-        fn run(ctx: @This(), comptime check_bounds: bool) void {
-            for (0..ctx.orb.patch_size) |v| {
-                const dy = @as(isize, @intCast(v)) - ctx.safe_margin;
-                const py = ctx.y + dy;
-
-                if (check_bounds) {
-                    if (py < 0 or py >= ctx.image.rows) continue;
-                }
-
-                for (0..ctx.orb.patch_size) |u| {
-                    const dx = @as(isize, @intCast(u)) - ctx.safe_margin;
-                    const px = ctx.x + dx;
-
-                    if (check_bounds) {
-                        if (px < 0 or px >= ctx.image.cols) continue;
-                    }
-
-                    // Apply circular mask
-                    const dist_sq = @as(f32, @floatFromInt(dx * dx + dy * dy));
-                    if (dist_sq > ctx.radius_sq) continue;
-
-                    // Gaussian weight
-                    const weight = @exp(-dist_sq / (2.0 * ctx.radius_sq / 4.0));
-
-                    const intensity = @as(f32, @floatFromInt(ctx.image.at(@intCast(py), @intCast(px)).*)) * weight;
-                    ctx.m00.* += intensity;
-                    ctx.m10.* += intensity * @as(f32, @floatFromInt(dx));
-                    ctx.m01.* += intensity * @as(f32, @floatFromInt(dy));
-                }
-            }
-        }
-    };
-
     const computer = MomentComputer{
-        .orb = self,
+        .patch_size = self.patch_size,
         .image = image,
         .x = x,
         .y = y,
