@@ -548,11 +548,11 @@ test "Rectangle perimeter and aspect ratio" {
     try expectEqual(square.perimeter(), 40.0);
     try std.testing.expectApproxEqAbs(square.aspectRatio(), 1.0, 1e-9);
 
-    const horizontal_line = Rectangle(i32){ .l = 0, .t = 0, .r = 10, .b = 0 };
-    try expectEqual(std.math.inf(f64), horizontal_line.aspectRatio());
+    const line = Rectangle(i32){ .l = 0, .t = 0, .r = 100, .b = 0 };
+    try std.testing.expect(line.aspectRatio() == std.math.inf(f64));
 
     const point = Rectangle(i32){ .l = 0, .t = 0, .r = 0, .b = 0 };
-    try expectEqual(true, std.math.isNan(point.aspectRatio()));
+    try std.testing.expect(std.math.isNan(point.aspectRatio()));
 }
 
 test "Rectangle reorder" {
