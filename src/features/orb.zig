@@ -450,61 +450,66 @@ fn computeOrientation(self: Orb, image: Image(u8), kp: KeyPoint) f32 {
     const is_safe = x >= safe_margin and x < @as(isize, @intCast(image.cols)) - safe_margin and
         y >= safe_margin and y < @as(isize, @intCast(image.rows)) - safe_margin;
 
+    const MomentComputer = struct {
+        orb: Orb,
+        image: Image(u8),
+        x: isize,
+        y: isize,
+        radius_sq: f32,
+        safe_margin: isize,
+        m00: *f32,
+        m10: *f32,
+        m01: *f32,
+
+        fn run(ctx: @This(), comptime check_bounds: bool) void {
+            for (0..ctx.orb.patch_size) |v| {
+                const dy = @as(isize, @intCast(v)) - ctx.safe_margin;
+                const py = ctx.y + dy;
+
+                if (check_bounds) {
+                    if (py < 0 or py >= ctx.image.rows) continue;
+                }
+
+                for (0..ctx.orb.patch_size) |u| {
+                    const dx = @as(isize, @intCast(u)) - ctx.safe_margin;
+                    const px = ctx.x + dx;
+
+                    if (check_bounds) {
+                        if (px < 0 or px >= ctx.image.cols) continue;
+                    }
+
+                    // Apply circular mask
+                    const dist_sq = @as(f32, @floatFromInt(dx * dx + dy * dy));
+                    if (dist_sq > ctx.radius_sq) continue;
+
+                    // Gaussian weight
+                    const weight = @exp(-dist_sq / (2.0 * ctx.radius_sq / 4.0));
+
+                    const intensity = @as(f32, @floatFromInt(ctx.image.at(@intCast(py), @intCast(px)).*)) * weight;
+                    ctx.m00.* += intensity;
+                    ctx.m10.* += intensity * @as(f32, @floatFromInt(dx));
+                    ctx.m01.* += intensity * @as(f32, @floatFromInt(dy));
+                }
+            }
+        }
+    };
+
+    const computer = MomentComputer{
+        .orb = self,
+        .image = image,
+        .x = x,
+        .y = y,
+        .radius_sq = radius_sq,
+        .safe_margin = safe_margin,
+        .m00 = &m00,
+        .m10 = &m10,
+        .m01 = &m01,
+    };
+
     if (is_safe) {
-        // Safe path: no bounds checking needed for pixels
-        // Using direct data access would be faster but breaks encapsulation.
-        // We rely on the fact that indices are within bounds.
-        for (0..self.patch_size) |v| {
-            const dy = @as(isize, @intCast(v)) - safe_margin;
-            const py = y + dy;
-
-            for (0..self.patch_size) |u| {
-                const dx = @as(isize, @intCast(u)) - safe_margin;
-
-                // Apply circular mask
-                const dist_sq = @as(f32, @floatFromInt(dx * dx + dy * dy));
-                if (dist_sq > radius_sq) continue;
-
-                // Gaussian weight
-                const weight = @exp(-dist_sq / (2.0 * radius_sq / 4.0));
-
-                const px = x + dx;
-                // We know coordinates are safe, but Image.at still does assert.
-                // In ReleaseFast, assertions are disabled.
-                const intensity = @as(f32, @floatFromInt(image.at(@intCast(py), @intCast(px)).*)) * weight;
-
-                m00 += intensity;
-                m10 += intensity * @as(f32, @floatFromInt(dx));
-                m01 += intensity * @as(f32, @floatFromInt(dy));
-            }
-        }
+        computer.run(false);
     } else {
-        // Unsafe path: full bounds checking
-        for (0..self.patch_size) |v| {
-            const dy = @as(isize, @intCast(v)) - safe_margin;
-            const py = y + dy;
-
-            if (py < 0 or py >= image.rows) continue;
-
-            for (0..self.patch_size) |u| {
-                const dx = @as(isize, @intCast(u)) - safe_margin;
-                const px = x + dx;
-
-                if (px < 0 or px >= image.cols) continue;
-
-                // Apply circular mask
-                const dist_sq = @as(f32, @floatFromInt(dx * dx + dy * dy));
-                if (dist_sq > radius_sq) continue;
-
-                // Gaussian weight
-                const weight = @exp(-dist_sq / (2.0 * radius_sq / 4.0));
-
-                const intensity = @as(f32, @floatFromInt(image.at(@intCast(py), @intCast(px)).*)) * weight;
-                m00 += intensity;
-                m10 += intensity * @as(f32, @floatFromInt(dx));
-                m01 += intensity * @as(f32, @floatFromInt(dy));
-            }
-        }
+        computer.run(true);
     }
 
     // Avoid division by zero
