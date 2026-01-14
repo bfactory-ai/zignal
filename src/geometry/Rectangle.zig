@@ -93,10 +93,12 @@ pub fn Rectangle(comptime T: type) type {
         /// Can be called with a Point(2, T) or with x and y coordinates.
         pub fn contains(self: Self, args: anytype) bool {
             const ArgsType = @TypeOf(args);
-            const x, const y = switch (@typeInfo(ArgsType)) {
+            const coords = switch (@typeInfo(ArgsType)) {
                 .@"struct" => |s| if (s.is_tuple) .{ args[0], args[1] } else .{ args.x(), args.y() },
                 else => @compileError("contains expects a Point(2, T) or a tuple .{x, y}"),
             };
+            const x = meta.as(T, coords[0]);
+            const y = meta.as(T, coords[1]);
 
             switch (@typeInfo(T)) {
                 .float => {
