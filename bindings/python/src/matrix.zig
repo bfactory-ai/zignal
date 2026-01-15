@@ -1757,7 +1757,7 @@ fn matrix_lu_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c
     _ = c.PyDict_SetItemString(result_dict, "u", u_obj);
     _ = c.PyDict_SetItemString(result_dict, "p", p_list);
 
-    const sign_obj = python.convert(lu_result.sign) orelse {
+    const sign_obj = python.create(lu_result.sign) orelse {
         c.Py_DECREF(l_obj);
         c.Py_DECREF(u_obj);
         c.Py_DECREF(p_list);
@@ -1824,7 +1824,7 @@ fn matrix_qr_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c
     _ = c.PyDict_SetItemString(result_dict, "q", q_obj);
     _ = c.PyDict_SetItemString(result_dict, "r", r_obj);
 
-    const rank_obj = python.convert(qr_result.rank) orelse {
+    const rank_obj = python.create(qr_result.rank) orelse {
         c.Py_DECREF(q_obj);
         c.Py_DECREF(r_obj);
         c.Py_DECREF(result_dict);
@@ -1962,7 +1962,7 @@ fn matrix_svd_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
     }
 
     // Add convergence status
-    const converged_obj = python.convert(svd_result.converged) orelse {
+    const converged_obj = python.create(svd_result.converged) orelse {
         c.Py_DECREF(result_dict);
         return null;
     };

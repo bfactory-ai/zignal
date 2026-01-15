@@ -100,7 +100,7 @@ fn PixelProxyBinding(comptime ColorType: type, comptime ProxyObjectType: type) t
                         const proxy: *ProxyObjectType = @ptrCast(self_obj.?);
                         const rgba = pimg.getPixelRgba(@intCast(proxy.row), @intCast(proxy.col));
                         const value = @field(rgba, fields[index].name);
-                        return python.convert(value);
+                        return python.create(value);
                     }
                     c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
                     return null;
@@ -118,7 +118,7 @@ fn PixelProxyBinding(comptime ColorType: type, comptime ProxyObjectType: type) t
                     }
                     const T = fields[index].type;
                     const field_name = fields[index].name;
-                    const parsed = python.as(T, value) catch |err| {
+                    const parsed = python.parse(T, value) catch |err| {
                         switch (err) {
                             python.ConversionError.not_integer => {
                                 c.PyErr_SetString(c.PyExc_TypeError, "Expected integer value");

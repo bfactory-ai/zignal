@@ -101,7 +101,7 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
                         3 => if (fields.len > 3) self.field3 else unreachable,
                         else => unreachable,
                     };
-                    return @ptrCast(@alignCast(python.convert(value)));
+                    return @ptrCast(@alignCast(python.create(value)));
                 }
             }.getter;
         }
@@ -118,7 +118,7 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
                     const field_name = field.name;
 
                     // Convert Python value using idiomatic error union
-                    const new_value = python.as(field.type, @ptrCast(value_obj)) catch |err| {
+                    const new_value = python.parse(field.type, @ptrCast(value_obj)) catch |err| {
                         switch (err) {
                             python.ConversionError.not_integer => {
                                 c.PyErr_SetString(c.PyExc_TypeError, "Expected integer value");
@@ -307,14 +307,14 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
         pub fn lumaMethod(self_obj: [*c]c.PyObject, _: ?*c.PyObject) callconv(.c) [*c]c.PyObject {
             const self: *ObjectType = @ptrCast(self_obj);
             const luma_val = objectToZigColor(self).luma();
-            return @ptrCast(python.convert(luma_val));
+            return @ptrCast(python.create(luma_val));
         }
 
         /// hex method implementation
         pub fn hexMethod(self_obj: [*c]c.PyObject, _: ?*c.PyObject) callconv(.c) [*c]c.PyObject {
             const self: *ObjectType = @ptrCast(self_obj);
             const hex_val = objectToZigColor(self).hex();
-            return @ptrCast(python.convert(hex_val));
+            return @ptrCast(python.create(hex_val));
         }
 
         /// from_hex method implementation (static)

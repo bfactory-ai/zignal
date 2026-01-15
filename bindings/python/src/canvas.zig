@@ -364,8 +364,8 @@ fn canvas_draw_line(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const p1 = python.parsePointTuple(f32, params.p1) catch return null;
-    const p2 = python.parsePointTuple(f32, params.p2) catch return null;
+    const p1 = python.parse(zignal.Point(2, f32), params.p1) catch return null;
+    const p2 = python.parse(zignal.Point(2, f32), params.p2) catch return null;
     const rgba = color_utils.parseColor(Rgba, params.color) catch return null;
     const width_val = python.validateNonNegative(u32, params.width, "Width") catch return null;
     const mode_val = python.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
@@ -399,7 +399,7 @@ fn canvas_draw_rectangle(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.P
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const rect = python.toRectangle(f32, params.rect) catch return null;
+    const rect = python.parse(zignal.Rectangle(f32), params.rect) catch return null;
     const rgba = color_utils.parseColor(Rgba, params.color) catch return null;
     const width_val = python.validateNonNegative(u32, params.width, "Width") catch return null;
     const mode_val = python.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
@@ -432,7 +432,7 @@ fn canvas_draw_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyO
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const points = python.toPointSlice(f32, params.points) catch return null;
+    const points = python.parse([]zignal.Point(2, f32), params.points) catch return null;
     defer allocator.free(points);
     const rgba = color_utils.parseColor(Rgba, params.color) catch return null;
     const width_val = python.validateNonNegative(u32, params.width, "Width") catch return null;
@@ -467,7 +467,7 @@ fn canvas_draw_circle(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyOb
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const center = python.parsePointTuple(f32, params.center) catch return null;
+    const center = python.parse(zignal.Point(2, f32), params.center) catch return null;
     const radius = python.validateNonNegative(f32, params.radius, "Radius") catch return null;
     const rgba = color_utils.parseColor(Rgba, params.color) catch return null;
     const width_val = python.validateNonNegative(u32, params.width, "Width") catch return null;
@@ -502,7 +502,7 @@ fn canvas_fill_rectangle(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.P
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const rect = python.toRectangle(f32, params.rect) catch return null;
+    const rect = python.parse(zignal.Rectangle(f32), params.rect) catch return null;
     const rgba = color_utils.parseColor(Rgba, params.color) catch return null;
     const mode_val = python.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
     const draw_mode: DrawMode = @enumFromInt(mode_val);
@@ -533,7 +533,7 @@ fn canvas_draw_image(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const pos = python.parsePointTuple(f32, params.position) catch return null;
+    const pos = python.parse(zignal.Point(2, f32), params.position) catch return null;
 
     const image_module = @import("image.zig");
     if (c.PyObject_IsInstance(params.image, @ptrCast(&image_module.ImageType)) <= 0) {
@@ -550,7 +550,7 @@ fn canvas_draw_image(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
     var rect_opt: ?Rectangle(usize) = null;
     if (params.source_rect) |rect_obj| {
         if (rect_obj != c.Py_None()) {
-            rect_opt = python.toRectangle(usize, rect_obj) catch return null;
+            rect_opt = python.parse(zignal.Rectangle(usize), rect_obj) catch return null;
         }
     }
 
@@ -597,7 +597,7 @@ fn canvas_fill_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyO
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const points = python.toPointSlice(f32, params.points) catch return null;
+    const points = python.parse([]zignal.Point(2, f32), params.points) catch return null;
     defer allocator.free(points);
     const rgba = color_utils.parseColor(Rgba, params.color) catch return null;
     const mode_val = python.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
@@ -632,7 +632,7 @@ fn canvas_fill_circle(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyOb
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const center = python.parsePointTuple(f32, params.center) catch return null;
+    const center = python.parse(zignal.Point(2, f32), params.center) catch return null;
     const radius = python.validateNonNegative(f32, params.radius, "Radius") catch return null;
     const rgba = color_utils.parseColor(Rgba, params.color) catch return null;
     const mode_val = python.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
@@ -668,9 +668,9 @@ fn canvas_draw_quadratic_bezier(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const p0 = python.parsePointTuple(f32, params.p0) catch return null;
-    const p1 = python.parsePointTuple(f32, params.p1) catch return null;
-    const p2 = python.parsePointTuple(f32, params.p2) catch return null;
+    const p0 = python.parse(zignal.Point(2, f32), params.p0) catch return null;
+    const p1 = python.parse(zignal.Point(2, f32), params.p1) catch return null;
+    const p2 = python.parse(zignal.Point(2, f32), params.p2) catch return null;
     const rgba = color_utils.parseColor(Rgba, params.color) catch return null;
     const width_val = python.validateNonNegative(u32, params.width, "Width") catch return null;
     const mode_val = python.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
@@ -696,10 +696,10 @@ fn canvas_draw_cubic_bezier(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const p0 = python.parsePointTuple(f32, params.p0) catch return null;
-    const p1 = python.parsePointTuple(f32, params.p1) catch return null;
-    const p2 = python.parsePointTuple(f32, params.p2) catch return null;
-    const p3 = python.parsePointTuple(f32, params.p3) catch return null;
+    const p0 = python.parse(zignal.Point(2, f32), params.p0) catch return null;
+    const p1 = python.parse(zignal.Point(2, f32), params.p1) catch return null;
+    const p2 = python.parse(zignal.Point(2, f32), params.p2) catch return null;
+    const p3 = python.parse(zignal.Point(2, f32), params.p3) catch return null;
     const rgba = color_utils.parseColor(Rgba, params.color) catch return null;
     const width_val = python.validateNonNegative(u32, params.width, "Width") catch return null;
     const mode_val = python.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
@@ -723,7 +723,7 @@ fn canvas_draw_spline_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const points = python.toPointSlice(f32, params.points) catch return null;
+    const points = python.parse([]zignal.Point(2, f32), params.points) catch return null;
     defer allocator.free(points);
     const rgba = color_utils.parseColor(Rgba, params.color) catch return null;
     const width_val = python.validateNonNegative(u32, params.width, "Width") catch return null;
@@ -748,7 +748,7 @@ fn canvas_fill_spline_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const points = python.toPointSlice(f32, params.points) catch return null;
+    const points = python.parse([]zignal.Point(2, f32), params.points) catch return null;
     defer allocator.free(points);
     const rgba = color_utils.parseColor(Rgba, params.color) catch return null;
     const tension_val = python.validateRange(f32, params.tension, 0.0, 1.0, "Tension") catch return null;
@@ -778,7 +778,7 @@ fn canvas_draw_arc(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const center = python.parsePointTuple(f32, params.center) catch return null;
+    const center = python.parse(zignal.Point(2, f32), params.center) catch return null;
     const radius_val: f32 = @floatCast(params.radius);
     const start_angle_val: f32 = @floatCast(params.start_angle);
     const end_angle_val: f32 = @floatCast(params.end_angle);
@@ -809,7 +809,7 @@ fn canvas_fill_arc(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const center = python.parsePointTuple(f32, params.center) catch return null;
+    const center = python.parse(zignal.Point(2, f32), params.center) catch return null;
     // Allow negative radius - the Zig library will handle it gracefully (no-op)
     const radius_val: f32 = @floatCast(params.radius);
     const start_angle_val: f32 = @floatCast(params.start_angle);
@@ -847,7 +847,7 @@ fn canvas_draw_text(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     };
     const text = std.mem.span(text_cstr);
 
-    const position = python.parsePointTuple(f32, params.position) catch return null;
+    const position = python.parse(zignal.Point(2, f32), params.position) catch return null;
     const rgba = color_utils.parseColor(Rgba, @ptrCast(params.color)) catch return null;
 
     const mode_val = python.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;

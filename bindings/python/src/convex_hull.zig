@@ -32,7 +32,7 @@ fn convex_hull_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     const points_obj = params.points orelse return 0;
 
     // Parse the point list
-    const points = python.toPointSlice(f64, points_obj) catch return -1;
+    const points = python.parse([]zignal.Point(2, f64), points_obj) catch return -1;
     defer python.ctx.allocator.free(points);
 
     // Find convex hull
@@ -119,7 +119,7 @@ fn convex_hull_find(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     const points_obj = params.points;
 
     // Parse the point list
-    const points = python.toPointSlice(f64, points_obj) catch {
+    const points = python.parse([]zignal.Point(2, f64), points_obj) catch {
         // Error already set by parsePointList
         return null;
     };
@@ -171,7 +171,7 @@ fn convex_hull_contains(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.Py
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const p = python.parsePointTuple(f64, params.point) catch return null;
+    const p = python.parse(zignal.Point(2, f64), params.point) catch return null;
     const result = hull.contains(p);
 
     return @ptrCast(python.boolean(result));

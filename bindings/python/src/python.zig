@@ -45,8 +45,8 @@ pub fn none() ?*c.PyObject {
     return val;
 }
 
-/// Convert a Zig value to Python object
-pub fn convert(value: anytype) ?*c.PyObject {
+/// Creates a Python object from a Zig value.
+pub fn create(value: anytype) ?*c.PyObject {
     const T = @TypeOf(value);
 
     return switch (@typeInfo(T)) {
@@ -70,7 +70,7 @@ pub fn convert(value: anytype) ?*c.PyObject {
         },
         .optional => blk: {
             if (value) |v| {
-                break :blk convert(v);
+                break :blk create(v);
             } else {
                 // TODO(py3.10): drop explicit cast once minimum Python >= 3.11
                 c.Py_INCREF(@as(?*c.PyObject, @ptrCast(c.Py_None)));
@@ -81,8 +81,72 @@ pub fn convert(value: anytype) ?*c.PyObject {
     };
 }
 
+/// Parses a Python object into a Zig value of type T.
+pub fn parse(comptime T: type, py_obj: ?*c.PyObject) !T {
+    if (py_obj == null) {
+        return ConversionError.not_python_object;
+    }
+
+    const info = @typeInfo(T);
+    switch (info) {
+        .int => {
+            // Always use PyLong_AsLong for better negative value handling
+            const val = c.PyLong_AsLong(py_obj);
+            if (val == -1 and c.PyErr_Occurred() != null) {
+                c.PyErr_Clear(); // Clear the Python error since we're handling it
+                return ConversionError.not_integer;
+            }
+
+            // Check if value fits in target type
+            const min_val = std.math.minInt(T);
+            const max_val = std.math.maxInt(T);
+            if (val < min_val or val > max_val) {
+                return ConversionError.integer_out_of_range;
+            }
+            return @intCast(val);
+        },
+        .float => {
+            const val = c.PyFloat_AsDouble(py_obj);
+            if (val == -1.0 and c.PyErr_Occurred() != null) {
+                c.PyErr_Clear(); // Clear the Python error since we're handling it
+                return ConversionError.not_float;
+            }
+            return @floatCast(val);
+        },
+        .@"struct" => {
+            // Point(2, T)
+            if (T == Point(2, f32)) return parsePointTuple(f32, py_obj);
+            if (T == Point(2, f64)) return parsePointTuple(f64, py_obj);
+
+            // Rectangle(T)
+            if (T == zignal.Rectangle(f32)) return parseRectangle(f32, py_obj);
+            if (T == zignal.Rectangle(f64)) return parseRectangle(f64, py_obj);
+            if (T == zignal.Rectangle(i32)) return parseRectangle(i32, py_obj);
+            if (T == zignal.Rectangle(u32)) return parseRectangle(u32, py_obj);
+            if (T == zignal.Rectangle(usize)) return parseRectangle(usize, py_obj);
+
+            // ArrayList(T)
+            if (@hasField(T, "items") and @hasField(T, "capacity") and @hasField(T, "allocator")) {
+                const Slice = std.meta.FieldType(T, .items);
+                const Child = @typeInfo(Slice).pointer.child;
+                return toArrayList(Child, py_obj);
+            }
+        },
+        .pointer => |ptr| {
+            if (ptr.size == .slice) {
+                const Child = ptr.child;
+                if (Child == Point(2, f32)) return parsePointSlice(f32, py_obj);
+                if (Child == Point(2, f64)) return parsePointSlice(f64, py_obj);
+            }
+        },
+        else => {},
+    }
+
+    return ConversionError.unsupported_type;
+}
+
 /// Wrapper for arguments tuple ownership. If `owned` is true, `tuple` must be decref'd.
-pub const ArgsTupleHandle = struct {
+const ArgsTupleHandle = struct {
     tuple: ?*c.PyObject,
     owned: bool,
 
@@ -138,7 +202,7 @@ pub fn getterForField(comptime Obj: type, comptime field_name: []const u8) *cons
             _ = closure;
             const self: *Obj = @ptrCast(self_obj.?);
             const val = @field(self, field_name);
-            return convert(val);
+            return create(val);
         }
     };
     return @ptrCast(&Gen.get);
@@ -225,7 +289,7 @@ pub fn getterOptionalFieldWhere(
             const self: *Obj = @ptrCast(self_obj.?);
             if (!Predicate(self)) return none();
             const val = @field(self, field_name);
-            return convert(val);
+            return create(val);
         }
     };
     return @ptrCast(&Gen.get);
@@ -274,8 +338,8 @@ pub fn getterTuple2FieldsWhere(
         fn get(self_obj: ?*c.PyObject, _: ?*anyopaque) callconv(.c) ?*c.PyObject {
             const self: *Obj = @ptrCast(self_obj.?);
             if (!Predicate(self)) return none();
-            const a = convert(@field(self, field0)) orelse return null;
-            const b = convert(@field(self, field1)) orelse {
+            const a = create(@field(self, field0)) orelse return null;
+            const b = create(@field(self, field1)) orelse {
                 c.Py_DECREF(a);
                 return null;
             };
@@ -298,8 +362,8 @@ pub fn getterTuple2FromArrayField(
         fn get(self_obj: ?*c.PyObject, _: ?*anyopaque) callconv(.c) ?*c.PyObject {
             const self: *Obj = @ptrCast(self_obj.?);
             const arr = @field(self, array_field);
-            const a = convert(arr[idx0]) orelse return null;
-            const b = convert(arr[idx1]) orelse {
+            const a = create(arr[idx0]) orelse return null;
+            const b = create(arr[idx1]) orelse {
                 c.Py_DECREF(a);
                 return null;
             };
@@ -335,7 +399,7 @@ pub fn getterMatrixNested(
 
                 var j: usize = 0;
                 while (j < cols) : (j += 1) {
-                    const val_obj = convert(mat[i][j]);
+                    const val_obj = create(mat[i][j]);
                     if (val_obj == null) {
                         c.Py_DECREF(row_list);
                         c.Py_DECREF(outer);
@@ -415,47 +479,12 @@ fn toArrayList(comptime T: type, seq_obj: ?*c.PyObject) !std.ArrayList(T) {
             const item = c.PySequence_GetItem(seq_obj, @intCast(i)); // New reference
             if (item == null) return error.PythonError;
             defer c.Py_DECREF(item);
-            break :blk try as(T, item);
+            break :blk try parse(T, item);
         };
         list.appendAssumeCapacity(val);
     }
 
     return list;
-}
-
-/// Convert Python value to Zig type using idiomatic error union
-pub fn as(comptime T: type, py_obj: ?*c.PyObject) ConversionError!T {
-    if (py_obj == null) {
-        return ConversionError.not_python_object;
-    }
-
-    return switch (@typeInfo(T)) {
-        .int => blk: {
-            // Always use PyLong_AsLong for better negative value handling
-            const val = c.PyLong_AsLong(py_obj);
-            if (val == -1 and c.PyErr_Occurred() != null) {
-                c.PyErr_Clear(); // Clear the Python error since we're handling it
-                break :blk ConversionError.not_integer;
-            }
-
-            // Check if value fits in target type
-            const min_val = std.math.minInt(T);
-            const max_val = std.math.maxInt(T);
-            if (val < min_val or val > max_val) {
-                break :blk ConversionError.integer_out_of_range;
-            }
-            break :blk @intCast(val);
-        },
-        .float => blk: {
-            const val = c.PyFloat_AsDouble(py_obj);
-            if (val == -1.0 and c.PyErr_Occurred() != null) {
-                c.PyErr_Clear(); // Clear the Python error since we're handling it
-                break :blk ConversionError.not_float;
-            }
-            break :blk @floatCast(val);
-        },
-        else => ConversionError.unsupported_type,
-    };
 }
 
 /// Convert Python object to Zig type with optional custom validation
@@ -466,9 +495,12 @@ pub fn convertWithValidation(
     field_name: []const u8,
     comptime validator: ?*const fn (field_name: []const u8, value: anytype) bool,
     error_message: ?[]const u8,
-) ConversionError!T {
+) !T {
     // First do the basic type conversion
-    const converted = as(T, py_obj) catch |err| {
+    const converted = parse(T, py_obj) catch |err| {
+        // If an exception is already set (e.g. MemoryError, specific ValueError), propagate it
+        if (c.PyErr_Occurred() != null) return err;
+
         switch (err) {
             ConversionError.not_integer => {
                 c.PyErr_SetString(c.PyExc_TypeError, "Expected integer value");
@@ -511,7 +543,7 @@ pub fn convertWithValidation(
 
 /// Parse a Python tuple representing a 2D point (x, y)
 /// Returns a Point(2, T) where T can be f32 or f64
-pub fn parsePointTuple(comptime T: type, point_obj: ?*c.PyObject) !Point(2, T) {
+fn parsePointTuple(comptime T: type, point_obj: ?*c.PyObject) !Point(2, T) {
     if (point_obj == null) {
         return error.InvalidPoint;
     }
@@ -548,7 +580,7 @@ pub fn parsePointTuple(comptime T: type, point_obj: ?*c.PyObject) !Point(2, T) {
 
 /// Parse a Python tuple representing a rectangle (left, top, right, bottom)
 /// Returns a Rectangle(T) where T can be any numeric type
-pub fn parseRectangleTuple(comptime T: type, tuple_obj: ?*c.PyObject) !zignal.Rectangle(T) {
+fn parseRectangleTuple(comptime T: type, tuple_obj: ?*c.PyObject) !zignal.Rectangle(T) {
     if (tuple_obj == null) {
         c.PyErr_SetString(c.PyExc_TypeError, "Rectangle tuple is null");
         return error.InvalidRectangle;
@@ -613,7 +645,7 @@ pub fn parseRectangleTuple(comptime T: type, tuple_obj: ?*c.PyObject) !zignal.Re
 
 /// Parse a Rectangle object or tuple to Zignal Rectangle(T)
 /// Accepts either a Rectangle instance or a tuple of (left, top, right, bottom)
-pub fn toRectangle(comptime T: type, rect_obj: ?*c.PyObject) !zignal.Rectangle(T) {
+fn parseRectangle(comptime T: type, rect_obj: ?*c.PyObject) !zignal.Rectangle(T) {
     const rectangle = @import("rectangle.zig");
 
     if (rect_obj == null) {
@@ -653,7 +685,7 @@ pub fn toRectangle(comptime T: type, rect_obj: ?*c.PyObject) !zignal.Rectangle(T
 }
 
 /// Parse a Python list of point tuples to an allocated slice of Point(2, T)
-pub fn toPointSlice(comptime T: type, list_obj: ?*c.PyObject) ![]Point(2, T) {
+fn parsePointSlice(comptime T: type, list_obj: ?*c.PyObject) ![]Point(2, T) {
     if (list_obj == null) {
         c.PyErr_SetString(c.PyExc_TypeError, "Points list is null");
         return error.InvalidPointList;
@@ -714,10 +746,10 @@ pub fn parsePointPairs(
     min_points: usize,
     comptime min_points_message: []const u8,
 ) !PointPairs(T) {
-    const from_points = toPointSlice(T, from_obj) catch |err| return err;
+    const from_points = parsePointSlice(T, from_obj) catch |err| return err;
     errdefer ctx.allocator.free(from_points);
 
-    const to_points = toPointSlice(T, to_obj) catch |err| return err;
+    const to_points = parsePointSlice(T, to_obj) catch |err| return err;
     errdefer ctx.allocator.free(to_points);
 
     if (from_points.len != to_points.len) {
@@ -754,7 +786,7 @@ pub fn projectPoints2D(points_obj: ?*c.PyObject, point_ctx: anytype, comptime ap
     }
 
     if (c.PySequence_Check(points_obj) != 0) {
-        const points = toPointSlice(f64, points_obj) catch return null;
+        const points = parsePointSlice(f64, points_obj) catch return null;
         defer ctx.allocator.free(points);
 
         const result_list = c.PyList_New(@intCast(points.len)) orelse return null;
