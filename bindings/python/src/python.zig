@@ -613,7 +613,7 @@ pub fn parseRectangleTuple(comptime T: type, tuple_obj: ?*c.PyObject) !zignal.Re
 
 /// Parse a Rectangle object or tuple to Zignal Rectangle(T)
 /// Accepts either a Rectangle instance or a tuple of (left, top, right, bottom)
-pub fn parseRectangle(comptime T: type, rect_obj: ?*c.PyObject) !zignal.Rectangle(T) {
+pub fn toRectangle(comptime T: type, rect_obj: ?*c.PyObject) !zignal.Rectangle(T) {
     const rectangle = @import("rectangle.zig");
 
     if (rect_obj == null) {

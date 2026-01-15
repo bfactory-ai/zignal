@@ -351,7 +351,7 @@ fn rectangle_clip(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const bounds_rect = python.parseRectangle(f64, params.bounds) catch return null;
+    const bounds_rect = python.toRectangle(f64, params.bounds) catch return null;
 
     var left = @max(self.left, bounds_rect.l);
     var top = @max(self.top, bounds_rect.t);
@@ -403,7 +403,7 @@ fn rectangle_intersect(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyO
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
     // Parse the other rectangle (can be Rectangle or tuple)
-    const other_rect = python.parseRectangle(f64, params.other) catch return null;
+    const other_rect = python.toRectangle(f64, params.other) catch return null;
 
     // Calculate intersection bounds
     const left = @max(self.left, other_rect.l);
@@ -458,7 +458,7 @@ fn rectangle_iou(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject)
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
     // Parse the other rectangle (can be Rectangle or tuple)
-    const other_rect = python.parseRectangle(f64, params.other) catch return null;
+    const other_rect = python.toRectangle(f64, params.other) catch return null;
 
     // Convert self to Rectangle(f64)
     const self_rect = getSelfAsZignalRect(self_obj);
@@ -530,7 +530,7 @@ fn rectangle_overlaps(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwargs: ?*c.Py
     _ = python.validateRange(f64, coverage_thresh, 0.0, 1.0, "coverage_thresh") catch return null;
 
     // Parse the other rectangle (can be Rectangle or tuple)
-    const other_rect = python.parseRectangle(f64, params.other) catch return null;
+    const other_rect = python.toRectangle(f64, params.other) catch return null;
 
     // Convert self to Rectangle(f64)
     const self_rect = getSelfAsZignalRect(self_obj);
@@ -576,7 +576,7 @@ fn rectangle_covers(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const other = python.parseRectangle(f64, params.other) catch return null;
+    const other = python.toRectangle(f64, params.other) catch return null;
 
     const self_rect = getSelfAsZignalRect(self_obj);
     const covers = self_rect.covers(other);
@@ -601,7 +601,7 @@ fn rectangle_merge(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const other = python.parseRectangle(f64, params.other) catch return null;
+    const other = python.toRectangle(f64, params.other) catch return null;
     const self_rect = getSelfAsZignalRect(self_obj);
     const merged = self_rect.merge(other);
 

@@ -399,7 +399,7 @@ fn canvas_draw_rectangle(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.P
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const rect = python.parseRectangle(f32, params.rect) catch return null;
+    const rect = python.toRectangle(f32, params.rect) catch return null;
     const rgba = color_utils.parseColor(Rgba, params.color) catch return null;
     const width_val = python.validateNonNegative(u32, params.width, "Width") catch return null;
     const mode_val = python.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
@@ -502,7 +502,7 @@ fn canvas_fill_rectangle(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.P
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const rect = python.parseRectangle(f32, params.rect) catch return null;
+    const rect = python.toRectangle(f32, params.rect) catch return null;
     const rgba = color_utils.parseColor(Rgba, params.color) catch return null;
     const mode_val = python.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
     const draw_mode: DrawMode = @enumFromInt(mode_val);
@@ -550,7 +550,7 @@ fn canvas_draw_image(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
     var rect_opt: ?Rectangle(usize) = null;
     if (params.source_rect) |rect_obj| {
         if (rect_obj != c.Py_None()) {
-            rect_opt = python.parseRectangle(usize, rect_obj) catch return null;
+            rect_opt = python.toRectangle(usize, rect_obj) catch return null;
         }
     }
 

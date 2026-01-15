@@ -508,7 +508,7 @@ pub fn image_crop(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
     // Parse the Rectangle object
-    const rect = python.parseRectangle(f32, params.rect) catch return null;
+    const rect = python.toRectangle(f32, params.rect) catch return null;
 
     return self.py_image.?.dispatch(.{rect}, struct {
         fn apply(img: anytype, r: zignal.Rectangle(f32)) ?*c.PyObject {
@@ -574,7 +574,7 @@ pub fn image_extract(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
     const method_value = params.method;
 
     // Parse the Rectangle object
-    const rect = python.parseRectangle(f32, rect_obj) catch return null;
+    const rect = python.toRectangle(f32, rect_obj) catch return null;
 
     const tag_extract = enum_utils.longToUnionTag(Interpolation, method_value) catch {
         python.setValueError("Invalid interpolation method", .{});
@@ -695,7 +695,7 @@ pub fn image_insert(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     const source = python.safeCast(ImageObject, source_obj);
 
     // Parse the Rectangle object
-    const rect = python.parseRectangle(f32, rect_obj) catch return null;
+    const rect = python.toRectangle(f32, rect_obj) catch return null;
 
     const tag_insert = enum_utils.longToUnionTag(Interpolation, method_value) catch {
         python.setValueError("Invalid interpolation method", .{});
