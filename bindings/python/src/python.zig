@@ -17,7 +17,7 @@ pub const c = @cImport({
 });
 
 /// Helper to register a type with a module
-pub fn registerType(module: [*c]c.PyObject, comptime name: []const u8, type_obj: *c.PyTypeObject) !void {
+pub fn register(module: [*c]c.PyObject, comptime name: []const u8, type_obj: *c.PyTypeObject) !void {
     if (c.PyType_Ready(type_obj) < 0) return error.TypeInitFailed;
 
     // TODO(py3.10): drop explicit cast once minimum Python >= 3.11

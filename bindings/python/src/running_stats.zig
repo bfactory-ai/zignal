@@ -5,7 +5,7 @@ const RunningStats = zignal.RunningStats;
 
 const python = @import("python.zig");
 const allocator = python.ctx.allocator;
-pub const registerType = python.registerType;
+pub const registerType = python.register;
 const c = python.c;
 const stub_metadata = @import("stub_metadata.zig");
 

@@ -81,7 +81,7 @@ pub export fn PyInit__zignal() ?*c.PyObject {
     };
 
     inline for (type_table) |entry| {
-        python.registerType(@ptrCast(m), entry.name, entry.ty) catch |err| {
+        python.register(@ptrCast(m), entry.name, entry.ty) catch |err| {
             std.log.err("Failed to register {s}: {}", .{ entry.name, err });
             c.Py_DECREF(m);
             return null;

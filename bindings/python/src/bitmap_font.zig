@@ -6,7 +6,7 @@ const BitmapFont = zignal.BitmapFont;
 const python = @import("python.zig");
 const ctx = python.ctx;
 const allocator = ctx.allocator;
-pub const registerType = python.registerType;
+pub const registerType = python.register;
 const c = python.c;
 const stub_metadata = @import("stub_metadata.zig");
 

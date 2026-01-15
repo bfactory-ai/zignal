@@ -4,7 +4,7 @@ const Point2F = zignal.Point(2, f64);
 const rectangle = @import("rectangle.zig");
 
 const python = @import("python.zig");
-pub const registerType = python.registerType;
+pub const registerType = python.register;
 const c = python.c;
 const stub_metadata = @import("stub_metadata.zig");
 
