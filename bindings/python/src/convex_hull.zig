@@ -32,7 +32,7 @@ fn convex_hull_init(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     const points_obj = params.points orelse return 0;
 
     // Parse the point list
-    const points = python.parsePointList(f64, points_obj) catch return -1;
+    const points = python.toPointSlice(f64, points_obj) catch return -1;
     defer python.ctx.allocator.free(points);
 
     // Find convex hull
@@ -119,7 +119,7 @@ fn convex_hull_find(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     const points_obj = params.points;
 
     // Parse the point list
-    const points = python.parsePointList(f64, points_obj) catch {
+    const points = python.toPointSlice(f64, points_obj) catch {
         // Error already set by parsePointList
         return null;
     };

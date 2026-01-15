@@ -95,7 +95,7 @@ pub const ArgsTupleHandle = struct {
 
 /// Ensure we always have a tuple for varargs-style APIs.
 /// Returns a handle describing whether the tuple is newly allocated (thus owned).
-pub fn ensureArgs(args: ?*c.PyObject) ?ArgsTupleHandle {
+fn ensureArgs(args: ?*c.PyObject) ?ArgsTupleHandle {
     if (args) |existing| {
         return ArgsTupleHandle{ .tuple = existing, .owned = false };
     }
@@ -391,7 +391,7 @@ pub const ConversionError = error{
 /// - error.PythonError: If a Python C-API call fails (e.g., getting an item).
 /// - error.OutOfMemory: If memory allocation fails.
 /// - ConversionError: If an element cannot be converted to type T.
-pub fn listFromPython(comptime T: type, seq_obj: ?*c.PyObject) !std.ArrayList(T) {
+fn toArrayList(comptime T: type, seq_obj: ?*c.PyObject) !std.ArrayList(T) {
     if (seq_obj == null) {
         c.PyErr_SetString(c.PyExc_TypeError, "Expected a sequence, got None");
         return error.InvalidType;
@@ -653,7 +653,7 @@ pub fn parseRectangle(comptime T: type, rect_obj: ?*c.PyObject) !zignal.Rectangl
 }
 
 /// Parse a Python list of point tuples to an allocated slice of Point(2, T)
-pub fn parsePointList(comptime T: type, list_obj: ?*c.PyObject) ![]Point(2, T) {
+pub fn toPointSlice(comptime T: type, list_obj: ?*c.PyObject) ![]Point(2, T) {
     if (list_obj == null) {
         c.PyErr_SetString(c.PyExc_TypeError, "Points list is null");
         return error.InvalidPointList;
@@ -714,10 +714,10 @@ pub fn parsePointPairs(
     min_points: usize,
     comptime min_points_message: []const u8,
 ) !PointPairs(T) {
-    const from_points = parsePointList(T, from_obj) catch |err| return err;
+    const from_points = toPointSlice(T, from_obj) catch |err| return err;
     errdefer ctx.allocator.free(from_points);
 
-    const to_points = parsePointList(T, to_obj) catch |err| return err;
+    const to_points = toPointSlice(T, to_obj) catch |err| return err;
     errdefer ctx.allocator.free(to_points);
 
     if (from_points.len != to_points.len) {
@@ -754,7 +754,7 @@ pub fn projectPoints2D(points_obj: ?*c.PyObject, point_ctx: anytype, comptime ap
     }
 
     if (c.PySequence_Check(points_obj) != 0) {
-        const points = parsePointList(f64, points_obj) catch return null;
+        const points = toPointSlice(f64, points_obj) catch return null;
         defer ctx.allocator.free(points);
 
         const result_list = c.PyList_New(@intCast(points.len)) orelse return null;

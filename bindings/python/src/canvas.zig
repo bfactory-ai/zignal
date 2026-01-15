@@ -432,7 +432,7 @@ fn canvas_draw_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyO
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const points = python.parsePointList(f32, params.points) catch return null;
+    const points = python.toPointSlice(f32, params.points) catch return null;
     defer allocator.free(points);
     const rgba = color_utils.parseColor(Rgba, params.color) catch return null;
     const width_val = python.validateNonNegative(u32, params.width, "Width") catch return null;
@@ -597,7 +597,7 @@ fn canvas_fill_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyO
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const points = python.parsePointList(f32, params.points) catch return null;
+    const points = python.toPointSlice(f32, params.points) catch return null;
     defer allocator.free(points);
     const rgba = color_utils.parseColor(Rgba, params.color) catch return null;
     const mode_val = python.validateRange(u32, params.mode, 0, 1, "Mode") catch return null;
@@ -723,7 +723,7 @@ fn canvas_draw_spline_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const points = python.parsePointList(f32, params.points) catch return null;
+    const points = python.toPointSlice(f32, params.points) catch return null;
     defer allocator.free(points);
     const rgba = color_utils.parseColor(Rgba, params.color) catch return null;
     const width_val = python.validateNonNegative(u32, params.width, "Width") catch return null;
@@ -748,7 +748,7 @@ fn canvas_fill_spline_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const points = python.parsePointList(f32, params.points) catch return null;
+    const points = python.toPointSlice(f32, params.points) catch return null;
     defer allocator.free(points);
     const rgba = color_utils.parseColor(Rgba, params.color) catch return null;
     const tension_val = python.validateRange(f32, params.tension, 0.0, 1.0, "Tension") catch return null;
