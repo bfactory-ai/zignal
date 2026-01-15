@@ -292,7 +292,7 @@ fn canvas_dealloc(self_obj: ?*c.PyObject) callconv(.c) void {
         c.Py_XDECREF(ref);
     }
 
-    python.getPyType(self_obj).*.tp_free.?(self_obj);
+    python.typeOf(self_obj).*.tp_free.?(self_obj);
 }
 
 fn canvas_repr(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {

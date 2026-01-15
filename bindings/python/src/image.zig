@@ -327,7 +327,7 @@ fn image_dealloc(self_obj: ?*c.PyObject) callconv(.c) void {
         c.Py_XDECREF(ref);
     }
 
-    python.getPyType(self_obj).*.tp_free.?(self_obj);
+    python.typeOf(self_obj).*.tp_free.?(self_obj);
 }
 
 fn image_repr(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
@@ -416,7 +416,7 @@ fn image_setitem(self_obj: ?*c.PyObject, key: ?*c.PyObject, value: ?*c.PyObject)
     // Check if key is a slice object (for view[:] = image syntax)
     // Use direct type comparison instead of PySlice_Check to avoid Zig translation issues
     // TODO: replace with `if (c.PySlice_Check(key) != 0) {` after Python 3.10 support is dropped
-    if (python.getPyType(key) == &c.PySlice_Type) {
+    if (python.typeOf(key) == &c.PySlice_Type) {
         // Handle slice assignment
         var start: c.Py_ssize_t = undefined;
         var stop: c.Py_ssize_t = undefined;

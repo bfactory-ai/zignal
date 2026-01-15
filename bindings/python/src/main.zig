@@ -48,7 +48,7 @@ var zignal_methods = stub_metadata.functionsToPyMethodDefArray(&module_functions
 
 // Replaces the Py_TYPE macro/inline function which can cause undefined symbol errors.
 comptime {
-    @export(&python.getPyType, .{ .name = "Py_TYPE" });
+    @export(&python.typeOf, .{ .name = "Py_TYPE" });
 }
 
 pub export fn PyInit__zignal() ?*c.PyObject {
