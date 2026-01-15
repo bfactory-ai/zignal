@@ -394,13 +394,12 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
             const self: *ObjectType = @ptrCast(self_obj);
 
             // Parse arguments: overlay (required) and mode (optional keyword, defaults to NORMAL)
-            const python_local = @import("python.zig");
             const Params = struct {
                 overlay: ?*c.PyObject,
                 mode: ?*c.PyObject = null,
             };
             var params: Params = undefined;
-            python_local.parseArgs(Params, args, kwds, &params) catch return null;
+            python.parseArgs(Params, args, kwds, &params) catch return null;
 
             const overlay_obj = params.overlay;
             const mode_obj = params.mode;

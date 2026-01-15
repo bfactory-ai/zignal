@@ -82,12 +82,12 @@ const rectangle_init_center_doc =
 ;
 
 fn rectangle_init_center(_: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-    const Params = struct { x: f64, y: f64, w: f64, h: f64 };
+    const Params = struct { x: f64, y: f64, width: f64, height: f64 };
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
-    _ = python.validatePositive(f64, params.w, "Width") catch return null;
-    _ = python.validatePositive(f64, params.h, "Height") catch return null;
-    const rect: Rectangle = .initCenter(params.x, params.y, params.w, params.h);
+    _ = python.validatePositive(f64, params.width, "Width") catch return null;
+    _ = python.validatePositive(f64, params.height, "Height") catch return null;
+    const rect: Rectangle = .initCenter(params.x, params.y, params.width, params.height);
     return create(rect);
 }
 
