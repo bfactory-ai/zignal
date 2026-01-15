@@ -95,7 +95,7 @@ pub const ArgsTupleHandle = struct {
 
 /// Ensure we always have a tuple for varargs-style APIs.
 /// Returns a handle describing whether the tuple is newly allocated (thus owned).
-pub fn ensureArgsTuple(args: ?*c.PyObject) ?ArgsTupleHandle {
+pub fn ensureArgs(args: ?*c.PyObject) ?ArgsTupleHandle {
     if (args) |existing| {
         return ArgsTupleHandle{ .tuple = existing, .owned = false };
     }
@@ -118,7 +118,7 @@ pub fn callMethodBorrowingArgs(target: ?*c.PyObject, method_name: [*c]const u8, 
 
 /// Call an object's method, automatically creating an empty args tuple when needed.
 pub fn callMethod(target: ?*c.PyObject, method_name: [*c]const u8, args: ?*c.PyObject) ?*c.PyObject {
-    const handle = ensureArgsTuple(args) orelse return null;
+    const handle = ensureArgs(args) orelse return null;
     defer handle.deinit();
     return callMethodBorrowingArgs(target, method_name, handle.tuple);
 }
