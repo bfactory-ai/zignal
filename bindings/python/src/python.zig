@@ -34,7 +34,7 @@ pub fn getPyType(obj: ?*c.PyObject) callconv(.c) *c.PyTypeObject {
 }
 
 /// Get Python boolean singletons using the stable Python C API
-pub fn getPyBool(value: bool) [*c]c.PyObject {
+pub fn boolean(value: bool) [*c]c.PyObject {
     return c.PyBool_FromLong(@intFromBool(value));
 }
 
@@ -55,7 +55,7 @@ pub fn convert(value: anytype) ?*c.PyObject {
         else
             c.PyLong_FromLongLong(@intCast(value)),
         .float => c.PyFloat_FromDouble(value),
-        .bool => @ptrCast(getPyBool(value)),
+        .bool => @ptrCast(boolean(value)),
         .pointer => |ptr| blk: {
             if (ptr.size == .Slice and ptr.child == u8) {
                 break :blk c.PyUnicode_FromStringAndSize(value.ptr, @intCast(value.len));

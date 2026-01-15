@@ -555,7 +555,7 @@ fn image_richcompare(self_obj: [*c]c.PyObject, other_obj: [*c]c.PyObject, op: c_
     // Variant-aware equality: compare size and per-pixel RGBA values
     if (self.py_image == null or other.py_image == null) {
         // If either is uninitialized, they are equal only for != case
-        return @ptrCast(python.getPyBool(op != c.Py_EQ));
+        return @ptrCast(python.boolean(op != c.Py_EQ));
     }
     // Store in local variables after null check to avoid repeated unwrapping
     const self_img = self.py_image.?;
@@ -564,7 +564,7 @@ fn image_richcompare(self_obj: [*c]c.PyObject, other_obj: [*c]c.PyObject, op: c_
     const dims_other = .{ other_img.rows(), other_img.cols() };
 
     if (dims_self[0] != dims_other[0] or dims_self[1] != dims_other[1]) {
-        return @ptrCast(python.getPyBool(op != c.Py_EQ));
+        return @ptrCast(python.boolean(op != c.Py_EQ));
     }
 
     const rows = dims_self[0];
@@ -585,9 +585,9 @@ fn image_richcompare(self_obj: [*c]c.PyObject, other_obj: [*c]c.PyObject, op: c_
     }
 
     if (op == c.Py_EQ) {
-        return @ptrCast(python.getPyBool(equal));
+        return @ptrCast(python.boolean(equal));
     } else {
-        return @ptrCast(python.getPyBool(!equal));
+        return @ptrCast(python.boolean(!equal));
     }
 }
 

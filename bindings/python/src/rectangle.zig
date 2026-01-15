@@ -4,7 +4,6 @@ const zignal = @import("zignal");
 const Rectangle = zignal.Rectangle;
 
 const python = @import("python.zig");
-pub const registerType = python.registerType;
 const c = python.c;
 const stub_metadata = @import("stub_metadata.zig");
 
@@ -132,7 +131,7 @@ const rectangle_is_empty_doc =
 fn rectangle_is_empty(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     _ = args;
     const rect = getSelfAsZignalRect(self_obj);
-    return @ptrCast(python.getPyBool(rect.isEmpty()));
+    return @ptrCast(python.boolean(rect.isEmpty()));
 }
 
 const rectangle_area_doc =
@@ -178,7 +177,7 @@ fn rectangle_contains(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyOb
     const p = python.parsePointTuple(f64, params.point) catch return null;
 
     const rect = getSelfAsZignalRect(self_obj);
-    return @ptrCast(python.getPyBool(rect.contains(p)));
+    return @ptrCast(python.boolean(rect.contains(p)));
 }
 
 const rectangle_center_doc =
@@ -539,7 +538,7 @@ fn rectangle_overlaps(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwargs: ?*c.Py
     // Check overlap
     const overlaps = self_rect.overlaps(other_rect, iou_thresh, coverage_thresh);
 
-    return @ptrCast(python.getPyBool(overlaps));
+    return @ptrCast(python.boolean(overlaps));
 }
 
 const rectangle_diagonal_doc =
@@ -582,7 +581,7 @@ fn rectangle_covers(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     const self_rect = getSelfAsZignalRect(self_obj);
     const covers = self_rect.covers(other);
 
-    return @ptrCast(python.getPyBool(covers));
+    return @ptrCast(python.boolean(covers));
 }
 
 const rectangle_merge_doc =
