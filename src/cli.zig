@@ -12,6 +12,7 @@ pub fn main(init: std.process.Init) !void {
             var stdout = std.Io.File.stdout().writer(init.io, &buffer);
             try stdout.interface.print("{s}\n", .{zignal.version});
             try stdout.interface.flush();
+            return;
         }
     }
 }
