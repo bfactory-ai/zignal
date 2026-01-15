@@ -42,6 +42,7 @@ pub fn build(b: *Build) void {
             .root_source_file = b.path("src/cli.zig"),
             .target = target,
             .optimize = optimize,
+            .strip = optimize != .Debug,
             .imports = &.{
                 .{ .name = "zignal", .module = zignal },
             },
@@ -129,22 +130,13 @@ pub fn build(b: *Build) void {
             .target = target,
             .optimize = optimize,
             .strip = optimize != .Debug,
+            .imports = &.{.{ .name = "zignal", .module = zignal }},
         }),
     });
 
     // Link Python for shared library
     const target_info = target.result;
     linkPython(b, py_module, "python3", target.result);
-
-    // Add zignal module as dependency
-    py_module.root_module.addImport("zignal", b.addModule("zignal", .{
-        .root_source_file = b.path("src/root.zig"),
-    }));
-
-    // Add build options to python bindings
-    const py_options = b.addOptions();
-    py_options.addOption([]const u8, "version", b.fmt("{f}", .{version}));
-    py_module.root_module.addOptions("build_options", py_options);
 
     // Determine output file extension based on target platform
     const extension = switch (target_info.os.tag) {
@@ -161,21 +153,12 @@ pub fn build(b: *Build) void {
             .root_source_file = b.path("bindings/python/src/generate_stubs.zig"),
             .target = target,
             .optimize = .Debug,
+            .imports = &.{.{ .name = "zignal", .module = zignal }},
         }),
     });
 
     // Link Python for executable
     linkPython(b, stub_generator, "python3-embed", target_info);
-
-    // Add zignal module as dependency for stub generator
-    stub_generator.root_module.addImport("zignal", b.addModule("zignal", .{
-        .root_source_file = b.path("src/root.zig"),
-    }));
-
-    // Add build options for version info
-    const stub_options = b.addOptions();
-    stub_options.addOption([]const u8, "version", b.fmt("{f}", .{version}));
-    stub_generator.root_module.addOptions("build_options", stub_options);
 
     // Run stub generator in the python bindings directory
     const run_stub_generator = b.addRunArtifact(stub_generator);
