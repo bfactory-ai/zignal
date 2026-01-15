@@ -174,7 +174,7 @@ fn convex_hull_contains(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.Py
     const p = python.parse(zignal.Point(2, f64), params.point) catch return null;
     const result = hull.contains(p);
 
-    return @ptrCast(python.boolean(result));
+    return @ptrCast(python.create(result));
 }
 
 const convex_hull_get_rectangle_doc =

@@ -33,11 +33,6 @@ pub fn typeOf(obj: ?*c.PyObject) callconv(.c) *c.PyTypeObject {
     return @ptrCast(obj.?.ob_type);
 }
 
-/// Get Python boolean singletons using the stable Python C API
-pub fn boolean(value: bool) [*c]c.PyObject {
-    return c.PyBool_FromLong(@intFromBool(value));
-}
-
 /// Helper to return Python None
 pub fn none() ?*c.PyObject {
     const val = c.Py_None();
@@ -55,7 +50,7 @@ pub fn create(value: anytype) ?*c.PyObject {
         else
             c.PyLong_FromLongLong(@intCast(value)),
         .float => c.PyFloat_FromDouble(value),
-        .bool => @ptrCast(boolean(value)),
+        .bool => c.PyBool_FromLong(@intFromBool(value)),
         .pointer => |ptr| blk: {
             if (ptr.size == .Slice and ptr.child == u8) {
                 break :blk c.PyUnicode_FromStringAndSize(value.ptr, @intCast(value.len));

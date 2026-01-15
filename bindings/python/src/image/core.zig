@@ -469,7 +469,7 @@ pub fn image_is_contiguous(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(
         }
     }.apply);
 
-    return @ptrCast(python.boolean(is_contig));
+    return @ptrCast(python.create(is_contig));
 }
 
 // ============================================================================

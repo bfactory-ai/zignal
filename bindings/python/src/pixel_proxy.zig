@@ -63,7 +63,7 @@ fn PixelProxyBinding(comptime ColorType: type, comptime ProxyObjectType: type) t
             }
             const parent = Self.parentFromObj(@ptrCast(self_obj));
             if (parent == null or parent.?.py_image == null) {
-                return @ptrCast(python.boolean(op != c.Py_EQ));
+                return @ptrCast(python.create(op != c.Py_EQ));
             }
             const proxy: *ProxyObjectType = @ptrCast(self_obj);
             const px = parent.?.py_image.?.getPixelRgba(@intCast(proxy.row), @intCast(proxy.col));
@@ -85,7 +85,7 @@ fn PixelProxyBinding(comptime ColorType: type, comptime ProxyObjectType: type) t
                 c.Py_INCREF(not_impl);
                 return not_impl;
             }
-            return if (op == c.Py_EQ) @ptrCast(python.boolean(equal)) else @ptrCast(python.boolean(!equal));
+            return if (op == c.Py_EQ) @ptrCast(python.create(equal)) else @ptrCast(python.create(!equal));
         }
 
         fn getField(comptime index: usize) fn (?*c.PyObject, ?*anyopaque) callconv(.c) ?*c.PyObject {

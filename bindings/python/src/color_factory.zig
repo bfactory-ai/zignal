@@ -787,7 +787,7 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
             const equal = self_rgba == other_rgba;
 
             const result = if (op == c.Py_EQ) equal else !equal;
-            return @ptrCast(python.boolean(result));
+            return @ptrCast(python.create(result));
         }
 
         /// __format__ method implementation
