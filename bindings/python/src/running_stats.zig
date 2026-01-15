@@ -82,7 +82,7 @@ fn running_stats_add(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
     stats_ptr.add(@floatCast(params.value));
-    return python.getPyNone();
+    return python.none();
 }
 
 const running_stats_extend_doc =
@@ -139,7 +139,7 @@ fn running_stats_extend(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.Py
         stats_ptr.add(@floatCast(value));
     }
 
-    return python.getPyNone();
+    return python.none();
 }
 
 const running_stats_clear_doc =
@@ -158,7 +158,7 @@ fn running_stats_clear(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) 
     _ = args;
     const stats_ptr = python.unwrap(RunningStatsObject, "stats_ptr", self_obj, "RunningStats") orelse return null;
     stats_ptr.clear();
-    return python.getPyNone();
+    return python.none();
 }
 
 const running_stats_scale_doc =

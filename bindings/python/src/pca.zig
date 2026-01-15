@@ -180,7 +180,7 @@ fn pca_fit(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callc
         }
     };
 
-    return python.getPyNone();
+    return python.none();
 }
 
 const pca_project_doc =

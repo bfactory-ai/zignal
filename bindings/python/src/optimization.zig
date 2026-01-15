@@ -93,7 +93,7 @@ fn assignment_get_assignments(self_obj: ?*c.PyObject, closure: ?*anyopaque) call
             const item = if (assignment) |col|
                 c.PyLong_FromLong(@intCast(col))
             else
-                python.getPyNone();
+                python.none();
 
             if (item == null) {
                 c.Py_DECREF(list);

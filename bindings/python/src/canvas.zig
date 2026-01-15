@@ -347,7 +347,7 @@ fn canvas_fill(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
     const rgba = color_utils.parseColor(Rgba, @ptrCast(params.color)) catch return null;
     canvas.fill(rgba);
 
-    return python.getPyNone();
+    return python.none();
 }
 
 // Draw methods
@@ -373,7 +373,7 @@ fn canvas_draw_line(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
 
     canvas.drawLine(p1, p2, rgba, width_val, draw_mode);
 
-    return python.getPyNone();
+    return python.none();
 }
 
 const canvas_draw_line_doc =
@@ -407,7 +407,7 @@ fn canvas_draw_rectangle(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.P
 
     canvas.drawRectangle(rect, rgba, width_val, draw_mode);
 
-    return python.getPyNone();
+    return python.none();
 }
 
 const canvas_draw_rectangle_doc =
@@ -441,7 +441,7 @@ fn canvas_draw_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyO
 
     canvas.drawPolygon(points, rgba, width_val, draw_mode);
 
-    return python.getPyNone();
+    return python.none();
 }
 
 const canvas_draw_polygon_doc =
@@ -476,7 +476,7 @@ fn canvas_draw_circle(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyOb
 
     canvas.drawCircle(center, radius, rgba, width_val, draw_mode);
 
-    return python.getPyNone();
+    return python.none();
 }
 
 const canvas_draw_circle_doc =
@@ -509,7 +509,7 @@ fn canvas_fill_rectangle(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.P
 
     canvas.fillRectangle(rect, rgba, draw_mode);
 
-    return python.getPyNone();
+    return python.none();
 }
 
 const canvas_fill_rectangle_doc =
@@ -568,7 +568,7 @@ fn canvas_draw_image(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
 
     canvas.drawImage(py_image_ptr, pos, rect_opt, blend_mode);
 
-    return python.getPyNone();
+    return python.none();
 }
 
 const canvas_draw_image_doc =
@@ -608,7 +608,7 @@ fn canvas_fill_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyO
         return null;
     };
 
-    return python.getPyNone();
+    return python.none();
 }
 
 const canvas_fill_polygon_doc =
@@ -640,7 +640,7 @@ fn canvas_fill_circle(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyOb
 
     canvas.fillCircle(center, radius, rgba, draw_mode);
 
-    return python.getPyNone();
+    return python.none();
 }
 
 const canvas_fill_circle_doc =
@@ -678,7 +678,7 @@ fn canvas_draw_quadratic_bezier(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds
 
     canvas.drawQuadraticBezier(p0, p1, p2, rgba, width_val, draw_mode);
 
-    return python.getPyNone();
+    return python.none();
 }
 
 fn canvas_draw_cubic_bezier(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
@@ -707,7 +707,7 @@ fn canvas_draw_cubic_bezier(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*
 
     canvas.drawCubicBezier(p0, p1, p2, p3, rgba, width_val, draw_mode);
 
-    return python.getPyNone();
+    return python.none();
 }
 
 fn canvas_draw_spline_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
@@ -733,7 +733,7 @@ fn canvas_draw_spline_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
 
     canvas.drawSplinePolygon(points, rgba, width_val, tension_val, draw_mode);
 
-    return python.getPyNone();
+    return python.none();
 }
 
 fn canvas_fill_spline_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
@@ -760,7 +760,7 @@ fn canvas_fill_spline_polygon(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: 
         return null;
     };
 
-    return python.getPyNone();
+    return python.none();
 }
 
 fn canvas_draw_arc(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
@@ -792,7 +792,7 @@ fn canvas_draw_arc(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
         return null;
     };
 
-    return python.getPyNone();
+    return python.none();
 }
 
 fn canvas_fill_arc(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
@@ -823,7 +823,7 @@ fn canvas_fill_arc(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
         return null;
     };
 
-    return python.getPyNone();
+    return python.none();
 }
 
 fn canvas_draw_text(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
@@ -872,7 +872,7 @@ fn canvas_draw_text(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
         canvas.drawText(text, position, rgba, font, @floatCast(params.scale), draw_mode);
     }
 
-    return python.getPyNone();
+    return python.none();
 }
 
 // Property getters

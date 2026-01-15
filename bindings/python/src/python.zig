@@ -39,10 +39,10 @@ pub fn getPyBool(value: bool) [*c]c.PyObject {
 }
 
 /// Helper to return Python None
-pub fn getPyNone() ?*c.PyObject {
-    const none = c.Py_None();
-    c.Py_INCREF(none);
-    return none;
+pub fn none() ?*c.PyObject {
+    const val = c.Py_None();
+    c.Py_INCREF(val);
+    return val;
 }
 
 /// Convert a Zig value to Python object
@@ -223,7 +223,7 @@ pub fn getterOptionalFieldWhere(
     const Gen = struct {
         fn get(self_obj: ?*c.PyObject, _: ?*anyopaque) callconv(.c) ?*c.PyObject {
             const self: *Obj = @ptrCast(self_obj.?);
-            if (!Predicate(self)) return getPyNone();
+            if (!Predicate(self)) return none();
             const val = @field(self, field_name);
             return convert(val);
         }
@@ -255,7 +255,7 @@ pub fn getterOptionalPtr(
             if (@field(self, field_name)) |ptr| {
                 return converter(ptr);
             }
-            return getPyNone();
+            return none();
         }
     };
     return @ptrCast(&Gen.get);
@@ -273,7 +273,7 @@ pub fn getterTuple2FieldsWhere(
     const Gen = struct {
         fn get(self_obj: ?*c.PyObject, _: ?*anyopaque) callconv(.c) ?*c.PyObject {
             const self: *Obj = @ptrCast(self_obj.?);
-            if (!Predicate(self)) return getPyNone();
+            if (!Predicate(self)) return none();
             const a = convert(@field(self, field0)) orelse return null;
             const b = convert(@field(self, field1)) orelse {
                 c.Py_DECREF(a);

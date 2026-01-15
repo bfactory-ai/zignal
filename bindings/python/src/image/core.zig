@@ -12,12 +12,12 @@ const parseColorTo = @import("../color_utils.zig").parseColor;
 const moveImageToPython = @import("../image.zig").moveImageToPython;
 const ImageObject = @import("../image.zig").ImageObject;
 const getImageType = @import("../image.zig").getImageType;
+const PyImageMod = @import("../PyImage.zig");
+const PyImage = PyImageMod.PyImage;
 const python = @import("../python.zig");
 const ctx = python.ctx;
 const allocator = ctx.allocator;
 const c = python.c;
-const PyImageMod = @import("../PyImage.zig");
-const PyImage = PyImageMod.PyImage;
 const rectangle = @import("../rectangle.zig");
 
 const Rgba = zignal.Rgba(u8);
@@ -302,7 +302,7 @@ pub fn image_save(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
                 python.setErrorWithPath(err, path);
                 return null;
             };
-            return python.getPyNone();
+            return python.none();
         }
     }.apply);
 }
@@ -377,7 +377,7 @@ pub fn image_fill(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
         fn apply(img: anytype, color_obj: ?*c.PyObject) ?*c.PyObject {
             const T = @TypeOf(img.data[0]);
             img.fill(parseColorTo(T, color_obj) catch return null);
-            return python.getPyNone();
+            return python.none();
         }
     }.apply);
 }
@@ -971,7 +971,7 @@ pub fn image_set_border(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.Py
             } else {
                 img.setBorder(r, std.mem.zeroes(T));
             }
-            return python.getPyNone();
+            return python.none();
         }
     }.apply);
 }

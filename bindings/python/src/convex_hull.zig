@@ -133,7 +133,7 @@ fn convex_hull_find(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
 
     // Check if hull is degenerate
     if (hull_points == null) {
-        return python.getPyNone();
+        return python.none();
     }
 
     return convertHullToPython(hull_points.?);
@@ -145,7 +145,7 @@ fn convex_hull_get_points(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv
     const hull = python.unwrap(ConvexHullObject, "hull", self_obj, "ConvexHull") orelse return null;
 
     if (!hull.isValid()) {
-        return python.getPyNone();
+        return python.none();
     }
 
     return convertHullToPython(hull.hull.items);
@@ -205,7 +205,7 @@ fn convex_hull_get_rectangle(self_obj: ?*c.PyObject, args: ?*c.PyObject) callcon
         return c.PyObject_CallObject(@ptrCast(&rectangle.RectangleType), args_tuple);
     }
 
-    return python.getPyNone();
+    return python.none();
 }
 
 pub const convex_hull_methods_metadata = [_]stub_metadata.MethodWithMetadata{
