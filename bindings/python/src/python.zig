@@ -415,7 +415,7 @@ fn toArrayList(comptime T: type, seq_obj: ?*c.PyObject) !std.ArrayList(T) {
             const item = c.PySequence_GetItem(seq_obj, @intCast(i)); // New reference
             if (item == null) return error.PythonError;
             defer c.Py_DECREF(item);
-            break :blk try toZig(T, item);
+            break :blk try as(T, item);
         };
         list.appendAssumeCapacity(val);
     }
@@ -424,7 +424,7 @@ fn toArrayList(comptime T: type, seq_obj: ?*c.PyObject) !std.ArrayList(T) {
 }
 
 /// Convert Python value to Zig type using idiomatic error union
-pub fn toZig(comptime T: type, py_obj: ?*c.PyObject) ConversionError!T {
+pub fn as(comptime T: type, py_obj: ?*c.PyObject) ConversionError!T {
     if (py_obj == null) {
         return ConversionError.not_python_object;
     }
@@ -468,7 +468,7 @@ pub fn convertWithValidation(
     error_message: ?[]const u8,
 ) ConversionError!T {
     // First do the basic type conversion
-    const converted = toZig(T, py_obj) catch |err| {
+    const converted = as(T, py_obj) catch |err| {
         switch (err) {
             ConversionError.not_integer => {
                 c.PyErr_SetString(c.PyExc_TypeError, "Expected integer value");

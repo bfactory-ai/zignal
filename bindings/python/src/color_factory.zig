@@ -118,7 +118,7 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
                     const field_name = field.name;
 
                     // Convert Python value using idiomatic error union
-                    const new_value = python.toZig(field.type, @ptrCast(value_obj)) catch |err| {
+                    const new_value = python.as(field.type, @ptrCast(value_obj)) catch |err| {
                         switch (err) {
                             python.ConversionError.not_integer => {
                                 c.PyErr_SetString(c.PyExc_TypeError, "Expected integer value");
