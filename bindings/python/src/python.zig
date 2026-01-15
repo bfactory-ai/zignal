@@ -46,7 +46,7 @@ pub fn getPyNone() ?*c.PyObject {
 }
 
 /// Convert a Zig value to Python object
-pub fn convertToPython(value: anytype) ?*c.PyObject {
+pub fn convert(value: anytype) ?*c.PyObject {
     const T = @TypeOf(value);
 
     return switch (@typeInfo(T)) {
@@ -70,7 +70,7 @@ pub fn convertToPython(value: anytype) ?*c.PyObject {
         },
         .optional => blk: {
             if (value) |v| {
-                break :blk convertToPython(v);
+                break :blk convert(v);
             } else {
                 // TODO(py3.10): drop explicit cast once minimum Python >= 3.11
                 c.Py_INCREF(@as(?*c.PyObject, @ptrCast(c.Py_None)));
@@ -138,7 +138,7 @@ pub fn getterForField(comptime Obj: type, comptime field_name: []const u8) *cons
             _ = closure;
             const self: *Obj = @ptrCast(self_obj.?);
             const val = @field(self, field_name);
-            return convertToPython(val);
+            return convert(val);
         }
     };
     return @ptrCast(&Gen.get);
@@ -225,7 +225,7 @@ pub fn getterOptionalFieldWhere(
             const self: *Obj = @ptrCast(self_obj.?);
             if (!Predicate(self)) return getPyNone();
             const val = @field(self, field_name);
-            return convertToPython(val);
+            return convert(val);
         }
     };
     return @ptrCast(&Gen.get);
@@ -274,8 +274,8 @@ pub fn getterTuple2FieldsWhere(
         fn get(self_obj: ?*c.PyObject, _: ?*anyopaque) callconv(.c) ?*c.PyObject {
             const self: *Obj = @ptrCast(self_obj.?);
             if (!Predicate(self)) return getPyNone();
-            const a = convertToPython(@field(self, field0)) orelse return null;
-            const b = convertToPython(@field(self, field1)) orelse {
+            const a = convert(@field(self, field0)) orelse return null;
+            const b = convert(@field(self, field1)) orelse {
                 c.Py_DECREF(a);
                 return null;
             };
@@ -298,8 +298,8 @@ pub fn getterTuple2FromArrayField(
         fn get(self_obj: ?*c.PyObject, _: ?*anyopaque) callconv(.c) ?*c.PyObject {
             const self: *Obj = @ptrCast(self_obj.?);
             const arr = @field(self, array_field);
-            const a = convertToPython(arr[idx0]) orelse return null;
-            const b = convertToPython(arr[idx1]) orelse {
+            const a = convert(arr[idx0]) orelse return null;
+            const b = convert(arr[idx1]) orelse {
                 c.Py_DECREF(a);
                 return null;
             };
@@ -335,7 +335,7 @@ pub fn getterMatrixNested(
 
                 var j: usize = 0;
                 while (j < cols) : (j += 1) {
-                    const val_obj = convertToPython(mat[i][j]);
+                    const val_obj = convert(mat[i][j]);
                     if (val_obj == null) {
                         c.Py_DECREF(row_list);
                         c.Py_DECREF(outer);

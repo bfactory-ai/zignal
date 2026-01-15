@@ -8,12 +8,9 @@ const c = @import("python.zig").c;
 const color = @import("color.zig");
 const createColorPyObject = color.createColorPyObject;
 const color_types = @import("color_registry.zig").color_types;
-const ConversionError = @import("python.zig").ConversionError;
-const convertFromPython = @import("python.zig").convertFromPython;
-const convertToPython = @import("python.zig").convertToPython;
-const convertWithValidation = @import("python.zig").convertWithValidation;
 const enum_utils = @import("enum_utils.zig");
 const getValidationErrorMessage = @import("color_registry.zig").getValidationErrorMessage;
+const python = @import("python.zig");
 const validateColorComponent = @import("color_registry.zig").validateColorComponent;
 
 const Rgba = zignal.Rgba(u8);
@@ -104,7 +101,7 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
                         3 => if (fields.len > 3) self.field3 else unreachable,
                         else => unreachable,
                     };
-                    return @ptrCast(@alignCast(convertToPython(value)));
+                    return @ptrCast(@alignCast(python.convert(value)));
                 }
             }.getter;
         }
@@ -121,17 +118,17 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
                     const field_name = field.name;
 
                     // Convert Python value using idiomatic error union
-                    const new_value = convertFromPython(field.type, @ptrCast(value_obj)) catch |err| {
+                    const new_value = python.convertFromPython(field.type, @ptrCast(value_obj)) catch |err| {
                         switch (err) {
-                            ConversionError.not_integer => {
+                            python.ConversionError.not_integer => {
                                 c.PyErr_SetString(c.PyExc_TypeError, "Expected integer value");
                                 return -1;
                             },
-                            ConversionError.not_float => {
+                            python.ConversionError.not_float => {
                                 c.PyErr_SetString(c.PyExc_TypeError, "Expected float value");
                                 return -1;
                             },
-                            ConversionError.integer_out_of_range => {
+                            python.ConversionError.integer_out_of_range => {
                                 // Generate helpful range message without the attempted value
                                 if (@typeInfo(field.type) == .int) {
                                     const min_val = std.math.minInt(field.type);
@@ -300,7 +297,6 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
 
         /// invert method implementation
         pub fn invertMethod(self_obj: [*c]c.PyObject, _: ?*c.PyObject) callconv(.c) [*c]c.PyObject {
-            const python = @import("python.zig");
             const self: *ObjectType = @ptrCast(self_obj);
             const inverted = objectToZigColor(self).invert();
             const result = createPyObject(inverted, python.getPyType(self_obj)) orelse return null;
@@ -311,14 +307,14 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
         pub fn lumaMethod(self_obj: [*c]c.PyObject, _: ?*c.PyObject) callconv(.c) [*c]c.PyObject {
             const self: *ObjectType = @ptrCast(self_obj);
             const luma_val = objectToZigColor(self).luma();
-            return @ptrCast(convertToPython(luma_val));
+            return @ptrCast(python.convert(luma_val));
         }
 
         /// hex method implementation
         pub fn hexMethod(self_obj: [*c]c.PyObject, _: ?*c.PyObject) callconv(.c) [*c]c.PyObject {
             const self: *ObjectType = @ptrCast(self_obj);
             const hex_val = objectToZigColor(self).hex();
-            return @ptrCast(convertToPython(hex_val));
+            return @ptrCast(python.convert(hex_val));
         }
 
         /// from_hex method implementation (static)
@@ -435,7 +431,6 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
                 }
 
                 // Validate ranges using python helper (it sets appropriate error messages)
-                const python = @import("python.zig");
                 const r_val = python.validateRange(u8, r, 0, 255, "r") catch return null;
                 const g_val = python.validateRange(u8, g, 0, 255, "g") catch return null;
                 const b_val = python.validateRange(u8, b, 0, 255, "b") catch return null;
@@ -612,7 +607,7 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
             }.validate;
 
             const error_msg = getValidationErrorMessage(ZigColorType);
-            return convertWithValidation(T, @ptrCast(py_obj), field_name, validator, error_msg);
+            return python.convertWithValidation(T, @ptrCast(py_obj), field_name, validator, error_msg);
         }
 
         /// Custom init function with validation
@@ -726,7 +721,6 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
 
         /// Standard Python object methods
         pub fn dealloc(self_obj: [*c]c.PyObject) callconv(.c) void {
-            const python = @import("python.zig");
             python.getPyType(self_obj).*.tp_free.?(self_obj);
         }
 
@@ -763,7 +757,6 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
         /// Rich comparison method implementing RGBA-based equality/inequality
         /// Colors are compared by their RGBA representation for visual equivalence
         pub fn richcompare(self_obj: [*c]c.PyObject, other_obj: [*c]c.PyObject, op: c_int) callconv(.c) [*c]c.PyObject {
-            const python = @import("python.zig");
             const color_utils = @import("color_utils.zig");
 
             // Only handle == (Py_EQ=2) and != (Py_NE=3); defer other comparisons

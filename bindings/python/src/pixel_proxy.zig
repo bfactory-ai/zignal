@@ -100,7 +100,7 @@ fn PixelProxyBinding(comptime ColorType: type, comptime ProxyObjectType: type) t
                         const proxy: *ProxyObjectType = @ptrCast(self_obj.?);
                         const rgba = pimg.getPixelRgba(@intCast(proxy.row), @intCast(proxy.col));
                         const value = @field(rgba, fields[index].name);
-                        return python.convertToPython(value);
+                        return python.convert(value);
                     }
                     c.PyErr_SetString(c.PyExc_RuntimeError, "Invalid pixel proxy");
                     return null;
