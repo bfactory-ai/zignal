@@ -118,7 +118,7 @@ fn PixelProxyBinding(comptime ColorType: type, comptime ProxyObjectType: type) t
                     }
                     const T = fields[index].type;
                     const field_name = fields[index].name;
-                    const parsed = python.convertFromPython(T, value) catch |err| {
+                    const parsed = python.toZig(T, value) catch |err| {
                         switch (err) {
                             python.ConversionError.not_integer => {
                                 c.PyErr_SetString(c.PyExc_TypeError, "Expected integer value");
