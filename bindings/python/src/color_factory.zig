@@ -4,14 +4,14 @@ const zignal = @import("zignal");
 const isPacked = zignal.meta.isPacked;
 const getSimpleTypeName = zignal.meta.getSimpleTypeName;
 
-const c = @import("py_utils.zig").c;
+const c = @import("python.zig").c;
 const color = @import("color.zig");
 const createColorPyObject = color.createColorPyObject;
 const color_types = @import("color_registry.zig").color_types;
-const ConversionError = @import("py_utils.zig").ConversionError;
-const convertFromPython = @import("py_utils.zig").convertFromPython;
-const convertToPython = @import("py_utils.zig").convertToPython;
-const convertWithValidation = @import("py_utils.zig").convertWithValidation;
+const ConversionError = @import("python.zig").ConversionError;
+const convertFromPython = @import("python.zig").convertFromPython;
+const convertToPython = @import("python.zig").convertToPython;
+const convertWithValidation = @import("python.zig").convertWithValidation;
 const enum_utils = @import("enum_utils.zig");
 const getValidationErrorMessage = @import("color_registry.zig").getValidationErrorMessage;
 const validateColorComponent = @import("color_registry.zig").validateColorComponent;
@@ -300,10 +300,10 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
 
         /// invert method implementation
         pub fn invertMethod(self_obj: [*c]c.PyObject, _: ?*c.PyObject) callconv(.c) [*c]c.PyObject {
-            const py_utils = @import("py_utils.zig");
+            const python = @import("python.zig");
             const self: *ObjectType = @ptrCast(self_obj);
             const inverted = objectToZigColor(self).invert();
-            const result = createPyObject(inverted, py_utils.getPyType(self_obj)) orelse return null;
+            const result = createPyObject(inverted, python.getPyType(self_obj)) orelse return null;
             return @ptrCast(result);
         }
 
@@ -398,13 +398,13 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
             const self: *ObjectType = @ptrCast(self_obj);
 
             // Parse arguments: overlay (required) and mode (optional keyword, defaults to NORMAL)
-            const py_utils_local = @import("py_utils.zig");
+            const python_local = @import("python.zig");
             const Params = struct {
                 overlay: ?*c.PyObject,
                 mode: ?*c.PyObject = null,
             };
             var params: Params = undefined;
-            py_utils_local.parseArgs(Params, args, kwds, &params) catch return null;
+            python_local.parseArgs(Params, args, kwds, &params) catch return null;
 
             const overlay_obj = params.overlay;
             const mode_obj = params.mode;
@@ -434,12 +434,12 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
                     return null;
                 }
 
-                // Validate ranges using py_utils helper (it sets appropriate error messages)
-                const py_utils = @import("py_utils.zig");
-                const r_val = py_utils.validateRange(u8, r, 0, 255, "r") catch return null;
-                const g_val = py_utils.validateRange(u8, g, 0, 255, "g") catch return null;
-                const b_val = py_utils.validateRange(u8, b, 0, 255, "b") catch return null;
-                const a_val = py_utils.validateRange(u8, a, 0, 255, "a") catch return null;
+                // Validate ranges using python helper (it sets appropriate error messages)
+                const python = @import("python.zig");
+                const r_val = python.validateRange(u8, r, 0, 255, "r") catch return null;
+                const g_val = python.validateRange(u8, g, 0, 255, "g") catch return null;
+                const b_val = python.validateRange(u8, b, 0, 255, "b") catch return null;
+                const a_val = python.validateRange(u8, a, 0, 255, "a") catch return null;
 
                 overlay = .{
                     .r = r_val,
@@ -726,8 +726,8 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
 
         /// Standard Python object methods
         pub fn dealloc(self_obj: [*c]c.PyObject) callconv(.c) void {
-            const py_utils = @import("py_utils.zig");
-            py_utils.getPyType(self_obj).*.tp_free.?(self_obj);
+            const python = @import("python.zig");
+            python.getPyType(self_obj).*.tp_free.?(self_obj);
         }
 
         pub fn new(type_obj: [*c]c.PyTypeObject, args: [*c]c.PyObject, kwds: [*c]c.PyObject) callconv(.c) ?*c.PyObject {
@@ -763,7 +763,7 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
         /// Rich comparison method implementing RGBA-based equality/inequality
         /// Colors are compared by their RGBA representation for visual equivalence
         pub fn richcompare(self_obj: [*c]c.PyObject, other_obj: [*c]c.PyObject, op: c_int) callconv(.c) [*c]c.PyObject {
-            const py_utils = @import("py_utils.zig");
+            const python = @import("python.zig");
             const color_utils = @import("color_utils.zig");
 
             // Only handle == (Py_EQ=2) and != (Py_NE=3); defer other comparisons
@@ -794,7 +794,7 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
             const equal = self_rgba == other_rgba;
 
             const result = if (op == c.Py_EQ) equal else !equal;
-            return @ptrCast(py_utils.getPyBool(result));
+            return @ptrCast(python.getPyBool(result));
         }
 
         /// __format__ method implementation

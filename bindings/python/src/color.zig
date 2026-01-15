@@ -20,9 +20,9 @@ const Ycbcr = zignal.Ycbcr(u8);
 
 const color_factory = @import("color_factory.zig");
 const color_registry = @import("color_registry.zig");
-const py_utils = @import("py_utils.zig");
-pub const registerType = py_utils.registerType;
-const c = py_utils.c;
+const python = @import("python.zig");
+pub const registerType = python.registerType;
+const c = python.c;
 
 // ============================================================================
 // GENERIC COLOR TYPE GENERATION

@@ -1,5 +1,8 @@
 const std = @import("std");
 
+const zignal = @import("zignal");
+const Point = zignal.Point;
+
 pub const ctx = struct {
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -7,9 +10,6 @@ pub const ctx = struct {
     .io = std.Io.Threaded.global_single_threaded.ioBasic(),
     .allocator = std.heap.c_allocator,
 };
-
-const zignal = @import("zignal");
-const Point = zignal.Point;
 
 pub const c = @cImport({
     @cDefine("PY_SSIZE_T_CLEAN", {});
@@ -177,7 +177,7 @@ pub fn autoGetSet(
 ///
 /// Example usage:
 /// ```zig
-/// const getset = py_utils.autoGetSetCustom(RectangleObject, &.{"left", "top", "right", "bottom"}, &[_]c.PyGetSetDef{
+/// const getset = python.autoGetSetCustom(RectangleObject, &.{"left", "top", "right", "bottom"}, &[_]c.PyGetSetDef{
 ///     .{ .name = "width", .get = @ptrCast(&rectangle_get_width), .set = null, .doc = "Width", .closure = null },
 ///     .{ .name = "height", .get = @ptrCast(&rectangle_get_height), .set = null, .doc = "Height", .closure = null },
 /// });
@@ -908,7 +908,7 @@ pub fn validatePositive(comptime T: type, value: anytype, name: []const u8) !T {
 }
 
 /// Build a Python kwlist for PyArg_ParseTupleAndKeywords from a comptime list of names.
-/// Usage: `const kw = py_utils.kw(&.{ "size", "method" });`
+/// Usage: `const kw = python.kw(&.{ "size", "method" });`
 /// Pass to CPython with: `@ptrCast(@constCast(&kw))`.
 ///
 /// Notes on Python versions:
@@ -940,7 +940,7 @@ pub fn kw(comptime names: []const []const u8) [names.len + 1]?[*:0]const u8 {
 ///     height: ?f64 = null,       // Optional with default
 /// };
 /// var params: Params = undefined;
-/// py_utils.parseArgs(Params, args, kwds, &params) catch return null;
+/// python.parseArgs(Params, args, kwds, &params) catch return null;
 /// ```
 pub fn parseArgs(comptime T: type, args: ?*c.PyObject, kwds: ?*c.PyObject, out: *T) !void {
     const type_info = @typeInfo(T);
