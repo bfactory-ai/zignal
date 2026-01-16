@@ -31,15 +31,7 @@ pub const DecodeLimits = struct {
     max_scans: usize = 64,
 };
 
-inline fn exceedsU32(limit: u32, value: u32) bool {
-    return limit != 0 and value > limit;
-}
-
-inline fn exceedsU64(limit: u64, value: u64) bool {
-    return limit != 0 and value > limit;
-}
-
-inline fn exceedsUsize(limit: usize, value: usize) bool {
+inline fn exceeds(limit: u64, value: u64) bool {
     return limit != 0 and value > limit;
 }
 
@@ -71,6 +63,10 @@ pub const Header = struct {
     frame_type: FrameType,
     num_components: u8,
     precision: u8,
+
+    pub fn totalPixels(self: Header) u64 {
+        return @as(u64, self.width) * @as(u64, self.height);
+    }
 };
 
 /// Retrieve metadata from a JPEG file without decoding the full image.
@@ -1216,7 +1212,7 @@ pub const JpegState = struct {
             return error.InvalidSOF;
         }
 
-        if (exceedsU32(limits.max_width, self.header.width) or exceedsU32(limits.max_height, self.header.height)) {
+        if (exceeds(limits.max_width, self.header.width) or exceeds(limits.max_height, self.header.height)) {
             return error.ImageTooLarge;
         }
 
@@ -1297,12 +1293,12 @@ pub const JpegState = struct {
         const width_actual_u64 = @as(u64, width_actual);
         const height_actual_u64 = @as(u64, height_actual);
         const total_pixels_actual = std.math.mul(u64, width_actual_u64, height_actual_u64) catch return error.ImageTooLarge;
-        if (exceedsU64(limits.max_pixels, total_pixels_actual)) {
+        if (exceeds(limits.max_pixels, total_pixels_actual)) {
             return error.ImageTooLarge;
         }
         const total_blocks_u64 = total_pixels_actual / 64;
         const total_blocks = std.math.cast(usize, total_blocks_u64) orelse return error.BlockMemoryLimitExceeded;
-        if (exceedsUsize(limits.max_blocks, total_blocks)) {
+        if (exceeds(limits.max_blocks, total_blocks)) {
             return error.BlockMemoryLimitExceeded;
         }
         self.block_storage = try self.allocator.alloc([4][64]i32, total_blocks);
@@ -2067,7 +2063,7 @@ pub fn decode(allocator: Allocator, data: []const u8, limits: DecodeLimits) !Jpe
     if (data.len < 2 or !std.mem.eql(u8, data[0..2], &signature)) {
         return error.InvalidJpegFile;
     }
-    if (exceedsUsize(limits.max_jpeg_bytes, data.len)) {
+    if (exceeds(limits.max_jpeg_bytes, data.len)) {
         return error.JpegDataTooLarge;
     }
 
@@ -2121,7 +2117,7 @@ pub fn decode(allocator: Allocator, data: []const u8, limits: DecodeLimits) !Jpe
 
             .SOS => {
                 scan_count += 1;
-                if (exceedsUsize(limits.max_scans, scan_count)) {
+                if (exceeds(limits.max_scans, scan_count)) {
                     return error.TooManyScans;
                 }
                 const scan_end = try processScanMarker(&state, data, pos);
