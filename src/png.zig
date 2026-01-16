@@ -136,9 +136,9 @@ pub const Header = struct {
     height: u32,
     bit_depth: u8,
     color_type: ColorType,
-    compression_method: u8, // Must be 0 (deflate)
-    filter_method: u8, // Must be 0
-    interlace_method: u8, // 0 = none, 1 = Adam7
+    compression_method: u8 = 0, // Must be 0 (deflate)
+    filter_method: u8 = 0, // Must be 0
+    interlace_method: u8 = 0, // 0 = none, 1 = Adam7
 
     // Color management metadata (from gAMA and sRGB chunks)
     // Gamma is stored for metadata purposes but ignored during decoding as files
@@ -1125,9 +1125,6 @@ fn encodeRaw(gpa: Allocator, image_data: []const u8, width: u32, height: u32, co
         .height = height,
         .bit_depth = bit_depth,
         .color_type = color_type,
-        .compression_method = 0,
-        .filter_method = 0,
-        .interlace_method = 0,
     };
 
     const ihdr_data = try createIHDR(header);
@@ -2212,9 +2209,6 @@ test "PNG adaptive filter selection" {
         .height = height,
         .bit_depth = 8,
         .color_type = .rgb,
-        .compression_method = 0,
-        .filter_method = 0,
-        .interlace_method = 0,
     };
 
     const scanline_bytes = header.scanlineBytes();
@@ -2632,8 +2626,6 @@ test "Adam7 interlaced PNG support" {
         .height = 4,
         .bit_depth = 8,
         .color_type = .rgb,
-        .compression_method = 0,
-        .filter_method = 0,
         .interlace_method = 1,
     };
 
@@ -2650,7 +2642,7 @@ test "Adam7 interlaced PNG support" {
     const rgb_pixel = extractRgbPixel(Rgb, &rgb_src, 1, interlaced_header, null);
     try std.testing.expectEqual(Rgb{ .r = 0, .g = 255, .b = 0 }, rgb_pixel);
 
-    const rgba_header = Header{ .width = 4, .height = 4, .bit_depth = 8, .color_type = .rgba, .compression_method = 0, .filter_method = 0, .interlace_method = 1, .gamma = null, .srgb_intent = null };
+    const rgba_header = Header{ .width = 4, .height = 4, .bit_depth = 8, .color_type = .rgba, .interlace_method = 1 };
 
     const rgba_src = [_]u8{ 255, 0, 0, 255, 0, 255, 0, 128 }; // red (alpha=255), green (alpha=128)
     const rgba_pixel = extractRgbaPixel(Rgba, &rgba_src, 1, rgba_header);
@@ -2772,9 +2764,6 @@ test "PNG grayscale transparency support" {
         .height = 1,
         .bit_depth = 8,
         .color_type = .grayscale,
-        .compression_method = 0,
-        .filter_method = 0,
-        .interlace_method = 0,
     };
 
     // Test pixels: 0, 128 (transparent), 255, 64
@@ -2801,9 +2790,6 @@ test "PNG RGB transparency support" {
         .height = 1,
         .bit_depth = 8,
         .color_type = .rgb,
-        .compression_method = 0,
-        .filter_method = 0,
-        .interlace_method = 0,
     };
 
     // Test pixels: red, white (transparent), blue
@@ -2830,9 +2816,6 @@ test "PNG transparency error cases" {
             .height = 16,
             .bit_depth = 8,
             .color_type = .grayscale_alpha, // This color type cannot have tRNS
-            .compression_method = 0,
-            .filter_method = 0,
-            .interlace_method = 0,
         },
         .idat_data = .empty,
     };
@@ -2857,9 +2840,6 @@ test "PNG 16-bit transparency" {
         .height = 1,
         .bit_depth = 16,
         .color_type = .grayscale,
-        .compression_method = 0,
-        .filter_method = 0,
-        .interlace_method = 0,
     };
 
     // Test pixels: 0x8000 (should be transparent), 0x4000 (should be opaque)
@@ -2952,9 +2932,6 @@ test "PNG pixel extraction with transparency" {
         .height = 4,
         .bit_depth = 8,
         .color_type = .rgb,
-        .compression_method = 0,
-        .filter_method = 0,
-        .interlace_method = 0,
     };
 
     const rgb_src = [_]u8{ 255, 0, 0, 0, 255, 0 }; // red, green pixels
@@ -3012,9 +2989,6 @@ test "PNG Header helpers" {
         .height = 50,
         .bit_depth = 8,
         .color_type = .rgb,
-        .compression_method = 0,
-        .filter_method = 0,
-        .interlace_method = 0,
     };
     try std.testing.expectEqual(@as(u64, 5000), h1.totalPixels());
     try std.testing.expect(!h1.hasAlpha());
@@ -3027,9 +3001,6 @@ test "PNG Header helpers" {
         .height = 10,
         .bit_depth = 16,
         .color_type = .rgba,
-        .compression_method = 0,
-        .filter_method = 0,
-        .interlace_method = 0,
     };
     try std.testing.expectEqual(@as(u64, 100), h2.totalPixels());
     try std.testing.expect(h2.hasAlpha());
@@ -3042,9 +3013,6 @@ test "PNG Header helpers" {
         .height = 5,
         .bit_depth = 8,
         .color_type = .grayscale_alpha,
-        .compression_method = 0,
-        .filter_method = 0,
-        .interlace_method = 0,
     };
     try std.testing.expect(h3.hasAlpha());
     try std.testing.expect(!h3.is16Bit());
