@@ -240,6 +240,7 @@ fn runGit(b: *std.Build, args: []const []const u8) ![]const u8 {
     var code: u8 = undefined;
     const dir = b.pathFromRoot(".");
     var full_args: std.ArrayList([]const u8) = .empty;
+    defer full_args.deinit(b.allocator);
     try full_args.appendSlice(b.allocator, &.{ "git", "-C", dir });
     try full_args.appendSlice(b.allocator, args);
     return b.runAllowFail(full_args.items, &code, .ignore);
