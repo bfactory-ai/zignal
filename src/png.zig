@@ -145,8 +145,10 @@ pub const Header = struct {
     compression_method: u8, // Must be 0 (deflate)
     filter_method: u8, // Must be 0
     interlace_method: u8, // 0 = none, 1 = Adam7
-    
+
     // Color management metadata (from gAMA and sRGB chunks)
+    // Gamma is stored for metadata purposes but ignored during decoding as files
+    // are typically already gamma-encoded for display.
     gamma: ?f32 = null,
     srgb_intent: ?SrgbRenderingIntent = null,
 
@@ -1644,13 +1646,10 @@ fn extractGrayscalePixel(comptime T: type, src_row: []const u8, pass_x: usize, h
         break :blk false;
     } else false;
 
-    // Apply gamma correction
-    const corrected_value = applyGammaCorrection(pixel_value, header);
-
     return switch (T) {
-        u8 => corrected_value,
-        Rgb => Rgb{ .r = corrected_value, .g = corrected_value, .b = corrected_value },
-        Rgba => Rgba{ .r = corrected_value, .g = corrected_value, .b = corrected_value, .a = if (is_transparent) 0 else 255 },
+        u8 => pixel_value,
+        Rgb => Rgb{ .r = pixel_value, .g = pixel_value, .b = pixel_value },
+        Rgba => Rgba{ .r = pixel_value, .g = pixel_value, .b = pixel_value, .a = if (is_transparent) 0 else 255 },
         else => @compileError("Unsupported pixel type"),
     };
 }
@@ -1702,15 +1701,10 @@ fn extractRgbPixel(comptime T: type, src_row: []const u8, pass_x: usize, header:
         break :blk false;
     } else false;
 
-    // Apply gamma correction to RGB channels
-    const corrected_r = applyGammaCorrection(r, header);
-    const corrected_g = applyGammaCorrection(g, header);
-    const corrected_b = applyGammaCorrection(b, header);
-
     return switch (T) {
-        u8 => @as(u8, @intCast((@as(u16, corrected_r) + @as(u16, corrected_g) + @as(u16, corrected_b)) / 3)),
-        Rgb => Rgb{ .r = corrected_r, .g = corrected_g, .b = corrected_b },
-        Rgba => Rgba{ .r = corrected_r, .g = corrected_g, .b = corrected_b, .a = if (is_transparent) 0 else 255 },
+        u8 => @as(u8, @intCast((@as(u16, r) + @as(u16, g) + @as(u16, b)) / 3)),
+        Rgb => Rgb{ .r = r, .g = g, .b = b },
+        Rgba => Rgba{ .r = r, .g = g, .b = b, .a = if (is_transparent) 0 else 255 },
         else => @compileError("Unsupported pixel type"),
     };
 }
@@ -1747,15 +1741,10 @@ fn extractRgbaPixel(comptime T: type, src_row: []const u8, pass_x: usize, header
     else
         src_row[offset + channel_stride * 3];
 
-    // Apply gamma correction to RGB channels (not alpha)
-    const corrected_r = applyGammaCorrection(r, header);
-    const corrected_g = applyGammaCorrection(g, header);
-    const corrected_b = applyGammaCorrection(b, header);
-
     return switch (T) {
-        u8 => @as(u8, @intCast((@as(u16, corrected_r) + @as(u16, corrected_g) + @as(u16, corrected_b)) / 3)),
-        Rgb => Rgb{ .r = corrected_r, .g = corrected_g, .b = corrected_b },
-        Rgba => Rgba{ .r = corrected_r, .g = corrected_g, .b = corrected_b, .a = a },
+        u8 => @as(u8, @intCast((@as(u16, r) + @as(u16, g) + @as(u16, b)) / 3)),
+        Rgb => Rgb{ .r = r, .g = g, .b = b },
+        Rgba => Rgba{ .r = r, .g = g, .b = b, .a = a },
         else => @compileError("Unsupported pixel type"),
     };
 }
@@ -2920,37 +2909,6 @@ test "PNG 16-bit transparency" {
     try std.testing.expectEqual(Rgba{ .r = 64, .g = 64, .b = 64, .a = 255 }, pixel_opaque);
 }
 
-test "PNG gamma correction" {
-    // Test that gamma correction is NOT applied for display purposes
-    // PNG files are already gamma-encoded and should be displayed as-is
-    const header_gamma = Header{
-        .width = 1, .height = 1, .bit_depth = 8, .color_type = .rgb,
-        .compression_method = 0, .filter_method = 0, .interlace_method = 0,
-        .gamma = 0.45455, .srgb_intent = null
-    };
-    const header_srgb = Header{
-        .width = 1, .height = 1, .bit_depth = 8, .color_type = .rgb,
-        .compression_method = 0, .filter_method = 0, .interlace_method = 0,
-        .gamma = null, .srgb_intent = .perceptual
-    };
-    const header_none = Header{
-        .width = 1, .height = 1, .bit_depth = 8, .color_type = .rgb,
-        .compression_method = 0, .filter_method = 0, .interlace_method = 0,
-        .gamma = null, .srgb_intent = null
-    };
-
-    // Test gamma correction
-    const input_value: u8 = 128;
-    const gamma_result = applyGammaCorrection(input_value, header_gamma);
-    const srgb_result = applyGammaCorrection(input_value, header_srgb);
-    const no_correction = applyGammaCorrection(input_value, header_none);
-
-    // All should return the original value (no correction applied)
-    try std.testing.expectEqual(input_value, gamma_result);
-    try std.testing.expectEqual(input_value, srgb_result);
-    try std.testing.expectEqual(input_value, no_correction);
-}
-
 test "PNG gAMA chunk parsing" {
     const allocator = std.testing.allocator;
 
@@ -3025,7 +2983,7 @@ test "PNG sRGB chunk parsing" {
 
 test "PNG pixel extraction config convenience" {
     // Test that PixelExtractionConfig provides clean defaults
-    var header = Header{
+    const header = Header{
         .width = 4,
         .height = 4,
         .bit_depth = 8,
@@ -3045,22 +3003,9 @@ test "PNG pixel extraction config convenience" {
     // Test config with transparency
     const trans_data = [_]u8{ 0x00, 0xFF, 0x00, 0x00, 0x00, 0x00 }; // red is transparent
     const transparency_config = PixelExtractionConfig{ .transparency = &trans_data };
-    const pixel_with_trans = extractRgbPixel(Rgba, &rgb_src, 0, header, transparency_config);
-    try std.testing.expectEqual(Rgba{ .r = 255, .g = 0, .b = 0, .a = 0 }, pixel_with_trans);
-
-    // Test config with gamma correction (now gamma is ignored for display)
-    header.gamma = 2.2;
-    const test_src = [_]u8{ 128, 128, 128 }; // middle gray value
-    const pixel_gamma_test = extractRgbPixel(Rgb, &test_src, 0, header, default_config);
-    
-    // Reset gamma to null for comparison
-    header.gamma = null;
-    const pixel_no_gamma = extractRgbPixel(Rgb, &test_src, 0, header, default_config);
-    
-    // Gamma correction is not applied for display, so both should be equal
-    try std.testing.expectEqual(pixel_gamma_test, pixel_no_gamma);
-}
-
+        const pixel_with_trans = extractRgbPixel(Rgba, &rgb_src, 0, header, transparency_config);
+        try std.testing.expectEqual(Rgba{ .r = 255, .g = 0, .b = 0, .a = 0 }, pixel_with_trans);
+    }
 test "PNG getInfo" {
     const gpa = std.testing.allocator;
     var data: ArrayList(u8) = .empty;
@@ -3099,8 +3044,13 @@ test "PNG getInfo" {
 test "PNG Header helpers" {
     // 8-bit RGB
     const h1 = Header{
-        .width = 100, .height = 50, .bit_depth = 8, .color_type = .rgb,
-        .compression_method = 0, .filter_method = 0, .interlace_method = 0,
+        .width = 100,
+        .height = 50,
+        .bit_depth = 8,
+        .color_type = .rgb,
+        .compression_method = 0,
+        .filter_method = 0,
+        .interlace_method = 0,
     };
     try std.testing.expectEqual(@as(u64, 5000), h1.totalPixels());
     try std.testing.expect(!h1.hasAlpha());
@@ -3109,8 +3059,13 @@ test "PNG Header helpers" {
 
     // 16-bit RGBA
     const h2 = Header{
-        .width = 10, .height = 10, .bit_depth = 16, .color_type = .rgba,
-        .compression_method = 0, .filter_method = 0, .interlace_method = 0,
+        .width = 10,
+        .height = 10,
+        .bit_depth = 16,
+        .color_type = .rgba,
+        .compression_method = 0,
+        .filter_method = 0,
+        .interlace_method = 0,
     };
     try std.testing.expectEqual(@as(u64, 100), h2.totalPixels());
     try std.testing.expect(h2.hasAlpha());
@@ -3119,8 +3074,13 @@ test "PNG Header helpers" {
 
     // 8-bit Grayscale Alpha
     const h3 = Header{
-        .width = 5, .height = 5, .bit_depth = 8, .color_type = .grayscale_alpha,
-        .compression_method = 0, .filter_method = 0, .interlace_method = 0,
+        .width = 5,
+        .height = 5,
+        .bit_depth = 8,
+        .color_type = .grayscale_alpha,
+        .compression_method = 0,
+        .filter_method = 0,
+        .interlace_method = 0,
     };
     try std.testing.expect(h3.hasAlpha());
     try std.testing.expect(!h3.is16Bit());
