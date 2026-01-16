@@ -40,6 +40,14 @@ pub fn none() ?*c.PyObject {
     return val;
 }
 
+/// Helper to create a Python Rectangle object from a Zig Rectangle
+fn createRectangle(rect: zignal.Rectangle(f64)) ?*c.PyObject {
+    const rectangle = @import("rectangle.zig");
+    const new_args = c.Py_BuildValue("(dddd)", rect.l, rect.t, rect.r, rect.b) orelse return null;
+    defer c.Py_DECREF(new_args);
+    return c.PyObject_CallObject(@ptrCast(&rectangle.RectangleType), new_args);
+}
+
 /// Creates a Python object from a Zig value.
 pub fn create(value: anytype) ?*c.PyObject {
     const T = @TypeOf(value);
@@ -70,16 +78,9 @@ pub fn create(value: anytype) ?*c.PyObject {
                 break :blk none();
             }
         },
-        .@"struct" => blk: {
-            switch (T) {
-                zignal.Rectangle(f64) => {
-                    const rectangle = @import("rectangle.zig");
-                    const new_args = c.Py_BuildValue("(dddd)", value.l, value.t, value.r, value.b) orelse return null;
-                    defer c.Py_DECREF(new_args);
-                    break :blk c.PyObject_CallObject(@ptrCast(&rectangle.RectangleType), new_args);
-                },
-                else => @compileError("Unsupported type: " ++ @typeName(T)),
-            }
+        .@"struct" => switch (T) {
+            zignal.Rectangle(f64) => createRectangle(value),
+            else => @compileError("Unsupported type: " ++ @typeName(T)),
         },
         else => null,
     };
