@@ -122,12 +122,6 @@ pub const SrgbRenderingIntent = enum(u8) {
     absolute_colorimetric = 3,
 };
 
-/// Configuration for pixel extraction functions
-const PixelExtractionConfig = struct {
-    transparency: ?[]const u8 = null,
-    palette: ?[]const [3]u8 = null,
-};
-
 /// PNG chunk structure
 pub const Chunk = struct {
     length: u32,
@@ -686,39 +680,27 @@ pub fn toNativeImage(allocator: Allocator, png_state: PngState) !union(enum) {
         switch (png_state.header.color_type) {
             .grayscale, .grayscale_alpha => {
                 if (png_state.transparency != null) {
-                    const config = PixelExtractionConfig{ .transparency = png_state.transparency };
-                    return .{ .rgba = try deinterlaceAdam7(allocator, Rgba, decompressed, png_state.header, config) };
+                    return .{ .rgba = try deinterlaceAdam7(allocator, Rgba, decompressed, png_state.header, null, png_state.transparency) };
                 } else {
-                    const config = PixelExtractionConfig{};
-                    return .{ .grayscale = try deinterlaceAdam7(allocator, u8, decompressed, png_state.header, config) };
+                    return .{ .grayscale = try deinterlaceAdam7(allocator, u8, decompressed, png_state.header, null, null) };
                 }
             },
             .rgb => {
                 if (png_state.transparency != null) {
-                    const config = PixelExtractionConfig{ .transparency = png_state.transparency };
-                    return .{ .rgba = try deinterlaceAdam7(allocator, Rgba, decompressed, png_state.header, config) };
+                    return .{ .rgba = try deinterlaceAdam7(allocator, Rgba, decompressed, png_state.header, null, png_state.transparency) };
                 } else {
-                    const config = PixelExtractionConfig{};
-                    return .{ .rgb = try deinterlaceAdam7(allocator, Rgb, decompressed, png_state.header, config) };
+                    return .{ .rgb = try deinterlaceAdam7(allocator, Rgb, decompressed, png_state.header, null, null) };
                 }
             },
             .rgba => {
-                const config = PixelExtractionConfig{};
-                return .{ .rgba = try deinterlaceAdam7(allocator, Rgba, decompressed, png_state.header, config) };
+                return .{ .rgba = try deinterlaceAdam7(allocator, Rgba, decompressed, png_state.header, null, null) };
             },
             .palette => {
                 const palette = png_state.palette orelse return error.MissingPalette;
                 if (png_state.transparency != null) {
-                    const config = PixelExtractionConfig{
-                        .transparency = png_state.transparency,
-                        .palette = palette,
-                    };
-                    return .{ .rgba = try deinterlaceAdam7(allocator, Rgba, decompressed, png_state.header, config) };
+                    return .{ .rgba = try deinterlaceAdam7(allocator, Rgba, decompressed, png_state.header, palette, png_state.transparency) };
                 } else {
-                    const config = PixelExtractionConfig{
-                        .palette = palette,
-                    };
-                    return .{ .rgb = try deinterlaceAdam7(allocator, Rgb, decompressed, png_state.header, config) };
+                    return .{ .rgb = try deinterlaceAdam7(allocator, Rgb, decompressed, png_state.header, palette, null) };
                 }
             },
         }
@@ -741,9 +723,8 @@ pub fn toNativeImage(allocator: Allocator, png_state: PngState) !union(enum) {
                     const src_row = decompressed[src_row_start .. src_row_start + scanline_bytes];
                     const dst_row = output_data[dst_row_start .. dst_row_start + width];
 
-                    const config = PixelExtractionConfig{ .transparency = png_state.transparency };
                     for (dst_row, 0..) |*pixel, i| {
-                        pixel.* = extractGrayscalePixel(Rgba, src_row, i, png_state.header, config);
+                        pixel.* = extractGrayscalePixel(Rgba, src_row, i, png_state.header, png_state.transparency);
                     }
                 }
 
@@ -762,9 +743,8 @@ pub fn toNativeImage(allocator: Allocator, png_state: PngState) !union(enum) {
                     const src_row = decompressed[src_row_start .. src_row_start + scanline_bytes];
                     const dst_row = output_data[dst_row_start .. dst_row_start + width];
 
-                    const config = PixelExtractionConfig{};
                     for (dst_row, 0..) |*pixel, i| {
-                        pixel.* = extractGrayscalePixel(u8, src_row, i, png_state.header, config);
+                        pixel.* = extractGrayscalePixel(u8, src_row, i, png_state.header, null);
                     }
                 }
 
@@ -786,9 +766,8 @@ pub fn toNativeImage(allocator: Allocator, png_state: PngState) !union(enum) {
                     const src_row = decompressed[src_row_start .. src_row_start + scanline_bytes];
                     const dst_row = output_data[dst_row_start .. dst_row_start + width];
 
-                    const config = PixelExtractionConfig{ .transparency = png_state.transparency };
                     for (dst_row, 0..) |*pixel, i| {
-                        pixel.* = extractRgbPixel(Rgba, src_row, i, png_state.header, config);
+                        pixel.* = extractRgbPixel(Rgba, src_row, i, png_state.header, png_state.transparency);
                     }
                 }
 
@@ -807,9 +786,8 @@ pub fn toNativeImage(allocator: Allocator, png_state: PngState) !union(enum) {
                     const src_row = decompressed[src_row_start .. src_row_start + scanline_bytes];
                     const dst_row = output_data[dst_row_start .. dst_row_start + width];
 
-                    const config = PixelExtractionConfig{};
                     for (dst_row, 0..) |*pixel, i| {
-                        pixel.* = extractRgbPixel(Rgb, src_row, i, png_state.header, config);
+                        pixel.* = extractRgbPixel(Rgb, src_row, i, png_state.header, null);
                     }
                 }
 
@@ -1545,7 +1523,7 @@ fn defilterAdam7Scanlines(data: []u8, header: Header) !void {
 }
 
 /// Deinterlace Adam7 data and convert to requested pixel format
-fn deinterlaceAdam7(allocator: Allocator, comptime T: type, decompressed: []u8, header: Header, config: PixelExtractionConfig) !Image(T) {
+fn deinterlaceAdam7(allocator: Allocator, comptime T: type, decompressed: []u8, header: Header, palette: ?[]const [3]u8, transparency: ?[]const u8) !Image(T) {
     const total_pixels = header.totalPixels();
     if (total_pixels > std.math.maxInt(usize)) {
         return error.ImageTooLarge;
@@ -1578,12 +1556,12 @@ fn deinterlaceAdam7(allocator: Allocator, comptime T: type, decompressed: []u8, 
 
                 // Extract pixel value based on color type and bit depth
                 output_data[final_pixel_idx] = switch (header.color_type) {
-                    .grayscale, .grayscale_alpha => extractGrayscalePixel(T, src_row, pass_x, header, config),
-                    .rgb => extractRgbPixel(T, src_row, pass_x, header, config),
-                    .rgba => extractRgbaPixel(T, src_row, pass_x, header, config),
+                    .grayscale, .grayscale_alpha => extractGrayscalePixel(T, src_row, pass_x, header, transparency),
+                    .rgb => extractRgbPixel(T, src_row, pass_x, header, transparency),
+                    .rgba => extractRgbaPixel(T, src_row, pass_x, header),
                     .palette => blk: {
-                        const palette = config.palette orelse return error.MissingPalette;
-                        break :blk extractPalettePixel(T, src_row, pass_x, header, palette, config.transparency);
+                        const pal = palette orelse return error.MissingPalette;
+                        break :blk extractPalettePixel(T, src_row, pass_x, header, pal, transparency);
                     },
                 };
             }
@@ -1611,7 +1589,7 @@ inline fn applyGammaCorrection(value: u8, header: Header) u8 {
 }
 
 /// Extract grayscale pixel from Adam7 pass data with optional transparency
-fn extractGrayscalePixel(comptime T: type, src_row: []const u8, pass_x: usize, header: Header, config: PixelExtractionConfig) T {
+fn extractGrayscalePixel(comptime T: type, src_row: []const u8, pass_x: usize, header: Header, transparency: ?[]const u8) T {
     const pixel_value: u8 = switch (header.bit_depth) {
         8 => if (header.color_type == .grayscale_alpha) src_row[pass_x * 2] else src_row[pass_x],
         16 => blk: {
@@ -1635,7 +1613,7 @@ fn extractGrayscalePixel(comptime T: type, src_row: []const u8, pass_x: usize, h
     };
 
     // Check for transparency
-    const is_transparent = if (config.transparency) |trans_data| blk: {
+    const is_transparent = if (transparency) |trans_data| blk: {
         if (header.color_type == .grayscale and trans_data.len >= 2) {
             const transparent_value = if (header.is16Bit())
                 @as(u8, @intCast(std.mem.readInt(u16, trans_data[0..2], .big) >> 8))
@@ -1655,7 +1633,7 @@ fn extractGrayscalePixel(comptime T: type, src_row: []const u8, pass_x: usize, h
 }
 
 /// Extract RGB pixel from Adam7 pass data with optional transparency
-fn extractRgbPixel(comptime T: type, src_row: []const u8, pass_x: usize, header: Header, config: PixelExtractionConfig) T {
+fn extractRgbPixel(comptime T: type, src_row: []const u8, pass_x: usize, header: Header, transparency: ?[]const u8) T {
     const channel_stride: usize = if (header.is16Bit()) 2 else 1;
     const total_bytes: usize = channel_stride * header.channels();
     const offset = pass_x * total_bytes;
@@ -1682,7 +1660,7 @@ fn extractRgbPixel(comptime T: type, src_row: []const u8, pass_x: usize, header:
         src_row[offset + channel_stride * 2];
 
     // Check for transparency
-    const is_transparent = if (config.transparency) |trans_data| blk: {
+    const is_transparent = if (transparency) |trans_data| blk: {
         if (header.color_type == .rgb and trans_data.len >= 6) {
             const trans_r: u8 = if (header.is16Bit())
                 @intCast(std.mem.readInt(u16, trans_data[0..2], .big) >> 8)
@@ -1710,8 +1688,7 @@ fn extractRgbPixel(comptime T: type, src_row: []const u8, pass_x: usize, header:
 }
 
 /// Extract RGBA pixel from Adam7 pass data
-fn extractRgbaPixel(comptime T: type, src_row: []const u8, pass_x: usize, header: Header, config: PixelExtractionConfig) T {
-    _ = config;
+fn extractRgbaPixel(comptime T: type, src_row: []const u8, pass_x: usize, header: Header) T {
     const channel_stride: usize = if (header.is16Bit()) 2 else 1;
     const total_bytes: usize = channel_stride * header.channels();
     const offset = pass_x * total_bytes;
@@ -2670,21 +2647,13 @@ test "Adam7 interlaced PNG support" {
 
     // Test pixel extraction functions work correctly
     const rgb_src = [_]u8{ 255, 0, 0, 0, 255, 0, 0, 0, 255 }; // red, green, blue pixels
-    const rgb_pixel = extractRgbPixel(Rgb, &rgb_src, 1, interlaced_header, PixelExtractionConfig{});
+    const rgb_pixel = extractRgbPixel(Rgb, &rgb_src, 1, interlaced_header, null);
     try std.testing.expectEqual(Rgb{ .r = 0, .g = 255, .b = 0 }, rgb_pixel);
 
-    const rgba_header = Header{
-        .width = 4,
-        .height = 4,
-        .bit_depth = 8,
-        .color_type = .rgba,
-        .compression_method = 0,
-        .filter_method = 0,
-        .interlace_method = 1,
-    };
+    const rgba_header = Header{ .width = 4, .height = 4, .bit_depth = 8, .color_type = .rgba, .compression_method = 0, .filter_method = 0, .interlace_method = 1, .gamma = null, .srgb_intent = null };
 
     const rgba_src = [_]u8{ 255, 0, 0, 255, 0, 255, 0, 128 }; // red (alpha=255), green (alpha=128)
-    const rgba_pixel = extractRgbaPixel(Rgba, &rgba_src, 1, rgba_header, PixelExtractionConfig{});
+    const rgba_pixel = extractRgbaPixel(Rgba, &rgba_src, 1, rgba_header);
     try std.testing.expectEqual(Rgba{ .r = 0, .g = 255, .b = 0, .a = 128 }, rgba_pixel);
 }
 
@@ -2708,12 +2677,7 @@ test "Adam7 palette deinterlace with transparency" {
     };
     const transparency = [_]u8{ 255, 64 };
 
-    const config = PixelExtractionConfig{
-        .palette = &palette,
-        .transparency = &transparency,
-    };
-
-    var image = try deinterlaceAdam7(allocator, Rgba, &decompressed, header, config);
+    var image = try deinterlaceAdam7(allocator, Rgba, &decompressed, header, &palette, &transparency);
     defer image.deinit(allocator);
 
     try std.testing.expectEqual(@as(usize, 1), image.rows);
@@ -2817,11 +2781,11 @@ test "PNG grayscale transparency support" {
     const gray_src = [_]u8{ 0, 128, 255, 64 };
 
     // Test transparency detection
-    const config = PixelExtractionConfig{ .transparency = &gray_trans_data };
-    const pixel_normal = extractGrayscalePixel(Rgba, &gray_src, 0, gray_header, config);
-    const pixel_transparent = extractGrayscalePixel(Rgba, &gray_src, 1, gray_header, config);
-    const pixel_white = extractGrayscalePixel(Rgba, &gray_src, 2, gray_header, config);
-    const pixel_gray = extractGrayscalePixel(Rgba, &gray_src, 3, gray_header, config);
+    const trans_slice: []const u8 = &gray_trans_data;
+    const pixel_normal = extractGrayscalePixel(Rgba, &gray_src, 0, gray_header, trans_slice);
+    const pixel_transparent = extractGrayscalePixel(Rgba, &gray_src, 1, gray_header, trans_slice);
+    const pixel_white = extractGrayscalePixel(Rgba, &gray_src, 2, gray_header, trans_slice);
+    const pixel_gray = extractGrayscalePixel(Rgba, &gray_src, 3, gray_header, trans_slice);
 
     try std.testing.expectEqual(Rgba{ .r = 0, .g = 0, .b = 0, .a = 255 }, pixel_normal);
     try std.testing.expectEqual(Rgba{ .r = 128, .g = 128, .b = 128, .a = 0 }, pixel_transparent);
@@ -2846,10 +2810,10 @@ test "PNG RGB transparency support" {
     const rgb_src = [_]u8{ 255, 0, 0, 255, 255, 255, 0, 0, 255 };
 
     // Test transparency detection
-    const config = PixelExtractionConfig{ .transparency = &rgb_trans_data };
-    const pixel_red = extractRgbPixel(Rgba, &rgb_src, 0, rgb_header, config);
-    const pixel_white = extractRgbPixel(Rgba, &rgb_src, 1, rgb_header, config);
-    const pixel_blue = extractRgbPixel(Rgba, &rgb_src, 2, rgb_header, config);
+    const trans_slice: []const u8 = &rgb_trans_data;
+    const pixel_red = extractRgbPixel(Rgba, &rgb_src, 0, rgb_header, trans_slice);
+    const pixel_white = extractRgbPixel(Rgba, &rgb_src, 1, rgb_header, trans_slice);
+    const pixel_blue = extractRgbPixel(Rgba, &rgb_src, 2, rgb_header, trans_slice);
 
     try std.testing.expectEqual(Rgba{ .r = 255, .g = 0, .b = 0, .a = 255 }, pixel_red);
     try std.testing.expectEqual(Rgba{ .r = 255, .g = 255, .b = 255, .a = 0 }, pixel_white);
@@ -2901,9 +2865,9 @@ test "PNG 16-bit transparency" {
     // Test pixels: 0x8000 (should be transparent), 0x4000 (should be opaque)
     const gray16_src = [_]u8{ 0x80, 0x00, 0x40, 0x00 };
 
-    const config = PixelExtractionConfig{ .transparency = &gray16_trans_data };
-    const pixel_transparent = extractGrayscalePixel(Rgba, &gray16_src, 0, gray16_header, config);
-    const pixel_opaque = extractGrayscalePixel(Rgba, &gray16_src, 1, gray16_header, config);
+    const trans_slice: []const u8 = &gray16_trans_data;
+    const pixel_transparent = extractGrayscalePixel(Rgba, &gray16_src, 0, gray16_header, trans_slice);
+    const pixel_opaque = extractGrayscalePixel(Rgba, &gray16_src, 1, gray16_header, trans_slice);
 
     try std.testing.expectEqual(Rgba{ .r = 128, .g = 128, .b = 128, .a = 0 }, pixel_transparent);
     try std.testing.expectEqual(Rgba{ .r = 64, .g = 64, .b = 64, .a = 255 }, pixel_opaque);
@@ -2981,8 +2945,8 @@ test "PNG sRGB chunk parsing" {
     try std.testing.expectEqual(SrgbRenderingIntent.perceptual, expected_intent);
 }
 
-test "PNG pixel extraction config convenience" {
-    // Test that PixelExtractionConfig provides clean defaults
+test "PNG pixel extraction with transparency" {
+    // Test extraction functions with transparency
     const header = Header{
         .width = 4,
         .height = 4,
@@ -2995,17 +2959,17 @@ test "PNG pixel extraction config convenience" {
 
     const rgb_src = [_]u8{ 255, 0, 0, 0, 255, 0 }; // red, green pixels
 
-    // Test default config (no transparency)
-    const default_config = PixelExtractionConfig{};
-    const pixel_default = extractRgbPixel(Rgb, &rgb_src, 0, header, default_config);
+    // Test default (no transparency)
+    const pixel_default = extractRgbPixel(Rgb, &rgb_src, 0, header, null);
     try std.testing.expectEqual(Rgb{ .r = 255, .g = 0, .b = 0 }, pixel_default);
 
-    // Test config with transparency
+    // Test with transparency
     const trans_data = [_]u8{ 0x00, 0xFF, 0x00, 0x00, 0x00, 0x00 }; // red is transparent
-    const transparency_config = PixelExtractionConfig{ .transparency = &trans_data };
-        const pixel_with_trans = extractRgbPixel(Rgba, &rgb_src, 0, header, transparency_config);
-        try std.testing.expectEqual(Rgba{ .r = 255, .g = 0, .b = 0, .a = 0 }, pixel_with_trans);
-    }
+    const trans_slice: []const u8 = &trans_data;
+    const pixel_with_trans = extractRgbPixel(Rgba, &rgb_src, 0, header, trans_slice);
+    try std.testing.expectEqual(Rgba{ .r = 255, .g = 0, .b = 0, .a = 0 }, pixel_with_trans);
+}
+
 test "PNG getInfo" {
     const gpa = std.testing.allocator;
     var data: ArrayList(u8) = .empty;
