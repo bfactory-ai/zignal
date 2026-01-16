@@ -4,6 +4,7 @@ const Io = std.Io;
 
 const zignal = @import("zignal");
 const png = zignal.png;
+const jpeg = zignal.jpeg;
 
 pub fn main(init: std.process.Init) !void {
     var args = try init.minimal.args.iterateAllocator(init.gpa);
@@ -60,7 +61,13 @@ fn info(io: Io, gpa: Allocator, image_path: []const u8) !void {
             }
         },
         .jpeg => {
+            const header = try jpeg.getInfo(file_data);
+
             try stdout.interface.print("Format: JPEG\n", .{});
+            try stdout.interface.print("Dimensions: {d}x{d}\n", .{ header.width, header.height });
+            try stdout.interface.print("Precision: {d}-bit\n", .{header.precision});
+            try stdout.interface.print("Components: {d}\n", .{header.num_components});
+            try stdout.interface.print("Type: {s}\n", .{@tagName(header.frame_type)});
         },
     }
     try stdout.interface.flush();

@@ -64,6 +64,97 @@ pub const zigzag = [64]u8{
     53, 60, 61, 54, 47, 55, 62, 63,
 };
 
+/// JPEG Header information extracted from SOF marker
+pub const Header = struct {
+    width: u32,
+    height: u32,
+    frame_type: FrameType,
+    num_components: u8,
+    precision: u8,
+};
+
+/// Retrieve metadata from a JPEG file without decoding the full image.
+/// Scans for a Start of Frame (SOF) marker.
+pub fn getInfo(data: []const u8) !Header {
+    if (data.len < 2 or !std.mem.eql(u8, data[0..2], &signature)) {
+        return error.InvalidJpegFile;
+    }
+
+    var pos: usize = 2;
+    while (pos < data.len - 1) {
+        if (data[pos] != 0xFF) {
+            // Not a marker - technically invalid if not inside entropy scan,
+            // but we might just be lost. For getInfo, strictness varies.
+            // But usually we should land on 0xFF.
+            return error.InvalidMarker;
+        }
+
+        const marker_byte = data[pos + 1];
+        // 0xFF00 is byte stuffing in entropy data, not a marker, but we shouldn't
+        // be in entropy data before SOF.
+        // 0xFF is valid padding byte before a marker.
+        if (marker_byte == 0xFF) {
+            pos += 1;
+            continue;
+        }
+
+        const marker_val = (@as(u16, 0xFF) << 8) | marker_byte;
+        const marker = Marker.fromBytes([2]u8{ 0xFF, marker_byte });
+
+        pos += 2; // Skip marker ID
+
+        // Markers with no payload
+        if (marker_val == 0xFF01 or // TEM
+            (marker_val >= 0xFFD0 and marker_val <= 0xFFD9)) // RSTm, SOI, EOI
+        {
+            if (marker == .EOI) return error.MissingSOF;
+            continue;
+        }
+
+        // Markers with payload: read length
+        if (pos + 2 > data.len) return error.UnexpectedEndOfData;
+        const length = (@as(u16, data[pos]) << 8) | data[pos + 1];
+        if (length < 2) return error.InvalidMarker;
+
+        // Check if this is a SOF marker
+        // SOF0 (Baseline) = 0xFFC0
+        // SOF1 (Extended Sequential) = 0xFFC1
+        // SOF2 (Progressive) = 0xFFC2
+        // ... SOF15
+        // Exclude DHT(C4), JPG(C8), DAC(CC) from the "C0-CF" range check if using range
+        const is_sof = switch (marker_val) {
+            0xFFC0, 0xFFC1, 0xFFC2, 0xFFC3, 0xFFC5, 0xFFC6, 0xFFC7, 0xFFC9, 0xFFCA, 0xFFCB, 0xFFCD, 0xFFCE, 0xFFCF => true,
+            else => false,
+        };
+
+        if (is_sof) {
+            const payload_len = length - 2;
+            if (pos + 2 + payload_len > data.len) return error.UnexpectedEndOfData;
+            const payload = data[pos + 2 .. pos + 2 + payload_len];
+
+            if (payload.len < 6) return error.InvalidSOF;
+
+            const precision = payload[0];
+            const height = (@as(u16, payload[1]) << 8) | payload[2];
+            const width = (@as(u16, payload[3]) << 8) | payload[4];
+            const num_components = payload[5];
+
+            return Header{
+                .width = width,
+                .height = height,
+                .frame_type = if (marker_val == 0xFFC2) .progressive else .baseline,
+                .num_components = num_components,
+                .precision = precision,
+            };
+        }
+
+        // Skip payload
+        pos += length;
+    }
+
+    return error.MissingSOF;
+}
+
 // -----------------------------
 // Encoder: public API and types
 // -----------------------------
