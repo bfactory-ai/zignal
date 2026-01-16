@@ -253,13 +253,13 @@ fn linkPython(b: *Build, artifact: *Build.Step.Compile, python_lib: []const u8, 
     const os_tag = target_info.os.tag;
     artifact.root_module.link_libc = true;
     if (b.graph.environ_map.get("PYTHON_INCLUDE_DIR")) |python_include| {
-        validatePath(python_include, "PYTHON_INCLUDE_DIR", os_tag);
+        validatePath(python_include, "PYTHON_INCLUDE_DIR");
         artifact.root_module.addIncludePath(.{ .cwd_relative = python_include });
     }
 
     // Common logic to add library path if provided
     if (b.graph.environ_map.get("PYTHON_LIBS_DIR")) |libs_dir| {
-        validatePath(libs_dir, "PYTHON_LIBS_DIR", os_tag);
+        validatePath(libs_dir, "PYTHON_LIBS_DIR");
         artifact.root_module.addLibraryPath(.{ .cwd_relative = libs_dir });
     }
 
@@ -279,13 +279,9 @@ fn linkPython(b: *Build, artifact: *Build.Step.Compile, python_lib: []const u8, 
     }
 }
 
-fn validatePath(path: []const u8, env_name: []const u8, os_tag: std.Target.Os.Tag) void {
+fn validatePath(path: []const u8, env_name: []const u8) void {
     if (std.mem.indexOf(u8, path, "..") != null) {
         std.debug.panic("Invalid path in {s}: '{s}'. Path traversal is not allowed.", .{ env_name, path });
-    }
-
-    if (os_tag == .windows and std.mem.indexOfScalar(u8, path, ':') != null) {
-        std.debug.panic("Invalid path in {s}: '{s}'. Absolute paths are not allowed on Windows.", .{ env_name, path });
     }
 }
 
