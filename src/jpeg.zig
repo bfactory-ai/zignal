@@ -1028,11 +1028,8 @@ pub const JpegState = struct {
     allocator: Allocator,
 
     // Image properties
-    width: u16,
-    height: u16,
-    num_components: u8,
+    header: Header,
     components: [4]Component = undefined,
-    frame_type: FrameType = .baseline,
 
     // Huffman tables (0-3 for DC, 0-3 for AC)
     dc_tables: [4]?HuffmanTable = .{ null, null, null, null },
@@ -1070,11 +1067,14 @@ pub const JpegState = struct {
     pub fn init(allocator: Allocator) JpegState {
         return .{
             .allocator = allocator,
-            .width = 0,
-            .height = 0,
-            .num_components = 0,
+            .header = .{
+                .width = 0,
+                .height = 0,
+                .frame_type = .baseline,
+                .num_components = 0,
+                .precision = 8,
+            },
             .scan_components = &[_]ScanComponent{},
-            .frame_type = .baseline,
         };
     }
 
@@ -1195,10 +1195,11 @@ pub const JpegState = struct {
 
     // Parse Start of Frame (SOF0/SOF2) marker
     pub fn parseSOF(self: *JpegState, data: []const u8, frame_type: FrameType, limits: DecodeLimits) !void {
-        self.frame_type = frame_type;
+        self.header.frame_type = frame_type;
         if (data.len < 6) return error.InvalidSOF;
 
         const precision = data[0];
+        self.header.precision = precision;
         // Provide specific error messages for different precision values
         switch (precision) {
             8 => {}, // Supported
@@ -1207,20 +1208,20 @@ pub const JpegState = struct {
             else => return error.UnsupportedPrecision,
         }
 
-        self.height = (@as(u16, data[1]) << 8) | data[2];
-        self.width = (@as(u16, data[3]) << 8) | data[4];
-        self.num_components = data[5];
+        self.header.height = (@as(u16, data[1]) << 8) | data[2];
+        self.header.width = (@as(u16, data[3]) << 8) | data[4];
+        self.header.num_components = data[5];
 
-        if (self.width == 0 or self.height == 0) {
+        if (self.header.width == 0 or self.header.height == 0) {
             return error.InvalidSOF;
         }
 
-        if (exceedsU32(limits.max_width, self.width) or exceedsU32(limits.max_height, self.height)) {
+        if (exceedsU32(limits.max_width, self.header.width) or exceedsU32(limits.max_height, self.header.height)) {
             return error.ImageTooLarge;
         }
 
         // Distinguish between invalid and unsupported component counts
-        switch (self.num_components) {
+        switch (self.header.num_components) {
             1, 3 => {}, // Supported: grayscale and YCbCr
             4 => return error.UnsupportedComponentCount, // CMYK - valid but unsupported
             0 => return error.InvalidComponentCount, // Invalid: no components
@@ -1232,7 +1233,7 @@ pub const JpegState = struct {
         var max_h_sampling: u4 = 0;
         var max_v_sampling: u4 = 0;
 
-        for (0..self.num_components) |i| {
+        for (0..self.header.num_components) |i| {
             if (pos + 3 > data.len) return error.InvalidSOF;
 
             self.components[i] = .{
@@ -1254,7 +1255,7 @@ pub const JpegState = struct {
         }
 
         // Validate specific chroma subsampling combinations
-        if (self.num_components == 3) {
+        if (self.header.num_components == 3) {
             // For color images, check if we support the chroma subsampling
             const y_h = self.components[0].h_sampling;
             const y_v = self.components[0].v_sampling;
@@ -1284,11 +1285,11 @@ pub const JpegState = struct {
         // Calculate block dimensions
         const mcu_width = 8 * @as(u32, max_h_sampling);
         const mcu_height = 8 * @as(u32, max_v_sampling);
-        const width_actual = ((@as(u32, self.width) + mcu_width - 1) / mcu_width) * mcu_width;
-        const height_actual = ((@as(u32, self.height) + mcu_height - 1) / mcu_height) * mcu_height;
+        const width_actual = ((@as(u32, self.header.width) + mcu_width - 1) / mcu_width) * mcu_width;
+        const height_actual = ((@as(u32, self.header.height) + mcu_height - 1) / mcu_height) * mcu_height;
 
-        self.block_width = (self.width + 7) / 8;
-        self.block_height = (self.height + 7) / 8;
+        self.block_width = @intCast((self.header.width + 7) / 8);
+        self.block_height = @intCast((self.header.height + 7) / 8);
         self.block_width_actual = @intCast((width_actual + 7) / 8);
         self.block_height_actual = @intCast((height_actual + 7) / 8);
 
@@ -1473,8 +1474,8 @@ pub const JpegState = struct {
 
         const num_components = data[0];
         // For progressive JPEG, individual scans can have fewer components
-        if (self.frame_type == .baseline and num_components != self.num_components) return error.InvalidSOS;
-        if (self.frame_type == .progressive and (num_components == 0 or num_components > self.num_components)) return error.InvalidSOS;
+        if (self.header.frame_type == .baseline and num_components != self.header.num_components) return error.InvalidSOS;
+        if (self.header.frame_type == .progressive and (num_components == 0 or num_components > self.header.num_components)) return error.InvalidSOS;
 
         const scan_components = try self.allocator.alloc(ScanComponent, num_components);
         errdefer self.allocator.free(scan_components);
@@ -1500,12 +1501,12 @@ pub const JpegState = struct {
         const approximation = data[pos + 2];
 
         // Validate spectral selection parameters
-        if (self.frame_type == .baseline) {
+        if (self.header.frame_type == .baseline) {
             // For baseline JPEG, these should be 0, 63, 0
             if (start_of_spectral != 0 or end_of_spectral != 63 or approximation != 0) {
                 return error.InvalidSOS;
             }
-        } else if (self.frame_type == .progressive) {
+        } else if (self.header.frame_type == .progressive) {
             // For progressive JPEG, validate spectral selection
             if (start_of_spectral > 63 or end_of_spectral > 63) return error.InvalidSOS;
             if (end_of_spectral < start_of_spectral) return error.InvalidSOS;
@@ -1626,7 +1627,7 @@ pub const BitReader = struct {
 fn performScan(state: *JpegState, scan_info: ScanInfo) !void {
     if (state.block_storage == null) return error.BlockStorageNotAllocated;
 
-    if (state.frame_type == .baseline) {
+    if (state.header.frame_type == .baseline) {
         // Baseline JPEG: single scan with all data
         try performBaselineScan(state, scan_info);
     } else {
@@ -1688,7 +1689,7 @@ fn performBaselineScan(state: *JpegState, scan_info: ScanInfo) !void {
     // Calculate maximum sampling factors
     var max_h_factor: u4 = 1;
     var max_v_factor: u4 = 1;
-    for (state.components[0..state.num_components]) |comp| {
+    for (state.components[0..state.header.num_components]) |comp| {
         max_h_factor = @max(max_h_factor, comp.h_sampling);
         max_v_factor = @max(max_v_factor, comp.v_sampling);
     }
@@ -1726,7 +1727,7 @@ fn performBaselineScan(state: *JpegState, scan_info: ScanInfo) !void {
                 var v_max: usize = undefined;
                 var h_max: usize = undefined;
 
-                for (state.components[0..state.num_components], 0..) |frame_component, i| {
+                for (state.components[0..state.header.num_components], 0..) |frame_component, i| {
                     if (frame_component.id == scan_comp.component_id) {
                         component_index = i;
                         v_max = if (noninterleaved) 1 else frame_component.v_sampling;
@@ -1778,7 +1779,7 @@ fn performProgressiveScan(state: *JpegState, scan_info: ScanInfo) !void {
     // Calculate sampling factors
     var max_h_factor: u4 = 1;
     var max_v_factor: u4 = 1;
-    for (state.components[0..state.num_components]) |comp| {
+    for (state.components[0..state.header.num_components]) |comp| {
         max_h_factor = @max(max_h_factor, comp.h_sampling);
         max_v_factor = @max(max_v_factor, comp.v_sampling);
     }
@@ -1808,7 +1809,7 @@ fn performProgressiveScan(state: *JpegState, scan_info: ScanInfo) !void {
                 var h_max: usize = undefined;
 
                 // Find the component
-                for (state.components[0..state.num_components], 0..) |frame_component, i| {
+                for (state.components[0..state.header.num_components], 0..) |frame_component, i| {
                     if (frame_component.id == scan_comp.component_id) {
                         component_index = i;
                         v_max = if (noninterleaved) 1 else frame_component.v_sampling;
@@ -2025,7 +2026,7 @@ fn processScanMarker(state: *JpegState, data: []const u8, pos: usize) !usize {
     state.bit_reader = BitReader.init(data[scan_start..scan_end]);
 
     // For baseline JPEG, don't perform scan here - loadJpeg will call performBlockScan
-    if (state.frame_type == .baseline) {
+    if (state.header.frame_type == .baseline) {
         // Track allocated components for baseline
         state.scan_components = scan_info.components;
         return scan_end; // Signal that baseline processing is complete
@@ -2127,7 +2128,7 @@ pub fn decode(allocator: Allocator, data: []const u8, limits: DecodeLimits) !Jpe
                 const scan_consumed = scan_end - pos;
                 try accumulateWithLimit(&total_marker_bytes, scan_consumed, limits.max_marker_bytes, error.MarkerDataLimitExceeded);
                 // For baseline JPEG, return immediately after first scan
-                if (state.frame_type == .baseline) {
+                if (state.header.frame_type == .baseline) {
                     return state;
                 }
                 // For progressive JPEG, continue parsing more scans
@@ -2173,7 +2174,7 @@ pub fn decode(allocator: Allocator, data: []const u8, limits: DecodeLimits) !Jpe
     }
 
     // For progressive JPEG that finished all scans
-    if (state.frame_type == .progressive) {
+    if (state.header.frame_type == .progressive) {
         return state;
     }
 
@@ -2399,7 +2400,7 @@ fn performBlockScan(state: *JpegState) !void {
     // Calculate maximum sampling factors
     var max_h_factor: u4 = 1;
     var max_v_factor: u4 = 1;
-    for (state.components[0..state.num_components]) |comp| {
+    for (state.components[0..state.header.num_components]) |comp| {
         max_h_factor = @max(max_h_factor, comp.h_sampling);
         max_v_factor = @max(max_v_factor, comp.v_sampling);
     }
@@ -2436,7 +2437,7 @@ fn performBlockScan(state: *JpegState) !void {
                 var v_max: usize = undefined;
                 var h_max: usize = undefined;
 
-                for (state.components[0..state.num_components], 0..) |frame_component, i| {
+                for (state.components[0..state.header.num_components], 0..) |frame_component, i| {
                     if (frame_component.id == scan_comp.component_id) {
                         component_index = i;
                         v_max = if (noninterleaved) 1 else frame_component.v_sampling;
@@ -2543,7 +2544,7 @@ fn dequantizeAllBlocks(state: *JpegState) !void {
 
     // Apply dequantization to all blocks
     for (state.block_storage.?) |*block_set| {
-        for (state.components[0..state.num_components], 0..) |comp, comp_idx| {
+        for (state.components[0..state.header.num_components], 0..) |comp, comp_idx| {
             const quant_table = state.quant_tables[comp.quant_table_id] orelse return error.MissingQuantTable;
 
             for (0..64) |i| {
@@ -2559,7 +2560,7 @@ fn idctAllBlocks(state: *JpegState) void {
 
     // Apply IDCT to all blocks
     for (state.block_storage.?) |*block_set| {
-        for (0..state.num_components) |comp_idx| {
+        for (0..state.header.num_components) |comp_idx| {
             idct8x8(&block_set[comp_idx]);
 
             // Apply level shift (+128) only to Y component (component 0) - master's approach
@@ -2623,7 +2624,7 @@ fn upsampleChromaForBlock(state: *JpegState, mcu_col: usize, mcu_row: usize, h_o
 fn ycbcrToRgbAllBlocks(state: *JpegState) !void {
     if (state.block_storage == null) return error.BlockStorageNotAllocated;
 
-    if (state.num_components == 1) {
+    if (state.header.num_components == 1) {
         // Grayscale - blocks already level-shifted in IDCT
         for (state.block_storage.?, 0..) |*block_set, idx| {
             for (0..64) |i| {
@@ -2868,7 +2869,7 @@ fn renderRgbBlocksToPixels(comptime T: type, state: *JpegState, img: *Image(T)) 
 
             for (0..8) |y| {
                 for (0..8) |x| {
-                    if (pixel_y + y >= state.height or pixel_x + x >= state.width) {
+                    if (pixel_y + y >= state.header.height or pixel_x + x >= state.header.width) {
                         continue;
                     }
 
@@ -2902,7 +2903,7 @@ pub fn toNativeImage(allocator: Allocator, state: *JpegState) !union(enum) {
     // Complete block-based pipeline:
     // Step 1: Decode all blocks into storage (storage allocated during parseSOF)
     // For baseline JPEG, decode blocks here. For progressive, decode() already did it.
-    if (state.frame_type == .baseline) {
+    if (state.header.frame_type == .baseline) {
         try performBlockScan(state);
     }
 
@@ -2916,15 +2917,15 @@ pub fn toNativeImage(allocator: Allocator, state: *JpegState) !union(enum) {
     try ycbcrToRgbAllBlocks(state);
 
     // Step 5: Create appropriate image type based on component count
-    if (state.num_components == 1) {
+    if (state.header.num_components == 1) {
         // Grayscale
-        var img = try Image(u8).init(allocator, state.height, state.width);
+        var img: Image(u8) = try .init(allocator, state.header.height, state.header.width);
         errdefer img.deinit(allocator);
         try renderRgbBlocksToPixels(u8, state, &img);
         return .{ .grayscale = img };
     } else {
         // Color (RGB)
-        var img = try Image(Rgb).init(allocator, state.height, state.width);
+        var img: Image(Rgb) = try .init(allocator, state.header.height, state.header.width);
         errdefer img.deinit(allocator);
         try renderRgbBlocksToPixels(Rgb, state, &img);
         return .{ .rgb = img };
@@ -2973,7 +2974,7 @@ pub fn load(comptime T: type, io: std.Io, allocator: Allocator, file_path: []con
 test "JPEG encode -> decode RGB roundtrip" {
     const gpa = std.testing.allocator;
 
-    var img = try Image(Rgb).init(gpa, 16, 16);
+    var img: Image(Rgb) = try .init(gpa, 16, 16);
     defer img.deinit(gpa);
     for (0..img.rows) |y| {
         for (0..img.cols) |x| {
@@ -2989,21 +2990,21 @@ test "JPEG encode -> decode RGB roundtrip" {
 
     var state = try decode(gpa, bytes, .{});
     defer state.deinit();
-    if (state.frame_type == .baseline) try performBlockScan(&state);
+    if (state.header.frame_type == .baseline) try performBlockScan(&state);
     try dequantizeAllBlocks(&state);
     idctAllBlocks(&state);
     try ycbcrToRgbAllBlocks(&state);
-    var out = try Image(Rgb).init(gpa, state.height, state.width);
+    var out: Image(Rgb) = try .init(gpa, state.header.height, state.header.width);
     defer out.deinit(gpa);
     try renderRgbBlocksToPixels(Rgb, &state, &out);
 
-    const ps = try img.psnr(out);
-    try std.testing.expect(ps > 40.0);
+    const psnr = try img.psnr(out);
+    try std.testing.expect(psnr > 40.0);
 }
 
 test "JPEG encode -> decode grayscale roundtrip" {
     const gpa = std.testing.allocator;
-    var img = try Image(u8).init(gpa, 16, 16);
+    var img: Image(u8) = try .init(gpa, 16, 16);
     defer img.deinit(gpa);
     for (0..img.rows) |y| {
         for (0..img.cols) |x| {
@@ -3015,19 +3016,19 @@ test "JPEG encode -> decode grayscale roundtrip" {
 
     var state = try decode(gpa, bytes, .{});
     defer state.deinit();
-    if (state.frame_type == .baseline) try performBlockScan(&state);
+    if (state.header.frame_type == .baseline) try performBlockScan(&state);
     try dequantizeAllBlocks(&state);
     idctAllBlocks(&state);
     try ycbcrToRgbAllBlocks(&state);
-    var out = try Image(Rgb).init(gpa, state.height, state.width);
+    var out: Image(Rgb) = try .init(gpa, state.header.height, state.header.width);
     defer out.deinit(gpa);
     try renderRgbBlocksToPixels(Rgb, &state, &out);
 
     // Convert original gray to RGB for PSNR
     var gray_rgb = try img.convert(Rgb, gpa);
     defer gray_rgb.deinit(gpa);
-    const ps = try gray_rgb.psnr(out);
-    try std.testing.expect(ps > 45);
+    const psnr = try gray_rgb.psnr(out);
+    try std.testing.expect(psnr > 45);
 }
 
 test "JPEG subsampling 4:2:2 roundtrip" {
@@ -3037,7 +3038,7 @@ test "JPEG subsampling 4:2:2 roundtrip" {
     const rows: usize = 19;
     const cols: usize = 25;
 
-    var img = try Image(Rgb).init(gpa, rows, cols);
+    var img: Image(Rgb) = try .init(gpa, rows, cols);
     defer img.deinit(gpa);
     for (0..rows) |y| {
         for (0..cols) |x| {
@@ -3053,16 +3054,16 @@ test "JPEG subsampling 4:2:2 roundtrip" {
 
     var state = try decode(gpa, bytes, .{});
     defer state.deinit();
-    if (state.frame_type == .baseline) try performBlockScan(&state);
+    if (state.header.frame_type == .baseline) try performBlockScan(&state);
     try dequantizeAllBlocks(&state);
     idctAllBlocks(&state);
     try ycbcrToRgbAllBlocks(&state);
-    var out = try Image(Rgb).init(gpa, state.height, state.width);
+    var out: Image(Rgb) = try .init(gpa, state.header.height, state.header.width);
     defer out.deinit(gpa);
     try renderRgbBlocksToPixels(Rgb, &state, &out);
 
-    const ps = try img.psnr(out);
-    try std.testing.expect(ps > 40);
+    const psnr = try img.psnr(out);
+    try std.testing.expect(psnr > 40);
 }
 
 test "JPEG subsampling 4:2:0 roundtrip" {
@@ -3072,7 +3073,7 @@ test "JPEG subsampling 4:2:0 roundtrip" {
     const rows: usize = 64;
     const cols: usize = 48;
 
-    var img = try Image(Rgb).init(gpa, rows, cols);
+    var img: Image(Rgb) = try .init(gpa, rows, cols);
     defer img.deinit(gpa);
     for (0..rows) |y| {
         for (0..cols) |x| {
@@ -3088,16 +3089,16 @@ test "JPEG subsampling 4:2:0 roundtrip" {
 
     var state = try decode(gpa, bytes, .{});
     defer state.deinit();
-    if (state.frame_type == .baseline) try performBlockScan(&state);
+    if (state.header.frame_type == .baseline) try performBlockScan(&state);
     try dequantizeAllBlocks(&state);
     idctAllBlocks(&state);
     try ycbcrToRgbAllBlocks(&state);
-    var out = try Image(Rgb).init(gpa, state.height, state.width);
+    var out: Image(Rgb) = try .init(gpa, state.header.height, state.header.width);
     defer out.deinit(gpa);
     try renderRgbBlocksToPixels(Rgb, &state, &out);
 
-    const ps = try img.psnr(out);
-    try std.testing.expect(ps > 45);
+    const psnr = try img.psnr(out);
+    try std.testing.expect(psnr > 45);
 }
 
 test "JPEG 4:2:0 odd-size roundtrip (non-multiple-of-MCU)" {
@@ -3107,7 +3108,7 @@ test "JPEG 4:2:0 odd-size roundtrip (non-multiple-of-MCU)" {
     const rows: usize = 37; // not multiple of 16
     const cols: usize = 53; // not multiple of 16
 
-    var img = try Image(Rgb).init(gpa, rows, cols);
+    var img: Image(Rgb) = try .init(gpa, rows, cols);
     defer img.deinit(gpa);
 
     // Fill with a smooth gradient so PSNR is meaningful
@@ -3125,17 +3126,17 @@ test "JPEG 4:2:0 odd-size roundtrip (non-multiple-of-MCU)" {
 
     var state = try decode(gpa, bytes, .{});
     defer state.deinit();
-    if (state.frame_type == .baseline) try performBlockScan(&state);
+    if (state.header.frame_type == .baseline) try performBlockScan(&state);
     try dequantizeAllBlocks(&state);
     idctAllBlocks(&state);
     try ycbcrToRgbAllBlocks(&state);
-    var out = try Image(Rgb).init(gpa, state.height, state.width);
+    var out: Image(Rgb) = try .init(gpa, state.header.height, state.header.width);
     defer out.deinit(gpa);
     try renderRgbBlocksToPixels(Rgb, &state, &out);
 
     // We expect a decent reconstruction quality even with 4:2:0 on odd dimensions.
-    const ps = try img.psnr(out);
-    try std.testing.expect(ps > 35.0);
+    const psnr = try img.psnr(out);
+    try std.testing.expect(psnr > 35.0);
 }
 
 test "JPEG max_jpeg_bytes limit" {
@@ -3153,7 +3154,7 @@ test "JPEG marker byte limit" {
 }
 
 test "JPEG block limit prevents excessive allocation" {
-    var state = JpegState.init(std.testing.allocator);
+    var state: JpegState = .init(std.testing.allocator);
     defer state.deinit();
 
     const sof_data = [_]u8{ 0x08, 0x00, 0x10, 0x00, 0x10, 0x01, 0x01, 0x11, 0x00 };
@@ -3168,11 +3169,11 @@ test "JPEG marker parsing" {
 
     // Test marker conversion
     const soi_bytes = [2]u8{ 0xFF, 0xD8 };
-    const soi = Marker.fromBytes(soi_bytes);
+    const soi: ?Marker = .fromBytes(soi_bytes);
     try testing.expect(soi == .SOI);
 
     const sof0_bytes = [2]u8{ 0xFF, 0xC0 };
-    const sof0 = Marker.fromBytes(sof0_bytes);
+    const sof0: ?Marker = .fromBytes(sof0_bytes);
     try testing.expect(sof0 == .SOF0);
 }
 
@@ -3180,7 +3181,7 @@ test "BitReader basic operations" {
     const testing = std.testing;
 
     const data = [_]u8{ 0b10110011, 0b01010101 };
-    var reader = BitReader.init(&data);
+    var reader: BitReader = .init(&data);
 
     // Read first 4 bits
     const bits1 = try reader.getBits(4);
