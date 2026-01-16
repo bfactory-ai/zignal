@@ -1120,7 +1120,7 @@ fn encodeRaw(gpa: Allocator, image_data: []const u8, width: u32, height: u32, co
     try writer.data.appendSlice(gpa, &signature);
 
     // Create and write IHDR
-    const header = Header{
+    const header: Header = .{
         .width = width,
         .height = height,
         .bit_depth = bit_depth,
@@ -2110,7 +2110,7 @@ test "PNG enforces decompressed byte limit" {
 }
 
 test "PNG default decompressed limit covers 8K RGBA 16-bit" {
-    const header = Header{
+    const header: Header = .{
         .width = max_dimensions_default,
         .height = max_dimensions_default,
         .bit_depth = 16,
@@ -2204,7 +2204,7 @@ test "PNG adaptive filter selection" {
     // so .sub is best, and the second row equals the first so .up is best.
     const width: u32 = 8;
     const height: u32 = 2;
-    const header = Header{
+    const header: Header = .{
         .width = width,
         .height = height,
         .bit_depth = 8,
@@ -2553,7 +2553,7 @@ test "PNG bounds checking - malformed palette" {
     };
 
     var png_state = PngState{
-        .header = Header{
+        .header = .{
             .width = 4,
             .height = 4,
             .bit_depth = 8,
@@ -2621,7 +2621,7 @@ test "PNG integer overflow protection" {
 
 test "Adam7 interlaced PNG support" {
     // Test that we can create an interlaced header
-    const interlaced_header = Header{
+    const interlaced_header: Header = .{
         .width = 4,
         .height = 4,
         .bit_depth = 8,
@@ -2642,7 +2642,7 @@ test "Adam7 interlaced PNG support" {
     const rgb_pixel = extractRgbPixel(Rgb, &rgb_src, 1, interlaced_header, null);
     try std.testing.expectEqual(Rgb{ .r = 0, .g = 255, .b = 0 }, rgb_pixel);
 
-    const rgba_header = Header{ .width = 4, .height = 4, .bit_depth = 8, .color_type = .rgba, .interlace_method = 1 };
+    const rgba_header: Header = .{ .width = 4, .height = 4, .bit_depth = 8, .color_type = .rgba, .interlace_method = 1 };
 
     const rgba_src = [_]u8{ 255, 0, 0, 255, 0, 255, 0, 128 }; // red (alpha=255), green (alpha=128)
     const rgba_pixel = extractRgbaPixel(Rgba, &rgba_src, 1, rgba_header);
@@ -2652,7 +2652,7 @@ test "Adam7 interlaced PNG support" {
 test "Adam7 palette deinterlace with transparency" {
     const allocator = std.testing.allocator;
 
-    const header = Header{
+    const header: Header = .{
         .width = 1,
         .height = 1,
         .bit_depth = 8,
@@ -2677,7 +2677,7 @@ test "Adam7 palette deinterlace with transparency" {
 }
 
 test "extractPalettePixel handles 4-bit indices" {
-    const header = Header{
+    const header: Header = .{
         .width = 2,
         .height = 1,
         .bit_depth = 4,
@@ -2706,7 +2706,7 @@ test "PNG palette transparency support" {
 
     // Create a palette PNG with transparency
     var png_state = PngState{
-        .header = Header{
+        .header = .{
             .width = 2,
             .height = 2,
             .bit_depth = 8,
@@ -2759,7 +2759,7 @@ test "PNG palette transparency support" {
 test "PNG grayscale transparency support" {
     // Test grayscale 8-bit transparency
     const gray_trans_data = [_]u8{ 0x00, 0x80 }; // Transparent value is 128 (0x80)
-    const gray_header = Header{
+    const gray_header: Header = .{
         .width = 4,
         .height = 1,
         .bit_depth = 8,
@@ -2785,7 +2785,7 @@ test "PNG grayscale transparency support" {
 test "PNG RGB transparency support" {
     // Test RGB transparency - transparent color is white (255, 255, 255)
     const rgb_trans_data = [_]u8{ 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF }; // White in 16-bit format
-    const rgb_header = Header{
+    const rgb_header: Header = .{
         .width = 3,
         .height = 1,
         .bit_depth = 8,
@@ -2811,7 +2811,7 @@ test "PNG transparency error cases" {
 
     // Test invalid tRNS chunk for grayscale_alpha (should error)
     var png_state = PngState{
-        .header = Header{
+        .header = .{
             .width = 16,
             .height = 16,
             .bit_depth = 8,
@@ -2835,7 +2835,7 @@ test "PNG transparency error cases" {
 test "PNG 16-bit transparency" {
     // Test 16-bit grayscale transparency
     const gray16_trans_data = [_]u8{ 0x80, 0x00 }; // Transparent value is 0x8000 (32768)
-    const gray16_header = Header{
+    const gray16_header: Header = .{
         .width = 2,
         .height = 1,
         .bit_depth = 16,
@@ -2865,7 +2865,7 @@ test "PNG gAMA chunk parsing" {
     };
 
     var png_state = PngState{
-        .header = Header{
+        .header = .{
             .width = 4,
             .height = 4,
             .bit_depth = 8,
@@ -2899,7 +2899,7 @@ test "PNG sRGB chunk parsing" {
     };
 
     var png_state = PngState{
-        .header = Header{
+        .header = .{
             .width = 4,
             .height = 4,
             .bit_depth = 8,
@@ -2927,7 +2927,7 @@ test "PNG sRGB chunk parsing" {
 
 test "PNG pixel extraction with transparency" {
     // Test extraction functions with transparency
-    const header = Header{
+    const header: Header = .{
         .width = 4,
         .height = 4,
         .bit_depth = 8,
@@ -2984,7 +2984,7 @@ test "PNG getInfo" {
 
 test "PNG Header helpers" {
     // 8-bit RGB
-    const h1 = Header{
+    const h1: Header = .{
         .width = 100,
         .height = 50,
         .bit_depth = 8,
@@ -2996,7 +2996,7 @@ test "PNG Header helpers" {
     try std.testing.expect(!h1.isGrayscale());
 
     // 16-bit RGBA
-    const h2 = Header{
+    const h2: Header = .{
         .width = 10,
         .height = 10,
         .bit_depth = 16,
@@ -3008,7 +3008,7 @@ test "PNG Header helpers" {
     try std.testing.expect(!h2.isGrayscale());
 
     // 8-bit Grayscale Alpha
-    const h3 = Header{
+    const h3: Header = .{
         .width = 5,
         .height = 5,
         .bit_depth = 8,
