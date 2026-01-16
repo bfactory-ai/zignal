@@ -18,9 +18,11 @@ pub fn main(init: std.process.Init) !void {
         if (std.mem.eql(u8, arg, "info")) {
             if (args.next()) |image_path| {
                 info(init.io, init.gpa, image_path) catch |err| {
-                    std.log.err("{t}", .{err});
+                    std.log.err("failed to get info for '{s}': {t}", .{ image_path, err });
                     return;
                 };
+            } else {
+                std.log.err("Missing image path for 'info' command", .{});
             }
             return;
         }
