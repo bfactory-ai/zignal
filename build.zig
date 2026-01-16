@@ -267,70 +267,46 @@ fn resolveVersion(b: *std.Build) std.SemanticVersion {
 /// @param python_lib: The Python library name ("python3" for shared libs, "python3-embed" for executables)
 /// @param target_info: Target platform information for platform-specific linking
 fn linkPython(b: *Build, artifact: *Build.Step.Compile, python_lib: []const u8, target_info: std.Target) void {
-    // Link against libc for Python headers
     artifact.root_module.link_libc = true;
 
-    // Add Python include directory if provided via environment variable
     if (b.graph.environ_map.get("PYTHON_INCLUDE_DIR")) |python_include| {
         artifact.root_module.addIncludePath(.{ .cwd_relative = python_include });
-    } else {
-        // No Python include directory specified - will rely on system default paths
     }
 
-    // Add platform-specific python libraries and flags
     switch (target_info.os.tag) {
+        .linux => {
+            artifact.root_module.linkSystemLibrary(python_lib, .{});
+        },
+        .macos => {
+            if (b.graph.environ_map.get("PYTHON_LIBS_DIR")) |libs_dir| {
+                artifact.root_module.addLibraryPath(.{ .cwd_relative = libs_dir });
+            }
+
+            if (b.graph.environ_map.get("PYTHON_LIB_NAME")) |lib_name| {
+                artifact.root_module.linkSystemLibrary(lib_name, .{});
+            } else {
+                artifact.root_module.linkSystemLibrary(python_lib, .{});
+            }
+            artifact.root_module.addRPathSpecial("@loader_path");
+        },
         .windows => {
-            // On Windows, link against the Python library
             if (b.graph.environ_map.get("PYTHON_LIBS_DIR")) |libs_dir| {
                 artifact.root_module.addLibraryPath(.{ .cwd_relative = libs_dir });
 
                 if (b.graph.environ_map.get("PYTHON_LIB_NAME")) |lib_name| {
-                    // Remove the .lib extension for linkSystemLibrary
                     const lib_name_no_ext = if (std.mem.endsWith(u8, lib_name, ".lib"))
                         lib_name[0 .. lib_name.len - 4]
                     else
                         lib_name;
                     artifact.root_module.linkSystemLibrary(lib_name_no_ext, .{});
                 } else {
-                    // Fallback - try to link against a common Python library name
                     artifact.root_module.linkSystemLibrary(python_lib, .{});
                 }
             } else {
-                // No Python library path provided - try system default
                 artifact.root_module.linkSystemLibrary(python_lib, .{});
             }
-        },
-        .macos => {
-            // On macOS, we need to handle Python linking carefully
-            // During build, we need the library path, but for distribution
-            // we'll use delocate to make the wheel portable
-
-            // Add library path if provided (needed during build)
-            if (b.graph.environ_map.get("PYTHON_LIBS_DIR")) |libs_dir| {
-                artifact.root_module.addLibraryPath(.{ .cwd_relative = libs_dir });
-            } else {
-                // No specific library path provided
-            }
-
-            // Link against Python library
-            if (b.graph.environ_map.get("PYTHON_LIB_NAME")) |lib_name| {
-                artifact.root_module.linkSystemLibrary(lib_name, .{});
-            } else {
-                artifact.root_module.linkSystemLibrary(python_lib, .{});
-            }
-
-            // Add rpath for runtime library resolution
-            artifact.root_module.addRPathSpecial("@loader_path");
-
-            // For Python extensions on macOS, we often use -undefined dynamic_lookup
-            // but Zig doesn't have a direct API for this, so we'll rely on
-            // delocate to fix the library dependencies after building
-        },
-        .linux => {
-            artifact.root_module.linkSystemLibrary(python_lib, .{});
         },
         else => {
-            // Try the default for other platforms
             artifact.root_module.linkSystemLibrary(python_lib, .{});
         },
     }
