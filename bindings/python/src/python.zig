@@ -67,9 +67,18 @@ pub fn create(value: anytype) ?*c.PyObject {
             if (value) |v| {
                 break :blk create(v);
             } else {
-                // TODO(py3.10): drop explicit cast once minimum Python >= 3.11
-                c.Py_INCREF(@as(?*c.PyObject, @ptrCast(c.Py_None)));
-                break :blk c.Py_None;
+                break :blk none();
+            }
+        },
+        .@"struct" => blk: {
+            switch (T) {
+                zignal.Rectangle(f64) => {
+                    const rectangle = @import("rectangle.zig");
+                    const new_args = c.Py_BuildValue("(dddd)", value.l, value.t, value.r, value.b) orelse return null;
+                    defer c.Py_DECREF(new_args);
+                    break :blk c.PyObject_CallObject(@ptrCast(&rectangle.RectangleType), new_args);
+                },
+                else => @compileError("Unsupported type: " ++ @typeName(T)),
             }
         },
         else => null,
