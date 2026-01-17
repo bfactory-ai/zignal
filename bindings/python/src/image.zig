@@ -367,17 +367,8 @@ fn image_getitem(self_obj: ?*c.PyObject, key: ?*c.PyObject) callconv(.c) ?*c.PyO
     const row_obj = coords[0];
     const col_obj = coords[1];
 
-    const row = c.PyLong_AsLong(row_obj);
-    if (row == -1 and c.PyErr_Occurred() != null) {
-        python.setTypeError("integer", row_obj);
-        return null;
-    }
-
-    const col = c.PyLong_AsLong(col_obj);
-    if (col == -1 and c.PyErr_Occurred() != null) {
-        python.setTypeError("integer", col_obj);
-        return null;
-    }
+    const row = python.parse(c_long, row_obj) catch return null;
+    const col = python.parse(c_long, col_obj) catch return null;
 
     // Bounds checking
     if (pimg_opt) |pimg| {
@@ -479,17 +470,8 @@ fn image_setitem(self_obj: ?*c.PyObject, key: ?*c.PyObject, value: ?*c.PyObject)
     const row_obj = coords[0];
     const col_obj = coords[1];
 
-    const row = c.PyLong_AsLong(row_obj);
-    if (row == -1 and c.PyErr_Occurred() != null) {
-        python.setTypeError("integer", row_obj);
-        return -1;
-    }
-
-    const col = c.PyLong_AsLong(col_obj);
-    if (col == -1 and c.PyErr_Occurred() != null) {
-        python.setTypeError("integer", col_obj);
-        return -1;
-    }
+    const row = python.parse(c_long, row_obj) catch return -1;
+    const col = python.parse(c_long, col_obj) catch return -1;
 
     // Bounds checking
     if (pimg_opt) |pimg| {

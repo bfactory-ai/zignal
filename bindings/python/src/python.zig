@@ -111,7 +111,7 @@ pub fn parse(comptime T: type, py_obj: ?*c.PyObject) !T {
             // Use PyLong_AsLongLong for 64-bit integer support
             const val = c.PyLong_AsLongLong(py_obj);
             if (val == -1 and c.PyErr_Occurred() != null) {
-                c.PyErr_Clear(); // Clear the Python error since we're handling it
+                // Exception already set by PyLong_AsLongLong (TypeError or OverflowError)
                 return ConversionError.not_integer;
             }
 
@@ -119,6 +119,7 @@ pub fn parse(comptime T: type, py_obj: ?*c.PyObject) !T {
             const min_val = std.math.minInt(T);
             const max_val = std.math.maxInt(T);
             if (val < min_val or val > max_val) {
+                c.PyErr_SetString(c.PyExc_ValueError, "Value out of range for target type");
                 return ConversionError.integer_out_of_range;
             }
             return @intCast(val);
@@ -126,7 +127,7 @@ pub fn parse(comptime T: type, py_obj: ?*c.PyObject) !T {
         .float => {
             const val = c.PyFloat_AsDouble(py_obj);
             if (val == -1.0 and c.PyErr_Occurred() != null) {
-                c.PyErr_Clear(); // Clear the Python error since we're handling it
+                // Exception already set by PyFloat_AsDouble (TypeError)
                 return ConversionError.not_float;
             }
             return @floatCast(val);
@@ -516,8 +517,8 @@ pub fn convertWithValidation(
 ) !T {
     // First do the basic type conversion
     const converted = parse(T, py_obj) catch |err| {
-        // If an exception is already set (e.g. MemoryError, specific ValueError), propagate it
-        if (c.PyErr_Occurred() != null) return err;
+        // Clear generic error from parse so we can set a more specific one
+        if (c.PyErr_Occurred() != null) c.PyErr_Clear();
 
         switch (err) {
             ConversionError.not_integer => {

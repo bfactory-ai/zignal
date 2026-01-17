@@ -128,15 +128,13 @@ fn running_stats_extend(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.Py
             }
             break;
         }
-        const value = c.PyFloat_AsDouble(item);
+        const value = python.parse(f64, item) catch {
+            c.Py_DECREF(item);
+            return null;
+        };
         c.Py_DECREF(item);
 
-        if (value == -1 and c.PyErr_Occurred() != null) {
-            c.PyErr_SetString(c.PyExc_TypeError, "values must contain only numbers");
-            return null;
-        }
-
-        stats_ptr.add(@floatCast(value));
+        stats_ptr.add(value);
     }
 
     return python.none();

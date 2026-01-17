@@ -545,12 +545,8 @@ fn matrix_getitem(self_obj: ?*c.PyObject, key: ?*c.PyObject) callconv(.c) ?*c.Py
         const row_obj = c.PyTuple_GetItem(key, 0);
         const col_obj = c.PyTuple_GetItem(key, 1);
 
-        const row = c.PyLong_AsLong(row_obj);
-        const col = c.PyLong_AsLong(col_obj);
-
-        if (c.PyErr_Occurred() != null) {
-            return null;
-        }
+        const row = python.parse(c_long, row_obj) catch return null;
+        const col = python.parse(c_long, col_obj) catch return null;
 
         // Handle negative indices
         const actual_row: usize = if (row < 0)
@@ -591,12 +587,8 @@ fn matrix_setitem(self_obj: ?*c.PyObject, key: ?*c.PyObject, value: ?*c.PyObject
         const row_obj = c.PyTuple_GetItem(key, 0);
         const col_obj = c.PyTuple_GetItem(key, 1);
 
-        const row = c.PyLong_AsLong(row_obj);
-        const col = c.PyLong_AsLong(col_obj);
-
-        if (c.PyErr_Occurred() != null) {
-            return -1;
-        }
+        const row = python.parse(c_long, row_obj) catch return -1;
+        const col = python.parse(c_long, col_obj) catch return -1;
 
         // Handle negative indices
         const actual_row: usize = if (row < 0)
@@ -616,10 +608,7 @@ fn matrix_setitem(self_obj: ?*c.PyObject, key: ?*c.PyObject, value: ?*c.PyObject
         }
 
         // Get the value as a float
-        const val = c.PyFloat_AsDouble(value);
-        if (c.PyErr_Occurred() != null) {
-            return -1;
-        }
+        const val = python.parse(f64, value) catch return -1;
 
         ptr.at(actual_row, actual_col).* = val;
         return 0;
@@ -656,22 +645,22 @@ fn dispatchMatrixOp(
     }
 
     if (left_is_mat) {
-        const scalar = c.PyFloat_AsDouble(right);
-        if (c.PyErr_Occurred() == null) {
+        if (python.parse(f64, right)) |scalar| {
             const left_ptr = python.unwrap(MatrixObject, "matrix_ptr", left, "Matrix") orelse return null;
             return matrixToObject(mat_scalar_op(left_ptr, scalar));
+        } else |_| {
+            c.PyErr_Clear();
         }
-        c.PyErr_Clear();
     }
 
     if (right_is_mat) {
         if (scalar_mat_op) |op| {
-            const scalar = c.PyFloat_AsDouble(left);
-            if (c.PyErr_Occurred() == null) {
+            if (python.parse(f64, left)) |scalar| {
                 const right_ptr = python.unwrap(MatrixObject, "matrix_ptr", right, "Matrix") orelse return null;
                 return matrixToObject(op(scalar, right_ptr));
+            } else |_| {
+                c.PyErr_Clear();
             }
-            c.PyErr_Clear();
         }
     }
 
@@ -742,11 +731,10 @@ fn matrix_truediv(left: ?*c.PyObject, right: ?*c.PyObject) callconv(.c) ?*c.PyOb
         return c.Py_NotImplemented();
     }
 
-    const scalar = c.PyFloat_AsDouble(right);
-    if (c.PyErr_Occurred() != null) {
+    const scalar = python.parse(f64, right) catch {
         c.Py_INCREF(c.Py_NotImplemented());
         return c.Py_NotImplemented();
-    }
+    };
 
     if (scalar == 0.0) {
         c.PyErr_SetString(c.PyExc_ZeroDivisionError, "Cannot divide matrix by zero");

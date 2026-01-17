@@ -238,10 +238,7 @@ fn pca_project(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
     // Convert Python list to f64 array
     for (0..@intCast(list_size)) |i| {
         const item = c.PyList_GetItem(list_obj, @intCast(i));
-        const value = c.PyFloat_AsDouble(item);
-        if (c.PyErr_Occurred() != null) {
-            return null;
-        }
+        const value = python.parse(f64, item) catch return null;
         vector[i] = value;
     }
 
@@ -419,10 +416,7 @@ fn pca_reconstruct(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
     // Convert Python list to f64 array
     for (0..@intCast(list_size)) |i| {
         const item = c.PyList_GetItem(list_obj, @intCast(i));
-        const value = c.PyFloat_AsDouble(item);
-        if (c.PyErr_Occurred() != null) {
-            return null;
-        }
+        const value = python.parse(f64, item) catch return null;
         coeffs[i] = value;
     }
 
