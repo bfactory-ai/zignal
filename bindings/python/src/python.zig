@@ -16,6 +16,21 @@ pub const c = @cImport({
     @cInclude("Python.h");
 });
 
+/// Clear the Python error indicator if one is set.
+pub fn clearError() void {
+    if (c.PyErr_Occurred() != null) {
+        c.PyErr_Clear();
+    }
+}
+
+/// Return Python NotImplemented constant with refcount incremented.
+/// Automatically clears any pending Python exception (useful when returning from a failed check/parse).
+pub fn notImplemented() ?*c.PyObject {
+    clearError();
+    c.Py_INCREF(c.Py_NotImplemented());
+    return c.Py_NotImplemented();
+}
+
 /// Helper to register a type with a module
 pub fn register(module: [*c]c.PyObject, comptime name: []const u8, type_obj: *c.PyTypeObject) !void {
     if (c.PyType_Ready(type_obj) < 0) return error.TypeInitFailed;

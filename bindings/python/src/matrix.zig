@@ -211,7 +211,7 @@ fn matrix_init_from_list(self: *MatrixObject, list_obj: ?*c.PyObject) c_int {
             const value = python.parse(f64, item) catch {
                 matrix_ptr.deinit();
                 allocator.destroy(matrix_ptr);
-                // python.parse clears the original Python error
+                c.PyErr_Clear(); // Clear the generic error from python.parse
                 c.PyErr_SetString(c.PyExc_TypeError, "Matrix elements must be numeric");
                 return -1;
             };
@@ -649,7 +649,7 @@ fn dispatchMatrixOp(
             const left_ptr = python.unwrap(MatrixObject, "matrix_ptr", left, "Matrix") orelse return null;
             return matrixToObject(mat_scalar_op(left_ptr, scalar));
         } else |_| {
-            c.PyErr_Clear();
+            python.clearError();
         }
     }
 
@@ -659,13 +659,12 @@ fn dispatchMatrixOp(
                 const right_ptr = python.unwrap(MatrixObject, "matrix_ptr", right, "Matrix") orelse return null;
                 return matrixToObject(op(scalar, right_ptr));
             } else |_| {
-                c.PyErr_Clear();
+                python.clearError();
             }
         }
     }
 
-    c.Py_INCREF(c.Py_NotImplemented());
-    return c.Py_NotImplemented();
+    return python.notImplemented();
 }
 
 fn op_add(a: *Matrix(f64), b: *Matrix(f64)) Matrix(f64) {
@@ -714,8 +713,7 @@ fn matrix_matmul(left: ?*c.PyObject, right: ?*c.PyObject) callconv(.c) ?*c.PyObj
     if (c.PyObject_IsInstance(left, @ptrCast(&MatrixType)) != 1 or
         c.PyObject_IsInstance(right, @ptrCast(&MatrixType)) != 1)
     {
-        c.Py_INCREF(c.Py_NotImplemented());
-        return c.Py_NotImplemented();
+        return python.notImplemented();
     }
 
     const self_ptr = python.unwrap(MatrixObject, "matrix_ptr", left, "Matrix") orelse return null;
@@ -727,14 +725,10 @@ fn matrix_matmul(left: ?*c.PyObject, right: ?*c.PyObject) callconv(.c) ?*c.PyObj
 
 fn matrix_truediv(left: ?*c.PyObject, right: ?*c.PyObject) callconv(.c) ?*c.PyObject {
     if (c.PyObject_IsInstance(left, @ptrCast(&MatrixType)) != 1) {
-        c.Py_INCREF(c.Py_NotImplemented());
-        return c.Py_NotImplemented();
+        return python.notImplemented();
     }
 
-    const scalar = python.parse(f64, right) catch {
-        c.Py_INCREF(c.Py_NotImplemented());
-        return c.Py_NotImplemented();
-    };
+    const scalar = python.parse(f64, right) catch return python.notImplemented();
 
     if (scalar == 0.0) {
         c.PyErr_SetString(c.PyExc_ZeroDivisionError, "Cannot divide matrix by zero");
