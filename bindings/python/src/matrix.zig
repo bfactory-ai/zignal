@@ -208,18 +208,13 @@ fn matrix_init_from_list(self: *MatrixObject, list_obj: ?*c.PyObject) c_int {
         while (col_idx < n_cols_usize) : (col_idx += 1) {
             const item = c.PyList_GetItem(row_obj, @intCast(col_idx));
 
-            // Convert to float
-            const float_obj = python.create(0.0) orelse return -1; // Create a float to check conversion
-            defer c.Py_XDECREF(float_obj);
-
-            const value = c.PyFloat_AsDouble(item);
-            if (value == -1.0 and c.PyErr_Occurred() != null) {
+            const value = python.parse(f64, item) catch {
                 matrix_ptr.deinit();
                 allocator.destroy(matrix_ptr);
-                c.PyErr_Clear();
+                // python.parse clears the original Python error
                 c.PyErr_SetString(c.PyExc_TypeError, "Matrix elements must be numeric");
                 return -1;
-            }
+            };
 
             matrix_ptr.at(row_idx, col_idx).* = value;
         }
