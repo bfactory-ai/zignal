@@ -551,7 +551,7 @@ fn pca_get_num_components(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv
     }
 
     const pca = self.pca_ptr.?;
-    return c.PyLong_FromSize_t(pca.num_components);
+    return python.create(pca.num_components);
 }
 
 fn pca_get_dim(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.PyObject {
@@ -569,7 +569,7 @@ fn pca_get_dim(self_obj: ?*c.PyObject, closure: ?*anyopaque) callconv(.c) ?*c.Py
         return null;
     }
 
-    return c.PyLong_FromSize_t(pca.dim);
+    return python.create(pca.dim);
 }
 
 // Method definitions

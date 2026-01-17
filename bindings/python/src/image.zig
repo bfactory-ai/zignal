@@ -341,9 +341,9 @@ fn image_repr(self_obj: ?*c.PyObject) callconv(.c) ?*c.PyObject {
             .rgba => "Rgba",
         };
         const formatted = std.fmt.bufPrintZ(&buffer, "Image({d}x{d}, dtype={s})", .{ pimg.rows(), pimg.cols(), fmt_name }) catch return null;
-        return c.PyUnicode_FromString(formatted.ptr);
+        return python.create(formatted);
     } else {
-        return c.PyUnicode_FromString("Image(uninitialized)");
+        return python.create("Image(uninitialized)");
     }
 }
 
@@ -397,7 +397,7 @@ fn image_getitem(self_obj: ?*c.PyObject, key: ?*c.PyObject) callconv(.c) ?*c.PyO
     // Variant-specific pixel return
     if (pimg_opt) |pimg| {
         return switch (pimg.data) {
-            .gray => |img| return c.PyLong_FromLong(@intCast(img.at(@intCast(row), @intCast(col)).*)),
+            .gray => |img| return python.create(img.at(@intCast(row), @intCast(col)).*),
             .rgb => return makeRgbProxy(@ptrCast(self_obj), @intCast(row), @intCast(col)),
             .rgba => return makeRgbaProxy(@ptrCast(self_obj), @intCast(row), @intCast(col)),
         };
@@ -867,7 +867,7 @@ fn image_format(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) 
                 };
             },
         }
-        return c.PyUnicode_FromStringAndSize(buffer.items.ptr, @intCast(buffer.items.len));
+        return python.create(buffer.items);
     } else {
         python.setValueError("Image not initialized", .{});
         return null;

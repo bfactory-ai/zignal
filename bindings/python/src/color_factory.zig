@@ -750,7 +750,7 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
                 else => unreachable,
             };
 
-            return @ptrCast(c.PyUnicode_FromString(formatted.ptr));
+            return @ptrCast(python.create(formatted));
         }
 
         /// Rich comparison method implementing RGBA-based equality/inequality
@@ -855,7 +855,7 @@ pub fn ColorBinding(comptime ZigColorType: type) type {
                 offset += footer.len;
 
                 const formatted = buffer[0..offset];
-                return @ptrCast(c.PyUnicode_FromStringAndSize(formatted.ptr, @intCast(formatted.len)));
+                return @ptrCast(python.create(formatted));
             } else if (format_str.len == 0) {
                 // Empty format spec - use repr
                 return repr(self_obj);

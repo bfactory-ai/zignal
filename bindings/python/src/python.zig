@@ -57,11 +57,24 @@ pub fn create(value: anytype) ?*c.PyObject {
             c.PyLong_FromUnsignedLongLong(@intCast(value))
         else
             c.PyLong_FromLongLong(@intCast(value)),
+        .comptime_int => c.PyLong_FromLongLong(@intCast(value)),
         .float => c.PyFloat_FromDouble(value),
+        .comptime_float => c.PyFloat_FromDouble(@floatCast(value)),
         .bool => c.PyBool_FromLong(@intFromBool(value)),
         .pointer => |ptr| blk: {
-            if (ptr.size == .Slice and ptr.child == u8) {
+            if (ptr.size == .slice and ptr.child == u8) {
                 break :blk c.PyUnicode_FromStringAndSize(value.ptr, @intCast(value.len));
+            }
+            // Handle C strings ([*:0]const u8 or [*:0]u8)
+            if (ptr.size == .c and ptr.child == u8) {
+                break :blk c.PyUnicode_FromString(value);
+            }
+            // Handle string literals (*const [N:0]u8) and pointers to arrays
+            if (ptr.size == .one) {
+                const child_info = @typeInfo(ptr.child);
+                if (child_info == .array and child_info.array.child == u8) {
+                    break :blk c.PyUnicode_FromStringAndSize(@ptrCast(value), @intCast(child_info.array.len));
+                }
             }
             break :blk null;
         },
@@ -95,8 +108,8 @@ pub fn parse(comptime T: type, py_obj: ?*c.PyObject) !T {
     const info = @typeInfo(T);
     switch (info) {
         .int => {
-            // Always use PyLong_AsLong for better negative value handling
-            const val = c.PyLong_AsLong(py_obj);
+            // Use PyLong_AsLongLong for 64-bit integer support
+            const val = c.PyLong_AsLongLong(py_obj);
             if (val == -1 and c.PyErr_Occurred() != null) {
                 c.PyErr_Clear(); // Clear the Python error since we're handling it
                 return ConversionError.not_integer;
@@ -429,7 +442,7 @@ pub fn getterStaticString(comptime text: []const u8) *const anyopaque {
     const Gen = struct {
         fn get(self_obj: ?*c.PyObject, _: ?*anyopaque) callconv(.c) ?*c.PyObject {
             _ = self_obj;
-            return c.PyUnicode_FromString(text.ptr);
+            return create(text);
         }
     };
     return @ptrCast(&Gen.get);
@@ -782,8 +795,8 @@ pub fn projectPoints2D(points_obj: ?*c.PyObject, point_ctx: anytype, comptime ap
     if (c.PyTuple_Check(points_obj) != 0 and c.PyTuple_Size(points_obj) == 2) {
         const point = parsePointTuple(f64, points_obj) catch return null;
         const result = @call(.auto, apply, .{ point_ctx, point.x(), point.y() });
-        const x_obj = c.PyFloat_FromDouble(result[0]) orelse return null;
-        const y_obj = c.PyFloat_FromDouble(result[1]) orelse {
+        const x_obj = create(result[0]) orelse return null;
+        const y_obj = create(result[1]) orelse {
             c.Py_DECREF(x_obj);
             return null;
         };
@@ -798,11 +811,11 @@ pub fn projectPoints2D(points_obj: ?*c.PyObject, point_ctx: anytype, comptime ap
 
         for (points, 0..) |point, i| {
             const result = @call(.auto, apply, .{ point_ctx, point.x(), point.y() });
-            const x_obj = c.PyFloat_FromDouble(result[0]) orelse {
+            const x_obj = create(result[0]) orelse {
                 c.Py_DECREF(result_list);
                 return null;
             };
-            const y_obj = c.PyFloat_FromDouble(result[1]) orelse {
+            const y_obj = create(result[1]) orelse {
                 c.Py_DECREF(x_obj);
                 c.Py_DECREF(result_list);
                 return null;
@@ -1409,22 +1422,15 @@ pub fn listFromSlice(comptime T: type, slice: []const T) ?*c.PyObject {
         .float => blk: {
             const Converter = struct {
                 fn convert(value: T, _: usize) ?*c.PyObject {
-                    const as_f64: f64 = @floatCast(value);
-                    return c.PyFloat_FromDouble(as_f64);
+                    return create(value);
                 }
             };
             break :blk listFromSliceCustom(T, slice, Converter.convert);
         },
         .int => blk: {
-            const info = @typeInfo(T).int;
-            const SignedParam = @typeInfo(@TypeOf(c.PyLong_FromLongLong)).@"fn".params[0].type.?;
-            const UnsignedParam = @typeInfo(@TypeOf(c.PyLong_FromUnsignedLongLong)).@"fn".params[0].type.?;
             const Converter = struct {
                 fn convert(value: T, _: usize) ?*c.PyObject {
-                    return if (info.signedness == .signed)
-                        c.PyLong_FromLongLong(@as(SignedParam, @intCast(value)))
-                    else
-                        c.PyLong_FromUnsignedLongLong(@as(UnsignedParam, @intCast(value)));
+                    return create(value);
                 }
             };
             break :blk listFromSliceCustom(T, slice, Converter.convert);
