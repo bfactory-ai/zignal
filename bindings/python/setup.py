@@ -262,7 +262,16 @@ def get_project_version():
         prerelease = match.group(2)
         dev_number = match.group(3)
         if prerelease:
-            return f"{base_version}.dev{dev_number or 0}"
+            normalized = prerelease.lower()
+            if re.match(r'^a(lpha)?$', normalized):
+                tag = 'a'
+            elif re.match(r'^b(eta)?$', normalized):
+                tag = 'b'
+            elif re.match(r'^(c|rc|pre|preview)$', normalized):
+                tag = 'rc'
+            else:
+                tag = '.dev'
+            return f"{base_version}{tag}{dev_number or 0}"
         else:
             return base_version
 
