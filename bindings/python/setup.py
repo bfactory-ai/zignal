@@ -104,7 +104,7 @@ def get_project_version():
         ver = subprocess.check_output(
             ["zig", "build", "version"], cwd=PROJECT_ROOT, text=True
         ).strip()
-    except Exception:
+    except (subprocess.CalledProcessError, FileNotFoundError):
         return "0.0.0.dev0"
 
     if m := re.match(r"^(\d+\.\d+\.\d+)(?:-(.+?)(?:\.(\d+))?)?", ver):
