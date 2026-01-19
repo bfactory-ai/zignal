@@ -36,18 +36,18 @@ def get_platform_config():
             plat_name = "manylinux2014_aarch64"
 
     elif system == "darwin":
-        if machine == "arm64":
-            plat_name = "macosx_11_0_arm64"
-            zig_target = "aarch64-macos-none"
-        else:
-            plat_name = "macosx_10_9_x86_64"
-            zig_target = "x86_64-macos-none"
+            if machine == "arm64":
+                plat_name = "macosx_11_0_arm64"
+                zig_target = "aarch64-macos-none"
+            else:
+                plat_name = "macosx_10_9_x86_64"
+                zig_target = "x86_64-macos-none"
 
     elif system == "windows":
-        if machine in ["x86_64", "amd64"]:
-            plat_name = "win_amd64"
-        elif machine in ["aarch64", "arm64"]:
-            plat_name = "win_arm64"
+            if machine in ["x86_64", "amd64"]:
+                plat_name = "win_amd64"
+            elif machine in ["aarch64", "arm64"]:
+                plat_name = "win_arm64"
 
     return plat_name, zig_target
 
@@ -90,12 +90,7 @@ def main():
     print("\nBuilding wheel...")
     cmd = [sys.executable, "-m", "build", "--wheel"]
 
-    # We pass platform name via env var PLAT_NAME which setup.py/setuptools reads,
-    # or passed as an argument if supported by the build frontend, but environment
-    # is the most robust way for setuptools to pick it up.
-
-    # However, 'build' tool calls setup.py in isolation. We need to pass arguments
-    # to the build backend or rely on environment variables being propagated.
+    # We pass platform name via env var PLAT_NAME which setup.py/setuptools reads.
     # 'python -m build' propagates environment variables.
 
     try:
@@ -115,16 +110,15 @@ def main():
 
         latest_wheel = max(wheels, key=lambda p: p.stat().st_mtime)
 
+        # Use python -m to avoid PATH issues and ensure we use the same python env
+        cmd = [sys.executable, "-m", "delocate.cmd.delocate_wheel",
+               "-w", str(dist_dir), "-v", str(latest_wheel)]
+
         try:
-            subprocess.run(
-                ["delocate-wheel", "-w", str(dist_dir), "-v", str(latest_wheel)],
-                check=True
-            )
-        except FileNotFoundError:
-            print("Warning: 'delocate-wheel' not found. Skipping repair.")
-            print("Install it with: pip install delocate")
+            subprocess.run(cmd, check=True)
         except subprocess.CalledProcessError:
-            print("Wheel repair failed.")
+            print("Wheel repair failed. Make sure 'delocate' is installed.")
+            print("Install with: pip install delocate")
             sys.exit(1)
 
     print(f"\nSuccess! Wheel available in {bindings_dir}/dist")
