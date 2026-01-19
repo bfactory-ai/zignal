@@ -23,6 +23,10 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest, macos-15-intel]
         python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
 
+    env:
+      ZIG_CPU: baseline
+      ZIG_OPTIMIZE: ReleaseFast
+
     steps:
     - uses: actions/checkout@v4
       with:
@@ -46,79 +50,79 @@ jobs:
         cd bindings/python
         uv sync --all-extras --dev
 
-    - name: Build and Fix Wheel (Linux)
-      if: runner.os == 'Linux'
+    - name: Build and Repair Wheel
+      shell: bash
       run: |
         cd bindings/python
-        export ZIG_TARGET=x86_64-linux-gnu
-        export ZIG_CPU=baseline
-        export ZIG_OPTIMIZE=ReleaseFast
-        uv run python -m build --wheel
-        echo "Repairing wheels..."
-        uv run auditwheel repair dist/*.whl -w dist_fixed
-        rm dist/*.whl
-        mv dist_fixed/*.whl dist/
-        echo "Final wheels:"
-        ls -l dist/
 
-    - name: Build and Fix Wheel (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        cd bindings/python
-        ARCH=$(uname -m)
-        if [ "$ARCH" == "arm64" ]; then
-          export ZIG_TARGET=aarch64-macos-none
-          export PLAT_NAME=macosx_11_0_arm64
-        else
-          export ZIG_TARGET=x86_64-macos-none
-          export PLAT_NAME=macosx_10_9_x86_64
+        if [ "$RUNNER_OS" == "Linux" ]; then
+          export ZIG_TARGET=x86_64-linux-gnu
+          # Auditwheel will fix the tag, so we don't need PLAT_NAME here usually,
+          # but building with python -m build is standard.
+
+          uv run python -m build --wheel
+
+          echo "Repairing wheels..."
+          uv run auditwheel repair dist/*.whl -w dist_fixed
+          rm dist/*.whl && mv dist_fixed/*.whl dist/
+
+        elif [ "$RUNNER_OS" == "macOS" ]; then
+          ARCH=$(uname -m)
+          if [ "$ARCH" == "arm64" ]; then
+            export ZIG_TARGET=aarch64-macos-none
+            export PLAT_NAME=macosx_11_0_arm64
+          else
+            export ZIG_TARGET=x86_64-macos-none
+            export PLAT_NAME=macosx_10_9_x86_64
+          fi
+
+          echo "Building for target: $ZIG_TARGET, platform: $PLAT_NAME"
+          uv run python -m build --wheel
+
+          echo "Delocating wheels..."
+          uv run delocate-wheel -w dist_fixed -v dist/*.whl
+          rm dist/*.whl && mv dist_fixed/*.whl dist/
+
+        elif [ "$RUNNER_OS" == "Windows" ]; then
+          export ZIG_TARGET=native
+          export PLAT_NAME=win_amd64
+
+          uv run python -m build --wheel
         fi
-        export ZIG_CPU=baseline
-        export ZIG_OPTIMIZE=ReleaseFast
-        echo "Building for target: $ZIG_TARGET, platform: $PLAT_NAME"
-        uv run python -m build --wheel
-        echo "Delocating wheels..."
-        uv run delocate-wheel -w dist_fixed -v dist/*.whl
-        rm dist/*.whl
-        mv dist_fixed/*.whl dist/
+
         echo "Final wheels:"
         ls -l dist/
 
-    - name: Build Wheel (Windows)
-      if: runner.os == 'Windows'
+    - name: Test Wheel
+      shell: bash
       run: |
         cd bindings/python
-        $env:ZIG_TARGET = "native"
-        $env:ZIG_CPU = "baseline"
-        $env:ZIG_OPTIMIZE = "ReleaseFast"
-        $env:PLAT_NAME = "win_amd64"
-        uv run python -m build --wheel
-        echo "Final wheels:"
-        Get-ChildItem dist/
 
-    - name: Test wheel (Unix)
-      if: runner.os != 'Windows'
-      run: |
-        cd bindings/python
+        # Find the built wheel (works on all bash environments including Git Bash)
         wheel=$(find dist -name "*.whl" | head -1)
         echo "Installing wheel: $wheel"
         uv pip install "$wheel"
-        TEST_TMP_DIR=$(mktemp -d)
-        cp -r tests "$TEST_TMP_DIR/"
-        cd "$TEST_TMP_DIR"
-        uv run --project "$GITHUB_WORKSPACE/bindings/python" pytest tests/ -v
 
-    - name: Test wheel (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        cd bindings/python
-        $wheel = Get-ChildItem dist/*.whl | Select-Object -First 1
-        Write-Host "Installing wheel: $wheel"
-        uv pip install "$wheel"
-        $test_tmp = New-Item -ItemType Directory -Path "$env:TEMP\wheel_test_$([Guid]::NewGuid().ToString().Substring(0,8))"
-        Copy-Item -Recurse tests $test_tmp
-        Set-Location $test_tmp
-        uv run --project "$env:GITHUB_WORKSPACE\bindings/python" pytest tests/ -v
+        # Create a temp directory safely using Python
+        TEST_TMP_DIR=$(python -c "import tempfile; print(tempfile.mkdtemp())")
+        echo "Testing in: $TEST_TMP_DIR"
+
+        # Copy tests to temp dir
+        cp -r tests "$TEST_TMP_DIR/"
+
+        # Switch to temp dir
+        cd "$TEST_TMP_DIR"
+
+        # Run pytest using the project environment
+        # We need the absolute path to the project for 'uv run --project'
+        PROJECT_ROOT="$GITHUB_WORKSPACE/bindings/python"
+
+        # On Windows, ensure path format is compatible with native Windows tools
+        if [ "$RUNNER_OS" == "Windows" ]; then
+          PROJECT_ROOT=$(cygpath -w "$PROJECT_ROOT")
+        fi
+
+        uv run --project "$PROJECT_ROOT" pytest tests/ -v
 
     - name: Upload wheels as artifacts
       uses: actions/upload-artifact@v4
@@ -126,46 +130,9 @@ jobs:
         name: wheels-${{ matrix.os }}-py${{ matrix.python-version }}
         path: bindings/python/dist/*.whl
 
-  build_sdist:
-    name: Build source distribution
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-
-    - name: Install Zig
-      uses: mlugg/setup-zig@v2
-      with:
-        version: master
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@v2
-
-    - name: Install dependencies
-      run: |
-        cd bindings/python
-        uv sync --all-extras --dev
-
-    - name: Build sdist
-      run: |
-        cd bindings/python
-        uv run python -m build --sdist
-
-    - name: Upload sdist as artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: sdist
-        path: bindings/python/dist/*.tar.gz
-
   upload_pypi:
     name: Upload to PyPI
-    needs: [build_wheels, build_sdist]
+    needs: [build_wheels]
     runs-on: ubuntu-latest
     if: github.event_name == 'release'
     environment:
@@ -190,7 +157,7 @@ jobs:
 
   upload_test_pypi:
     name: Upload to TestPyPI
-    needs: [build_wheels, build_sdist]
+    needs: [build_wheels]
     runs-on: ubuntu-latest
     if: (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     environment:
@@ -216,7 +183,7 @@ jobs:
 
   notify_fork_pr:
     name: Notify Fork PR Build Results
-    needs: [build_wheels, build_sdist]
+    needs: [build_wheels]
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
     permissions:
