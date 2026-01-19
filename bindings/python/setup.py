@@ -117,12 +117,10 @@ class ZigBuildExt(build_ext):
                 env["PYTHON_LIBS_DIR"] = lib_dir
                 print(f"Setting PYTHON_LIBS_DIR={lib_dir}")
 
-                # Update LD_LIBRARY_PATH to ensure the build tool can run the executable
-                current_ld_path = env.get("LD_LIBRARY_PATH", "")
-                if current_ld_path:
-                    env["LD_LIBRARY_PATH"] = f"{lib_dir}:{current_ld_path}"
-                else:
-                    env["LD_LIBRARY_PATH"] = lib_dir
+                # Set LD_LIBRARY_PATH to include only the trusted Python library directory.
+                # We do not inherit the existing LD_LIBRARY_PATH to prevent environment
+                # variable injection vulnerabilities (e.g., arbitrary code execution).
+                env["LD_LIBRARY_PATH"] = str(lib_dir)
 
             # Determine library name
             ldlibrary = sysconfig.get_config_var("LDLIBRARY")
