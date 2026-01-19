@@ -23,7 +23,9 @@ classifiers = [
     "Topic :: Multimedia :: Graphics",
     "Topic :: Scientific/Engineering :: Image Processing",
 ]
-dependencies = []
+dependencies = [
+    "numpy>=2.1.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/bfactory-ai/zignal"

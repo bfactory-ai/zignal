@@ -41,65 +41,8 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v2
 
-    - name: Create virtual environment
-      run: |
-        uv venv
-
-    - name: Install build dependencies
-      run: |
-        uv pip install --upgrade setuptools wheel build pytest
-        # Install numpy for more comprehensive testing (optional)
-        uv pip install numpy || echo "NumPy installation failed, tests will be skipped"
-
-    - name: Install macOS-specific dependencies
-      if: runner.os == 'macOS'
-      run: |
-        # Install delocate for fixing wheel dependencies
-        uv pip install delocate
-
-    - name: Build wheel (Unix)
-      if: runner.os != 'Windows'
-      run: |
-        source .venv/bin/activate
-        cd bindings/python
-        python scripts/build_wheels.py --optimize ReleaseFast
-      env:
-        ZIG_OPTIMIZE: ReleaseFast
-
-    - name: Build wheel (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        .venv\Scripts\Activate.ps1
-        cd bindings/python
-        python scripts/build_wheels.py --optimize ReleaseFast
-      env:
-        ZIG_OPTIMIZE: ReleaseFast
-
-    - name: Test wheel (Unix)
-      if: runner.os != 'Windows'
-      run: |
-        source .venv/bin/activate
-        wheel=$(find bindings/python/dist -name "*.whl" | head -1)
-        echo "Installing wheel: $wheel"
-        uv pip install "$wheel"
-        # Run tests from a temp directory to avoid importing local source code
-        mkdir -p /tmp/wheel_test
-        cp -r bindings/python/tests /tmp/wheel_test/
-        cd /tmp/wheel_test
-        pytest tests/ -v
-
-    - name: Test wheel (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        .venv\Scripts\Activate.ps1
-        $wheel = Get-ChildItem bindings/python/dist/*.whl | Select-Object -First 1
-        Write-Host "Installing wheel: $wheel"
-        uv pip install "$wheel"
-        # Run tests from a temp directory to avoid importing local source code
-        New-Item -ItemType Directory -Force -Path C:\temp\wheel_test
-        Copy-Item -Recurse bindings/python/tests C:\temp\wheel_test\
-        Set-Location C:\temp\wheel_test
-        pytest tests/ -v
+    - name: Build and Test Wheels
+      run: python bindings/python/scripts/build_wheels.py --with-numpy --optimize ReleaseFast
 
     - name: Upload wheels as artifacts
       uses: actions/upload-artifact@v4
@@ -107,59 +50,9 @@ jobs:
         name: wheels-${{ matrix.os }}-py${{ matrix.python-version }}
         path: bindings/python/dist/*.whl
 
-  build_sdist:
-    name: Build source distribution
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-
-    - name: Install Zig
-      uses: mlugg/setup-zig@v2
-      with:
-        version: master
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@v2
-
-    - name: Create virtual environment
-      run: |
-        uv venv
-
-    - name: Install build dependencies
-      run: |
-        uv pip install --upgrade setuptools wheel build pytest
-        # Install numpy for more comprehensive testing (optional)
-        uv pip install numpy || echo "NumPy installation failed, tests will be skipped"
-
-    - name: Install macOS-specific dependencies
-      if: runner.os == 'macOS'
-      run: |
-        # Install delocate for fixing wheel dependencies
-        uv pip install delocate
-
-    - name: Build sdist
-      run: |
-        source .venv/bin/activate
-        cd bindings/python
-        python scripts/update_version.py
-        python -m build --sdist
-
-    - name: Upload sdist as artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: sdist
-        path: bindings/python/dist/*.tar.gz
-
   upload_pypi:
     name: Upload to PyPI
-    needs: [build_wheels, build_sdist]
+    needs: [build_wheels]
     runs-on: ubuntu-latest
     # Only upload on releases
     if: github.event_name == 'release'
@@ -188,7 +81,7 @@ jobs:
 
   upload_test_pypi:
     name: Upload to TestPyPI
-    needs: [build_wheels, build_sdist]
+    needs: [build_wheels]
     runs-on: ubuntu-latest
     # Upload to TestPyPI only for PRs from the main repo (not forks) and releases
     # Fork PRs don't have OIDC permissions for security reasons
@@ -219,7 +112,7 @@ jobs:
 
   notify_fork_pr:
     name: Notify Fork PR Build Results
-    needs: [build_wheels, build_sdist]
+    needs: [build_wheels]
     runs-on: ubuntu-latest
     # Only run for fork PRs where TestPyPI upload isn't possible
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
