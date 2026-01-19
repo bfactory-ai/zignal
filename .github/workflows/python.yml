@@ -1,13 +1,6 @@
 name: python
 
 on:
-  push:
-    paths:
-      - 'bindings/python/**'
-      - 'src/**'
-      - 'build.zig'
-      - 'build.zig.zon'
-      - '.github/workflows/python.yml'
   release:
     types: [created]
   pull_request:
