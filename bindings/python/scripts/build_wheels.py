@@ -68,7 +68,6 @@ def main():
     env = os.environ.copy()
 
     if plat_name:
-        env["PLAT_NAME"] = plat_name
         print(f"Platform tag: {plat_name}")
 
     if "ZIG_TARGET" not in env:
@@ -89,9 +88,9 @@ def main():
     # 4. Build wheel
     print("\nBuilding wheel...")
     cmd = [sys.executable, "-m", "build", "--wheel"]
-
-    # We pass platform name via env var PLAT_NAME which setup.py/setuptools reads.
-    # 'python -m build' propagates environment variables.
+    if plat_name:
+        # Pass platform tag to the backend for correct wheel tagging.
+        cmd.append(f"--config-setting=--plat-name={plat_name}")
 
     try:
         subprocess.run(cmd, env=env, check=True)
