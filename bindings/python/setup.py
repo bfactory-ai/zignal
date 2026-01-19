@@ -1,4 +1,18 @@
-"""Setup script for zignal Python bindings."""
+"""
+Setup script for zignal Python bindings.
+
+This script is designed to be used with modern Python packaging tools like `build` and `pip`.
+It integrates the Zig build system into the Python build process.
+
+Usage:
+    python -m build --wheel
+    pip install .
+
+Environment Variables:
+    ZIG_TARGET: The Zig compilation target (e.g., "x86_64-linux-gnu", "native").
+    ZIG_OPTIMIZE: Zig optimization mode (default: "ReleaseFast").
+    ZIG_CPU: Zig CPU architecture (optional, e.g., "baseline").
+"""
 
 import os
 import shutil

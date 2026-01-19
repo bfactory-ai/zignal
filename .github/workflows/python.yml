@@ -57,23 +57,94 @@ jobs:
         # Install delocate for fixing wheel dependencies
         uv pip install delocate
 
-    - name: Build wheel (Unix)
-      if: runner.os != 'Windows'
+    - name: Install Linux-specific dependencies
+      if: runner.os == 'Linux'
+      run: |
+        # Install auditwheel for fixing wheel dependencies
+        uv pip install auditwheel
+
+    - name: Build and Fix Wheel (Linux)
+      if: runner.os == 'Linux'
       run: |
         source .venv/bin/activate
         cd bindings/python
-        python scripts/build_wheels.py --optimize ReleaseFast
-      env:
-        ZIG_OPTIMIZE: ReleaseFast
 
-    - name: Build wheel (Windows)
+        # Sync version
+        python scripts/update_version.py
+
+        # Build wheel
+        # Target x86_64-linux-gnu for older glibc compatibility (manylinux)
+        export ZIG_TARGET=x86_64-linux-gnu
+        export ZIG_CPU=baseline
+        export ZIG_OPTIMIZE=ReleaseFast
+
+        python -m build --wheel
+
+        # Bundle dependencies and tag as manylinux
+        echo "Repairing wheels..."
+        auditwheel repair dist/*.whl -w dist_fixed
+
+        # Replace original wheels with fixed ones
+        rm dist/*.whl
+        mv dist_fixed/*.whl dist/
+
+        echo "Final wheels:"
+        ls -l dist/
+
+    - name: Build and Fix Wheel (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        source .venv/bin/activate
+        cd bindings/python
+
+        # Sync version
+        python scripts/update_version.py
+
+        # Determine target based on runner arch
+        ARCH=$(uname -m)
+        if [ "$ARCH" == "arm64" ]; then
+          export ZIG_TARGET=aarch64-macos-none
+        else
+          export ZIG_TARGET=x86_64-macos-none
+        fi
+
+        export ZIG_CPU=baseline
+        export ZIG_OPTIMIZE=ReleaseFast
+
+        echo "Building for target: $ZIG_TARGET"
+        python -m build --wheel
+
+        # Bundle dependencies
+        echo "Delocating wheels..."
+        delocate-wheel -w dist_fixed -v dist/*.whl
+
+        # Replace original wheels with fixed ones
+        rm dist/*.whl
+        mv dist_fixed/*.whl dist/
+
+        echo "Final wheels:"
+        ls -l dist/
+
+    - name: Build Wheel (Windows)
       if: runner.os == 'Windows'
       run: |
         .venv\Scripts\Activate.ps1
         cd bindings/python
-        python scripts/build_wheels.py --optimize ReleaseFast
-      env:
-        ZIG_OPTIMIZE: ReleaseFast
+
+        # Sync version
+        python scripts/update_version.py
+
+        # Build wheel
+        # Use native for Windows (Zig's windows-msvc cross-compilation can be tricky with python libs)
+        $env:ZIG_TARGET = "native"
+        $env:ZIG_CPU = "baseline"
+        $env:ZIG_OPTIMIZE = "ReleaseFast"
+
+        python -m build --wheel
+
+        echo "Final wheels:"
+        Get-ChildItem dist/
+
 
     - name: Test wheel (Unix)
       if: runner.os != 'Windows'
