@@ -36,18 +36,18 @@ def get_platform_config():
             plat_name = "manylinux2014_aarch64"
 
     elif system == "darwin":
-            if machine == "arm64":
-                plat_name = "macosx_11_0_arm64"
-                zig_target = "aarch64-macos-none"
-            else:
-                plat_name = "macosx_10_9_x86_64"
-                zig_target = "x86_64-macos-none"
+        if machine == "arm64":
+            plat_name = "macosx_11_0_arm64"
+            zig_target = "aarch64-macos-none"
+        else:
+            plat_name = "macosx_10_9_x86_64"
+            zig_target = "x86_64-macos-none"
 
     elif system == "windows":
-            if machine in ["x86_64", "amd64"]:
-                plat_name = "win_amd64"
-            elif machine in ["aarch64", "arm64"]:
-                plat_name = "win_arm64"
+        if machine in ["x86_64", "amd64"]:
+            plat_name = "win_amd64"
+        elif machine in ["aarch64", "arm64"]:
+            plat_name = "win_arm64"
 
     return plat_name, zig_target
 
@@ -61,7 +61,11 @@ def main():
 
     # 1. Update version
     print("Updating version...")
-    subprocess.run([sys.executable, "scripts/update_version.py"], check=True)
+    try:
+        subprocess.run([sys.executable, "scripts/update_version.py"], check=True)
+    except subprocess.CalledProcessError:
+        print("Version update failed.")
+        sys.exit(1)
 
     # 2. Configure environment
     plat_name, zig_target = get_platform_config()
@@ -89,8 +93,8 @@ def main():
     print("\nBuilding wheel...")
     cmd = [sys.executable, "-m", "build", "--wheel"]
     if plat_name:
-        # Pass platform tag to the backend for correct wheel tagging.
-        cmd.append(f"--config-setting=--plat-name={plat_name}")
+        # Pass platform tag to setuptools bdist_wheel for correct wheel tagging.
+        cmd.append(f"--config-setting=--build-option=--plat-name={plat_name}")
 
     try:
         subprocess.run(cmd, env=env, check=True)
