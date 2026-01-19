@@ -126,8 +126,7 @@ class ZigBuildExt(build_ext):
             ldlibrary = sysconfig.get_config_var("LDLIBRARY")
             if ldlibrary:
                 # LDLIBRARY is usually 'libpython3.x.so'
-                if ldlibrary.startswith("lib"):
-                    ldlibrary = ldlibrary[3:]  # strip 'lib'
+                ldlibrary = ldlibrary.removeprefix("lib")
                 # Strip extensions .so, .so.1.0, etc.
                 if ".so" in ldlibrary:
                     ldlibrary = ldlibrary.split(".so")[0]
