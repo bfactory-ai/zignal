@@ -47,7 +47,12 @@ dev = [
     "setuptools>=45",
     "wheel",
     "build",
+    "auditwheel ; sys_platform == 'linux'",
+    "delocate ; sys_platform == 'darwin'",
 ]
+
+[tool.uv]
+default-groups = ["dev"]
 
 [tool.ruff]
 line-length = 99
