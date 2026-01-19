@@ -5,6 +5,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -43,13 +44,34 @@ def python_cmd() -> list[str]:
 def ensure_deps(with_numpy: bool) -> None:
     """Ensure build and test dependencies are installed."""
     print("=== Ensuring Dependencies ===")
+
+    # Ensure virtual environment exists
+    venv_dir = bindings_dir() / ".venv"
+    # Env to unmask the outer uv environment
+    env = os.environ.copy()
+    if "VIRTUAL_ENV" in env:
+        del env["VIRTUAL_ENV"]
+
+    if not venv_dir.exists():
+        print("Creating virtual environment...")
+        run(["uv", "venv"], cwd=bindings_dir(), env=env)
+
+    # Ensure pip is installed (uv venv doesn't include it by default)
+    run(["uv", "pip", "install", "pip"], cwd=bindings_dir(), env=env)
+
     deps = ["setuptools", "wheel", "build", "pytest"]
     if with_numpy:
         deps.append("numpy")
     if platform.system() == "Darwin":
         deps.append("delocate")
 
-    run(["uv", "pip", "install", "--upgrade", *deps])
+    # Use python -m pip to install dependencies to avoid uv pip issues with numpy
+    # We must use the python from the venv directly to avoid outer uv interference
+    python_exe = venv_dir / "bin" / "python"
+    if sys.platform == "win32":
+        python_exe = venv_dir / "Scripts" / "python.exe"
+
+    run([str(python_exe), "-m", "pip", "install", "--upgrade", *deps], cwd=bindings_dir(), env=env)
 
 
 def update_version(skip: bool) -> None:
@@ -59,7 +81,11 @@ def update_version(skip: bool) -> None:
 
     script = bindings_dir() / "scripts" / "update_version.py"
     if script.exists():
-        run([*python_cmd(), str(script)], cwd=bindings_dir())
+        # Unset VIRTUAL_ENV so uv run picks up the local .venv
+        env = os.environ.copy()
+        if "VIRTUAL_ENV" in env:
+            del env["VIRTUAL_ENV"]
+        run([*python_cmd(), str(script)], cwd=bindings_dir(), env=env)
 
 
 def clean_artifacts() -> None:
@@ -83,6 +109,9 @@ def build_wheel(optimize: str) -> None:
     print(f"=== Building Wheel (Optimize: {optimize}) ===")
 
     env = os.environ.copy()
+    if "VIRTUAL_ENV" in env:
+        del env["VIRTUAL_ENV"]
+
     env["ZIG_OPTIMIZE"] = optimize
     env["ZIG_CPU"] = env.get("ZIG_CPU", "baseline")
 
@@ -94,7 +123,18 @@ def build_wheel(optimize: str) -> None:
         wheels = list(dist_dir.glob("*.whl"))
         if wheels:
             latest_wheel = max(wheels, key=lambda p: p.stat().st_mtime)
-            run([*python_cmd(), "-m", "delocate.cmd.delocate_wheel", "-w", str(dist_dir), "-v", str(latest_wheel)])
+            run(
+                [
+                    *python_cmd(),
+                    "-m",
+                    "delocate.cmd.delocate_wheel",
+                    "-w",
+                    str(dist_dir),
+                    "-v",
+                    str(latest_wheel),
+                ],
+                env=env,
+            )
 
 
 def test_artifacts() -> None:
@@ -107,17 +147,49 @@ def test_artifacts() -> None:
         raise RuntimeError("No wheel found to test!")
 
     latest_wheel = max(wheels, key=lambda p: p.stat().st_mtime)
-    run(["uv", "pip", "install", str(latest_wheel), "--force-reinstall"])
+
+    # Install into the project venv
+    # Use python -m pip to avoid uv pip issues with numpy on 3.14
+    venv_path = bindings_dir() / ".venv"
+    # Env to unmask the outer uv environment if present
+    env = os.environ.copy()
+    if "VIRTUAL_ENV" in env:
+        del env["VIRTUAL_ENV"]
+
+    python_exe = venv_path / "bin" / "python"
+    if sys.platform == "win32":
+        python_exe = venv_path / "Scripts" / "python.exe"
+
+    run(
+        [str(python_exe), "-m", "pip", "install", str(latest_wheel), "--force-reinstall"],
+        cwd=bindings_dir(),
+        env=env,
+    )
+
+    # Run tests in a temp dir using the project venv
+    env["VIRTUAL_ENV"] = str(venv_path)
+    # Ensure uv uses this venv
+    env["UV_PROJECT_ENVIRONMENT"] = str(venv_path)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
         shutil.copytree(bindings_dir() / "tests", tmp_path / "tests")
-        run([*python_cmd(), "-m", "pytest", "tests", "-v"], cwd=tmp_path)
+
+        # We use 'python -m pytest' directly from the venv python to avoid uv resolving shenanigans in tmp dir
+        python_exe = venv_path / "bin" / "python"
+        if sys.platform == "win32":
+            python_exe = venv_path / "Scripts" / "python.exe"
+
+        run([str(python_exe), "-m", "pytest", "tests", "-v"], cwd=tmp_path, env=env)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Zignal Wheel Build Helper")
-    parser.add_argument("--optimize", default="ReleaseFast", choices=["Debug", "ReleaseSafe", "ReleaseFast", "ReleaseSmall"])
+    parser.add_argument(
+        "--optimize",
+        default="ReleaseFast",
+        choices=["Debug", "ReleaseSafe", "ReleaseFast", "ReleaseSmall"],
+    )
     parser.add_argument("--skip-version-update", action="store_true")
     parser.add_argument("--with-numpy", action="store_true")
     parser.add_argument("--skip-tests", action="store_true")
