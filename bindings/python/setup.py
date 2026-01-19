@@ -1,9 +1,6 @@
 """
 Setup script for zignal Python bindings.
 
-This script is designed to be used with modern Python packaging tools like `build` and `pip`.
-It integrates the Zig build system into the Python build process.
-
 Usage:
     python -m build --wheel
     pip install .
@@ -238,11 +235,11 @@ def get_zig_cpu():
 
 def sync_version():
     """Sync version from Zig build system directly."""
-    try:
-        current_dir = Path(__file__).parent
-        project_root = current_dir.parent.parent
+    current_dir = Path(__file__).parent
+    project_root = current_dir.parent.parent
 
-        # 1. Get version from Zig
+    # 1. Get version from Zig
+    try:
         result = subprocess.run(
             ["zig", "build", "version"],
             cwd=project_root,
@@ -250,41 +247,42 @@ def sync_version():
             text=True,
             check=True,
         )
-        zig_version = result.stdout.strip()
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        # Gracefully ignore errors if zig is not installed or the version command fails.
+        # This allows installation from source distributions where Zig might not be present.
+        return
 
-        # 2. Convert to Python PEP 440 format
-        # Pattern to match Zig version format: 0.2.0-dev.13+abc123
-        pattern = r"^(\d+\.\d+\.\d+)(?:-(.+?)(?:\.(\d+))?)?(?:\+(.+))?$"
-        match = re.match(pattern, zig_version)
+    zig_version = result.stdout.strip()
 
-        if match:
-            base_version = match.group(1)
-            prerelease = match.group(2)
-            dev_number = match.group(3)
-            if prerelease:
-                python_version = f"{base_version}.dev{dev_number or 0}"
-            else:
-                python_version = base_version
+    # 2. Convert to Python PEP 440 format
+    # Pattern to match Zig version format: 0.2.0-dev.13+abc123
+    pattern = r"^(\d+\.\d+\.\d+)(?:-(.+?)(?:\.(\d+))?)?(?:\+(.+))?$"
+    match = re.match(pattern, zig_version)
+
+    if match:
+        base_version = match.group(1)
+        prerelease = match.group(2)
+        dev_number = match.group(3)
+        if prerelease:
+            python_version = f"{base_version}.dev{dev_number or 0}"
         else:
-            python_version = zig_version
+            python_version = base_version
+    else:
+        python_version = zig_version
 
-        # 3. Update pyproject.toml
-        pyproject_path = current_dir / "pyproject.toml"
-        if pyproject_path.exists():
-            content = pyproject_path.read_text()
-            new_content, count = re.subn(
-                r'^version\s*=\s*"[^"]*"',
-                f'version = "{python_version}"',
-                content,
-                flags=re.MULTILINE
-            )
-            if count > 0 and new_content != content:
-                pyproject_path.write_text(new_content)
-                print(f"Synchronized pyproject.toml version: {python_version}")
-    except Exception:
-        # Gracefully ignore errors (e.g., zig not in PATH) to allow installation
-        # from source distributions where Zig might not be present yet.
-        pass
+    # 3. Update pyproject.toml
+    pyproject_path = current_dir / "pyproject.toml"
+    if pyproject_path.exists():
+        content = pyproject_path.read_text()
+        new_content, count = re.subn(
+            r'^version\s*=\s*"[^"]*"',
+            f'version = "{python_version}"',
+            content,
+            flags=re.MULTILINE
+        )
+        if count > 0 and new_content != content:
+            pyproject_path.write_text(new_content)
+            print(f"Synchronized pyproject.toml version: {python_version}")
 
 
 if __name__ == "__main__":
