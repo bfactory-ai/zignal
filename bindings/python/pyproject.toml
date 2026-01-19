@@ -36,11 +36,13 @@ test = ["pytest", "numpy"]
 docs = ["pdoc"]
 
 [dependency-groups]
-dev = [
+test = [
     "pytest",
-    "ty",
-    "ruff",
     "numpy",
+]
+dev = [
+    { include-group = "test" },
+    "ruff",
     "pdoc",
     "setuptools>=45",
     "wheel",
@@ -62,3 +64,4 @@ select = [
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+

@@ -37,140 +37,88 @@ jobs:
       uses: mlugg/setup-zig@v2
       with:
         version: master
+        - name: Install uv
+          uses: astral-sh/setup-uv@v2
 
-    - name: Install uv
-      uses: astral-sh/setup-uv@v2
+        - name: Install dependencies
+          run: |
+            cd bindings/python
+            uv sync --all-extras --dev
 
-    - name: Create virtual environment
-      run: |
-        uv venv
+        - name: Build and Fix Wheel (Linux)
+          if: runner.os == 'Linux'
+          run: |
+            cd bindings/python
+            uv run python scripts/update_version.py
+            export ZIG_TARGET=x86_64-linux-gnu
+            export ZIG_CPU=baseline
+            export ZIG_OPTIMIZE=ReleaseFast
+            uv run python -m build --wheel
+            echo "Repairing wheels..."
+            uv run auditwheel repair dist/*.whl -w dist_fixed
+            rm dist/*.whl
+            mv dist_fixed/*.whl dist/
+            echo "Final wheels:"
+            ls -l dist/
 
-    - name: Install build dependencies
-      run: |
-        uv pip install --upgrade setuptools wheel build pytest
-        # Install numpy for more comprehensive testing (optional)
-        uv pip install numpy || echo "NumPy installation failed, tests will be skipped"
+        - name: Build and Fix Wheel (macOS)
+          if: runner.os == 'macOS'
+          run: |
+            cd bindings/python
+            uv run python scripts/update_version.py
+            ARCH=$(uname -m)
+            if [ "$ARCH" == "arm64" ]; then
+              export ZIG_TARGET=aarch64-macos-none
+            else
+              export ZIG_TARGET=x86_64-macos-none
+            fi
+            export ZIG_CPU=baseline
+            export ZIG_OPTIMIZE=ReleaseFast
+            echo "Building for target: $ZIG_TARGET"
+            uv run python -m build --wheel
+            echo "Delocating wheels..."
+            uv run delocate-wheel -w dist_fixed -v dist/*.whl
+            rm dist/*.whl
+            mv dist_fixed/*.whl dist/
+            echo "Final wheels:"
+            ls -l dist/
 
-    - name: Install macOS-specific dependencies
-      if: runner.os == 'macOS'
-      run: |
-        # Install delocate for fixing wheel dependencies
-        uv pip install delocate
+        - name: Build Wheel (Windows)
+          if: runner.os == 'Windows'
+          run: |
+            cd bindings/python
+            uv run python scripts/update_version.py
+            $env:ZIG_TARGET = "native"
+            $env:ZIG_CPU = "baseline"
+            $env:ZIG_OPTIMIZE = "ReleaseFast"
+            uv run python -m build --wheel
+            echo "Final wheels:"
+            Get-ChildItem dist/
 
-    - name: Install Linux-specific dependencies
-      if: runner.os == 'Linux'
-      run: |
-        # Install auditwheel for fixing wheel dependencies
-        uv pip install auditwheel
-
-    - name: Build and Fix Wheel (Linux)
-      if: runner.os == 'Linux'
-      run: |
-        source .venv/bin/activate
-        cd bindings/python
-
-        # Sync version
-        python scripts/update_version.py
-
-        # Build wheel
-        # Target x86_64-linux-gnu for older glibc compatibility (manylinux)
-        export ZIG_TARGET=x86_64-linux-gnu
-        export ZIG_CPU=baseline
-        export ZIG_OPTIMIZE=ReleaseFast
-
-        python -m build --wheel
-
-        # Bundle dependencies and tag as manylinux
-        echo "Repairing wheels..."
-        auditwheel repair dist/*.whl -w dist_fixed
-
-        # Replace original wheels with fixed ones
-        rm dist/*.whl
-        mv dist_fixed/*.whl dist/
-
-        echo "Final wheels:"
-        ls -l dist/
-
-    - name: Build and Fix Wheel (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        source .venv/bin/activate
-        cd bindings/python
-
-        # Sync version
-        python scripts/update_version.py
-
-        # Determine target based on runner arch
-        ARCH=$(uname -m)
-        if [ "$ARCH" == "arm64" ]; then
-          export ZIG_TARGET=aarch64-macos-none
-        else
-          export ZIG_TARGET=x86_64-macos-none
-        fi
-
-        export ZIG_CPU=baseline
-        export ZIG_OPTIMIZE=ReleaseFast
-
-        echo "Building for target: $ZIG_TARGET"
-        python -m build --wheel
-
-        # Bundle dependencies
-        echo "Delocating wheels..."
-        delocate-wheel -w dist_fixed -v dist/*.whl
-
-        # Replace original wheels with fixed ones
-        rm dist/*.whl
-        mv dist_fixed/*.whl dist/
-
-        echo "Final wheels:"
-        ls -l dist/
-
-    - name: Build Wheel (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        .venv\Scripts\Activate.ps1
-        cd bindings/python
-
-        # Sync version
-        python scripts/update_version.py
-
-        # Build wheel
-        # Use native for Windows (Zig's windows-msvc cross-compilation can be tricky with python libs)
-        $env:ZIG_TARGET = "native"
-        $env:ZIG_CPU = "baseline"
-        $env:ZIG_OPTIMIZE = "ReleaseFast"
-
-        python -m build --wheel
-
-        echo "Final wheels:"
-        Get-ChildItem dist/
+        - name: Test wheel (Unix)
+          if: runner.os != 'Windows'
+          run: |
+            cd bindings/python
+            wheel=$(find dist -name "*.whl" | head -1)
+            echo "Installing wheel: $wheel"
+            uv pip install "$wheel"
+            mkdir -p /tmp/wheel_test
+            cp -r tests /tmp/wheel_test/
+            cd /tmp/wheel_test
+            uv run pytest tests/ -v
 
 
-    - name: Test wheel (Unix)
-      if: runner.os != 'Windows'
-      run: |
-        source .venv/bin/activate
-        wheel=$(find bindings/python/dist -name "*.whl" | head -1)
-        echo "Installing wheel: $wheel"
-        uv pip install "$wheel"
-        # Run tests from a temp directory to avoid importing local source code
-        mkdir -p /tmp/wheel_test
-        cp -r bindings/python/tests /tmp/wheel_test/
-        cd /tmp/wheel_test
-        pytest tests/ -v
-
-    - name: Test wheel (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        .venv\Scripts\Activate.ps1
-        $wheel = Get-ChildItem bindings/python/dist/*.whl | Select-Object -First 1
-        Write-Host "Installing wheel: $wheel"
-        uv pip install "$wheel"
-        # Run tests from a temp directory to avoid importing local source code
-        New-Item -ItemType Directory -Force -Path C:\temp\wheel_test
-        Copy-Item -Recurse bindings/python/tests C:\temp\wheel_test\
-        Set-Location C:\temp\wheel_test
-        pytest tests/ -v
+        - name: Test wheel (Windows)
+          if: runner.os == 'Windows'
+          run: |
+            cd bindings/python
+            $wheel = Get-ChildItem dist/*.whl | Select-Object -First 1
+            Write-Host "Installing wheel: $wheel"
+            uv pip install "$wheel"
+            New-Item -ItemType Directory -Force -Path C:\temp\wheel_test
+            Copy-Item -Recurse tests C:\temp\wheel_test\
+            Set-Location C:\temp\wheel_test
+            uv run pytest tests/ -v
 
     - name: Upload wheels as artifacts
       uses: actions/upload-artifact@v4
@@ -199,28 +147,17 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v2
 
-    - name: Create virtual environment
+    - name: Install dependencies
       run: |
-        uv venv
-
-    - name: Install build dependencies
-      run: |
-        uv pip install --upgrade setuptools wheel build pytest
-        # Install numpy for more comprehensive testing (optional)
-        uv pip install numpy || echo "NumPy installation failed, tests will be skipped"
-
-    - name: Install macOS-specific dependencies
-      if: runner.os == 'macOS'
-      run: |
-        # Install delocate for fixing wheel dependencies
-        uv pip install delocate
+        cd bindings/python
+        uv sync --all-extras --dev
 
     - name: Build sdist
       run: |
-        source .venv/bin/activate
         cd bindings/python
-        python scripts/update_version.py
-        python -m build --sdist
+        uv run python scripts/update_version.py
+        uv run python -m build --sdist
+
 
     - name: Upload sdist as artifact
       uses: actions/upload-artifact@v4
