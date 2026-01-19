@@ -114,11 +114,11 @@ def get_project_version():
 
         # Map prerelease tag to PEP 440
         normalized = pre.lower()
-        if normalized.startswith("a"):
+        if normalized in ("a", "alpha"):
             tag = "a"
-        elif normalized.startswith("b"):
+        elif normalized in ("b", "beta"):
             tag = "b"
-        elif any(normalized.startswith(x) for x in ("c", "rc", "pre")):
+        elif normalized in ("c", "rc", "pre", "preview"):
             tag = "rc"
         else:
             tag = ".dev"
