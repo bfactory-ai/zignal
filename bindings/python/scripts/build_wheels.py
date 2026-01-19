@@ -17,6 +17,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 
@@ -36,7 +37,8 @@ def get_platform_config():
             plat_name = "manylinux2014_aarch64"
 
     elif system == "darwin":
-        if machine == "arm64":
+        python_platform = sysconfig.get_platform().lower()
+        if "arm64" in python_platform or "aarch64" in python_platform:
             plat_name = "macosx_11_0_arm64"
             zig_target = "aarch64-macos-none"
         else:
