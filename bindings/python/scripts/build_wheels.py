@@ -28,17 +28,31 @@ def run(cmd, cwd=None, env=None, check=True):
 
 
 def project_root() -> Path:
-    """Return the absolute path to the repository root."""
-    return Path(__file__).resolve().parents[3]
+    """Return the absolute path to the repository root by finding 'build.zig'."""
+    current_path = Path(__file__).resolve()
+    for parent in current_path.parents:
+        if (parent / "build.zig").exists():
+            return parent
+    raise FileNotFoundError(
+        "Project root with 'build.zig' not found. This script may have been moved."
+    )
 
 
 def bindings_dir() -> Path:
     return project_root() / "bindings" / "python"
 
 
+def get_venv_python() -> Path:
+    """Return the path to the virtual environment python executable."""
+    venv_dir = bindings_dir() / ".venv"
+    if sys.platform == "win32":
+        return venv_dir / "Scripts" / "python.exe"
+    return venv_dir / "bin" / "python"
+
+
 def python_cmd() -> list[str]:
-    """Return the command to run python via uv."""
-    return ["uv", "run", "python"]
+    """Return the command to run python using the local venv."""
+    return [str(get_venv_python())]
 
 
 def ensure_deps(with_numpy: bool) -> None:
@@ -67,12 +81,7 @@ def ensure_deps(with_numpy: bool) -> None:
 
     # Use python -m pip to install dependencies to avoid uv pip issues with numpy
     # We must use the python from the venv directly to avoid outer uv interference
-    python_exe = venv_dir / "bin" / "python"
-    if sys.platform == "win32":
-        python_exe = venv_dir / "Scripts" / "python.exe"
-
-    run([str(python_exe), "-m", "pip", "install", "--upgrade", *deps], cwd=bindings_dir(), env=env)
-
+    run([*python_cmd(), "-m", "pip", "install", "--upgrade", *deps], cwd=bindings_dir(), env=env)
 
 def update_version(skip: bool) -> None:
     """Sync version from Zig to pyproject.toml."""
@@ -156,15 +165,7 @@ def test_artifacts() -> None:
     if "VIRTUAL_ENV" in env:
         del env["VIRTUAL_ENV"]
 
-    python_exe = venv_path / "bin" / "python"
-    if sys.platform == "win32":
-        python_exe = venv_path / "Scripts" / "python.exe"
-
-    run(
-        [str(python_exe), "-m", "pip", "install", str(latest_wheel), "--force-reinstall"],
-        cwd=bindings_dir(),
-        env=env,
-    )
+    run([*python_cmd(), "-m", "pip", "install", str(latest_wheel), "--force-reinstall"], cwd=bindings_dir(), env=env)
 
     # Run tests in a temp dir using the project venv
     env["VIRTUAL_ENV"] = str(venv_path)
@@ -176,11 +177,7 @@ def test_artifacts() -> None:
         shutil.copytree(bindings_dir() / "tests", tmp_path / "tests")
 
         # We use 'python -m pytest' directly from the venv python to avoid uv resolving shenanigans in tmp dir
-        python_exe = venv_path / "bin" / "python"
-        if sys.platform == "win32":
-            python_exe = venv_path / "Scripts" / "python.exe"
-
-        run([str(python_exe), "-m", "pytest", "tests", "-v"], cwd=tmp_path, env=env)
+        run([*python_cmd(), "-m", "pytest", "tests", "-v"], cwd=tmp_path, env=env)
 
 
 def main() -> None:
