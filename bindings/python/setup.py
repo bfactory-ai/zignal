@@ -291,6 +291,12 @@ if __name__ == "__main__":
     # Ensure version is in sync with Zig before starting build
     sync_version()
 
+    # Support forcing platform name via environment variable
+    # This is useful for avoiding 'universal2' tags on macOS when building for a single arch
+    options = {}
+    if os.environ.get("PLAT_NAME"):
+        options["bdist_wheel"] = {"plat_name": os.environ.get("PLAT_NAME")}
+
     setup(
         packages=find_packages(exclude=["tests", "tests.*"]),
         ext_modules=[
@@ -299,4 +305,5 @@ if __name__ == "__main__":
         cmdclass={"build_ext": ZigBuildExt},
         distclass=BinaryDistribution,
         zip_safe=False,
+        options=options,
     )

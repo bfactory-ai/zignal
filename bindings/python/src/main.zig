@@ -30,15 +30,6 @@ const enum_utils = @import("enum_utils.zig");
 // ============================================================================
 
 var zignal_module = c.PyModuleDef{
-    .m_base = .{
-        .ob_base = .{
-            .ob_refcnt = 1,
-            .ob_type = null,
-        },
-        .m_init = null,
-        .m_index = 0,
-        .m_copy = null,
-    },
     .m_name = "zignal",
     .m_doc = "zero dependency image processing library",
     .m_size = -1,
