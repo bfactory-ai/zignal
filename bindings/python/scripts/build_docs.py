@@ -27,7 +27,7 @@ def main():
     try:
         subprocess.check_call(["zig", "build", "python-bindings"])
     except subprocess.CalledProcessError:
-        sys.exit(1)
+        sys.exit("Error: Failed to build Python bindings.")
 
     # 2. Type Check with ty
     print("Validating type stubs with ty...")
@@ -35,13 +35,11 @@ def main():
         # Check the package directory which contains the .pyi stubs
         # Path is relative to the project root
         subprocess.check_call(["ty", "check", "bindings/python/zignal"])
-        print("✓ Type annotations look good!")
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        if isinstance(e, FileNotFoundError):
-            print("Warning: 'ty' not found. Skipping type validation.")
-        else:
-            print("\n✗ Type validation failed! Please check the stubs in bindings/python/zignal/")
-            sys.exit(1)
+        print("Success: Type annotations look good!")
+    except FileNotFoundError:
+        print("Warning: 'ty' not found. Skipping type validation.")
+    except subprocess.CalledProcessError:
+        sys.exit("Error: Type validation failed! Please check the stubs in bindings/python/zignal")
 
     # 3. Generate Docs
     docs_dir = bindings_dir / "docs"
@@ -54,7 +52,8 @@ def main():
         (tmp_path / "empty.py").write_text("'''Search index placeholder.'''")
 
         # Set PYTHONPATH to include the dummy module for search generation
-        env = {**os.environ, "PYTHONPATH": f"{tmp_path}{os.pathsep}{os.environ.get('PYTHONPATH', '')}"}
+        # We explicitly do not inherit PYTHONPATH to ensure a hermetic build
+        env = {**os.environ, "PYTHONPATH": str(tmp_path)}
 
         try:
             subprocess.check_call(
@@ -62,9 +61,7 @@ def main():
                 env=env
             )
         except subprocess.CalledProcessError:
-            sys.exit(1)
-
-    print(f"\n✓ Documentation generated successfully in {docs_dir}")
+            sys.exit("Error: Failed to generate documentation with pdoc.")
 
 
 if __name__ == "__main__":
