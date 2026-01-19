@@ -52,6 +52,10 @@ comptime {
 }
 
 pub export fn PyInit__zignal() ?*c.PyObject {
+    // Manually initialize m_base to emulate PyModuleDef_HEAD_INIT (refcount = 1).
+    const base_obj = &zignal_module.m_base.ob_base;
+    @as(*c.Py_ssize_t, @ptrCast(base_obj)).* = 1;
+
     const m = c.PyModule_Create(&zignal_module);
     if (m == null) return null;
 
