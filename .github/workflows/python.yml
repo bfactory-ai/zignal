@@ -37,88 +37,86 @@ jobs:
       uses: mlugg/setup-zig@v2
       with:
         version: master
-        - name: Install uv
-          uses: astral-sh/setup-uv@v2
 
-        - name: Install dependencies
-          run: |
-            cd bindings/python
-            uv sync --all-extras --dev
+    - name: Install uv
+      uses: astral-sh/setup-uv@v2
 
-        - name: Build and Fix Wheel (Linux)
-          if: runner.os == 'Linux'
-          run: |
-            cd bindings/python
-            uv run python scripts/update_version.py
-            export ZIG_TARGET=x86_64-linux-gnu
-            export ZIG_CPU=baseline
-            export ZIG_OPTIMIZE=ReleaseFast
-            uv run python -m build --wheel
-            echo "Repairing wheels..."
-            uv run auditwheel repair dist/*.whl -w dist_fixed
-            rm dist/*.whl
-            mv dist_fixed/*.whl dist/
-            echo "Final wheels:"
-            ls -l dist/
+    - name: Install dependencies
+      run: |
+        cd bindings/python
+        uv sync --all-extras --dev
 
-        - name: Build and Fix Wheel (macOS)
-          if: runner.os == 'macOS'
-          run: |
-            cd bindings/python
-            uv run python scripts/update_version.py
-            ARCH=$(uname -m)
-            if [ "$ARCH" == "arm64" ]; then
-              export ZIG_TARGET=aarch64-macos-none
-            else
-              export ZIG_TARGET=x86_64-macos-none
-            fi
-            export ZIG_CPU=baseline
-            export ZIG_OPTIMIZE=ReleaseFast
-            echo "Building for target: $ZIG_TARGET"
-            uv run python -m build --wheel
-            echo "Delocating wheels..."
-            uv run delocate-wheel -w dist_fixed -v dist/*.whl
-            rm dist/*.whl
-            mv dist_fixed/*.whl dist/
-            echo "Final wheels:"
-            ls -l dist/
+    - name: Build and Fix Wheel (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        cd bindings/python
+        export ZIG_TARGET=x86_64-linux-gnu
+        export ZIG_CPU=baseline
+        export ZIG_OPTIMIZE=ReleaseFast
+        uv run python -m build --wheel
+        echo "Repairing wheels..."
+        uv run auditwheel repair dist/*.whl -w dist_fixed
+        rm dist/*.whl
+        mv dist_fixed/*.whl dist/
+        echo "Final wheels:"
+        ls -l dist/
 
-        - name: Build Wheel (Windows)
-          if: runner.os == 'Windows'
-          run: |
-            cd bindings/python
-            uv run python scripts/update_version.py
-            $env:ZIG_TARGET = "native"
-            $env:ZIG_CPU = "baseline"
-            $env:ZIG_OPTIMIZE = "ReleaseFast"
-            uv run python -m build --wheel
-            echo "Final wheels:"
-            Get-ChildItem dist/
+    - name: Build and Fix Wheel (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        cd bindings/python
+        ARCH=$(uname -m)
+        if [ "$ARCH" == "arm64" ]; then
+          export ZIG_TARGET=aarch64-macos-none
+        else
+          export ZIG_TARGET=x86_64-macos-none
+        fi
+        export ZIG_CPU=baseline
+        export ZIG_OPTIMIZE=ReleaseFast
+        echo "Building for target: $ZIG_TARGET"
+        uv run python -m build --wheel
+        echo "Delocating wheels..."
+        uv run delocate-wheel -w dist_fixed -v dist/*.whl
+        rm dist/*.whl
+        mv dist_fixed/*.whl dist/
+        echo "Final wheels:"
+        ls -l dist/
 
-        - name: Test wheel (Unix)
-          if: runner.os != 'Windows'
-          run: |
-            cd bindings/python
-            wheel=$(find dist -name "*.whl" | head -1)
-            echo "Installing wheel: $wheel"
-            uv pip install "$wheel"
-            mkdir -p /tmp/wheel_test
-            cp -r tests /tmp/wheel_test/
-            cd /tmp/wheel_test
-            uv run pytest tests/ -v
+    - name: Build Wheel (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        cd bindings/python
+        $env:ZIG_TARGET = "native"
+        $env:ZIG_CPU = "baseline"
+        $env:ZIG_OPTIMIZE = "ReleaseFast"
+        uv run python -m build --wheel
+        echo "Final wheels:"
+        Get-ChildItem dist/
+
+    - name: Test wheel (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        cd bindings/python
+        wheel=$(find dist -name "*.whl" | head -1)
+        echo "Installing wheel: $wheel"
+        uv pip install "$wheel"
+        mkdir -p /tmp/wheel_test
+        cp -r tests /tmp/wheel_test/
+        cd /tmp/wheel_test
+        uv run pytest tests/ -v
 
 
-        - name: Test wheel (Windows)
-          if: runner.os == 'Windows'
-          run: |
-            cd bindings/python
-            $wheel = Get-ChildItem dist/*.whl | Select-Object -First 1
-            Write-Host "Installing wheel: $wheel"
-            uv pip install "$wheel"
-            New-Item -ItemType Directory -Force -Path C:\temp\wheel_test
-            Copy-Item -Recurse tests C:\temp\wheel_test\
-            Set-Location C:\temp\wheel_test
-            uv run pytest tests/ -v
+    - name: Test wheel (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        cd bindings/python
+        $wheel = Get-ChildItem dist/*.whl | Select-Object -First 1
+        Write-Host "Installing wheel: $wheel"
+        uv pip install "$wheel"
+        New-Item -ItemType Directory -Force -Path C:\temp\wheel_test
+        Copy-Item -Recurse tests C:\temp\wheel_test\
+        Set-Location C:\temp\wheel_test
+        uv run pytest tests/ -v
 
     - name: Upload wheels as artifacts
       uses: actions/upload-artifact@v4
@@ -155,7 +153,6 @@ jobs:
     - name: Build sdist
       run: |
         cd bindings/python
-        uv run python scripts/update_version.py
         uv run python -m build --sdist
 
 
@@ -239,7 +236,7 @@ jobs:
       uses: actions/github-script@v7
       with:
         script: |
-          const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+          const runUrl = `${{context.serverUrl}}/${{context.repo.owner}}/${{context.repo.repo}}/actions/runs/${{context.runId}}`;
           const artifactsUrl = `${runUrl}#artifacts`;
 
           const comment = `## Build Successful!
