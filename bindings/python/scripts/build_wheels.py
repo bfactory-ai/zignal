@@ -37,7 +37,7 @@ def get_platform_config():
 
     elif system == "darwin":
         plat_name = "macosx_11_0_arm64"
-        zig_target = "aarch64-macos-none"
+        zig_target = "aarch64-macos"
 
     elif system == "windows":
         if machine in ["x86_64", "amd64"]:
@@ -70,6 +70,10 @@ def main():
     if plat_name:
         print(f"Platform tag: {plat_name}")
 
+    if platform.system() == "Darwin":
+        # Ensure consistent tagging and build settings for macOS arm64 wheels.
+        env.setdefault("MACOSX_DEPLOYMENT_TARGET", "11.0")
+
     if "ZIG_TARGET" not in env:
         env["ZIG_TARGET"] = zig_target
         print(f"Zig target:   {zig_target}")
@@ -87,7 +91,7 @@ def main():
 
     # 4. Build wheel
     print("\nBuilding wheel...")
-    cmd = [sys.executable, "-m", "build", "--wheel"]
+    cmd = [sys.executable, "-m", "build", "--wheel", "--no-isolation"]
     if plat_name:
         # Pass platform tag to setuptools bdist_wheel for correct wheel tagging.
         cmd.append(f"--config-setting=--build-option=--plat-name={plat_name}")
