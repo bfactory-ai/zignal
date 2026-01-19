@@ -65,6 +65,8 @@ class ZigBuildExt(build_ext):
                 or sysconfig.get_config_var("LIBRARY")
                 or f"python{sys.version_info.major}.{sys.version_info.minor}"
             )
+            # Ensure we only have the filename
+            libname = os.path.basename(libname)
             env["PYTHON_LIB_NAME"] = re.sub(r"^lib|(\.so|\.a|\.dylib).*$", "", libname)
 
         cmd = [
