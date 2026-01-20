@@ -38,6 +38,21 @@ pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) typ
             return result;
         }
 
+        /// Initializes a matrix from a flat slice of values.
+        /// The slice length must be exactly rows * cols.
+        pub fn fromSlice(data: []const T) !Self {
+            if (data.len != rows * cols) {
+                return error.DimensionMismatch;
+            }
+            var result: Self = .{};
+            for (0..rows) |r| {
+                for (0..cols) |c| {
+                    result.items[r][c] = data[r * cols + c];
+                }
+            }
+            return result;
+        }
+
         /// Returns the rows and columns as a struct.
         pub fn shape(self: Self) struct { usize, usize } {
             _ = self;
@@ -1026,4 +1041,16 @@ test "SMatrix GEMM operations" {
     const zero_result = a.gemm(false, b, false, 0.0, 0.0, null);
     try expectEqual(@as(f32, 0.0), zero_result.at(0, 0).*);
     try expectEqual(@as(f32, 0.0), zero_result.at(1, 1).*);
+}
+
+test "SMatrix fromSlice" {
+    const data = [_]f32{ 1.0, 2.0, 3.0, 4.0, 5.0, 6.0 };
+    const mat: SMatrix(f32, 2, 3) = try .fromSlice(&data);
+
+    try expectEqual(@as(f32, 1.0), mat.at(0, 0).*);
+    try expectEqual(@as(f32, 2.0), mat.at(0, 1).*);
+    try expectEqual(@as(f32, 3.0), mat.at(0, 2).*);
+    try expectEqual(@as(f32, 4.0), mat.at(1, 0).*);
+    try expectEqual(@as(f32, 5.0), mat.at(1, 1).*);
+    try expectEqual(@as(f32, 6.0), mat.at(1, 2).*);
 }
