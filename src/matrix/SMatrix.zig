@@ -29,13 +29,7 @@ pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) typ
 
         /// Initialize a SMatrix with the given items.
         pub fn init(items: [rows][cols]T) Self {
-            var result: Self = .{};
-            for (0..rows) |r| {
-                for (0..cols) |c| {
-                    result.items[r][c] = items[r][c];
-                }
-            }
-            return result;
+            return .{ .items = items };
         }
 
         /// Initializes a matrix from a flat slice of values.
@@ -45,11 +39,7 @@ pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) typ
                 return error.DimensionMismatch;
             }
             var result: Self = .{};
-            for (0..rows) |r| {
-                for (0..cols) |c| {
-                    result.items[r][c] = data[r * cols + c];
-                }
-            }
+            @memcpy(@as(*[rows * cols]T, @ptrCast(&result.items)), data[0 .. rows * cols]);
             return result;
         }
 
@@ -618,11 +608,7 @@ pub fn SMatrix(comptime T: type, comptime rows: usize, comptime cols: usize) typ
         /// Converts this SMatrix to a dynamic Matrix
         pub fn toMatrix(self: Self, allocator: std.mem.Allocator) !@import("Matrix.zig").Matrix(T) {
             var result = try @import("Matrix.zig").Matrix(T).init(allocator, rows, cols);
-            for (0..rows) |r| {
-                for (0..cols) |c| {
-                    result.at(r, c).* = self.items[r][c];
-                }
-            }
+            @memcpy(result.items, @as(*const [rows * cols]T, @ptrCast(&self.items)));
             return result;
         }
 
