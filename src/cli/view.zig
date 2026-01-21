@@ -71,7 +71,7 @@ pub fn run(io: Io, gpa: Allocator, args: *std.process.Args.Iterator) !void {
     var image = try zignal.Image(zignal.Rgba(u8)).load(io, gpa, path);
     defer image.deinit(gpa);
 
-    var display_fmt: zignal.DisplayFormat = undefined;
+    var display_fmt: zignal.DisplayFormat = detectBestFormat(io, width, height, filter);
 
     if (protocol) |p| {
         if (std.mem.eql(u8, p, "kitty")) {
@@ -82,12 +82,12 @@ pub fn run(io: Io, gpa: Allocator, args: *std.process.Args.Iterator) !void {
             display_fmt = .{ .sgr = .{ .width = width, .height = height } };
         } else if (std.mem.eql(u8, p, "braille")) {
             display_fmt = .{ .braille = .{ .width = width, .height = height } };
+        } else if (std.mem.eql(u8, p, "auto")) {
+            // Already set to default
         } else {
-            // auto
-            display_fmt = detectBestFormat(io, width, height, filter);
+            std.log.err("Unknown protocol: {s}", .{p});
+            return error.InvalidArguments;
         }
-    } else {
-        display_fmt = detectBestFormat(io, width, height, filter);
     }
 
     var buffer: [65536]u8 = undefined;
