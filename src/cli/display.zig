@@ -1,11 +1,12 @@
 const std = @import("std");
-const zignal = @import("zignal");
-const terminal = zignal.terminal;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
+const zignal = @import("zignal");
+const terminal = zignal.terminal;
+
 pub const help_text =
-    \\Usage: zignal view <image> [options]
+    \\Usage: zignal display <image> [options]
     \\
     \\Display an image in the terminal using supported graphics protocols.
     \\
@@ -26,19 +27,23 @@ pub fn run(io: Io, gpa: Allocator, args: *std.process.Args.Iterator) !void {
 
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "--width")) {
-            if (args.next()) |w| {
-                width = std.fmt.parseInt(u32, w, 10) catch {
-                    std.log.err("Invalid width: {s}", .{w});
-                    return error.InvalidArguments;
-                };
-            }
+            const w_arg = args.next() orelse {
+                std.log.err("Missing value for --width", .{});
+                return error.InvalidArguments;
+            };
+            width = std.fmt.parseInt(u32, w_arg, 10) catch {
+                std.log.err("Invalid width: {s}", .{w_arg});
+                return error.InvalidArguments;
+            };
         } else if (std.mem.eql(u8, arg, "--height")) {
-            if (args.next()) |h| {
-                height = std.fmt.parseInt(u32, h, 10) catch {
-                    std.log.err("Invalid height: {s}", .{h});
-                    return error.InvalidArguments;
-                };
-            }
+            const h_arg = args.next() orelse {
+                std.log.err("Missing value for --height", .{});
+                return error.InvalidArguments;
+            };
+            height = std.fmt.parseInt(u32, h_arg, 10) catch {
+                std.log.err("Invalid height: {s}", .{h_arg});
+                return error.InvalidArguments;
+            };
         } else if (std.mem.eql(u8, arg, "--protocol")) {
             protocol = args.next();
         } else if (std.mem.eql(u8, arg, "--filter")) {
@@ -63,21 +68,34 @@ pub fn run(io: Io, gpa: Allocator, args: *std.process.Args.Iterator) !void {
     }
 
     const path = image_path orelse {
-        std.log.err("Missing image path for 'view' command", .{});
+        std.log.err("Missing image path for 'display' command", .{});
         return error.InvalidArguments;
     };
 
-    // Load image as RGBA to support transparency
-    var image = try zignal.Image(zignal.Rgba(u8)).load(io, gpa, path);
+    var image: zignal.Image(zignal.Rgba(u8)) = try .load(io, gpa, path);
     defer image.deinit(gpa);
 
-    var display_fmt: zignal.DisplayFormat = detectBestFormat(io, width, height, filter);
+    var display_fmt: zignal.DisplayFormat = .{ .auto = .{
+        .width = width,
+        .height = height,
+        .interpolation = filter,
+    } };
 
     if (protocol) |p| {
         if (std.mem.eql(u8, p, "kitty")) {
-            display_fmt = .{ .kitty = .{ .width = width, .height = height, .interpolation = filter } };
+            display_fmt = .{ .kitty = .{
+                .width = width,
+                .height = height,
+                .interpolation = filter,
+            } };
         } else if (std.mem.eql(u8, p, "sixel")) {
-            display_fmt = .{ .sixel = .{ .palette = .{ .adaptive = .{ .max_colors = 256 } }, .dither = .auto, .width = width, .height = height, .interpolation = filter } };
+            display_fmt = .{ .sixel = .{
+                .palette = .{ .adaptive = .{ .max_colors = 256 } },
+                .dither = .auto,
+                .width = width,
+                .height = height,
+                .interpolation = filter,
+            } };
         } else if (std.mem.eql(u8, p, "sgr")) {
             display_fmt = .{ .sgr = .{ .width = width, .height = height } };
         } else if (std.mem.eql(u8, p, "braille")) {
@@ -90,18 +108,8 @@ pub fn run(io: Io, gpa: Allocator, args: *std.process.Args.Iterator) !void {
         }
     }
 
-    var buffer: [65536]u8 = undefined;
+    var buffer: [4096]u8 = undefined;
     var stdout = std.Io.File.stdout().writer(io, &buffer);
     try stdout.interface.print("{f}\n", .{image.display(io, display_fmt)});
     try stdout.interface.flush();
-}
-
-fn detectBestFormat(io: Io, width: ?u32, height: ?u32, filter: zignal.Interpolation) zignal.DisplayFormat {
-    if (terminal.isKittySupported(io) catch false) {
-        return .{ .kitty = .{ .width = width, .height = height, .interpolation = filter } };
-    }
-    if (terminal.isSixelSupported(io) catch false) {
-        return .{ .sixel = .{ .palette = .{ .adaptive = .{ .max_colors = 256 } }, .dither = .auto, .width = width, .height = height, .interpolation = filter } };
-    }
-    return .{ .sgr = .{ .width = width, .height = height } };
 }

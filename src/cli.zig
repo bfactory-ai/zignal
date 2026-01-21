@@ -6,13 +6,13 @@ const zignal = @import("zignal");
 
 const info = @import("cli/info.zig");
 const version = @import("cli/version.zig");
-const view = @import("cli/view.zig");
+const display = @import("cli/display.zig");
 
 const general_help =
     \\Usage: zignal <command> [options]
     \\
     \\Commands:
-    \\  view     Display an image in the terminal
+    \\  display  Display an image in the terminal
     \\  info     Display image information
     \\  version  Display version information
     \\  help     Display this help message
@@ -26,9 +26,9 @@ pub fn main(init: std.process.Init) !void {
     defer args.deinit();
     _ = args.skip();
     while (args.next()) |arg| {
-        if (std.mem.eql(u8, arg, "view")) {
-            view.run(init.io, init.gpa, &args) catch |err| {
-                std.log.err("view command failed: {t}", .{err});
+        if (std.mem.eql(u8, arg, "display")) {
+            display.run(init.io, init.gpa, &args) catch |err| {
+                std.log.err("display command failed: {t}", .{err});
                 return;
             };
             return;
@@ -62,16 +62,17 @@ fn help(io: Io, args: ?*std.process.Args.Iterator) !void {
 
     if (args) |commands| {
         if (commands.next()) |subcmd| {
-            if (std.mem.eql(u8, subcmd, "view")) {
-                try stdout.interface.print("{s}", .{view.help_text});
-            } else if (std.mem.eql(u8, subcmd, "info")) {
-                try stdout.interface.print("{s}", .{info.help_text});
-            } else if (std.mem.eql(u8, subcmd, "version")) {
-                try stdout.interface.print("{s}", .{version.help_text});
-            } else if (std.mem.eql(u8, subcmd, "help")) {
-                try stdout.interface.print("{s}", .{general_help});
+            const help_map = std.StaticStringMap([]const u8).initComptime(.{
+                .{ "display", display.help_text },
+                .{ "info", info.help_text },
+                .{ "version", version.help_text },
+                .{ "help", general_help },
+            });
+
+            if (help_map.get(subcmd)) |text| {
+                try stdout.interface.print("{s}", .{text});
             } else {
-                try stdout.interface.print("Unknown command: {s}\n\n{s}", .{ subcmd, general_help });
+                try stdout.interface.print("Unknown command: \"{s}\"\n\n{s}", .{ subcmd, general_help });
             }
             try stdout.interface.flush();
             return;
