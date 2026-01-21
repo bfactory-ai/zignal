@@ -6,7 +6,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 pub const help_text =
-    \\Usage: zignal info <image> [images...]
+    \\Usage: zignal info <image1> <image2> ...
     \\
     \\Display detailed information about one or more image files.
     \\
@@ -51,7 +51,7 @@ pub fn run(io: Io, gpa: Allocator, args: *std.process.Args.Iterator) !void {
 
                 switch (fmt) {
                     .png => {
-                        const png_info = png.getInfo(&reader.interface) catch |err| break :blk err;
+                        const png_info = png.getInfo(&reader.interface, .{}) catch |err| break :blk err;
 
                         try stdout.interface.print("Format: PNG\n", .{});
                         try stdout.interface.print("Dimensions: {d}x{d}\n", .{ png_info.width, png_info.height });
@@ -67,7 +67,7 @@ pub fn run(io: Io, gpa: Allocator, args: *std.process.Args.Iterator) !void {
                         }
                     },
                     .jpeg => {
-                        const header = jpeg.getInfo(&reader.interface) catch |err| break :blk err;
+                        const header = jpeg.getInfo(&reader.interface, .{}) catch |err| break :blk err;
 
                         try stdout.interface.print("Format: JPEG\n", .{});
                         try stdout.interface.print("Dimensions: {d}x{d}\n", .{ header.width, header.height });

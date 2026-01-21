@@ -275,8 +275,12 @@ pub const PngState = struct {
 
 /// Retrieve metadata from a PNG stream without decoding the full image.
 /// This reads headers and ancillary chunks (gAMA, sRGB) but stops before IDAT.
-pub fn getInfo(reader: *std.Io.Reader) !Header {
+pub fn getInfo(reader: *std.Io.Reader, limits: DecodeLimits) !Header {
+    var bytes_read: usize = 0;
+    var chunk_count: usize = 0;
+
     const sig = try reader.takeArray(8);
+    bytes_read += 8;
     if (!std.mem.eql(u8, sig, &signature)) {
         return error.InvalidPngSignature;
     }
@@ -285,12 +289,31 @@ pub fn getInfo(reader: *std.Io.Reader) !Header {
     var header_found = false;
 
     while (true) {
+        // Check limits before reading next chunk
+        if (limits.max_png_bytes != 0 and bytes_read > limits.max_png_bytes) {
+            return error.PngDataTooLarge;
+        }
+        if (limits.max_chunks != 0 and chunk_count > limits.max_chunks) {
+            return error.TooManyChunks;
+        }
+
         const length = reader.takeInt(u32, .big) catch |err| switch (err) {
             error.EndOfStream => break,
             else => return err,
         };
+        bytes_read += 4;
+
         const chunk_type_ptr = try reader.takeArray(4);
+        bytes_read += 4;
         const chunk_type = chunk_type_ptr.*;
+
+        chunk_count += 1;
+
+        // Total chunk size: length + 4 (CRC)
+        const total_chunk_size = @as(usize, length) + 4;
+        if (limits.max_png_bytes != 0 and bytes_read + total_chunk_size > limits.max_png_bytes) {
+            return error.PngDataTooLarge;
+        }
 
         // Stop at image data or end of file
         if (std.mem.eql(u8, &chunk_type, "IDAT")) break;
@@ -301,6 +324,8 @@ pub fn getInfo(reader: *std.Io.Reader) !Header {
             if (length != 13) return error.InvalidHeaderLength;
 
             const data = try reader.takeArray(13);
+            bytes_read += 13;
+
             const width = std.mem.readInt(u32, data[0..4], .big);
             const height = std.mem.readInt(u32, data[4..8], .big);
 
@@ -326,14 +351,18 @@ pub fn getInfo(reader: *std.Io.Reader) !Header {
             };
             header_found = true;
             _ = try reader.discard(std.Io.Limit.limited(4)); // CRC
+            bytes_read += 4;
         } else if (std.mem.eql(u8, &chunk_type, "gAMA") and header_found) {
             if (length != 4) return error.InvalidGammaLength;
             const gamma_int = try reader.takeInt(u32, .big);
+            bytes_read += 4;
             header.gamma = @as(f32, @floatFromInt(gamma_int)) / 100000.0;
             _ = try reader.discard(std.Io.Limit.limited(4)); // CRC
+            bytes_read += 4;
         } else if (std.mem.eql(u8, &chunk_type, "sRGB") and header_found) {
             if (length != 1) return error.InvalidSrgbLength;
             const intent_raw = try reader.takeByte();
+            bytes_read += 1;
             header.srgb_intent = switch (intent_raw) {
                 0 => .perceptual,
                 1 => .relative_colorimetric,
@@ -342,9 +371,11 @@ pub fn getInfo(reader: *std.Io.Reader) !Header {
                 else => return error.InvalidSrgbIntent,
             };
             _ = try reader.discard(std.Io.Limit.limited(4)); // CRC
+            bytes_read += 4;
         } else {
             // Skip unknown or unneeded chunk data + CRC
             _ = try reader.discard(std.Io.Limit.limited64(@as(u64, length) + 4));
+            bytes_read += length + 4;
         }
     }
 
@@ -375,7 +406,7 @@ test "PNG getInfo" {
     try appendTestChunk(&data, gpa, "IDAT".*, &[_]u8{});
 
     var reader = std.Io.Reader.fixed(data.items);
-    const header = try getInfo(&reader);
+    const header = try getInfo(&reader, .{});
 
     try std.testing.expectEqual(100, header.width);
     try std.testing.expectEqual(200, header.height);
