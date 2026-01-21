@@ -3,21 +3,43 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 const zignal = @import("zignal");
-const png = zignal.png;
-const jpeg = zignal.jpeg;
+
+const info = @import("cli/info.zig");
+const version = @import("cli/version.zig");
+const view = @import("cli/view.zig");
+
+const general_help =
+    \\Usage: zignal <command> [options]
+    \\
+    \\Commands:
+    \\  view     Display an image in the terminal
+    \\  info     Display image information
+    \\  version  Display version information
+    \\  help     Display this help message
+    \\
+    \\Run 'zignal help <command>' for more information on a specific command.
+    \\
+;
 
 pub fn main(init: std.process.Init) !void {
     var args = try init.minimal.args.iterateAllocator(init.gpa);
     defer args.deinit();
     _ = args.skip();
     while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "view")) {
+            view.run(init.io, init.gpa, &args) catch |err| {
+                std.log.err("view command failed: {t}", .{err});
+                return;
+            };
+            return;
+        }
         if (std.mem.eql(u8, arg, "version")) {
-            try version(init.io);
+            try version.run(init.io);
             return;
         }
         if (std.mem.eql(u8, arg, "info")) {
             if (args.next()) |image_path| {
-                info(init.io, init.gpa, image_path) catch |err| {
+                info.run(init.io, init.gpa, image_path) catch |err| {
                     std.log.err("failed to get info for '{s}': {t}", .{ image_path, err });
                     return;
                 };
@@ -26,51 +48,35 @@ pub fn main(init: std.process.Init) !void {
             }
             return;
         }
+        if (std.mem.eql(u8, arg, "help") or std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            try help(init.io, &args);
+            return;
+        }
     }
+    try help(init.io, null);
 }
 
-fn version(io: Io) !void {
-    var buffer: [256]u8 = undefined;
-    var stdout = std.Io.File.stdout().writer(io, &buffer);
-    try stdout.interface.print("{s}\n", .{zignal.version});
-    try stdout.interface.flush();
-}
-
-fn info(io: Io, gpa: Allocator, image_path: []const u8) !void {
-    const image_format = try zignal.ImageFormat.detectFromPath(io, gpa, image_path) orelse return error.UnsupportedImageFormat;
-
+fn help(io: Io, args: ?*std.process.Args.Iterator) !void {
     var buffer: [4096]u8 = undefined;
     var stdout = std.Io.File.stdout().writer(io, &buffer);
 
-    var header_buf: [4096]u8 = undefined;
-    const file_data = try std.Io.Dir.cwd().readFile(io, image_path, &header_buf);
-
-    switch (image_format) {
-        .png => {
-            const png_info = try png.getInfo(file_data);
-
-            try stdout.interface.print("Format: PNG\n", .{});
-            try stdout.interface.print("Dimensions: {d}x{d}\n", .{ png_info.width, png_info.height });
-            try stdout.interface.print("Bit Depth: {d}\n", .{png_info.bit_depth});
-            try stdout.interface.print("Color Type: {s}\n", .{@tagName(png_info.color_type)});
-            try stdout.interface.print("Channels: {d}\n", .{png_info.channels()});
-
-            if (png_info.gamma) |g| {
-                try stdout.interface.print("Gamma: {d}\n", .{g});
+    if (args) |commands| {
+        if (commands.next()) |subcmd| {
+            if (std.mem.eql(u8, subcmd, "view")) {
+                try stdout.interface.print("{s}", .{view.help_text});
+            } else if (std.mem.eql(u8, subcmd, "info")) {
+                try stdout.interface.print("{s}", .{info.help_text});
+            } else if (std.mem.eql(u8, subcmd, "version")) {
+                try stdout.interface.print("{s}", .{version.help_text});
+            } else if (std.mem.eql(u8, subcmd, "help")) {
+                try stdout.interface.print("{s}", .{general_help});
+            } else {
+                try stdout.interface.print("Unknown command: {s}\n\n{s}", .{ subcmd, general_help });
             }
-            if (png_info.srgb_intent) |intent| {
-                try stdout.interface.print("sRGB Intent: {s}\n", .{@tagName(intent)});
-            }
-        },
-        .jpeg => {
-            const header = try jpeg.getInfo(file_data);
-
-            try stdout.interface.print("Format: JPEG\n", .{});
-            try stdout.interface.print("Dimensions: {d}x{d}\n", .{ header.width, header.height });
-            try stdout.interface.print("Precision: {d}-bit\n", .{header.precision});
-            try stdout.interface.print("Components: {d}\n", .{header.num_components});
-            try stdout.interface.print("Type: {s}\n", .{@tagName(header.frame_type)});
-        },
+            try stdout.interface.flush();
+            return;
+        }
     }
+    try stdout.interface.print("{s}", .{general_help});
     try stdout.interface.flush();
 }
