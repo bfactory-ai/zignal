@@ -74,10 +74,10 @@ pub const Header = struct {
 pub fn getInfo(reader: *std.Io.Reader, limits: DecodeLimits) !Header {
     var bytes_read: usize = 0;
     var marker_count: usize = 0;
-    const max_markers_scan = 10000; // Sanity limit for markers before SOF
+    const MAX_MARKERS_SCAN = 10000; // Sanity limit for markers before SOF
 
     const sig = try reader.takeArray(2);
-    bytes_read += 2;
+    bytes_read += sig.len;
     if (!std.mem.eql(u8, sig, &signature)) {
         return error.InvalidJpegFile;
     }
@@ -103,7 +103,7 @@ pub fn getInfo(reader: *std.Io.Reader, limits: DecodeLimits) !Header {
         if (marker_byte == 0x00) continue; // stuffed byte
 
         marker_count += 1;
-        if (marker_count > max_markers_scan) return error.ImageTooLarge;
+        if (marker_count > MAX_MARKERS_SCAN) return error.ImageTooLarge;
 
         const marker_val = (@as(u16, 0xFF) << 8) | marker_byte;
 
@@ -119,7 +119,7 @@ pub fn getInfo(reader: *std.Io.Reader, limits: DecodeLimits) !Header {
 
         // Markers with payload: read length
         const length = try reader.takeInt(u16, .big);
-        bytes_read += 2;
+        bytes_read += @sizeOf(u16);
         if (length < 2) return error.InvalidMarker;
 
         // Check if this is a SOF marker
@@ -139,13 +139,12 @@ pub fn getInfo(reader: *std.Io.Reader, limits: DecodeLimits) !Header {
             const height = try reader.takeInt(u16, .big);
             const width = try reader.takeInt(u16, .big);
             const num_components = try reader.takeByte();
-            bytes_read += 6;
+            bytes_read += 6; // precision(1) + height(2) + width(2) + components(1)
 
             // Discard remaining component info if any
             if (payload_len > 6) {
                 const skip = payload_len - 6;
-                _ = try reader.discard(std.Io.Limit.limited(skip));
-                bytes_read += skip;
+                bytes_read += try reader.discard(std.Io.Limit.limited(skip));
             }
 
             return Header{
@@ -163,11 +162,9 @@ pub fn getInfo(reader: *std.Io.Reader, limits: DecodeLimits) !Header {
         // But for safety, we count it against the limit.
         if (bytes_read + skip > limits.max_jpeg_bytes) return error.ImageTooLarge;
 
-        _ = try reader.discard(std.Io.Limit.limited(skip));
-        bytes_read += skip;
+        bytes_read += try reader.discard(std.Io.Limit.limited(skip));
     }
 }
-
 test "JPEG getInfo" {
     const gpa = std.testing.allocator;
 

@@ -280,7 +280,7 @@ pub fn getInfo(reader: *std.Io.Reader, limits: DecodeLimits) !Header {
     var chunk_count: usize = 0;
 
     const sig = try reader.takeArray(8);
-    bytes_read += 8;
+    bytes_read += sig.len;
     if (!std.mem.eql(u8, sig, &signature)) {
         return error.InvalidPngSignature;
     }
@@ -301,10 +301,10 @@ pub fn getInfo(reader: *std.Io.Reader, limits: DecodeLimits) !Header {
             error.EndOfStream => break,
             else => return err,
         };
-        bytes_read += 4;
+        bytes_read += @sizeOf(u32);
 
         const chunk_type_ptr = try reader.takeArray(4);
-        bytes_read += 4;
+        bytes_read += chunk_type_ptr.len;
         const chunk_type = chunk_type_ptr.*;
 
         chunk_count += 1;
@@ -324,7 +324,7 @@ pub fn getInfo(reader: *std.Io.Reader, limits: DecodeLimits) !Header {
             if (length != 13) return error.InvalidHeaderLength;
 
             const data = try reader.takeArray(13);
-            bytes_read += 13;
+            bytes_read += data.len;
 
             const width = std.mem.readInt(u32, data[0..4], .big);
             const height = std.mem.readInt(u32, data[4..8], .big);
@@ -350,19 +350,17 @@ pub fn getInfo(reader: *std.Io.Reader, limits: DecodeLimits) !Header {
                 .interlace_method = data[12],
             };
             header_found = true;
-            _ = try reader.discard(std.Io.Limit.limited(4)); // CRC
-            bytes_read += 4;
+            bytes_read += try reader.discard(std.Io.Limit.limited(4)); // CRC
         } else if (std.mem.eql(u8, &chunk_type, "gAMA") and header_found) {
             if (length != 4) return error.InvalidGammaLength;
             const gamma_int = try reader.takeInt(u32, .big);
-            bytes_read += 4;
+            bytes_read += @sizeOf(u32);
             header.gamma = @as(f32, @floatFromInt(gamma_int)) / 100000.0;
-            _ = try reader.discard(std.Io.Limit.limited(4)); // CRC
-            bytes_read += 4;
+            bytes_read += try reader.discard(std.Io.Limit.limited(4)); // CRC
         } else if (std.mem.eql(u8, &chunk_type, "sRGB") and header_found) {
             if (length != 1) return error.InvalidSrgbLength;
             const intent_raw = try reader.takeByte();
-            bytes_read += 1;
+            bytes_read += @sizeOf(u8);
             header.srgb_intent = switch (intent_raw) {
                 0 => .perceptual,
                 1 => .relative_colorimetric,
@@ -370,12 +368,10 @@ pub fn getInfo(reader: *std.Io.Reader, limits: DecodeLimits) !Header {
                 3 => .absolute_colorimetric,
                 else => return error.InvalidSrgbIntent,
             };
-            _ = try reader.discard(std.Io.Limit.limited(4)); // CRC
-            bytes_read += 4;
+            bytes_read += try reader.discard(std.Io.Limit.limited(4)); // CRC
         } else {
             // Skip unknown or unneeded chunk data + CRC
-            _ = try reader.discard(std.Io.Limit.limited64(@as(u64, length) + 4));
-            bytes_read += length + 4;
+            bytes_read += try reader.discard(std.Io.Limit.limited64(@as(u64, length) + 4));
         }
     }
 
