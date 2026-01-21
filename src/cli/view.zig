@@ -43,16 +43,18 @@ pub fn run(io: Io, gpa: Allocator, args: *std.process.Args.Iterator) !void {
             protocol = args.next();
         } else if (std.mem.eql(u8, arg, "--filter")) {
             if (args.next()) |f| {
-                if (std.mem.eql(u8, f, "nearest")) {
-                    filter = .nearest_neighbor;
-                } else if (std.mem.eql(u8, f, "bilinear")) {
-                    filter = .bilinear;
-                } else if (std.mem.eql(u8, f, "bicubic")) {
-                    filter = .bicubic;
-                } else if (std.mem.eql(u8, f, "lanczos")) {
-                    filter = .lanczos;
-                } else if (std.mem.eql(u8, f, "catmull-rom")) {
-                    filter = .catmull_rom;
+                const filter_map = std.StaticStringMap(zignal.Interpolation).initComptime(.{
+                    .{ "nearest", .nearest_neighbor },
+                    .{ "bilinear", .bilinear },
+                    .{ "bicubic", .bicubic },
+                    .{ "lanczos", .lanczos },
+                    .{ "catmull-rom", .catmull_rom },
+                });
+                if (filter_map.get(f)) |f_enum| {
+                    filter = f_enum;
+                } else {
+                    std.log.err("Unknown filter type: {s}", .{f});
+                    return error.InvalidArguments;
                 }
             }
         } else if (!std.mem.startsWith(u8, arg, "-")) {
