@@ -87,26 +87,41 @@ pub fn run(io: Io, gpa: Allocator, args: *std.process.Args.Iterator) !void {
     } };
 
     if (protocol) |p| {
-        if (std.mem.eql(u8, p, "kitty")) {
-            display_fmt = .{ .kitty = .{
-                .width = width,
-                .height = height,
-                .interpolation = filter,
-            } };
-        } else if (std.mem.eql(u8, p, "sixel")) {
-            display_fmt = .{ .sixel = .{
-                .palette = .{ .adaptive = .{ .max_colors = 256 } },
-                .dither = .auto,
-                .width = width,
-                .height = height,
-                .interpolation = filter,
-            } };
-        } else if (std.mem.eql(u8, p, "sgr")) {
-            display_fmt = .{ .sgr = .{ .width = width, .height = height } };
-        } else if (std.mem.eql(u8, p, "braille")) {
-            display_fmt = .{ .braille = .{ .width = width, .height = height } };
-        } else if (std.mem.eql(u8, p, "auto")) {
-            // Already set to default
+        const protocol_map: std.StaticStringMap(zignal.DisplayFormat) = .initComptime(.{
+            .{ "kitty", zignal.DisplayFormat{ .kitty = .default } },
+            .{ "sixel", zignal.DisplayFormat{ .sixel = .default } },
+            .{ "sgr", zignal.DisplayFormat{ .sgr = .default } },
+            .{ "braille", zignal.DisplayFormat{ .braille = .default } },
+            .{ "auto", zignal.DisplayFormat{ .auto = .default } },
+        });
+
+        if (protocol_map.get(p)) |template| {
+            display_fmt = template;
+            switch (display_fmt) {
+                .kitty => |*opts| {
+                    opts.width = width;
+                    opts.height = height;
+                    opts.interpolation = filter;
+                },
+                .sixel => |*opts| {
+                    opts.width = width;
+                    opts.height = height;
+                    opts.interpolation = filter;
+                },
+                .sgr => |*opts| {
+                    opts.width = width;
+                    opts.height = height;
+                },
+                .braille => |*opts| {
+                    opts.width = width;
+                    opts.height = height;
+                },
+                .auto => |*opts| {
+                    opts.width = width;
+                    opts.height = height;
+                    opts.interpolation = filter;
+                },
+            }
         } else {
             std.log.err("Unknown protocol: {s}", .{p});
             return error.InvalidArguments;
