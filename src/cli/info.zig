@@ -32,6 +32,9 @@ pub fn run(io: Io, gpa: Allocator, args: *std.process.Args.Iterator) !void {
     var buffer: [4096]u8 = undefined;
     var stdout = std.Io.File.stdout().writer(io, &buffer);
 
+    // Buffer for reading file data
+    var read_buffer: [4096]u8 = undefined;
+
     for (image_paths.items) |image_path| {
         if (image_paths.items.len > 1) {
             try stdout.interface.print("File: {s}\n", .{image_path});
@@ -41,12 +44,14 @@ pub fn run(io: Io, gpa: Allocator, args: *std.process.Args.Iterator) !void {
         const result = blk: {
             const image_format = zignal.ImageFormat.detectFromPath(io, gpa, image_path) catch |err| break :blk err;
             if (image_format) |fmt| {
-                var header_buf: [4096]u8 = undefined;
-                const file_data = std.Io.Dir.cwd().readFile(io, image_path, &header_buf) catch |err| break :blk err;
+                const file = std.Io.Dir.cwd().openFile(io, image_path, .{}) catch |err| break :blk err;
+                defer file.close(io);
+
+                var reader = file.reader(io, &read_buffer);
 
                 switch (fmt) {
                     .png => {
-                        const png_info = png.getInfo(file_data) catch |err| break :blk err;
+                        const png_info = png.getInfo(&reader.interface) catch |err| break :blk err;
 
                         try stdout.interface.print("Format: PNG\n", .{});
                         try stdout.interface.print("Dimensions: {d}x{d}\n", .{ png_info.width, png_info.height });
@@ -62,7 +67,7 @@ pub fn run(io: Io, gpa: Allocator, args: *std.process.Args.Iterator) !void {
                         }
                     },
                     .jpeg => {
-                        const header = jpeg.getInfo(file_data) catch |err| break :blk err;
+                        const header = jpeg.getInfo(&reader.interface) catch |err| break :blk err;
 
                         try stdout.interface.print("Format: JPEG\n", .{});
                         try stdout.interface.print("Dimensions: {d}x{d}\n", .{ header.width, header.height });
