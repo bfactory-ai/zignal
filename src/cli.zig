@@ -29,7 +29,7 @@ pub fn main(init: std.process.Init) !void {
         if (std.mem.eql(u8, arg, "display")) {
             display.run(init.io, init.gpa, &args) catch |err| {
                 std.log.err("display command failed: {t}", .{err});
-                return;
+                std.process.exit(1);
             };
             return;
         }
@@ -41,10 +41,11 @@ pub fn main(init: std.process.Init) !void {
             if (args.next()) |image_path| {
                 info.run(init.io, init.gpa, image_path) catch |err| {
                     std.log.err("failed to get info for '{s}': {t}", .{ image_path, err });
-                    return;
+                    std.process.exit(1);
                 };
             } else {
                 std.log.err("Missing image path for 'info' command", .{});
+                std.process.exit(1);
             }
             return;
         }
@@ -52,6 +53,10 @@ pub fn main(init: std.process.Init) !void {
             try help(init.io, &args);
             return;
         }
+
+        std.log.err("Unknown command: '{s}'", .{arg});
+        try help(init.io, null);
+        std.process.exit(1);
     }
     try help(init.io, null);
 }
@@ -73,6 +78,8 @@ fn help(io: Io, args: ?*std.process.Args.Iterator) !void {
                 try stdout.interface.print("{s}", .{text});
             } else {
                 try stdout.interface.print("Unknown command: \"{s}\"\n\n{s}", .{ subcmd, general_help });
+                try stdout.interface.flush();
+                std.process.exit(1);
             }
             try stdout.interface.flush();
             return;
