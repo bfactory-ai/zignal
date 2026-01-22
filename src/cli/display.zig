@@ -52,7 +52,7 @@ pub fn run(io: Io, gpa: Allocator, iterator: *std.process.Args.Iterator) !void {
         if (protocol_map.get(p)) |p_enum| {
             protocol = p_enum;
         } else {
-            std.log.err("Unknown protocol tpe: {s}", .{p});
+            std.log.err("Unknown protocol type: {s}", .{p});
             return error.InvalidArguments;
         }
     }
