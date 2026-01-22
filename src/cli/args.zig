@@ -40,6 +40,12 @@ pub fn parse(comptime T: type, allocator: Allocator, args: *std.process.Args.Ite
     errdefer positionals.deinit(allocator);
 
     while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--")) {
+            while (args.next()) |pos| {
+                try positionals.append(allocator, pos);
+            }
+            break;
+        }
         if (std.mem.startsWith(u8, arg, "--")) {
             const flag_name = arg[2..];
             var found = false;
