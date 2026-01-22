@@ -101,16 +101,16 @@ pub fn generateHelp(comptime T: type, comptime usage_line: []const u8, comptime 
     }
 
     inline for (fields) |field| {
-        const meta_info = if (@hasDecl(T, "meta") and @hasField(@TypeOf(T.meta), field.name))
+        const info = if (@hasDecl(T, "meta") and @hasField(@TypeOf(T.meta), field.name))
             @field(T.meta, field.name)
         else
             OptionConfig{ .help = "No description" };
 
-        const metavar = if (@hasField(@TypeOf(meta_info), "metavar"))
-            if (@typeInfo(@TypeOf(meta_info.metavar)) == .optional)
-                meta_info.metavar orelse "value"
-            else
-                meta_info.metavar
+        const metavar = if (@hasField(@TypeOf(info), "metavar"))
+            switch (@typeInfo(@TypeOf(info.metavar))) {
+                .optional => info.metavar orelse "value",
+                else => info.metavar,
+            }
         else
             "value";
 
@@ -124,7 +124,7 @@ pub fn generateHelp(comptime T: type, comptime usage_line: []const u8, comptime 
         const padding_len = if (flag_str.len < 17) 17 - flag_str.len else 1;
         const padding = " " ** padding_len;
 
-        text = text ++ flag_str ++ padding ++ meta_info.help ++ "\n";
+        text = text ++ flag_str ++ padding ++ info.help ++ "\n";
     }
     return text;
 }
