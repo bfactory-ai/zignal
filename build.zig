@@ -43,6 +43,7 @@ pub fn build(b: *Build) void {
             .target = target,
             .optimize = optimize,
             .strip = optimize != .Debug,
+            .link_libc = true,
             .imports = &.{
                 .{ .name = "zignal", .module = zignal },
             },
