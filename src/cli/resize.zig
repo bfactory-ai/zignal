@@ -105,6 +105,11 @@ fn processImage(
     var img: zignal.Image(zignal.Rgba(u8)) = try .load(io, gpa, input_path);
     defer img.deinit(gpa);
 
+    if (img.rows == 0 or img.cols == 0) {
+        std.log.err("Input image has zero dimensions ({d}x{d})", .{ img.cols, img.rows });
+        return error.InvalidDimensions;
+    }
+
     // Calculate new dimensions
     var new_width: u32 = 0;
     var new_height: u32 = 0;
