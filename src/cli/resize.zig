@@ -20,13 +20,13 @@ const Args = struct {
         .width = .{ .help = "Target width in pixels", .metavar = "pixels" },
         .height = .{ .help = "Target height in pixels", .metavar = "pixels" },
         .filter = .{ .help = "Interpolation filter (nearest, bilinear, bicubic, catmull-rom, mitchell, lanczos)", .metavar = "name" },
-        .output = .{ .help = "Output file path (mandatory)", .metavar = "file" },
+        .output = .{ .help = "Output file or directory path (mandatory)", .metavar = "path" },
     };
 };
 
 pub const help_text = args.generateHelp(
     Args,
-    "zignal resize <image> --output <file> [options]",
+    "zignal resize <image> --output <path> [options]",
     "Resize an image using various interpolation methods.",
 );
 
