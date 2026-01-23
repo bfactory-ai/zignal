@@ -127,7 +127,7 @@ pub fn Matrix(comptime T: type) type {
                 const log2_align = std.math.log2_int(u32, simd_alignment);
                 break :blk @as(std.mem.Alignment, @enumFromInt(log2_align));
             };
-            const data = try allocator.alignedAlloc(T, alignment, @as(u32, rows) * cols);
+            const data = try allocator.alignedAlloc(T, alignment, @as(u32, rows) * @as(usize, cols));
             return Self{
                 .items = data,
                 .rows = rows,
@@ -139,7 +139,7 @@ pub fn Matrix(comptime T: type) type {
         /// Initializes a matrix from a flat slice of values.
         /// The slice length must be exactly rows * cols.
         pub fn fromSlice(allocator: std.mem.Allocator, rows: u32, cols: u32, data: []const T) !Self {
-            if (data.len != @as(usize, rows) * cols) {
+            if (data.len != @as(usize, rows) * @as(usize, cols)) {
                 return error.DimensionMismatch;
             }
             const result = try init(allocator, rows, cols);
@@ -221,7 +221,7 @@ pub fn Matrix(comptime T: type) type {
             var rand = prng.random();
 
             var result = try init(allocator, rows, cols);
-            for (0..@as(usize, rows) * cols) |i| {
+            for (0..@as(usize, rows) * @as(usize, cols)) |i| {
                 result.items[i] = rand.float(T);
             }
             return result;

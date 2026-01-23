@@ -147,11 +147,7 @@ fn matrix_full(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
 
 fn matrix_init_from_list(self: *MatrixObject, list_obj: ?*c.PyObject) c_int {
     // Get dimensions
-    const irows = c.PyList_Size(list_obj);
-    if (irows == 0) {
-        python.setValueError("Cannot create Matrix from empty list", .{});
-        return -1;
-    }
+    const n_rows = python.validatePositive(u32, c.PyList_Size(list_obj), "rows") catch return -1;
 
     // Check first row to get number of columns
     const first_row = c.PyList_GetItem(list_obj, 0);
@@ -160,11 +156,7 @@ fn matrix_init_from_list(self: *MatrixObject, list_obj: ?*c.PyObject) c_int {
         return -1;
     }
 
-    const icols = c.PyList_Size(first_row);
-    if (icols == 0) {
-        python.setValueError("Cannot create Matrix with empty rows", .{});
-        return -1;
-    }
+    const n_cols = python.validatePositive(u32, c.PyList_Size(first_row), "col") catch return -1;
 
     // Create the matrix
     const matrix_ptr = allocator.create(Matrix(f64)) catch {
@@ -172,14 +164,14 @@ fn matrix_init_from_list(self: *MatrixObject, list_obj: ?*c.PyObject) c_int {
         return -1;
     };
 
-    matrix_ptr.* = Matrix(f64).init(allocator, @intCast(irows), @intCast(icols)) catch {
+    matrix_ptr.* = Matrix(f64).init(allocator, n_rows, n_cols) catch {
         allocator.destroy(matrix_ptr);
         python.setMemoryError("matrix data");
         return -1;
     };
 
-    const n_rows: u32 = @intCast(irows);
-    const n_cols: u32 = @intCast(icols);
+    // const n_rows: u32 = @intCast(irows);
+    // const n_cols: u32 = @intCast(icols);
 
     // Fill matrix with data from list
     var row_idx: u32 = 0;
@@ -196,7 +188,7 @@ fn matrix_init_from_list(self: *MatrixObject, list_obj: ?*c.PyObject) c_int {
 
         // Check that row has correct number of columns
         const row_size = c.PyList_Size(row_obj);
-        if (row_size != icols) {
+        if (row_size != @as(isize, n_cols)) {
             matrix_ptr.deinit();
             allocator.destroy(matrix_ptr);
             python.setValueError("All rows must have the same number of columns", .{});
@@ -206,7 +198,7 @@ fn matrix_init_from_list(self: *MatrixObject, list_obj: ?*c.PyObject) c_int {
         // Extract values from row
         var col_idx: u32 = 0;
         while (col_idx < n_cols) : (col_idx += 1) {
-            const item = c.PyList_GetItem(row_obj, @intCast(col_idx));
+            const item = c.PyList_GetItem(row_obj, col_idx);
 
             const value = python.parse(f64, item) catch {
                 matrix_ptr.deinit();
@@ -461,10 +453,10 @@ fn matrix_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
         return null;
     }
 
-    // Check if array is C-contiguous
-    const rows: u32 = @intCast(buffer.shape[0]);
-    const cols: u32 = @intCast(buffer.shape[1]);
-    const expected_stride_row = cols * @sizeOf(f64);
+    // Check if array is C-contiguous and dimensions fit in u32
+    const rows = python.validateNonNegative(u32, buffer.shape[0], "rows") catch return null;
+    const cols = python.validateNonNegative(u32, buffer.shape[1], "cols") catch return null;
+    const expected_stride_row = @as(usize, cols) * @sizeOf(f64);
     const expected_stride_col = @sizeOf(f64);
 
     if (buffer.strides[0] != @as(c.Py_ssize_t, @intCast(expected_stride_row)) or
@@ -496,8 +488,8 @@ fn matrix_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
         const data_slice = @as([*]align(simd_align) f64, @ptrCast(@alignCast(buffer.buf.?)))[0 .. rows * cols];
         matrix_ptr.* = Matrix(f64){
             .items = data_slice,
-            .rows = @intCast(rows),
-            .cols = @intCast(cols),
+            .rows = rows,
+            .cols = cols,
             .allocator = allocator,
         };
 
@@ -518,7 +510,7 @@ fn matrix_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
         };
         if (buffer.buf) |src_buf| {
             const src_ptr: [*]const u8 = @ptrCast(src_buf);
-            const src_bytes = src_ptr[0 .. rows * cols * @sizeOf(f64)];
+            const src_bytes = src_ptr[0 .. @as(usize, rows) * @as(usize, cols) * @sizeOf(f64)];
             @memcpy(std.mem.sliceAsBytes(matrix_ptr.items), src_bytes);
         }
 
@@ -545,19 +537,19 @@ fn matrix_getitem(self_obj: ?*c.PyObject, key: ?*c.PyObject) callconv(.c) ?*c.Py
         const row_obj = c.PyTuple_GetItem(key, 0);
         const col_obj = c.PyTuple_GetItem(key, 1);
 
-        const row = python.parse(c_long, row_obj) catch return null;
-        const col = python.parse(c_long, col_obj) catch return null;
+        const irow = python.parse(isize, row_obj) catch return null;
+        const icol = python.parse(isize, col_obj) catch return null;
 
         // Handle negative indices
-        const actual_row: u32 = if (row < 0)
-            @intCast(@as(i64, @intCast(ptr.rows)) + row)
+        const actual_row: u32 = if (irow < 0)
+            @intCast(@as(isize, @intCast(ptr.rows)) + irow)
         else
-            @intCast(row);
+            @intCast(irow);
 
-        const actual_col: u32 = if (col < 0)
-            @intCast(@as(i64, @intCast(ptr.cols)) + col)
+        const actual_col: u32 = if (icol < 0)
+            @intCast(@as(isize, @intCast(ptr.cols)) + icol)
         else
-            @intCast(col);
+            @intCast(icol);
 
         // Bounds checking
         if (actual_row >= ptr.rows or actual_col >= ptr.cols) {
@@ -1058,15 +1050,15 @@ fn matrix_identity(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const rows_pos = python.validatePositive(u32, params.rows, "rows") catch return null;
-    const cols_pos = python.validatePositive(u32, params.cols, "cols") catch return null;
+    const rows_pos = python.validateNonNegative(u32, params.rows, "rows") catch return null;
+    const cols_pos = python.validateNonNegative(u32, params.cols, "cols") catch return null;
 
     const allocation = allocOwnedMatrix(type_obj) orelse return null;
     var cleanup_needed = true;
     var matrix_initialized = false;
     defer if (cleanup_needed) cleanupOwnedMatrix(allocation, matrix_initialized);
 
-    allocation.matrix_ptr.* = Matrix(f64).identity(allocator, @intCast(rows_pos), @intCast(cols_pos)) catch {
+    allocation.matrix_ptr.* = Matrix(f64).identity(allocator, rows_pos, cols_pos) catch {
         python.setMemoryError("matrix data");
         return null;
     };
@@ -1103,7 +1095,7 @@ fn matrix_zeros(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) 
     var matrix_initialized = false;
     defer if (cleanup_needed) cleanupOwnedMatrix(allocation, matrix_initialized);
 
-    allocation.matrix_ptr.* = Matrix(f64).init(allocator, @intCast(rows_pos), @intCast(cols_pos)) catch {
+    allocation.matrix_ptr.* = Matrix(f64).init(allocator, rows_pos, cols_pos) catch {
         python.setMemoryError("matrix data");
         return null;
     };
@@ -1143,7 +1135,7 @@ fn matrix_ones(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
     var matrix_initialized = false;
     defer if (cleanup_needed) cleanupOwnedMatrix(allocation, matrix_initialized);
 
-    allocation.matrix_ptr.* = Matrix(f64).init(allocator, @intCast(rows_pos), @intCast(cols_pos)) catch {
+    allocation.matrix_ptr.* = Matrix(f64).init(allocator, rows_pos, cols_pos) catch {
         python.setMemoryError("matrix data");
         return null;
     };
@@ -1561,7 +1553,7 @@ fn matrix_submatrix_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c
     const row_count_pos = python.validatePositive(u32, params.row_count, "row_count") catch return null;
     const col_count_pos = python.validatePositive(u32, params.col_count, "col_count") catch return null;
 
-    const result_matrix = ptr.subMatrix(row_start_pos, col_start_pos, @intCast(row_count_pos), @intCast(col_count_pos));
+    const result_matrix = ptr.subMatrix(row_start_pos, col_start_pos, row_count_pos, col_count_pos);
     return matrixToObject(result_matrix);
 }
 
@@ -1602,7 +1594,7 @@ fn matrix_random(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject)
     var matrix_initialized = false;
     defer if (cleanup_needed) cleanupOwnedMatrix(allocation, matrix_initialized);
 
-    allocation.matrix_ptr.* = Matrix(f64).random(allocator, @intCast(rows_pos), @intCast(cols_pos), params.seed) catch {
+    allocation.matrix_ptr.* = Matrix(f64).random(allocator, rows_pos, cols_pos, params.seed) catch {
         python.setMemoryError("matrix data");
         return null;
     };

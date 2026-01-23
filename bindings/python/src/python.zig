@@ -903,7 +903,7 @@ pub fn validateRange(comptime T: type, value: anytype, min: T, max: T, name: []c
 
     // Check range before converting to avoid truncation issues with @intCast
     switch (ValueType) {
-        c_long, c_int => {
+        c_long, c_int, isize => {
             // For integer types, check range using the original value
             if (value < min or value > max) {
                 var buffer: [256]u8 = undefined;
@@ -938,7 +938,7 @@ pub fn validateRange(comptime T: type, value: anytype, min: T, max: T, name: []c
                 return error.OutOfRange;
             }
         },
-        else => @compileError("Unsupported value type"),
+        else => @compileError("Unsupported value type " ++ @typeName(ValueType)),
     }
 
     // Now convert after range check
@@ -966,10 +966,17 @@ pub fn validateNonNegative(comptime T: type, value: anytype, name: []const u8) !
 
 /// Convenience function for strictly positive values (> 0)
 pub fn validatePositive(comptime T: type, value: anytype, name: []const u8) !T {
-    const info = @typeInfo(T);
-    const max = if (info == .float) std.math.inf(T) else std.math.maxInt(T);
-    // For floats, allow any positive value > 0. For integers, minimum is 1.
-    const min = if (info == .float) std.math.floatEps(T) else 1;
+    const min: T, const max: T = switch (@typeInfo(T)) {
+        .float => .{
+            std.math.floatEps(T),
+            std.math.floatMax(T),
+        },
+        .int => .{
+            1,
+            std.math.maxInt(T),
+        },
+        else => @compileError("Unsupported type: " ++ @typeName(T)),
+    };
     return validateRange(T, value, min, max, name);
 }
 

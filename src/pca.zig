@@ -145,7 +145,7 @@ pub fn Pca(comptime T: type) type {
             }
 
             // Create centered data matrix
-            var centered_matrix: Matrix(T) = try .init(self.allocator, @as(u32, @intCast(n_samples)), @as(u32, @intCast(self.dim)));
+            var centered_matrix: Matrix(T) = try .init(self.allocator, n_samples, self.dim);
             defer centered_matrix.deinit();
 
             for (0..n_samples) |i| {
@@ -292,7 +292,7 @@ pub fn Pca(comptime T: type) type {
             if (data_matrix.rows == 0) return error.NoVectors;
 
             // Build centered data matrix
-            var centered_matrix: Matrix(T) = try Matrix(T).init(self.allocator, data_matrix.rows, @as(u32, @intCast(self.dim)));
+            var centered_matrix: Matrix(T) = try .init(self.allocator, data_matrix.rows, self.dim);
             defer centered_matrix.deinit();
 
             for (0..data_matrix.rows) |i| {
@@ -337,7 +337,7 @@ pub fn Pca(comptime T: type) type {
             // Prepare outputs
             self.num_components = num_components;
             self.eigenvalues = try self.allocator.realloc(self.eigenvalues, num_components);
-            self.components = try Matrix(T).init(self.allocator, @as(u32, @intCast(self.dim)), @as(u32, @intCast(num_components)));
+            self.components = try .init(self.allocator, self.dim, num_components);
 
             // Compute SVD of covariance matrix
             var result = try cov_matrix.svd(self.allocator, .{
@@ -393,7 +393,7 @@ pub fn Pca(comptime T: type) type {
             // Extract components by projecting data onto eigenvectors
             self.num_components = num_components;
             self.eigenvalues = try self.allocator.realloc(self.eigenvalues, num_components);
-            self.components = try Matrix(T).init(self.allocator, @as(u32, @intCast(self.dim)), @as(u32, @intCast(num_components)));
+            self.components = try .init(self.allocator, self.dim, num_components);
 
             // Compute SVD of Gram matrix
             var result = try gram_matrix.svd(self.allocator, .{

@@ -352,7 +352,7 @@ fn constructAugmentingPath(
     // Build augmenting path: alternating primed and starred zeros
     // Path can have up to 2*n elements (alternating starred and primed)
     const PathNode = struct { row: u32, col: u32 };
-    const path = try allocator.alloc(PathNode, 2 * n);
+    const path = try allocator.alloc(PathNode, 2 * @as(usize, n));
     defer allocator.free(path);
     var path_len: u32 = 0;
 
