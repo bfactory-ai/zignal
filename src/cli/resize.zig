@@ -116,12 +116,12 @@ fn processImage(
     var new_height: u32 = 0;
 
     if (options.scale) |s| {
-        if (s <= 0) {
-            std.log.err("Scale factor must be positive", .{});
+        if (s <= 0 or !std.math.isFinite(s)) {
+            std.log.err("Scale factor must be positive and finite", .{});
             return error.InvalidArguments;
         }
-        new_width = @intFromFloat(@round(@as(f32, @floatFromInt(img.cols)) * s));
-        new_height = @intFromFloat(@round(@as(f32, @floatFromInt(img.rows)) * s));
+        new_width = zignal.meta.safeCast(u32, @as(f32, @floatFromInt(img.cols)) * s) catch return error.InvalidDimensions;
+        new_height = zignal.meta.safeCast(u32, @as(f32, @floatFromInt(img.rows)) * s) catch return error.InvalidDimensions;
     } else {
         if (options.width != null and options.height != null) {
             new_width = options.width.?;
@@ -129,11 +129,11 @@ fn processImage(
         } else if (options.width) |w| {
             new_width = w;
             const aspect = @as(f32, @floatFromInt(img.rows)) / @as(f32, @floatFromInt(img.cols));
-            new_height = @intFromFloat(@round(@as(f32, @floatFromInt(w)) * aspect));
+            new_height = zignal.meta.safeCast(u32, @as(f32, @floatFromInt(w)) * aspect) catch return error.InvalidDimensions;
         } else if (options.height) |h| {
             new_height = h;
             const aspect = @as(f32, @floatFromInt(img.cols)) / @as(f32, @floatFromInt(img.rows));
-            new_width = @intFromFloat(@round(@as(f32, @floatFromInt(h)) * aspect));
+            new_width = zignal.meta.safeCast(u32, @as(f32, @floatFromInt(h)) * aspect) catch return error.InvalidDimensions;
         }
     }
 
