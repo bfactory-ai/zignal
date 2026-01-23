@@ -132,7 +132,7 @@ fn matrix_full(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
     var matrix_initialized = false;
     defer if (cleanup_needed) cleanupOwnedMatrix(allocation, matrix_initialized);
 
-    allocation.matrix_ptr.* = Matrix(f64).init(allocator, rows_pos, cols_pos) catch {
+    allocation.matrix_ptr.* = Matrix(f64).init(allocator, @intCast(rows_pos), @intCast(cols_pos)) catch {
         python.setMemoryError("matrix data");
         return null;
     };
@@ -496,8 +496,8 @@ fn matrix_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
         const data_slice = @as([*]align(simd_align) f64, @ptrCast(@alignCast(buffer.buf.?)))[0 .. rows * cols];
         matrix_ptr.* = Matrix(f64){
             .items = data_slice,
-            .rows = rows,
-            .cols = cols,
+            .rows = @intCast(rows),
+            .cols = @intCast(cols),
             .allocator = allocator,
         };
 
@@ -509,7 +509,7 @@ fn matrix_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
         c.Py_INCREF(array_obj);
     } else {
         // Fallback: copy unaligned data to an aligned buffer
-        matrix_ptr.* = Matrix(f64).init(allocator, rows, cols) catch {
+        matrix_ptr.* = Matrix(f64).init(allocator, @intCast(rows), @intCast(cols)) catch {
             allocator.destroy(matrix_ptr);
             // TODO(py3.10): drop explicit cast once minimum Python >= 3.11
             c.Py_DECREF(@as(?*c.PyObject, @ptrCast(self)));
@@ -1066,7 +1066,7 @@ fn matrix_identity(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
     var matrix_initialized = false;
     defer if (cleanup_needed) cleanupOwnedMatrix(allocation, matrix_initialized);
 
-    allocation.matrix_ptr.* = Matrix(f64).identity(allocator, rows_pos, cols_pos) catch {
+    allocation.matrix_ptr.* = Matrix(f64).identity(allocator, @intCast(rows_pos), @intCast(cols_pos)) catch {
         python.setMemoryError("matrix data");
         return null;
     };
@@ -1103,7 +1103,7 @@ fn matrix_zeros(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) 
     var matrix_initialized = false;
     defer if (cleanup_needed) cleanupOwnedMatrix(allocation, matrix_initialized);
 
-    allocation.matrix_ptr.* = Matrix(f64).init(allocator, rows_pos, cols_pos) catch {
+    allocation.matrix_ptr.* = Matrix(f64).init(allocator, @intCast(rows_pos), @intCast(cols_pos)) catch {
         python.setMemoryError("matrix data");
         return null;
     };
@@ -1143,7 +1143,7 @@ fn matrix_ones(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
     var matrix_initialized = false;
     defer if (cleanup_needed) cleanupOwnedMatrix(allocation, matrix_initialized);
 
-    allocation.matrix_ptr.* = Matrix(f64).init(allocator, rows_pos, cols_pos) catch {
+    allocation.matrix_ptr.* = Matrix(f64).init(allocator, @intCast(rows_pos), @intCast(cols_pos)) catch {
         python.setMemoryError("matrix data");
         return null;
     };
@@ -1561,7 +1561,7 @@ fn matrix_submatrix_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c
     const row_count_pos = python.validatePositive(usize, params.row_count, "row_count") catch return null;
     const col_count_pos = python.validatePositive(usize, params.col_count, "col_count") catch return null;
 
-    const result_matrix = ptr.subMatrix(row_start_pos, col_start_pos, row_count_pos, col_count_pos);
+    const result_matrix = ptr.subMatrix(row_start_pos, col_start_pos, @intCast(row_count_pos), @intCast(col_count_pos));
     return matrixToObject(result_matrix);
 }
 
@@ -1602,7 +1602,7 @@ fn matrix_random(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject)
     var matrix_initialized = false;
     defer if (cleanup_needed) cleanupOwnedMatrix(allocation, matrix_initialized);
 
-    allocation.matrix_ptr.* = Matrix(f64).random(allocator, rows_pos, cols_pos, params.seed) catch {
+    allocation.matrix_ptr.* = Matrix(f64).random(allocator, @intCast(rows_pos), @intCast(cols_pos), params.seed) catch {
         python.setMemoryError("matrix data");
         return null;
     };

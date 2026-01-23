@@ -106,7 +106,7 @@ pub fn FeatureDistributionMatching(comptime T: type) type {
             } else {
                 // Color image - extract features and compute covariance
                 self.target_size = target_image.rows * target_image.cols;
-                var feature_mat = try Matrix(f64).init(self.allocator, self.target_size, 3);
+                var feature_mat = try Matrix(f64).init(self.allocator, @as(u32, @intCast(self.target_size)), 3);
                 defer feature_mat.deinit();
 
                 self.target_is_grayscale = getFeatureMatrix(T, target_image, &feature_mat);

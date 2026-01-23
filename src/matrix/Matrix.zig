@@ -87,7 +87,7 @@ pub fn Matrix(comptime T: type) type {
             /// For LU, PA = LU (use .row). For QR, AP = QR (use .column).
             pub fn toMatrix(self: *const @This(), mode: Mode) !Matrix(T) {
                 const n = self.indices.len;
-                var p_mat = try Matrix(T).initAll(self.allocator, n, n, 0);
+                var p_mat = try Matrix(T).initAll(self.allocator, @as(u32, @intCast(n)), @as(u32, @intCast(n)), 0);
                 switch (mode) {
                     .row => {
                         // For PA = LU
@@ -109,8 +109,8 @@ pub fn Matrix(comptime T: type) type {
         const Self = @This();
 
         items: []align(simd_alignment) T,
-        rows: usize,
-        cols: usize,
+        rows: u32,
+        cols: u32,
         allocator: std.mem.Allocator,
         err: ?MatrixError = null,
 
@@ -122,12 +122,12 @@ pub fn Matrix(comptime T: type) type {
             effective_rank: ?*usize = null,
         };
 
-        pub fn init(allocator: std.mem.Allocator, rows: usize, cols: usize) !Self {
+        pub fn init(allocator: std.mem.Allocator, rows: u32, cols: u32) !Self {
             const alignment = comptime blk: {
                 const log2_align = std.math.log2_int(usize, simd_alignment);
                 break :blk @as(std.mem.Alignment, @enumFromInt(log2_align));
             };
-            const data = try allocator.alignedAlloc(T, alignment, rows * cols);
+            const data = try allocator.alignedAlloc(T, alignment, @as(usize, rows) * cols);
             return Self{
                 .items = data,
                 .rows = rows,
@@ -138,8 +138,8 @@ pub fn Matrix(comptime T: type) type {
 
         /// Initializes a matrix from a flat slice of values.
         /// The slice length must be exactly rows * cols.
-        pub fn fromSlice(allocator: std.mem.Allocator, rows: usize, cols: usize, data: []const T) !Self {
-            if (data.len != rows * cols) {
+        pub fn fromSlice(allocator: std.mem.Allocator, rows: u32, cols: u32, data: []const T) !Self {
+            if (data.len != @as(usize, rows) * cols) {
                 return error.DimensionMismatch;
             }
             const result = try init(allocator, rows, cols);
@@ -184,7 +184,7 @@ pub fn Matrix(comptime T: type) type {
         }
 
         /// Returns the rows and columns as a struct.
-        pub fn shape(self: Self) struct { usize, usize } {
+        pub fn shape(self: Self) struct { u32, u32 } {
             return .{ self.rows, self.cols };
         }
 
@@ -192,18 +192,18 @@ pub fn Matrix(comptime T: type) type {
         pub inline fn at(self: Self, row_idx: usize, col_idx: usize) *T {
             assert(row_idx < self.rows);
             assert(col_idx < self.cols);
-            return &self.items[row_idx * self.cols + col_idx];
+            return &self.items[row_idx * @as(usize, self.cols) + col_idx];
         }
 
         /// Returns a matrix with all elements set to value.
-        pub fn initAll(allocator: std.mem.Allocator, rows: usize, cols: usize, value: T) !Self {
+        pub fn initAll(allocator: std.mem.Allocator, rows: u32, cols: u32, value: T) !Self {
             const result = try init(allocator, rows, cols);
             @memset(result.items, value);
             return result;
         }
 
         /// Returns an identity-like matrix.
-        pub fn identity(allocator: std.mem.Allocator, rows: usize, cols: usize) !Self {
+        pub fn identity(allocator: std.mem.Allocator, rows: u32, cols: u32) !Self {
             var result = try initAll(allocator, rows, cols, 0);
             for (0..@min(rows, cols)) |i| {
                 result.at(i, i).* = 1;
@@ -212,7 +212,7 @@ pub fn Matrix(comptime T: type) type {
         }
 
         /// Returns a matrix filled with random floating-point numbers.
-        pub fn random(allocator: std.mem.Allocator, rows: usize, cols: usize, seed: ?u64) !Self {
+        pub fn random(allocator: std.mem.Allocator, rows: u32, cols: u32, seed: ?u64) !Self {
             // Avoid relying on the TLS CSPRNG used by std.crypto.random, which can be
             // uninitialised in some embedding scenarios (e.g. Python extension module),
             // and seed a local PRNG instead.
@@ -221,7 +221,7 @@ pub fn Matrix(comptime T: type) type {
             var rand = prng.random();
 
             var result = try init(allocator, rows, cols);
-            for (0..rows * cols) |i| {
+            for (0..@as(usize, rows) * cols) |i| {
                 result.items[i] = rand.float(T);
             }
             return result;
@@ -562,7 +562,7 @@ pub fn Matrix(comptime T: type) type {
         }
 
         /// Extract a submatrix - changes dimensions
-        pub fn subMatrix(self: Self, row_begin: usize, col_begin: usize, row_count: usize, col_count: usize) Self {
+        pub fn subMatrix(self: Self, row_begin: usize, col_begin: usize, row_count: u32, col_count: u32) Self {
             if (self.err != null) return self;
 
             if (row_begin + row_count > self.rows or col_begin + col_count > self.cols) {
@@ -1615,7 +1615,7 @@ pub fn Matrix(comptime T: type) type {
         }
 
         /// Converts a Matrix to a static SMatrix with the given dimensions
-        pub fn toSMatrix(self: Self, comptime rows: usize, comptime cols: usize) SMatrix(T, rows, cols) {
+        pub fn toSMatrix(self: Self, comptime rows: u32, comptime cols: u32) SMatrix(T, rows, cols) {
             assert(self.rows == rows);
             assert(self.cols == cols);
 
