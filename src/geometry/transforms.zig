@@ -174,7 +174,7 @@ pub fn AffineTransform(comptime T: type) type {
             }
             // Use Matrix operations to perform matrix operations
             // Compute the pseudo-inverse so we can support additional correspondences
-            var effective_rank: usize = 0;
+            var effective_rank: u32 = 0;
             var pinv_chain = p.pseudoInverse(.{ .effective_rank = &effective_rank });
             var pinv = try pinv_chain.eval();
             defer pinv.deinit();

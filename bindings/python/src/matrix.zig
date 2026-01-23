@@ -124,8 +124,8 @@ fn matrix_full(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
     const fill_value = params.fill_value;
 
     // Validate dimensions
-    const rows_pos = python.validatePositive(usize, rows, "rows") catch return null;
-    const cols_pos = python.validatePositive(usize, cols, "cols") catch return null;
+    const rows_pos = python.validatePositive(u32, rows, "rows") catch return null;
+    const cols_pos = python.validatePositive(u32, cols, "cols") catch return null;
 
     const allocation = allocOwnedMatrix(type_obj) orelse return null;
     var cleanup_needed = true;
@@ -147,8 +147,8 @@ fn matrix_full(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
 
 fn matrix_init_from_list(self: *MatrixObject, list_obj: ?*c.PyObject) c_int {
     // Get dimensions
-    const n_rows = c.PyList_Size(list_obj);
-    if (n_rows == 0) {
+    const irows = c.PyList_Size(list_obj);
+    if (irows == 0) {
         python.setValueError("Cannot create Matrix from empty list", .{});
         return -1;
     }
@@ -160,8 +160,8 @@ fn matrix_init_from_list(self: *MatrixObject, list_obj: ?*c.PyObject) c_int {
         return -1;
     }
 
-    const n_cols = c.PyList_Size(first_row);
-    if (n_cols == 0) {
+    const icols = c.PyList_Size(first_row);
+    if (icols == 0) {
         python.setValueError("Cannot create Matrix with empty rows", .{});
         return -1;
     }
@@ -172,18 +172,18 @@ fn matrix_init_from_list(self: *MatrixObject, list_obj: ?*c.PyObject) c_int {
         return -1;
     };
 
-    matrix_ptr.* = Matrix(f64).init(allocator, @intCast(n_rows), @intCast(n_cols)) catch {
+    matrix_ptr.* = Matrix(f64).init(allocator, @intCast(irows), @intCast(icols)) catch {
         allocator.destroy(matrix_ptr);
         python.setMemoryError("matrix data");
         return -1;
     };
 
-    const n_rows_usize: usize = @intCast(n_rows);
-    const n_cols_usize: usize = @intCast(n_cols);
+    const n_rows: u32 = @intCast(irows);
+    const n_cols: u32 = @intCast(icols);
 
     // Fill matrix with data from list
-    var row_idx: usize = 0;
-    while (row_idx < n_rows_usize) : (row_idx += 1) {
+    var row_idx: u32 = 0;
+    while (row_idx < n_rows) : (row_idx += 1) {
         const row_obj = c.PyList_GetItem(list_obj, @intCast(row_idx));
 
         // Check that this is a list
@@ -196,7 +196,7 @@ fn matrix_init_from_list(self: *MatrixObject, list_obj: ?*c.PyObject) c_int {
 
         // Check that row has correct number of columns
         const row_size = c.PyList_Size(row_obj);
-        if (row_size != n_cols) {
+        if (row_size != icols) {
             matrix_ptr.deinit();
             allocator.destroy(matrix_ptr);
             python.setValueError("All rows must have the same number of columns", .{});
@@ -204,8 +204,8 @@ fn matrix_init_from_list(self: *MatrixObject, list_obj: ?*c.PyObject) c_int {
         }
 
         // Extract values from row
-        var col_idx: usize = 0;
-        while (col_idx < n_cols_usize) : (col_idx += 1) {
+        var col_idx: u32 = 0;
+        while (col_idx < n_cols) : (col_idx += 1) {
             const item = c.PyList_GetItem(row_obj, @intCast(col_idx));
 
             const value = python.parse(f64, item) catch {
@@ -462,8 +462,8 @@ fn matrix_from_numpy(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
     }
 
     // Check if array is C-contiguous
-    const rows: usize = @intCast(buffer.shape[0]);
-    const cols: usize = @intCast(buffer.shape[1]);
+    const rows: u32 = @intCast(buffer.shape[0]);
+    const cols: u32 = @intCast(buffer.shape[1]);
     const expected_stride_row = cols * @sizeOf(f64);
     const expected_stride_col = @sizeOf(f64);
 
@@ -549,12 +549,12 @@ fn matrix_getitem(self_obj: ?*c.PyObject, key: ?*c.PyObject) callconv(.c) ?*c.Py
         const col = python.parse(c_long, col_obj) catch return null;
 
         // Handle negative indices
-        const actual_row: usize = if (row < 0)
+        const actual_row: u32 = if (row < 0)
             @intCast(@as(i64, @intCast(ptr.rows)) + row)
         else
             @intCast(row);
 
-        const actual_col: usize = if (col < 0)
+        const actual_col: u32 = if (col < 0)
             @intCast(@as(i64, @intCast(ptr.cols)) + col)
         else
             @intCast(col);
@@ -591,12 +591,12 @@ fn matrix_setitem(self_obj: ?*c.PyObject, key: ?*c.PyObject, value: ?*c.PyObject
         const col = python.parse(c_long, col_obj) catch return -1;
 
         // Handle negative indices
-        const actual_row: usize = if (row < 0)
+        const actual_row: u32 = if (row < 0)
             @intCast(@as(i64, @intCast(ptr.rows)) + row)
         else
             @intCast(row);
 
-        const actual_col: usize = if (col < 0)
+        const actual_col: u32 = if (col < 0)
             @intCast(@as(i64, @intCast(ptr.cols)) + col)
         else
             @intCast(col);
@@ -818,7 +818,7 @@ fn matrixDimensionGetter(comptime dim: enum { rows, cols }) *const anyopaque {
     const Gen = struct {
         fn get(self_obj: ?*c.PyObject, _: ?*anyopaque) callconv(.c) ?*c.PyObject {
             const ptr = python.unwrap(MatrixObject, "matrix_ptr", self_obj, "Matrix") orelse return null;
-            const value: usize = switch (dimension) {
+            const value: u32 = switch (dimension) {
                 .rows => ptr.rows,
                 .cols => ptr.cols,
             };
@@ -1058,8 +1058,8 @@ fn matrix_identity(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObjec
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const rows_pos = python.validatePositive(usize, params.rows, "rows") catch return null;
-    const cols_pos = python.validatePositive(usize, params.cols, "cols") catch return null;
+    const rows_pos = python.validatePositive(u32, params.rows, "rows") catch return null;
+    const cols_pos = python.validatePositive(u32, params.cols, "cols") catch return null;
 
     const allocation = allocOwnedMatrix(type_obj) orelse return null;
     var cleanup_needed = true;
@@ -1095,8 +1095,8 @@ fn matrix_zeros(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) 
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const rows_pos = python.validatePositive(usize, params.rows, "rows") catch return null;
-    const cols_pos = python.validatePositive(usize, params.cols, "cols") catch return null;
+    const rows_pos = python.validatePositive(u32, params.rows, "rows") catch return null;
+    const cols_pos = python.validatePositive(u32, params.cols, "cols") catch return null;
 
     const allocation = allocOwnedMatrix(type_obj) orelse return null;
     var cleanup_needed = true;
@@ -1135,8 +1135,8 @@ fn matrix_ones(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) c
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const rows_pos = python.validatePositive(usize, params.rows, "rows") catch return null;
-    const cols_pos = python.validatePositive(usize, params.cols, "cols") catch return null;
+    const rows_pos = python.validatePositive(u32, params.rows, "rows") catch return null;
+    const cols_pos = python.validatePositive(u32, params.cols, "cols") catch return null;
 
     const allocation = allocOwnedMatrix(type_obj) orelse return null;
     var cleanup_needed = true;
@@ -1476,7 +1476,7 @@ fn matrix_row_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
 
     const ptr = python.unwrap(MatrixObject, "matrix_ptr", self_obj, "Matrix") orelse return null;
 
-    const idx: usize = if (params.idx < 0)
+    const idx: u32 = if (params.idx < 0)
         @intCast(@as(i64, @intCast(ptr.rows)) + params.idx)
     else
         @intCast(params.idx);
@@ -1507,7 +1507,7 @@ fn matrix_col_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObj
 
     const ptr = python.unwrap(MatrixObject, "matrix_ptr", self_obj, "Matrix") orelse return null;
 
-    const idx: usize = if (params.idx < 0)
+    const idx: u32 = if (params.idx < 0)
         @intCast(@as(i64, @intCast(ptr.cols)) + params.idx)
     else
         @intCast(params.idx);
@@ -1556,10 +1556,10 @@ fn matrix_submatrix_method(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c
         return null;
     }
 
-    const row_start_pos: usize = @intCast(params.row_start);
-    const col_start_pos: usize = @intCast(params.col_start);
-    const row_count_pos = python.validatePositive(usize, params.row_count, "row_count") catch return null;
-    const col_count_pos = python.validatePositive(usize, params.col_count, "col_count") catch return null;
+    const row_start_pos: u32 = @intCast(params.row_start);
+    const col_start_pos: u32 = @intCast(params.col_start);
+    const row_count_pos = python.validatePositive(u32, params.row_count, "row_count") catch return null;
+    const col_count_pos = python.validatePositive(u32, params.col_count, "col_count") catch return null;
 
     const result_matrix = ptr.subMatrix(row_start_pos, col_start_pos, @intCast(row_count_pos), @intCast(col_count_pos));
     return matrixToObject(result_matrix);
@@ -1594,8 +1594,8 @@ fn matrix_random(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject)
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
-    const rows_pos = python.validatePositive(usize, params.rows, "rows") catch return null;
-    const cols_pos = python.validatePositive(usize, params.cols, "cols") catch return null;
+    const rows_pos = python.validatePositive(u32, params.rows, "rows") catch return null;
+    const cols_pos = python.validatePositive(u32, params.cols, "cols") catch return null;
 
     const allocation = allocOwnedMatrix(type_obj) orelse return null;
     var cleanup_needed = true;
@@ -1724,7 +1724,7 @@ fn matrix_lu_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c
         c.Py_DECREF(result_dict);
         return null;
     };
-    const p_list = python.listFromSlice(usize, lu_result.p.indices) orelse {
+    const p_list = python.listFromSlice(u32, lu_result.p.indices) orelse {
         c.Py_DECREF(l_obj);
         c.Py_DECREF(u_obj);
         c.Py_DECREF(result_dict);
@@ -1812,7 +1812,7 @@ fn matrix_qr_method(self_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c
     c.Py_DECREF(rank_obj);
 
     // Convert permutation to Python list
-    const perm_list = python.listFromSlice(usize, qr_result.perm.indices) orelse {
+    const perm_list = python.listFromSlice(u32, qr_result.perm.indices) orelse {
         c.Py_DECREF(q_obj);
         c.Py_DECREF(r_obj);
         c.Py_DECREF(result_dict);
