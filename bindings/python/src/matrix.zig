@@ -156,7 +156,7 @@ fn matrix_init_from_list(self: *MatrixObject, list_obj: ?*c.PyObject) c_int {
         return -1;
     }
 
-    const n_cols = python.validatePositive(u32, c.PyList_Size(first_row), "col") catch return -1;
+    const n_cols = python.validatePositive(u32, c.PyList_Size(first_row), "cols") catch return -1;
 
     // Create the matrix
     const matrix_ptr = allocator.create(Matrix(f64)) catch {
