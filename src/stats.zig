@@ -7,6 +7,7 @@
 
 const std = @import("std");
 const testing = std.testing;
+const Matrix = @import("matrix.zig").Matrix;
 
 /// Running statistics for streaming data.
 /// Computes mean, variance, skewness, and kurtosis in a single pass.
@@ -198,6 +199,97 @@ pub fn RunningStats(comptime T: type) type {
     };
 }
 
+/// Multivariate running statistics for streaming data.
+/// Computes mean vector and full covariance matrix in a single pass.
+/// Supports generic dimensionality `dim`.
+pub fn CovarianceStats(comptime dim: usize, comptime T: type) type {
+    comptime {
+        const info = @typeInfo(T);
+        if (info != .float) {
+            @compileError("CovarianceStats only supports floating-point types (f32, f64, f128)");
+        }
+    }
+
+    return struct {
+        const Self = @This();
+
+        count: usize,
+        sum: [dim]T,
+        // Upper triangular covariance sums are sufficient, but storing full matrix
+        // simplifies indexing and is clearer. Stores sum(x_i * x_j).
+        prod_sum: [dim][dim]T,
+
+        /// Initialize empty statistics
+        pub fn init() Self {
+            return .{
+                .count = 0,
+                .sum = @splat(0),
+                .prod_sum = @splat(@splat(0)),
+            };
+        }
+
+        /// Add a sample vector
+        pub fn add(self: *Self, sample: [dim]T) void {
+            self.count += 1;
+            inline for (0..dim) |i| {
+                self.sum[i] += sample[i];
+                inline for (0..dim) |j| {
+                    self.prod_sum[i][j] += sample[i] * sample[j];
+                }
+            }
+        }
+
+        /// Compute the mean vector
+        pub fn mean(self: Self) [dim]T {
+            if (self.count == 0) return @splat(0);
+            const n = @as(T, @floatFromInt(self.count));
+            var res: [dim]T = undefined;
+            inline for (0..dim) |i| {
+                res[i] = self.sum[i] / n;
+            }
+            return res;
+        }
+
+        /// Returns simple variance vector (diagonal of covariance matrix)
+        pub fn varianceVector(self: Self) [dim]T {
+            if (self.count <= 1) return @splat(0);
+            const n = @as(T, @floatFromInt(self.count));
+            var res: [dim]T = undefined;
+
+            inline for (0..dim) |i| {
+                // E[X^2] - E[X]^2 method
+                // Note: using population statistics formula which matches the naive accumulation
+                // For sample variance, we'd need to adjust by n/(n-1)
+                const mean_sq = self.prod_sum[i][i] / n;
+                const mean_val = self.sum[i] / n;
+                res[i] = mean_sq - mean_val * mean_val;
+            }
+            return res;
+        }
+
+        /// Returns full covariance matrix allocated with allocator
+        pub fn covarianceMatrix(self: Self, allocator: std.mem.Allocator) !Matrix(T) {
+            var mat = try Matrix(T).init(allocator, dim, dim);
+            if (self.count <= 1) {
+                @memset(mat.items, 0);
+                return mat;
+            }
+
+            const n = @as(T, @floatFromInt(self.count));
+
+            inline for (0..dim) |i| {
+                inline for (0..dim) |j| {
+                    const e_xy = self.prod_sum[i][j] / n;
+                    const e_x = self.sum[i] / n;
+                    const e_y = self.sum[j] / n;
+                    mat.at(i, j).* = e_xy - e_x * e_y;
+                }
+            }
+            return mat;
+        }
+    };
+}
+
 // ============================================================================
 // TESTS
 // ============================================================================
@@ -381,4 +473,26 @@ test "RunningStats: large values for numerical stability" {
     try testing.expectApproxEqAbs(@as(f64, 1e10 + 1.0), stats.mean(), 1e-5);
     try testing.expectApproxEqAbs(@as(f64, 1.0), stats.variance(), 1e-4);
     try testing.expectApproxEqAbs(@as(f64, 1.0), stats.stdDev(), 1e-4);
+}
+
+test "CovarianceStats: basic" {
+    var stats = CovarianceStats(2, f64).init();
+
+    stats.add(.{ 1.0, 2.0 });
+    stats.add(.{ 2.0, 4.0 });
+    stats.add(.{ 3.0, 6.0 });
+
+    const mean = stats.mean();
+    try testing.expectApproxEqAbs(@as(f64, 2.0), mean[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 4.0), mean[1], 1e-10);
+
+    var cov = try stats.covarianceMatrix(testing.allocator);
+    defer cov.deinit();
+
+    // Cov(X,Y) = E[XY] - E[X]E[Y]
+    // E[X] = 2, E[Y] = 4
+    // E[XY] = (2 + 8 + 18)/3 = 28/3 = 9.333
+    // Cov = 9.333 - 8 = 1.333
+    try testing.expectApproxEqAbs(@as(f64, 0.6666666), cov.at(0, 0).*, 1e-5); // Var(X) = (1+4+9)/3 - 4 = 14/3 - 4 = 0.666
+    try testing.expectApproxEqAbs(@as(f64, 1.3333333), cov.at(0, 1).*, 1e-5); // Cov(X,Y)
 }

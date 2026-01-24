@@ -12,6 +12,7 @@ const Rgba = @import("color.zig").Rgba(u8);
 const Gray = @import("color.zig").Gray;
 const convertColor = @import("color.zig").convertColor;
 const RunningStats = @import("stats.zig").RunningStats;
+const CovarianceStats = @import("stats.zig").CovarianceStats;
 
 /// Feature Distribution Matching struct for stateful image style transfer.
 /// Allows efficient batch processing by reusing target distribution statistics.
@@ -72,13 +73,13 @@ pub fn FeatureDistributionMatching(comptime T: type) type {
                 self.target_cov_u.deinit();
             }
 
-            var stats = StreamStats3x3.init();
+            var stats = CovarianceStats(3, f64).init();
 
             // Pass 1: Accumulate statistics
             if (T == u8) {
                 for (target_image.data) |pixel| {
                     const v = @as(f64, @floatFromInt(pixel)) / 255.0;
-                    stats.add(v, v, v);
+                    stats.add(.{ v, v, v });
                 }
                 self.target_is_grayscale = true;
             } else {
@@ -87,7 +88,7 @@ pub fn FeatureDistributionMatching(comptime T: type) type {
                     const r = @as(f64, @floatFromInt(pixel.r)) / 255.0;
                     const g = @as(f64, @floatFromInt(pixel.g)) / 255.0;
                     const b = @as(f64, @floatFromInt(pixel.b)) / 255.0;
-                    stats.add(r, g, b);
+                    stats.add(.{ r, g, b });
                     if (pixel.r != pixel.g or pixel.g != pixel.b) is_gray = false;
                 }
                 self.target_is_grayscale = is_gray;
@@ -97,9 +98,9 @@ pub fn FeatureDistributionMatching(comptime T: type) type {
 
             if (self.target_is_grayscale) {
                 // Grayscale logic: only variance matters
-                const cov = stats.covarianceSimple();
+                const cov = stats.varianceVector();
                 // Use the variance of the first channel (all are same) as the eigenvalue
-                self.target_cov_s = .{ cov[0][0], 0, 0 };
+                self.target_cov_s = .{ cov[0], 0, 0 };
 
                 // Initialize empty matrix for U since we won't use it
                 self.target_cov_u = Matrix(f64){ .rows = 0, .cols = 0, .items = &[_]f64{}, .allocator = self.allocator };
@@ -144,13 +145,13 @@ pub fn FeatureDistributionMatching(comptime T: type) type {
             if (!self.has_source or self.source_image == null) return error.NoSourceSet;
 
             const source_img = self.source_image.?;
-            var stats = StreamStats3x3.init();
+            var stats = CovarianceStats(3, f64).init();
 
             // Pass 1: Compute source statistics
             if (T == u8) {
                 for (source_img.data) |pixel| {
                     const v = @as(f64, @floatFromInt(pixel)) / 255.0;
-                    stats.add(v, v, v);
+                    stats.add(.{ v, v, v });
                 }
             } else {
                 if (self.target_is_grayscale) {
@@ -159,15 +160,15 @@ pub fn FeatureDistributionMatching(comptime T: type) type {
                         // Using convertColor logic to get grayscale value.
                         const gray = convertColor(u8, pixel);
                         const v = @as(f64, @floatFromInt(gray)) / 255.0;
-                        stats.add(v, v, v);
+                        stats.add(.{ v, v, v });
                     }
                 } else {
                     for (source_img.data) |pixel| {
-                        stats.add(
+                        stats.add(.{
                             @as(f64, @floatFromInt(pixel.r)) / 255.0,
                             @as(f64, @floatFromInt(pixel.g)) / 255.0,
                             @as(f64, @floatFromInt(pixel.b)) / 255.0,
-                        );
+                        });
                     }
                 }
             }
@@ -177,8 +178,8 @@ pub fn FeatureDistributionMatching(comptime T: type) type {
             // Pass 2: Apply transformation
             if (T == u8 or self.target_is_grayscale) {
                 // Scalar matching logic
-                const source_cov = stats.covarianceSimple();
-                const source_var = source_cov[0][0];
+                const source_cov = stats.varianceVector();
+                const source_var = source_cov[0];
                 const scale = if (source_var > 1e-10) @sqrt(self.target_cov_s[0] / source_var) else 1.0;
                 const offset = self.target_mean[0] - source_mean[0] * scale;
 
@@ -273,85 +274,6 @@ pub fn FeatureDistributionMatching(comptime T: type) type {
         }
     };
 }
-
-/// Helper struct for O(1) memory statistics collection
-const StreamStats3x3 = struct {
-    count: usize,
-    sum: [3]f64,
-    // Upper triangular covariance sums sufficient, but storing full 3x3 for simplicity
-    // Stores sum(x_i * x_j)
-    prod_sum: [3][3]f64,
-
-    fn init() @This() {
-        return .{
-            .count = 0,
-            .sum = @splat(0),
-            .prod_sum = @splat(@splat(0)),
-        };
-    }
-
-    fn add(self: *@This(), r: f64, g: f64, b: f64) void {
-        const v = [3]f64{ r, g, b };
-        self.count += 1;
-
-        // Unroll small loop
-        self.sum[0] += v[0];
-        self.sum[1] += v[1];
-        self.sum[2] += v[2];
-
-        // Symmetric matrix, fill all for ease of extraction
-        inline for (0..3) |i| {
-            inline for (0..3) |j| {
-                self.prod_sum[i][j] += v[i] * v[j];
-            }
-        }
-    }
-
-    fn mean(self: @This()) [3]f64 {
-        if (self.count == 0) return @splat(0);
-        const n = @as(f64, @floatFromInt(self.count));
-        return .{
-            self.sum[0] / n,
-            self.sum[1] / n,
-            self.sum[2] / n,
-        };
-    }
-
-    /// Returns simple variance for 3 channels (diagonal of covariance)
-    fn covarianceSimple(self: @This()) [3][3]f64 {
-        var res: [3][3]f64 = @splat(@splat(0));
-        if (self.count <= 1) return res;
-        const n = @as(f64, @floatFromInt(self.count));
-
-        // Naive 1-pass algorithm: Cov(X,Y) = E[XY] - E[X]E[Y]
-        // Stable enough for bounded [0,1] image data
-        for (0..3) |i| {
-            res[i][i] = (self.prod_sum[i][i] / n) - (self.sum[i] / n) * (self.sum[i] / n);
-        }
-        return res;
-    }
-
-    /// Returns full covariance matrix allocated with allocator
-    fn covarianceMatrix(self: @This(), allocator: std.mem.Allocator) !Matrix(f64) {
-        var mat = try Matrix(f64).init(allocator, 3, 3);
-        if (self.count <= 1) {
-            @memset(mat.items, 0);
-            return mat;
-        }
-
-        const n = @as(f64, @floatFromInt(self.count));
-
-        for (0..3) |i| {
-            for (0..3) |j| {
-                const e_xy = self.prod_sum[i][j] / n;
-                const e_x = self.sum[i] / n;
-                const e_y = self.sum[j] / n;
-                mat.at(i, j).* = e_xy - e_x * e_y;
-            }
-        }
-        return mat;
-    }
-};
 
 /// Feature Distribution Matching (FDM) for image style transfer and domain adaptation.
 ///
