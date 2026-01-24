@@ -116,6 +116,10 @@ pub fn FeatureDistributionMatching(comptime T: type) type {
                     .mode = .skinny_u,
                 });
 
+                if (target_svd.converged != 0) {
+                    return error.NotConverged;
+                }
+
                 self.target_cov_u = try Matrix(f64).fromSMatrix(self.allocator, target_svd.u);
                 for (0..3) |i| {
                     self.target_cov_s[i] = target_svd.s.at(i, 0).*;
@@ -208,6 +212,10 @@ pub fn FeatureDistributionMatching(comptime T: type) type {
 
                 const source_cov_static = source_cov_mat.toSMatrix(3, 3);
                 const source_svd = source_cov_static.svd(.{ .with_u = true, .with_v = false, .mode = .skinny_u });
+
+                if (source_svd.converged != 0) {
+                    return error.NotConverged;
+                }
 
                 // Construct combined scaling matrix
                 var sigma_combined = try Matrix(f64).init(self.allocator, 3, 3);
