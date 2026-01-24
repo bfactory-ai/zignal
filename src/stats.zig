@@ -240,8 +240,12 @@ pub fn CovarianceStats(comptime dim: usize, comptime T: type) type {
             }
 
             inline for (0..dim) |i| {
-                inline for (0..dim) |j| {
-                    self.m2[i][j] += delta[i] * (sample[j] - self.mean_vec[j]);
+                inline for (i..dim) |j| {
+                    const term = delta[i] * (sample[j] - self.mean_vec[j]);
+                    self.m2[i][j] += term;
+                    if (i != j) {
+                        self.m2[j][i] += term;
+                    }
                 }
             }
         }
