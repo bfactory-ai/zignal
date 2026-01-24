@@ -279,8 +279,12 @@ pub fn CovarianceStats(comptime dim: usize, comptime T: type) type {
             const n_1 = @as(T, @floatFromInt(self.count - 1));
 
             inline for (0..dim) |i| {
-                inline for (0..dim) |j| {
-                    mat.at(i, j).* = self.m2[i][j] / n_1;
+                inline for (i..dim) |j| {
+                    const cov_val = self.m2[i][j] / n_1;
+                    mat.at(i, j).* = cov_val;
+                    if (i != j) {
+                        mat.at(j, i).* = cov_val;
+                    }
                 }
             }
             return mat;
