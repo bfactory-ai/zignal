@@ -104,7 +104,6 @@ fn fdm_set_target(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
     fdm_ptr.setTarget(target_rgb) catch |err| {
         switch (err) {
             error.OutOfMemory => python.setMemoryError("target image"),
-            else => python.setRuntimeError("Failed to set target image: {s}", .{@errorName(err)}),
         }
         return null;
     };
