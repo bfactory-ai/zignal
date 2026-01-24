@@ -183,21 +183,18 @@ pub fn FeatureDistributionMatching(comptime T: type) type {
                 const scale = if (source_var > 1e-10) @sqrt(self.target_cov_s[0] / source_var) else 1.0;
                 const offset = self.target_mean[0] - source_mean[0] * scale;
 
-                for (source_img.data) |*pixel| {
-                    var val: f64 = 0;
-                    if (T == u8) {
-                        val = @as(f64, @floatFromInt(pixel.*)) / 255.0;
-                    } else {
-                        // Color image, target is grayscale: convert to gray then match
-                        val = @as(f64, @floatFromInt(convertColor(u8, pixel.*))) / 255.0;
+                if (T == u8) {
+                    for (source_img.data) |*pixel| {
+                        const val = @as(f64, @floatFromInt(pixel.*)) / 255.0;
+                        const result = clamp(val * scale + offset, 0, 1);
+                        pixel.* = @as(u8, @intFromFloat(@round(255.0 * result)));
                     }
-
-                    const result = clamp(val * scale + offset, 0, 1);
-                    const res_u8 = @as(u8, @intFromFloat(@round(255.0 * result)));
-
-                    if (T == u8) {
-                        pixel.* = res_u8;
-                    } else {
+                } else {
+                    for (source_img.data) |*pixel| {
+                        // Color image, target is grayscale: convert to gray then match
+                        const val = @as(f64, @floatFromInt(convertColor(u8, pixel.*))) / 255.0;
+                        const result = clamp(val * scale + offset, 0, 1);
+                        const res_u8 = @as(u8, @intFromFloat(@round(255.0 * result)));
                         pixel.* = .{ .r = res_u8, .g = res_u8, .b = res_u8 };
                     }
                 }
