@@ -214,27 +214,34 @@ pub fn CovarianceStats(comptime dim: usize, comptime T: type) type {
         const Self = @This();
 
         count: usize,
-        sum: [dim]T,
+        mean_vec: [dim]T,
         // Upper triangular covariance sums are sufficient, but storing full matrix
         // simplifies indexing and is clearer. Stores sum(x_i * x_j).
-        prod_sum: [dim][dim]T,
+        m2: [dim][dim]T,
 
         /// Initialize empty statistics
         pub fn init() Self {
             return .{
                 .count = 0,
-                .sum = @splat(0),
-                .prod_sum = @splat(@splat(0)),
+                .mean_vec = @splat(0),
+                .m2 = @splat(@splat(0)),
             };
         }
 
         /// Add a sample vector
         pub fn add(self: *Self, sample: [dim]T) void {
             self.count += 1;
+            const n = @as(T, @floatFromInt(self.count));
+
+            var delta: [dim]T = undefined;
             inline for (0..dim) |i| {
-                self.sum[i] += sample[i];
+                delta[i] = sample[i] - self.mean_vec[i];
+                self.mean_vec[i] += delta[i] / n;
+            }
+
+            inline for (0..dim) |i| {
                 inline for (0..dim) |j| {
-                    self.prod_sum[i][j] += sample[i] * sample[j];
+                    self.m2[i][j] += delta[i] * (sample[j] - self.mean_vec[j]);
                 }
             }
         }
@@ -242,27 +249,17 @@ pub fn CovarianceStats(comptime dim: usize, comptime T: type) type {
         /// Compute the mean vector
         pub fn mean(self: Self) [dim]T {
             if (self.count == 0) return @splat(0);
-            const n = @as(T, @floatFromInt(self.count));
-            var res: [dim]T = undefined;
-            inline for (0..dim) |i| {
-                res[i] = self.sum[i] / n;
-            }
-            return res;
+            return self.mean_vec;
         }
 
         /// Returns simple variance vector (diagonal of covariance matrix)
         pub fn varianceVector(self: Self) [dim]T {
             if (self.count <= 1) return @splat(0);
-            const n = @as(T, @floatFromInt(self.count));
+            const n_1 = @as(T, @floatFromInt(self.count - 1));
             var res: [dim]T = undefined;
 
             inline for (0..dim) |i| {
-                // E[X^2] - E[X]^2 method
-                // Note: using population statistics formula which matches the naive accumulation
-                // For sample variance, we'd need to adjust by n/(n-1)
-                const mean_sq = self.prod_sum[i][i] / n;
-                const mean_val = self.sum[i] / n;
-                res[i] = mean_sq - mean_val * mean_val;
+                res[i] = self.m2[i][i] / n_1;
             }
             return res;
         }
@@ -275,14 +272,11 @@ pub fn CovarianceStats(comptime dim: usize, comptime T: type) type {
                 return mat;
             }
 
-            const n = @as(T, @floatFromInt(self.count));
+            const n_1 = @as(T, @floatFromInt(self.count - 1));
 
             inline for (0..dim) |i| {
                 inline for (0..dim) |j| {
-                    const e_xy = self.prod_sum[i][j] / n;
-                    const e_x = self.sum[i] / n;
-                    const e_y = self.sum[j] / n;
-                    mat.at(i, j).* = e_xy - e_x * e_y;
+                    mat.at(i, j).* = self.m2[i][j] / n_1;
                 }
             }
             return mat;
@@ -489,10 +483,15 @@ test "CovarianceStats: basic" {
     var cov = try stats.covarianceMatrix(testing.allocator);
     defer cov.deinit();
 
-    // Cov(X,Y) = E[XY] - E[X]E[Y]
-    // E[X] = 2, E[Y] = 4
-    // E[XY] = (2 + 8 + 18)/3 = 28/3 = 9.333
-    // Cov = 9.333 - 8 = 1.333
-    try testing.expectApproxEqAbs(@as(f64, 0.6666666), cov.at(0, 0).*, 1e-5); // Var(X) = (1+4+9)/3 - 4 = 14/3 - 4 = 0.666
-    try testing.expectApproxEqAbs(@as(f64, 1.3333333), cov.at(0, 1).*, 1e-5); // Cov(X,Y)
+    // Cov(X,Y) using unbiased Welford: m2 / (n-1)
+    // Variance is m2[i][i] / (n-1)
+    // Covariance is m2[i][j] / (n-1)
+    // Here n=3, n-1=2
+    // m2 is sum of squared differences from mean.
+    // X values: 1, 2, 3. Mean 2. Diffs: -1, 0, 1. SqDiffs: 1, 0, 1. SumSqDiffs: 2. Var = 2/2 = 1.
+    // Y values: 2, 4, 6. Mean 4. Diffs: -2, 0, 2. SqDiffs: 4, 0, 4. SumSqDiffs: 8. Var = 8/2 = 4.
+    // XY products of diffs: (-1)*(-2)=2, 0*0=0, 1*2=2. SumProdDiffs = 4. Cov = 4/2 = 2.
+
+    try testing.expectApproxEqAbs(@as(f64, 1.0), cov.at(0, 0).*, 1e-5); // Var(X)
+    try testing.expectApproxEqAbs(@as(f64, 2.0), cov.at(0, 1).*, 1e-5); // Cov(X,Y)
 }
