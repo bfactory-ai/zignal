@@ -350,13 +350,11 @@ fn interpolateBilinear(comptime T: type, self: Image(T), x: f32, y: f32) ?T {
                 const f_bl = @field(bl, f.name);
                 const f_br = @field(br, f.name);
 
-                @field(temp, f.name) = switch (@typeInfo(f.type)) {
-                    .int => |info| if (info.bits <= 16)
-                        lerpInt(f.type, f_tl, f_tr, f_bl, f_br, fx, fy)
-                    else
-                        lerpFloat(f.type, f_tl, f_tr, f_bl, f_br, lr_frac, tb_frac),
-                    else => lerpFloat(f.type, f_tl, f_tr, f_bl, f_br, lr_frac, tb_frac),
-                };
+                const info = @typeInfo(f.type);
+                @field(temp, f.name) = if (info == .int and info.int.bits <= 16)
+                    lerpInt(f.type, f_tl, f_tr, f_bl, f_br, fx, fy)
+                else
+                    lerpFloat(f.type, f_tl, f_tr, f_bl, f_br, lr_frac, tb_frac);
             }
         },
         else => @compileError("Unsupported type for bilinear interpolation: " ++ @typeName(T)),
