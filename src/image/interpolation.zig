@@ -303,23 +303,31 @@ fn interpolateBilinear(comptime T: type, self: Image(T), x: f32, y: f32) ?T {
     const bl: T = self.at(@intCast(bottom), @intCast(left)).*;
     const br: T = self.at(@intCast(bottom), @intCast(right)).*;
 
-    const scale = 256;
-    const fx: i32 = @intFromFloat(@round(lr_frac * scale));
-    const fy: i32 = @intFromFloat(@round(tb_frac * scale));
-
     // Handle different pixel types
     var temp: T = undefined;
     switch (@typeInfo(T)) {
-        .int => {
-            const tl_i: i32 = @intCast(tl);
-            const tr_i: i32 = @intCast(tr);
-            const bl_i: i32 = @intCast(bl);
-            const br_i: i32 = @intCast(br);
+        .int => |info| {
+            if (info.bits <= 16) {
+                const scale = 256;
+                const fx: i32 = @intFromFloat(@round(lr_frac * scale));
+                const fy: i32 = @intFromFloat(@round(tb_frac * scale));
+                const Int = if (info.bits <= 8) i32 else i64;
 
-            const top_val = tl_i * (scale - fx) + tr_i * fx;
-            const bottom_val = bl_i * (scale - fx) + br_i * fx;
-            const result = @divTrunc(top_val * (scale - fy) + bottom_val * fy + (scale * scale / 2), scale * scale);
-            temp = clamp(T, result);
+                const tl_i: Int = @intCast(tl);
+                const tr_i: Int = @intCast(tr);
+                const bl_i: Int = @intCast(bl);
+                const br_i: Int = @intCast(br);
+
+                const top_val = tl_i * (scale - fx) + tr_i * fx;
+                const bottom_val = bl_i * (scale - fx) + br_i * fx;
+                const result = @divTrunc(top_val * (scale - fy) + bottom_val * fy + (scale * scale / 2), scale * scale);
+                temp = clamp(T, result);
+            } else {
+                temp = clamp(T, (1 - tb_frac) * ((1 - lr_frac) * as(f32, tl) +
+                    lr_frac * as(f32, tr)) +
+                    tb_frac * ((1 - lr_frac) * as(f32, bl) +
+                        lr_frac * as(f32, br)));
+            }
         },
         .float => {
             temp = clamp(T, (1 - tb_frac) * ((1 - lr_frac) * as(f32, tl) +
@@ -330,6 +338,10 @@ fn interpolateBilinear(comptime T: type, self: Image(T), x: f32, y: f32) ?T {
         .@"struct" => {
             inline for (std.meta.fields(T)) |f| {
                 if (f.type == u8 or f.type == i8) {
+                    const scale = 256;
+                    const fx: i32 = @intFromFloat(@round(lr_frac * scale));
+                    const fy: i32 = @intFromFloat(@round(tb_frac * scale));
+
                     const tl_v: i32 = @intCast(@field(tl, f.name));
                     const tr_v: i32 = @intCast(@field(tr, f.name));
                     const bl_v: i32 = @intCast(@field(bl, f.name));
