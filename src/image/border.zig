@@ -52,8 +52,8 @@ pub fn computeCoords(
             if (rows <= 0 or cols <= 0) return null;
             if (rows == 1 and cols == 1) return .{ .row = 0, .col = 0 };
 
-            const r = resolveIndex(row, rows, .mirror) orelse 0;
-            const c = resolveIndex(col, cols, .mirror) orelse 0;
+            const r = resolveIndex(row, rows, .mirror).?;
+            const c = resolveIndex(col, cols, .mirror).?;
             return .{ .row = r, .col = c };
         },
         .wrap => {
