@@ -303,10 +303,25 @@ fn interpolateBilinear(comptime T: type, self: Image(T), x: f32, y: f32) ?T {
     const bl: T = self.at(@intCast(bottom), @intCast(left)).*;
     const br: T = self.at(@intCast(bottom), @intCast(right)).*;
 
+    const scale = 256;
+    const fx: i32 = @intFromFloat(@round(lr_frac * scale));
+    const fy: i32 = @intFromFloat(@round(tb_frac * scale));
+
     // Handle different pixel types
     var temp: T = undefined;
     switch (@typeInfo(T)) {
-        .int, .float => {
+        .int => {
+            const tl_i: i32 = @intCast(tl);
+            const tr_i: i32 = @intCast(tr);
+            const bl_i: i32 = @intCast(bl);
+            const br_i: i32 = @intCast(br);
+
+            const top_val = tl_i * (scale - fx) + tr_i * fx;
+            const bottom_val = bl_i * (scale - fx) + br_i * fx;
+            const result = @divTrunc(top_val * (scale - fy) + bottom_val * fy + (scale * scale / 2), scale * scale);
+            temp = clamp(T, result);
+        },
+        .float => {
             temp = clamp(T, (1 - tb_frac) * ((1 - lr_frac) * as(f32, tl) +
                 lr_frac * as(f32, tr)) +
                 tb_frac * ((1 - lr_frac) * as(f32, bl) +
@@ -314,13 +329,25 @@ fn interpolateBilinear(comptime T: type, self: Image(T), x: f32, y: f32) ?T {
         },
         .@"struct" => {
             inline for (std.meta.fields(T)) |f| {
-                @field(temp, f.name) = clamp(
-                    f.type,
-                    (1 - tb_frac) * ((1 - lr_frac) * as(f32, @field(tl, f.name)) +
-                        lr_frac * as(f32, @field(tr, f.name))) +
-                        tb_frac * ((1 - lr_frac) * as(f32, @field(bl, f.name)) +
-                            lr_frac * as(f32, @field(br, f.name))),
-                );
+                if (f.type == u8 or f.type == i8) {
+                    const tl_v: i32 = @intCast(@field(tl, f.name));
+                    const tr_v: i32 = @intCast(@field(tr, f.name));
+                    const bl_v: i32 = @intCast(@field(bl, f.name));
+                    const br_v: i32 = @intCast(@field(br, f.name));
+
+                    const top_v = tl_v * (scale - fx) + tr_v * fx;
+                    const bottom_v = bl_v * (scale - fx) + br_v * fx;
+                    const result = @divTrunc(top_v * (scale - fy) + bottom_v * fy + (scale * scale / 2), scale * scale);
+                    @field(temp, f.name) = clamp(f.type, result);
+                } else {
+                    @field(temp, f.name) = clamp(
+                        f.type,
+                        (1 - tb_frac) * ((1 - lr_frac) * as(f32, @field(tl, f.name)) +
+                            lr_frac * as(f32, @field(tr, f.name))) +
+                            tb_frac * ((1 - lr_frac) * as(f32, @field(bl, f.name)) +
+                                lr_frac * as(f32, @field(br, f.name))),
+                    );
+                }
             }
         },
         else => @compileError("Unsupported type for bilinear interpolation: " ++ @typeName(T)),
