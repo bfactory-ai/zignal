@@ -78,6 +78,8 @@ pub const Interpolation = union(enum) {
 /// Returns the interpolated pixel value or null if the coordinates are out of bounds
 pub fn interpolate(comptime T: type, self: Image(T), x: f32, y: f32, method: Interpolation) ?T {
     if (!std.math.isFinite(x) or !std.math.isFinite(y)) return null;
+    const range_limit = @as(f32, @floatFromInt(std.math.maxInt(isize) / 2));
+    if (@abs(x) > range_limit or @abs(y) > range_limit) return null;
     return switch (method) {
         .nearest_neighbor => interpolateNearestNeighbor(T, self, x, y),
         .bilinear => interpolateBilinear(T, self, x, y),
