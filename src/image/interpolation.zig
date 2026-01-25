@@ -77,6 +77,7 @@ pub const Interpolation = union(enum) {
 ///
 /// Returns the interpolated pixel value or null if the coordinates are out of bounds
 pub fn interpolate(comptime T: type, self: Image(T), x: f32, y: f32, method: Interpolation) ?T {
+    if (!std.math.isFinite(x) or !std.math.isFinite(y)) return null;
     return switch (method) {
         .nearest_neighbor => interpolateNearestNeighbor(T, self, x, y),
         .bilinear => interpolateBilinear(T, self, x, y),
@@ -426,9 +427,11 @@ fn interpolateWithKernel(
             var weight_sum: f32 = 0;
 
             inline for (0..window_size) |j| {
-                if (resolveIndex(iy - @as(isize, @intCast(window_radius - 1)) + @as(isize, @intCast(j)), @intCast(self.rows), .mirror)) |pixel_y| {
+                const row_idx = iy - @as(isize, @intCast(window_radius - 1)) + @as(isize, @intCast(j));
+                if (resolveIndex(row_idx, @intCast(self.rows), .mirror)) |pixel_y| {
                     inline for (0..window_size) |i| {
-                        if (resolveIndex(ix - @as(isize, @intCast(window_radius - 1)) + @as(isize, @intCast(i)), @intCast(self.cols), .mirror)) |pixel_x| {
+                        const col_idx = ix - @as(isize, @intCast(window_radius - 1)) + @as(isize, @intCast(i));
+                        if (resolveIndex(col_idx, @intCast(self.cols), .mirror)) |pixel_x| {
                             const pixel = self.at(pixel_y, pixel_x).*;
                             const weight = x_weights[i] * y_weights[j];
                             sum += as(f32, pixel) * weight;
@@ -442,24 +445,29 @@ fn interpolateWithKernel(
             result = clamp(T, val);
         },
         .@"struct" => {
-            inline for (std.meta.fields(T)) |f| {
-                var sum: f32 = 0;
-                var weight_sum: f32 = 0;
+            const fields = std.meta.fields(T);
+            var sums: [fields.len]f32 = @splat(0);
+            var weight_sum: f32 = 0;
 
-                inline for (0..window_size) |j| {
-                    if (resolveIndex(iy - @as(isize, @intCast(window_radius - 1)) + @as(isize, @intCast(j)), @intCast(self.rows), .mirror)) |pixel_y| {
-                        inline for (0..window_size) |i| {
-                            if (resolveIndex(ix - @as(isize, @intCast(window_radius - 1)) + @as(isize, @intCast(i)), @intCast(self.cols), .mirror)) |pixel_x| {
-                                const pixel = self.at(pixel_y, pixel_x).*;
-                                const weight = x_weights[i] * y_weights[j];
-                                sum += as(f32, @field(pixel, f.name)) * weight;
-                                weight_sum += weight;
+            inline for (0..window_size) |j| {
+                const row_idx = iy - @as(isize, @intCast(window_radius - 1)) + @as(isize, @intCast(j));
+                if (resolveIndex(row_idx, @intCast(self.rows), .mirror)) |pixel_y| {
+                    inline for (0..window_size) |i| {
+                        const col_idx = ix - @as(isize, @intCast(window_radius - 1)) + @as(isize, @intCast(i));
+                        if (resolveIndex(col_idx, @intCast(self.cols), .mirror)) |pixel_x| {
+                            const pixel = self.at(pixel_y, pixel_x).*;
+                            const weight = x_weights[i] * y_weights[j];
+                            inline for (fields, 0..) |f, f_idx| {
+                                sums[f_idx] += as(f32, @field(pixel, f.name)) * weight;
                             }
+                            weight_sum += weight;
                         }
                     }
                 }
+            }
 
-                const val = if (weight_sum != 0) sum / weight_sum else 0;
+            inline for (fields, 0..) |f, f_idx| {
+                const val = if (weight_sum != 0) sums[f_idx] / weight_sum else 0;
                 @field(result, f.name) = clamp(f.type, val);
             }
         },
