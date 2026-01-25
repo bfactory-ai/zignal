@@ -337,15 +337,12 @@ fn interpolateBilinear(comptime T: type, self: Image(T), x: f32, y: f32) ?T {
     var temp: T = undefined;
     switch (@typeInfo(T)) {
         .int => |info| {
-            if (info.bits <= 16) {
-                temp = lerpInt(T, tl, tr, bl, br, fx, fy);
-            } else {
-                temp = lerpFloat(T, tl, tr, bl, br, lr_frac, tb_frac);
-            }
+            temp = if (info.bits <= 16)
+                lerpInt(T, tl, tr, bl, br, fx, fy)
+            else
+                lerpFloat(T, tl, tr, bl, br, lr_frac, tb_frac);
         },
-        .float => {
-            temp = lerpFloat(T, tl, tr, bl, br, lr_frac, tb_frac);
-        },
+        .float => temp = lerpFloat(T, tl, tr, bl, br, lr_frac, tb_frac),
         .@"struct" => {
             inline for (std.meta.fields(T)) |f| {
                 const f_tl = @field(tl, f.name);
