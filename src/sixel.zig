@@ -870,7 +870,7 @@ fn applyOrderedDither(
             const max_vec: @Vector(24, i16) = @splat(255);
 
             // SIMD Loop: Process 8 pixels (24 bytes) at a time
-            while (c + 8 <= cols) : (c += 8) {
+            while (cols >= 8 and c <= cols - 8) : (c += 8) {
                 // 1. Load 8 pixels (24 bytes)
                 const ptr = @as([*]const u8, @ptrCast(row_slice.ptr)) + c * 3;
                 const pixels_u8: @Vector(24, u8) = ptr[0..24].*;
@@ -899,7 +899,7 @@ fn applyOrderedDither(
             }
         } else {
             // Scalar unrolled loop for non-packed structures
-            while (c + 8 <= cols) : (c += 8) {
+            while (cols >= 8 and c <= cols - 8) : (c += 8) {
                 inline for (0..8) |k| {
                     var current = row_slice[c + k];
                     const offset = offsets[k];
