@@ -456,7 +456,7 @@ pub fn fromImageProfiled(
                 }
             }
 
-            var compressor: rle.Compressor = (u8){ .data = row_buffer[0 .. last_used_col + 1] };
+            var compressor: rle.Compressor(u8) = .{ .data = row_buffer[0 .. last_used_col + 1] };
             while (compressor.next()) |entry| {
                 if (entry.count > 3) {
                     try output.print(gpa, "!{d}{c}", .{ entry.count, entry.value });

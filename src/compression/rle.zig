@@ -39,6 +39,24 @@ pub fn compress(comptime T: type, allocator: Allocator, data: []const T) ![]Entr
     return result.toOwnedSlice(allocator);
 }
 
+/// Decompress a slice of RLE entries into a flat slice.
+/// Callers own the returned memory.
+pub fn decompress(comptime T: type, allocator: Allocator, entries: []const Entry(T)) ![]T {
+    var total_count: usize = 0;
+    for (entries) |entry| total_count += entry.count;
+
+    const result = try allocator.alloc(T, total_count);
+    errdefer allocator.free(result);
+
+    var pos: usize = 0;
+    for (entries) |entry| {
+        @memset(result[pos .. pos + entry.count], entry.value);
+        pos += entry.count;
+    }
+
+    return result;
+}
+
 /// Generic iterator for streaming RLE compression without intermediate allocations.
 pub fn Compressor(comptime T: type) type {
     return struct {
@@ -62,6 +80,31 @@ pub fn Compressor(comptime T: type) type {
                 .value = value,
                 .count = self.pos - start_pos,
             };
+        }
+    };
+}
+
+/// Generic iterator for streaming RLE expansion.
+pub fn Decompressor(comptime T: type) type {
+    return struct {
+        entries: []const Entry(T),
+        entry_idx: usize = 0,
+        sub_pos: usize = 0,
+
+        const Self = @This();
+
+        pub fn next(self: *Self) ?T {
+            while (self.entry_idx < self.entries.len) {
+                const entry = self.entries[self.entry_idx];
+                if (self.sub_pos < entry.count) {
+                    const val = entry.value;
+                    self.sub_pos += 1;
+                    return val;
+                }
+                self.entry_idx += 1;
+                self.sub_pos = 0;
+            }
+            return null;
         }
     };
 }
@@ -104,4 +147,31 @@ test "RLE compressor iterator" {
     try std.testing.expectEqual(@as(usize, 3), r3.count);
 
     try std.testing.expect(compressor.next() == null);
+}
+
+test "RLE basic decompression" {
+    const allocator = std.testing.allocator;
+    const input = [_]Entry(u8){
+        .{ .value = 'A', .count = 4 },
+        .{ .value = 'B', .count = 3 },
+    };
+    const expected = "AAAABBB";
+
+    const decompressed = try decompress(u8, allocator, &input);
+    defer allocator.free(decompressed);
+
+    try std.testing.expectEqualSlices(u8, expected, decompressed);
+}
+
+test "RLE decompressor iterator" {
+    const entries = [_]Entry(u8){
+        .{ .value = 'X', .count = 2 },
+        .{ .value = 'Y', .count = 1 },
+    };
+    var decompressor = Decompressor(u8){ .entries = &entries };
+
+    try std.testing.expectEqual(@as(?u8, 'X'), decompressor.next());
+    try std.testing.expectEqual(@as(?u8, 'X'), decompressor.next());
+    try std.testing.expectEqual(@as(?u8, 'Y'), decompressor.next());
+    try std.testing.expectEqual(@as(?u8, null), decompressor.next());
 }
