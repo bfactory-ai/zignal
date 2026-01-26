@@ -51,6 +51,8 @@ pub const DitherMode = enum {
     floyd_steinberg,
     /// Atkinson dithering (used by original Macintosh)
     atkinson,
+    /// Ordered dithering (Bayer 8x8 matrix), faster and parallelizable
+    ordered,
     /// Automatic heuristics based on palette size and image dimensions
     auto,
 };
@@ -199,7 +201,7 @@ pub fn fromImageProfiled(
                 break :blk DitherMode.none;
             }
             if (palette_size <= 16) break :blk DitherMode.atkinson;
-            break :blk DitherMode.floyd_steinberg;
+            break :blk DitherMode.ordered;
         },
         else => options.dither,
     };
@@ -272,6 +274,7 @@ pub fn fromImageProfiled(
         switch (dither_mode) {
             .floyd_steinberg => applyErrorDiffusion(working_img.*, palette[0..palette_size], color_lut, floyd_steinberg_config),
             .atkinson => applyErrorDiffusion(working_img.*, palette[0..palette_size], color_lut, atkinson_config),
+            .ordered => applyOrderedDither(working_img.*, palette[0..palette_size], color_lut),
             else => {},
         }
 
@@ -808,6 +811,119 @@ const atkinson_config = DitherConfig{
         .{ .dx = 0, .dy = 2, .weight = 1, .divisor_shift = 3 }, // bottom+1
     },
 };
+
+/// Bayer 8x8 ordered dithering matrix
+const bayer8x8 = [8][8]i32{
+    .{ 0, 32, 8, 40, 2, 34, 10, 42 },
+    .{ 48, 16, 56, 24, 50, 18, 58, 26 },
+    .{ 12, 44, 4, 36, 14, 46, 6, 38 },
+    .{ 60, 28, 52, 20, 62, 30, 54, 22 },
+    .{ 3, 35, 11, 43, 1, 33, 9, 41 },
+    .{ 51, 19, 59, 27, 49, 17, 57, 25 },
+    .{ 15, 47, 7, 39, 13, 45, 5, 37 },
+    .{ 63, 31, 55, 23, 61, 29, 53, 21 },
+};
+
+/// Applies ordered dithering using a Bayer matrix
+fn applyOrderedDither(
+    img: Image(Rgb),
+    pal: []const Rgb,
+    lut: ColorLookupTable,
+) void {
+    const rows = img.rows;
+    const cols = img.cols;
+    const stride = img.stride;
+
+    // Scale factor for dithering strength.
+    // The matrix values are 0..63. We center them at 0 (-32..31) and scale.
+    // A spread of ~16-32 is usually good for 8-bit color.
+    // Optimized for spread=16 (shift by 1)
+
+    // Check if we can use SIMD (Rgb must be 3 bytes packed)
+    const can_simd = comptime @sizeOf(Rgb) == 3;
+
+    for (0..rows) |r| {
+        const row_offset = r * stride;
+        const row_slice = img.data[row_offset .. row_offset + cols];
+        const bayer_row = &bayer8x8[r & 7];
+
+        // Pre-compute offsets for the current row to avoid repeated calculation
+        var offsets: [8]i32 = undefined;
+        for (0..8) |i| {
+            offsets[i] = (bayer_row[i] - 32) >> 1;
+        }
+
+        var c: usize = 0;
+
+        if (can_simd) {
+            // Build SIMD offset vector (8 pixels * 3 channels = 24 values)
+            // Offsets are broadcast to R, G, B components
+            var offset_arr: [24]i16 = undefined;
+            inline for (0..8) |i| {
+                const val: i16 = @intCast(offsets[i]);
+                offset_arr[i * 3] = val;
+                offset_arr[i * 3 + 1] = val;
+                offset_arr[i * 3 + 2] = val;
+            }
+            const offset_vec: @Vector(24, i16) = offset_arr;
+            const min_vec: @Vector(24, i16) = @splat(0);
+            const max_vec: @Vector(24, i16) = @splat(255);
+
+            // SIMD Loop: Process 8 pixels (24 bytes) at a time
+            while (c + 8 <= cols) : (c += 8) {
+                // 1. Load 8 pixels (24 bytes)
+                const ptr = @as([*]const u8, @ptrCast(row_slice.ptr)) + c * 3;
+                const pixels_u8: @Vector(24, u8) = ptr[0..24].*;
+
+                // 2. Add offsets (widen to i16)
+                const pixels_i16 = @as(@Vector(24, i16), pixels_u8);
+                const result_i16 = pixels_i16 + offset_vec;
+
+                // 3. Clamp
+                const clamped = @min(@max(result_i16, min_vec), max_vec);
+
+                // 4. Narrow back to u8
+                const result_u8 = @as(@Vector(24, u8), @intCast(clamped));
+                const result_arr: [24]u8 = result_u8;
+                const dithered_pixels = @as([*]const Rgb, @ptrCast(&result_arr));
+
+                // 5. Lookup and store (scalar part)
+                for (0..8) |k| {
+                    const idx = lut.lookup(dithered_pixels[k]);
+                    row_slice[c + k] = pal[idx];
+                }
+            }
+        } else {
+            // Scalar unrolled loop for non-packed structures
+            while (c + 8 <= cols) : (c += 8) {
+                inline for (0..8) |k| {
+                    var current = row_slice[c + k];
+                    const offset = offsets[k];
+
+                    current.r = clampToU8(@as(i32, current.r) + offset);
+                    current.g = clampToU8(@as(i32, current.g) + offset);
+                    current.b = clampToU8(@as(i32, current.b) + offset);
+
+                    const idx = lut.lookup(current);
+                    row_slice[c + k] = pal[idx];
+                }
+            }
+        }
+
+        // Handle remaining pixels
+        while (c < cols) : (c += 1) {
+            var current = row_slice[c];
+            const offset = offsets[c & 7];
+
+            current.r = clampToU8(@as(i32, current.r) + offset);
+            current.g = clampToU8(@as(i32, current.g) + offset);
+            current.b = clampToU8(@as(i32, current.b) + offset);
+
+            const idx = lut.lookup(current);
+            row_slice[c] = pal[idx];
+        }
+    }
+}
 
 /// Unified error diffusion dithering implementation
 fn applyErrorDiffusion(
