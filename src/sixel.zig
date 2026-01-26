@@ -600,6 +600,13 @@ const ColorLookupTable = struct {
         // We pack distance (upper bits) and index (lower 8 bits) into a u32 score.
         var best_score: u32 = std.math.maxInt(u32);
 
+        // Pre-compute base indices: [0, 1, 2, ..., 15]
+        const iota: V = blk: {
+            var idxs: [VecWidth]i32 = undefined;
+            for (0..VecWidth) |k| idxs[k] = @intCast(k);
+            break :blk idxs;
+        };
+
         var i: usize = 0;
 
         // Main SIMD loop
@@ -614,12 +621,8 @@ const ColorLookupTable = struct {
 
             const dist = dr * dr + dg * dg + db * db;
 
-            // Create indices vector
-            const indices: V = blk: {
-                var idxs: [VecWidth]i32 = undefined;
-                for (0..VecWidth) |k| idxs[k] = @intCast(i + k);
-                break :blk idxs;
-            };
+            // Calculate current indices
+            const indices: V = iota + @as(V, @splat(@intCast(i)));
 
             // Pack score: (dist << 8) | index
             const score = (@as(@Vector(VecWidth, u32), @bitCast(dist)) << @as(@Vector(VecWidth, u5), @splat(8))) | @as(@Vector(VecWidth, u32), @bitCast(indices));
