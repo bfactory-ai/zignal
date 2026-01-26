@@ -411,13 +411,13 @@ test "PNG getInfo" {
     try std.testing.expectApproxEqAbs(@as(f32, 0.35), header.gamma.?, 0.0001);
 }
 
-// CRC table for PNG chunk validation
-var crc_table: [8][256]u32 = undefined;
-var crc_table_computed = false;
-
-fn makeCrcTable() void {
+// CRC table for PNG chunk validation (computed at compile-time)
+const crc_table = blk: {
+    @setEvalBranchQuota(20000);
+    var table: [8][256]u32 = undefined;
     var c: u32 = undefined;
     var n: usize = 0;
+
     // Compute the first table (byte-by-byte, standard)
     while (n < 256) : (n += 1) {
         c = @intCast(n);
@@ -429,7 +429,7 @@ fn makeCrcTable() void {
                 c = c >> 1;
             }
         }
-        crc_table[0][n] = c;
+        table[0][n] = c;
     }
 
     // Compute the remaining 7 tables for Slice-by-8
@@ -438,18 +438,15 @@ fn makeCrcTable() void {
     while (k < 8) : (k += 1) {
         n = 0;
         while (n < 256) : (n += 1) {
-            const x = crc_table[k - 1][n];
-            crc_table[k][n] = (x >> 8) ^ crc_table[0][x & 0xFF];
+            const x = table[k - 1][n];
+            table[k][n] = (x >> 8) ^ table[0][x & 0xFF];
         }
     }
-
-    crc_table_computed = true;
-}
+    break :blk table;
+};
 
 fn updateCrc(initial_crc: u32, buf: []const u8) u32 {
     var c = initial_crc;
-    if (!crc_table_computed) makeCrcTable();
-
     var i: usize = 0;
     // Process 8 bytes at a time
     while (i + 8 <= buf.len) {
