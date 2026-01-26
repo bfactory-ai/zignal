@@ -223,7 +223,7 @@ fn resizeGeneric(comptime T: type, self: Image(T), out: Image(T), method: Interp
                 out.at(r, c).* = switch (@typeInfo(T)) {
                     .int, .float => 0,
                     .@"struct" => std.mem.zeroes(T),
-                    else => undefined,
+                    else => @compileError("Unsupported type for fallback in resizeGeneric: " ++ @typeName(T)),
                 };
             }
         }
