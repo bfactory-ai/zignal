@@ -381,55 +381,61 @@ pub fn fromImageProfiled(
             color_generation_counter = 1;
         }
 
-        for (0..width) |col| {
-            const column_generation = column_generation_counter;
-            column_generation_counter += 1;
-            if (column_generation_counter == 0) {
-                @memset(&column_stamp, 0);
-                column_generation_counter = 1;
-            }
+        const block_size = 128; // Fits widely in L1 with 256 colors
+        var col_base: usize = 0;
+        while (col_base < width) : (col_base += block_size) {
+            const col_limit = @min(col_base + block_size, width);
 
-            var column_len: usize = 0;
+            for (col_base..col_limit) |col| {
+                const column_generation = column_generation_counter;
+                column_generation_counter += 1;
+                if (column_generation_counter == 0) {
+                    @memset(&column_stamp, 0);
+                    column_generation_counter = 1;
+                }
 
-            for (0..6) |bit| {
-                const pixel_row = row + bit;
-                if (pixel_row >= height) continue;
+                var column_len: usize = 0;
 
-                const color_idx = if (prepared_img_ptr) |img_ptr| blk: {
-                    const rgb = img_ptr.at(pixel_row, col).*;
-                    break :blk color_lut.lookup(rgb);
-                } else blk: {
-                    if (comptime is_rgb) {
-                        const rgb = image.at(pixel_row, col).*;
+                for (0..6) |bit| {
+                    const pixel_row = row + bit;
+                    if (pixel_row >= height) continue;
+
+                    const color_idx = if (prepared_img_ptr) |img_ptr| blk: {
+                        const rgb = img_ptr.at(pixel_row, col).*;
                         break :blk color_lut.lookup(rgb);
-                    } else {
-                        const rgb = convertColor(Rgb, image.at(pixel_row, col).*); // fallback conversion
-                        break :blk color_lut.lookup(rgb);
+                    } else blk: {
+                        if (comptime is_rgb) {
+                            const rgb = image.at(pixel_row, col).*;
+                            break :blk color_lut.lookup(rgb);
+                        } else {
+                            const rgb = convertColor(Rgb, image.at(pixel_row, col).*); // fallback conversion
+                            break :blk color_lut.lookup(rgb);
+                        }
+                    };
+
+                    if (!colors_used[color_idx]) {
+                        colors_used[color_idx] = true;
                     }
-                };
 
-                if (!colors_used[color_idx]) {
-                    colors_used[color_idx] = true;
+                    if (column_stamp[color_idx] != column_generation) {
+                        column_stamp[color_idx] = column_generation;
+                        column_index[color_idx] = @intCast(column_len);
+                        column_colors[column_len] = @intCast(color_idx);
+                        column_bits[column_len] = 0;
+                        column_len += 1;
+                    }
+
+                    const idx = column_index[color_idx];
+                    column_bits[idx] |= @as(u8, 1) << @intCast(bit);
                 }
 
-                if (column_stamp[color_idx] != column_generation) {
-                    column_stamp[color_idx] = column_generation;
-                    column_index[color_idx] = @intCast(column_len);
-                    column_colors[column_len] = @intCast(color_idx);
-                    column_bits[column_len] = 0;
-                    column_len += 1;
+                for (0..column_len) |idx| {
+                    const color_idx = column_colors[idx];
+                    const bits = column_bits[idx];
+                    const offset = @as(usize, color_idx) * width + col;
+                    color_map_storage[offset] = if (bits != 0) bits + sixel_char_offset else sixel_char_offset;
+                    color_map_generation[offset] = row_generation;
                 }
-
-                const idx = column_index[color_idx];
-                column_bits[idx] |= @as(u8, 1) << @intCast(bit);
-            }
-
-            for (0..column_len) |idx| {
-                const color_idx = column_colors[idx];
-                const bits = column_bits[idx];
-                const offset = @as(usize, color_idx) * width + col;
-                color_map_storage[offset] = if (bits != 0) bits + sixel_char_offset else sixel_char_offset;
-                color_map_generation[offset] = row_generation;
             }
         }
 
@@ -534,6 +540,18 @@ const ColorLookupTable = struct {
     fn init(palette: []const Rgb) ColorLookupTable {
         var self: ColorLookupTable = undefined;
         const LUT_SIZE = @as(usize, 1) << color_quantize_bits;
+
+        // Flatten palette for SIMD processing
+        var pal_r: [256]i32 = undefined;
+        var pal_g: [256]i32 = undefined;
+        var pal_b: [256]i32 = undefined;
+
+        for (palette, 0..) |c, i| {
+            pal_r[i] = c.r;
+            pal_g[i] = c.g;
+            pal_b[i] = c.b;
+        }
+
         for (0..LUT_SIZE) |r| {
             for (0..LUT_SIZE) |g| {
                 for (0..LUT_SIZE) |b| {
@@ -542,32 +560,79 @@ const ColorLookupTable = struct {
                         .g = @intCast(g << (8 - color_quantize_bits) | (g >> (2 * color_quantize_bits - 8))),
                         .b = @intCast(b << (8 - color_quantize_bits) | (b >> (2 * color_quantize_bits - 8))),
                     };
-                    self.table[r][g][b] = findNearestColor(palette, rgb);
+                    self.table[r][g][b] = findNearestColorSIMD(palette.len, &pal_r, &pal_g, &pal_b, rgb);
                 }
             }
         }
         return self;
     }
 
-    /// Finds the nearest color in a palette to the target color
-    fn findNearestColor(pal: []const Rgb, target: Rgb) u8 {
-        var best_idx: u8 = 0;
-        var best_dist: u32 = std.math.maxInt(u32);
+    /// Finds the nearest color in a palette to the target color using SIMD
+    fn findNearestColorSIMD(
+        len: usize,
+        pal_r: *const [256]i32,
+        pal_g: *const [256]i32,
+        pal_b: *const [256]i32,
+        target: Rgb,
+    ) u8 {
+        const VecWidth = 16;
+        const V = @Vector(VecWidth, i32);
 
-        for (pal, 0..) |p, idx| {
-            const dr = if (target.r > p.r) target.r - p.r else p.r - target.r;
-            const dg = if (target.g > p.g) target.g - p.g else p.g - target.g;
-            const db = if (target.b > p.b) target.b - p.b else p.b - target.b;
-            const dist = @as(u32, dr) * @as(u32, dr) +
-                @as(u32, dg) * @as(u32, dg) +
-                @as(u32, db) * @as(u32, db);
+        const tr = @as(i32, target.r);
+        const tg = @as(i32, target.g);
+        const tb = @as(i32, target.b);
 
-            if (dist < best_dist) {
-                best_dist = dist;
-                best_idx = @intCast(idx);
+        const v_tr: V = @splat(tr);
+        const v_tg: V = @splat(tg);
+        const v_tb: V = @splat(tb);
+
+        // Track min distance and index.
+        // We pack distance (upper bits) and index (lower 8 bits) into a u32 score.
+        var best_score: u32 = std.math.maxInt(u32);
+
+        var i: usize = 0;
+
+        // Main SIMD loop
+        while (i + VecWidth <= len) : (i += VecWidth) {
+            const vr: V = pal_r[i..][0..VecWidth].*;
+            const vg: V = pal_g[i..][0..VecWidth].*;
+            const vb: V = pal_b[i..][0..VecWidth].*;
+
+            const dr = vr - v_tr;
+            const dg = vg - v_tg;
+            const db = vb - v_tb;
+
+            const dist = dr * dr + dg * dg + db * db;
+
+            // Create indices vector
+            const indices: V = blk: {
+                var idxs: [VecWidth]i32 = undefined;
+                for (0..VecWidth) |k| idxs[k] = @intCast(i + k);
+                break :blk idxs;
+            };
+
+            // Pack score: (dist << 8) | index
+            const score = (@as(@Vector(VecWidth, u32), @bitCast(dist)) << @as(@Vector(VecWidth, u5), @splat(8))) | @as(@Vector(VecWidth, u32), @bitCast(indices));
+
+            const min_vec_score = @reduce(.Min, score);
+            if (min_vec_score < best_score) {
+                best_score = min_vec_score;
             }
         }
-        return best_idx;
+
+        // Scalar tail loop
+        while (i < len) : (i += 1) {
+            const dr = pal_r[i] - tr;
+            const dg = pal_g[i] - tg;
+            const db = pal_b[i] - tb;
+            const dist = dr * dr + dg * dg + db * db;
+            const score = (@as(u32, @intCast(dist)) << 8) | @as(u32, @intCast(i));
+            if (score < best_score) {
+                best_score = score;
+            }
+        }
+
+        return @intCast(best_score & 0xFF);
     }
 
     /// Looks up the palette index for the given RGB color.
