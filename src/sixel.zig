@@ -882,14 +882,18 @@ fn applyOrderedDither(
                 // 3. Clamp
                 const clamped = @min(@max(result_i16, min_vec), max_vec);
 
-                // 4. Narrow back to u8
+                // 4. Narrow back to u8 AND pre-quantize for lookup (shift right by 3)
+                // We do the shift here in SIMD to save 24 shifts in the scalar loop
                 const result_u8 = @as(@Vector(24, u8), @intCast(clamped));
-                const result_arr: [24]u8 = result_u8;
-                const dithered_pixels = @as([*]const Rgb, @ptrCast(&result_arr));
+                const quantized_vec = result_u8 >> @as(@Vector(24, u3), @splat(8 - color_quantize_bits));
+                const q_arr: [24]u8 = quantized_vec;
 
-                // 5. Lookup and store (scalar part)
+                // 5. Lookup and store (scalar part) using pre-quantized values
                 for (0..8) |k| {
-                    const idx = lut.lookup(dithered_pixels[k]);
+                    const r5 = q_arr[k * 3];
+                    const g5 = q_arr[k * 3 + 1];
+                    const b5 = q_arr[k * 3 + 2];
+                    const idx = lut.table[r5][g5][b5];
                     row_slice[c + k] = pal[idx];
                 }
             }
