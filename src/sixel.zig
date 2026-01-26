@@ -781,7 +781,14 @@ const DitherEntry = struct {
     divisor_shift: u3,
 };
 
+const DitherAlgorithm = enum {
+    floyd_steinberg,
+    atkinson,
+    generic,
+};
+
 const DitherConfig = struct {
+    algorithm: DitherAlgorithm,
     distributions: []const DitherEntry,
 };
 
@@ -789,6 +796,7 @@ const DitherConfig = struct {
 //          X   7/16
 //  3/16  5/16  1/16
 const floyd_steinberg_config = DitherConfig{
+    .algorithm = .floyd_steinberg,
     .distributions = &[_]DitherEntry{
         .{ .dx = 1, .dy = 0, .weight = 7, .divisor_shift = 4 }, // right
         .{ .dx = -1, .dy = 1, .weight = 3, .divisor_shift = 4 }, // bottom-left
@@ -802,6 +810,7 @@ const floyd_steinberg_config = DitherConfig{
 //   1/8   1/8  1/8
 //         1/8
 const atkinson_config = DitherConfig{
+    .algorithm = .atkinson,
     .distributions = &[_]DitherEntry{
         .{ .dx = 1, .dy = 0, .weight = 1, .divisor_shift = 3 }, // right
         .{ .dx = 2, .dy = 0, .weight = 1, .divisor_shift = 3 }, // right+1
@@ -951,36 +960,99 @@ fn applyErrorDiffusion(
         }
     }.call;
 
-    // Detect standard configurations for optimization
-    const is_fs = config.distributions.len == 4 and config.distributions[0].weight == 7;
-    const is_atkinson = config.distributions.len == 6 and config.distributions[0].weight == 1;
+    switch (config.algorithm) {
+        .floyd_steinberg => {
+            // Optimized Floyd-Steinberg loop
+            for (0..rows) |r| {
+                const row_offset = r * stride;
+                const row_slice = img.data[row_offset .. row_offset + cols];
+                const is_safe_row = r < rows - 1;
 
-    if (is_fs) {
-        // Optimized Floyd-Steinberg loop
-        for (0..rows) |r| {
-            const row_offset = r * stride;
-            const row_slice = img.data[row_offset .. row_offset + cols];
-            const is_safe_row = r < rows - 1;
+                for (0..cols) |c| {
+                    const current = row_slice[c];
+                    const idx = lut.lookup(current);
+                    const quantized = pal[idx];
+                    row_slice[c] = quantized;
 
-            for (0..cols) |c| {
-                const current = row_slice[c];
-                const idx = lut.lookup(current);
-                const quantized = pal[idx];
-                row_slice[c] = quantized;
+                    const r_err = @as(i16, current.r) - @as(i16, quantized.r);
+                    const g_err = @as(i16, current.g) - @as(i16, quantized.g);
+                    const b_err = @as(i16, current.b) - @as(i16, quantized.b);
 
-                const r_err = @as(i16, current.r) - @as(i16, quantized.r);
-                const g_err = @as(i16, current.g) - @as(i16, quantized.g);
-                const b_err = @as(i16, current.b) - @as(i16, quantized.b);
+                    // Safe path (center of image)
+                    if (is_safe_row and c > 0 and c < cols - 1) {
+                        const next_row_offset = (r + 1) * stride;
+                        updatePixel(&img.data[row_offset + c + 1], r_err, g_err, b_err, 7, 4);
+                        updatePixel(&img.data[next_row_offset + c - 1], r_err, g_err, b_err, 3, 4);
+                        updatePixel(&img.data[next_row_offset + c], r_err, g_err, b_err, 5, 4);
+                        updatePixel(&img.data[next_row_offset + c + 1], r_err, g_err, b_err, 1, 4);
+                    } else {
+                        // Boundary path
+                        for (config.distributions) |dist| {
+                            const nc_signed = @as(isize, @intCast(c)) + dist.dx;
+                            const nr_signed = @as(isize, @intCast(r)) + dist.dy;
+                            if (nr_signed >= 0 and nr_signed < rows_isize and nc_signed >= 0 and nc_signed < cols_isize) {
+                                const neighbor_idx = @as(usize, @intCast(nr_signed)) * stride + @as(usize, @intCast(nc_signed));
+                                updatePixel(&img.data[neighbor_idx], r_err, g_err, b_err, dist.weight, dist.divisor_shift);
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        .atkinson => {
+            // Optimized Atkinson loop
+            for (0..rows) |r| {
+                const row_offset = r * stride;
+                const row_slice = img.data[row_offset .. row_offset + cols];
+                const is_safe_row = r < rows - 2;
 
-                // Safe path (center of image)
-                if (is_safe_row and c > 0 and c < cols - 1) {
-                    const next_row_offset = (r + 1) * stride;
-                    updatePixel(&img.data[row_offset + c + 1], r_err, g_err, b_err, 7, 4);
-                    updatePixel(&img.data[next_row_offset + c - 1], r_err, g_err, b_err, 3, 4);
-                    updatePixel(&img.data[next_row_offset + c], r_err, g_err, b_err, 5, 4);
-                    updatePixel(&img.data[next_row_offset + c + 1], r_err, g_err, b_err, 1, 4);
-                } else {
-                    // Boundary path
+                for (0..cols) |c| {
+                    const current = row_slice[c];
+                    const idx = lut.lookup(current);
+                    const quantized = pal[idx];
+                    row_slice[c] = quantized;
+
+                    const r_err = @as(i16, current.r) - @as(i16, quantized.r);
+                    const g_err = @as(i16, current.g) - @as(i16, quantized.g);
+                    const b_err = @as(i16, current.b) - @as(i16, quantized.b);
+
+                    if (is_safe_row and c > 0 and c < cols - 2) {
+                        const r1_offset = (r + 1) * stride;
+                        const r2_offset = (r + 2) * stride;
+                        updatePixel(&img.data[row_offset + c + 1], r_err, g_err, b_err, 1, 3);
+                        updatePixel(&img.data[row_offset + c + 2], r_err, g_err, b_err, 1, 3);
+                        updatePixel(&img.data[r1_offset + c - 1], r_err, g_err, b_err, 1, 3);
+                        updatePixel(&img.data[r1_offset + c], r_err, g_err, b_err, 1, 3);
+                        updatePixel(&img.data[r1_offset + c + 1], r_err, g_err, b_err, 1, 3);
+                        updatePixel(&img.data[r2_offset + c], r_err, g_err, b_err, 1, 3);
+                    } else {
+                        for (config.distributions) |dist| {
+                            const nc_signed = @as(isize, @intCast(c)) + dist.dx;
+                            const nr_signed = @as(isize, @intCast(r)) + dist.dy;
+                            if (nr_signed >= 0 and nr_signed < rows_isize and nc_signed >= 0 and nc_signed < cols_isize) {
+                                const neighbor_idx = @as(usize, @intCast(nr_signed)) * stride + @as(usize, @intCast(nc_signed));
+                                updatePixel(&img.data[neighbor_idx], r_err, g_err, b_err, dist.weight, dist.divisor_shift);
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        else => {
+            // Generic fallback
+            for (0..rows) |r| {
+                const row_offset = r * stride;
+                const row_slice = img.data[row_offset .. row_offset + cols];
+                for (0..cols) |c| {
+                    const current = row_slice[c];
+                    const idx = lut.lookup(current);
+                    const quantized = pal[idx];
+                    row_slice[c] = quantized;
+
+                    const r_err = @as(i16, current.r) - @as(i16, quantized.r);
+                    const g_err = @as(i16, current.g) - @as(i16, quantized.g);
+                    const b_err = @as(i16, current.b) - @as(i16, quantized.b);
+
                     for (config.distributions) |dist| {
                         const nc_signed = @as(isize, @intCast(c)) + dist.dx;
                         const nr_signed = @as(isize, @intCast(r)) + dist.dy;
@@ -991,70 +1063,7 @@ fn applyErrorDiffusion(
                     }
                 }
             }
-        }
-    } else if (is_atkinson) {
-        // Optimized Atkinson loop
-        for (0..rows) |r| {
-            const row_offset = r * stride;
-            const row_slice = img.data[row_offset .. row_offset + cols];
-            const is_safe_row = r < rows - 2;
-
-            for (0..cols) |c| {
-                const current = row_slice[c];
-                const idx = lut.lookup(current);
-                const quantized = pal[idx];
-                row_slice[c] = quantized;
-
-                const r_err = @as(i16, current.r) - @as(i16, quantized.r);
-                const g_err = @as(i16, current.g) - @as(i16, quantized.g);
-                const b_err = @as(i16, current.b) - @as(i16, quantized.b);
-
-                if (is_safe_row and c > 0 and c < cols - 2) {
-                    const r1_offset = (r + 1) * stride;
-                    const r2_offset = (r + 2) * stride;
-                    updatePixel(&img.data[row_offset + c + 1], r_err, g_err, b_err, 1, 3);
-                    updatePixel(&img.data[row_offset + c + 2], r_err, g_err, b_err, 1, 3);
-                    updatePixel(&img.data[r1_offset + c - 1], r_err, g_err, b_err, 1, 3);
-                    updatePixel(&img.data[r1_offset + c], r_err, g_err, b_err, 1, 3);
-                    updatePixel(&img.data[r1_offset + c + 1], r_err, g_err, b_err, 1, 3);
-                    updatePixel(&img.data[r2_offset + c], r_err, g_err, b_err, 1, 3);
-                } else {
-                    for (config.distributions) |dist| {
-                        const nc_signed = @as(isize, @intCast(c)) + dist.dx;
-                        const nr_signed = @as(isize, @intCast(r)) + dist.dy;
-                        if (nr_signed >= 0 and nr_signed < rows_isize and nc_signed >= 0 and nc_signed < cols_isize) {
-                            const neighbor_idx = @as(usize, @intCast(nr_signed)) * stride + @as(usize, @intCast(nc_signed));
-                            updatePixel(&img.data[neighbor_idx], r_err, g_err, b_err, dist.weight, dist.divisor_shift);
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        // Generic fallback
-        for (0..rows) |r| {
-            const row_offset = r * stride;
-            const row_slice = img.data[row_offset .. row_offset + cols];
-            for (0..cols) |c| {
-                const current = row_slice[c];
-                const idx = lut.lookup(current);
-                const quantized = pal[idx];
-                row_slice[c] = quantized;
-
-                const r_err = @as(i16, current.r) - @as(i16, quantized.r);
-                const g_err = @as(i16, current.g) - @as(i16, quantized.g);
-                const b_err = @as(i16, current.b) - @as(i16, quantized.b);
-
-                for (config.distributions) |dist| {
-                    const nc_signed = @as(isize, @intCast(c)) + dist.dx;
-                    const nr_signed = @as(isize, @intCast(r)) + dist.dy;
-                    if (nr_signed >= 0 and nr_signed < rows_isize and nc_signed >= 0 and nc_signed < cols_isize) {
-                        const neighbor_idx = @as(usize, @intCast(nr_signed)) * stride + @as(usize, @intCast(nc_signed));
-                        updatePixel(&img.data[neighbor_idx], r_err, g_err, b_err, dist.weight, dist.divisor_shift);
-                    }
-                }
-            }
-        }
+        },
     }
 }
 
