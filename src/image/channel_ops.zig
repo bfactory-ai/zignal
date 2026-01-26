@@ -205,7 +205,7 @@ pub fn resizePlaneNearestU8(
         const src_y = @min(src_rows - 1, @as(u32, @intFromFloat(@round(@as(f32, @floatFromInt(r)) * y_ratio))));
         for (0..dst_cols) |c| {
             const src_x = @min(src_cols - 1, @as(u32, @intFromFloat(@round(@as(f32, @floatFromInt(c)) * x_ratio))));
-            dst[r * dst_cols + c] = src[src_y * src_cols + src_x];
+            dst[r * dst_cols + c] = src[@as(usize, src_y) * src_cols + src_x];
         }
     }
 }
@@ -509,7 +509,7 @@ pub fn resizePlaneF32(
                 const src_y = @min(src_rows - 1, @as(u32, @intFromFloat(@round(@as(f32, @floatFromInt(r)) * y_ratio))));
                 for (0..dst_cols) |c| {
                     const src_x = @min(src_cols - 1, @as(u32, @intFromFloat(@round(@as(f32, @floatFromInt(c)) * x_ratio))));
-                    dst[r * dst_cols + c] = src[src_y * src_cols + src_x];
+                    dst[r * dst_cols + c] = src[@as(usize, src_y) * src_cols + src_x];
                 }
             }
         },
@@ -529,10 +529,10 @@ pub fn resizePlaneF32(
                     const src_x_next = resolveIndex(@intCast(src_x + 1), @intCast(src_cols), .mirror).?;
                     const fx = src_x_f - @floor(src_x_f);
 
-                    const tl = src[src_y * src_cols + src_x];
-                    const tr = src[src_y * src_cols + src_x_next];
-                    const bl = src[src_y_next * src_cols + src_x];
-                    const br = src[src_y_next * src_cols + src_x_next];
+                    const tl = src[@as(usize, src_y) * src_cols + src_x];
+                    const tr = src[@as(usize, src_y) * src_cols + src_x_next];
+                    const bl = src[@as(usize, src_y_next) * src_cols + src_x];
+                    const br = src[@as(usize, src_y_next) * src_cols + src_x_next];
 
                     const top = tl * (1 - fx) + tr * fx;
                     const bottom = bl * (1 - fx) + br * fx;
