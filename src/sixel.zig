@@ -693,75 +693,83 @@ const AdaptiveHistogramHandle = struct {
     counts: []u32,
     stamps: []u32,
     generation: u32,
+    /// Pointer to the internal pool node for release
+    _node: *anyopaque,
 };
 
-const AdaptiveHistogramCache = struct {
+const AdaptiveHistogramPool = struct {
+    const Node = struct {
+        counts: []u32,
+        stamps: []u32,
+        generation: u32,
+        next: ?*Node = null,
+    };
+
     var mutex = std.Thread.Mutex{};
-    var cond = std.Thread.Condition{};
-    var counts: []u32 = &[_]u32{};
-    var stamps: []u32 = &[_]u32{};
-    var generation: u32 = 1;
-    var in_use: bool = false;
+    var available: ?*Node = null;
+
+    fn acquire() !AdaptiveHistogramHandle {
+        mutex.lock();
+        if (available) |node| {
+            available = node.next;
+            mutex.unlock();
+
+            node.generation +%= 1;
+            if (node.generation == 0) {
+                @memset(node.stamps, 0);
+                node.generation = 1;
+            }
+
+            return .{
+                .counts = node.counts,
+                .stamps = node.stamps,
+                .generation = node.generation,
+                ._node = node,
+            };
+        }
+        mutex.unlock();
+
+        // Allocate new buffer
+        const allocator = std.heap.page_allocator;
+        const required_len: usize = @as(usize, 1) << (3 * color_quantize_bits);
+
+        const counts = try allocator.alloc(u32, required_len);
+        errdefer allocator.free(counts);
+        const stamps = try allocator.alloc(u32, required_len);
+        errdefer allocator.free(stamps);
+        @memset(stamps, 0);
+
+        const node = try allocator.create(Node);
+        node.* = .{
+            .counts = counts,
+            .stamps = stamps,
+            .generation = 1,
+            .next = null,
+        };
+
+        return .{
+            .counts = node.counts,
+            .stamps = node.stamps,
+            .generation = node.generation,
+            ._node = node,
+        };
+    }
+
+    fn release(handle: AdaptiveHistogramHandle) void {
+        const node = @as(*Node, @ptrCast(@alignCast(handle._node)));
+        mutex.lock();
+        defer mutex.unlock();
+        node.next = available;
+        available = node;
+    }
 };
 
 fn acquireAdaptiveHistogram() !AdaptiveHistogramHandle {
-    const required_len: usize = @as(usize, 1) << (3 * color_quantize_bits);
-    AdaptiveHistogramCache.mutex.lock();
-    defer AdaptiveHistogramCache.mutex.unlock();
-
-    while (AdaptiveHistogramCache.in_use) {
-        AdaptiveHistogramCache.cond.wait(&AdaptiveHistogramCache.mutex);
-    }
-
-    AdaptiveHistogramCache.in_use = true;
-
-    if (AdaptiveHistogramCache.counts.len != required_len or AdaptiveHistogramCache.stamps.len != required_len) {
-        const new_counts = std.heap.page_allocator.alloc(u32, required_len) catch |err| {
-            AdaptiveHistogramCache.in_use = false;
-            AdaptiveHistogramCache.cond.signal();
-            return err;
-        };
-        errdefer std.heap.page_allocator.free(new_counts);
-
-        const new_stamps = std.heap.page_allocator.alloc(u32, required_len) catch |err| {
-            AdaptiveHistogramCache.in_use = false;
-            AdaptiveHistogramCache.cond.signal();
-            return err;
-        };
-        errdefer std.heap.page_allocator.free(new_stamps);
-
-        const old_counts = AdaptiveHistogramCache.counts;
-        const old_stamps = AdaptiveHistogramCache.stamps;
-
-        AdaptiveHistogramCache.counts = new_counts;
-        AdaptiveHistogramCache.stamps = new_stamps;
-        @memset(AdaptiveHistogramCache.stamps, 0);
-
-        if (old_counts.len != 0) std.heap.page_allocator.free(old_counts);
-        if (old_stamps.len != 0) std.heap.page_allocator.free(old_stamps);
-    }
-
-    var generation_token = AdaptiveHistogramCache.generation;
-    AdaptiveHistogramCache.generation +%= 1;
-    if (AdaptiveHistogramCache.generation == 0) {
-        @memset(AdaptiveHistogramCache.stamps, 0);
-        AdaptiveHistogramCache.generation = 1;
-        generation_token = 1;
-    }
-
-    return AdaptiveHistogramHandle{
-        .counts = AdaptiveHistogramCache.counts,
-        .stamps = AdaptiveHistogramCache.stamps,
-        .generation = generation_token,
-    };
+    return AdaptiveHistogramPool.acquire();
 }
 
 fn releaseAdaptiveHistogram(handle: AdaptiveHistogramHandle) void {
-    _ = handle;
-    AdaptiveHistogramCache.mutex.lock();
-    AdaptiveHistogramCache.in_use = false;
-    AdaptiveHistogramCache.cond.signal();
-    AdaptiveHistogramCache.mutex.unlock();
+    AdaptiveHistogramPool.release(handle);
 }
 
 inline fn divTruncPow2(value: i32, shift: u3) i32 {
