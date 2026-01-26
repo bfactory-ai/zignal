@@ -140,7 +140,7 @@ pub fn resize(comptime T: type, allocator: Allocator, self: Image(T), out: Image
             defer for (channels) |channel| allocator.free(channel);
 
             // Allocate output channels
-            const out_plane_size = out.rows * out.cols;
+            const out_plane_size = try std.math.mul(usize, out.rows, out.cols);
             var out_channels: [channels.len][]u8 = undefined;
             var allocated_count: usize = 0;
             errdefer {
