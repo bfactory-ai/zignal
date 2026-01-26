@@ -783,14 +783,8 @@ const DitherEntry = struct {
     divisor_shift: u3,
 };
 
-const DitherAlgorithm = enum {
-    floyd_steinberg,
-    atkinson,
-    generic,
-};
-
 const DitherConfig = struct {
-    algorithm: DitherAlgorithm,
+    mode: DitherMode,
     distributions: []const DitherEntry,
 };
 
@@ -798,7 +792,7 @@ const DitherConfig = struct {
 //          X   7/16
 //  3/16  5/16  1/16
 const floyd_steinberg_config = DitherConfig{
-    .algorithm = .floyd_steinberg,
+    .mode = .floyd_steinberg,
     .distributions = &[_]DitherEntry{
         .{ .dx = 1, .dy = 0, .weight = 7, .divisor_shift = 4 }, // right
         .{ .dx = -1, .dy = 1, .weight = 3, .divisor_shift = 4 }, // bottom-left
@@ -812,7 +806,7 @@ const floyd_steinberg_config = DitherConfig{
 //   1/8   1/8  1/8
 //         1/8
 const atkinson_config = DitherConfig{
-    .algorithm = .atkinson,
+    .mode = .atkinson,
     .distributions = &[_]DitherEntry{
         .{ .dx = 1, .dy = 0, .weight = 1, .divisor_shift = 3 }, // right
         .{ .dx = 2, .dy = 0, .weight = 1, .divisor_shift = 3 }, // right+1
@@ -968,7 +962,7 @@ fn applyErrorDiffusion(
         }
     }.call;
 
-    switch (config.algorithm) {
+    switch (config.mode) {
         .floyd_steinberg => {
             // Optimized Floyd-Steinberg loop
             for (0..rows) |r| {
