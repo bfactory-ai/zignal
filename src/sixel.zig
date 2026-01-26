@@ -220,11 +220,12 @@ pub fn fromImageProfiled(
             prepared_img_opt = try image.convert(Rgb, gpa);
         } else {
             var scaled_img = try Image(Rgb).init(gpa, height, width);
+            const inv_scale = 1.0 / scale;
 
             for (0..height) |row_idx| {
+                const src_y = @as(f32, @floatFromInt(row_idx)) * inv_scale;
                 for (0..width) |col_idx| {
-                    const src_x = @as(f32, @floatFromInt(col_idx)) / scale;
-                    const src_y = @as(f32, @floatFromInt(row_idx)) / scale;
+                    const src_x = @as(f32, @floatFromInt(col_idx)) * inv_scale;
 
                     const rgb_value = blk: {
                         if (image.interpolate(src_x, src_y, options.interpolation)) |pixel| {
@@ -381,6 +382,23 @@ pub fn fromImageProfiled(
             color_generation_counter = 1;
         }
 
+        // Prepare row slices for fast access
+        var row_slices: [6][]const Rgb = undefined;
+        const limit = @min(6, height - row);
+
+        for (0..limit) |i| {
+            const r = row + i;
+            if (prepared_img_ptr) |ptr| {
+                const offset = r * ptr.stride;
+                row_slices[i] = ptr.data[offset .. offset + ptr.cols];
+            } else {
+                if (comptime is_rgb) {
+                    const offset = r * image.stride;
+                    row_slices[i] = image.data[offset .. offset + image.cols];
+                }
+            }
+        }
+
         const block_size = 128; // Fits widely in L1 with 256 colors
         var col_base: usize = 0;
         while (col_base < width) : (col_base += block_size) {
@@ -396,22 +414,9 @@ pub fn fromImageProfiled(
 
                 var column_len: usize = 0;
 
-                for (0..6) |bit| {
-                    const pixel_row = row + bit;
-                    if (pixel_row >= height) continue;
-
-                    const color_idx = if (prepared_img_ptr) |img_ptr| blk: {
-                        const rgb = img_ptr.at(pixel_row, col).*;
-                        break :blk color_lut.lookup(rgb);
-                    } else blk: {
-                        if (comptime is_rgb) {
-                            const rgb = image.at(pixel_row, col).*;
-                            break :blk color_lut.lookup(rgb);
-                        } else {
-                            const rgb = convertColor(Rgb, image.at(pixel_row, col).*); // fallback conversion
-                            break :blk color_lut.lookup(rgb);
-                        }
-                    };
+                for (0..limit) |bit| {
+                    const rgb = row_slices[bit][col];
+                    const color_idx = color_lut.lookup(rgb);
 
                     if (!colors_used[color_idx]) {
                         colors_used[color_idx] = true;
