@@ -43,7 +43,7 @@ pub fn compress(comptime T: type, allocator: Allocator, data: []const T) ![]Entr
 /// Callers own the returned memory.
 pub fn decompress(comptime T: type, allocator: Allocator, entries: []const Entry(T)) ![]T {
     var total_count: usize = 0;
-    for (entries) |entry| total_count += entry.count;
+    for (entries) |entry| total_count = try std.math.add(usize, total_count, entry.count);
 
     const result = try allocator.alloc(T, total_count);
     errdefer allocator.free(result);
@@ -161,6 +161,17 @@ test "RLE basic decompression" {
     defer allocator.free(decompressed);
 
     try std.testing.expectEqualSlices(u8, expected, decompressed);
+}
+
+test "RLE decompression overflow" {
+    const allocator = std.testing.allocator;
+    const input = [_]Entry(u8){
+        .{ .value = 'A', .count = std.math.maxInt(usize) },
+        .{ .value = 'B', .count = 1 },
+    };
+
+    const result = decompress(u8, allocator, &input);
+    try std.testing.expectError(error.Overflow, result);
 }
 
 test "RLE decompressor iterator" {
