@@ -5,7 +5,9 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const assert = std.debug.assert;
 const expect = std.testing.expect;
+const meta = @import("meta.zig");
 const clamp = std.math.clamp;
 
 const convertColor = @import("color.zig").convertColor;
@@ -843,6 +845,9 @@ fn applyOrderedDither(
     const cols = img.cols;
     const stride = img.stride;
 
+    const T = @TypeOf(img.data[0].r);
+    comptime assert(T == u8); // Sixel pipeline is currently u8-only
+
     // Scale factor for dithering strength.
     // The matrix values are 0..63. We center them at 0 (-32..31) and scale.
     // A spread of ~16-32 is usually good for 8-bit color.
@@ -910,14 +915,14 @@ fn applyOrderedDither(
             // Scalar unrolled loop for non-packed structures
             while (cols >= 8 and c <= cols - 8) : (c += 8) {
                 inline for (0..8) |k| {
-                    var current = row_slice[c + k];
+                    var pixel = row_slice[c + k];
                     const offset = offsets[k];
 
-                    current.r = clampToU8(@as(i32, current.r) + offset);
-                    current.g = clampToU8(@as(i32, current.g) + offset);
-                    current.b = clampToU8(@as(i32, current.b) + offset);
+                    const r5 = meta.clamp(u8, @as(i32, pixel.r) + offset) >> (8 - color_quantize_bits);
+                    const g5 = meta.clamp(u8, @as(i32, pixel.g) + offset) >> (8 - color_quantize_bits);
+                    const b5 = meta.clamp(u8, @as(i32, pixel.b) + offset) >> (8 - color_quantize_bits);
 
-                    const idx = lut.lookup(current);
+                    const idx = lut.table[r5][g5][b5];
                     row_slice[c + k] = pal[idx];
                 }
             }
@@ -925,14 +930,14 @@ fn applyOrderedDither(
 
         // Handle remaining pixels
         while (c < cols) : (c += 1) {
-            var current = row_slice[c];
+            var pixel = row_slice[c];
             const offset = offsets[c & 7];
 
-            current.r = clampToU8(@as(i32, current.r) + offset);
-            current.g = clampToU8(@as(i32, current.g) + offset);
-            current.b = clampToU8(@as(i32, current.b) + offset);
+            const r5 = meta.clamp(u8, @as(i32, pixel.r) + offset) >> (8 - color_quantize_bits);
+            const g5 = meta.clamp(u8, @as(i32, pixel.g) + offset) >> (8 - color_quantize_bits);
+            const b5 = meta.clamp(u8, @as(i32, pixel.b) + offset) >> (8 - color_quantize_bits);
 
-            const idx = lut.lookup(current);
+            const idx = lut.table[r5][g5][b5];
             row_slice[c] = pal[idx];
         }
     }
@@ -950,6 +955,9 @@ fn applyErrorDiffusion(
     const stride = img.stride;
     const rows_isize: isize = @intCast(rows);
     const cols_isize: isize = @intCast(cols);
+
+    const T = @TypeOf(img.data[0].r);
+    comptime assert(T == u8); // Sixel pipeline is currently u8-only
 
     // Helper for updating a pixel
     const updatePixel = struct {
