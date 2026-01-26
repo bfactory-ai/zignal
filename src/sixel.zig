@@ -817,40 +817,117 @@ fn applyErrorDiffusion(
     const rows_isize: isize = @intCast(rows);
     const cols_isize: isize = @intCast(cols);
 
-    for (0..rows) |r| {
-        const row_offset = r * stride;
-        const row_slice = img.data[row_offset .. row_offset + cols];
-        for (0..cols) |c| {
-            const current = row_slice[c];
-            const idx = lut.lookup(current);
-            const quantized = pal[idx];
+    // Helper for updating a pixel
+    const updatePixel = struct {
+        inline fn call(ptr: *Rgb, r_err: i16, g_err: i16, b_err: i16, weight: i32, shift: u3) void {
+            ptr.r = clampToU8(@as(i32, ptr.r) + divTruncPow2(@as(i32, r_err) * weight, shift));
+            ptr.g = clampToU8(@as(i32, ptr.g) + divTruncPow2(@as(i32, g_err) * weight, shift));
+            ptr.b = clampToU8(@as(i32, ptr.b) + divTruncPow2(@as(i32, b_err) * weight, shift));
+        }
+    }.call;
 
-            const r_error = @as(i16, current.r) - @as(i16, quantized.r);
-            const g_error = @as(i16, current.g) - @as(i16, quantized.g);
-            const b_error = @as(i16, current.b) - @as(i16, quantized.b);
+    // Detect standard configurations for optimization
+    const is_fs = config.distributions.len == 4 and config.distributions[0].weight == 7;
+    const is_atkinson = config.distributions.len == 6 and config.distributions[0].weight == 1;
 
-            row_slice[c] = quantized;
+    if (is_fs) {
+        // Optimized Floyd-Steinberg loop
+        for (0..rows) |r| {
+            const row_offset = r * stride;
+            const row_slice = img.data[row_offset .. row_offset + cols];
+            const is_safe_row = r < rows - 1;
 
-            for (config.distributions) |dist| {
-                const c_isize: isize = @intCast(c);
-                const r_isize: isize = @intCast(r);
-                const nc_signed = c_isize + dist.dx;
-                const nr_signed = r_isize + dist.dy;
-                if (nr_signed < 0 or nr_signed >= rows_isize or nc_signed < 0 or nc_signed >= cols_isize) continue;
+            for (0..cols) |c| {
+                const current = row_slice[c];
+                const idx = lut.lookup(current);
+                const quantized = pal[idx];
+                row_slice[c] = quantized;
 
-                const nr: usize = @intCast(nr_signed);
-                const nc: usize = @intCast(nc_signed);
-                const neighbor_index = nr * stride + nc;
+                const r_err = @as(i16, current.r) - @as(i16, quantized.r);
+                const g_err = @as(i16, current.g) - @as(i16, quantized.g);
+                const b_err = @as(i16, current.b) - @as(i16, quantized.b);
 
-                const weight = @as(i32, dist.weight);
-                const r_delta = divTruncPow2(@as(i32, r_error) * weight, dist.divisor_shift);
-                const g_delta = divTruncPow2(@as(i32, g_error) * weight, dist.divisor_shift);
-                const b_delta = divTruncPow2(@as(i32, b_error) * weight, dist.divisor_shift);
+                // Safe path (center of image)
+                if (is_safe_row and c > 0 and c < cols - 1) {
+                    const next_row_offset = (r + 1) * stride;
+                    updatePixel(&img.data[row_offset + c + 1], r_err, g_err, b_err, 7, 4);
+                    updatePixel(&img.data[next_row_offset + c - 1], r_err, g_err, b_err, 3, 4);
+                    updatePixel(&img.data[next_row_offset + c], r_err, g_err, b_err, 5, 4);
+                    updatePixel(&img.data[next_row_offset + c + 1], r_err, g_err, b_err, 1, 4);
+                } else {
+                    // Boundary path
+                    for (config.distributions) |dist| {
+                        const nc_signed = @as(isize, @intCast(c)) + dist.dx;
+                        const nr_signed = @as(isize, @intCast(r)) + dist.dy;
+                        if (nr_signed >= 0 and nr_signed < rows_isize and nc_signed >= 0 and nc_signed < cols_isize) {
+                            const neighbor_idx = @as(usize, @intCast(nr_signed)) * stride + @as(usize, @intCast(nc_signed));
+                            updatePixel(&img.data[neighbor_idx], r_err, g_err, b_err, dist.weight, dist.divisor_shift);
+                        }
+                    }
+                }
+            }
+        }
+    } else if (is_atkinson) {
+        // Optimized Atkinson loop
+        for (0..rows) |r| {
+            const row_offset = r * stride;
+            const row_slice = img.data[row_offset .. row_offset + cols];
+            const is_safe_row = r < rows - 2;
 
-                var neighbor_ptr = &img.data[neighbor_index];
-                neighbor_ptr.r = clampToU8(@as(i32, neighbor_ptr.r) + r_delta);
-                neighbor_ptr.g = clampToU8(@as(i32, neighbor_ptr.g) + g_delta);
-                neighbor_ptr.b = clampToU8(@as(i32, neighbor_ptr.b) + b_delta);
+            for (0..cols) |c| {
+                const current = row_slice[c];
+                const idx = lut.lookup(current);
+                const quantized = pal[idx];
+                row_slice[c] = quantized;
+
+                const r_err = @as(i16, current.r) - @as(i16, quantized.r);
+                const g_err = @as(i16, current.g) - @as(i16, quantized.g);
+                const b_err = @as(i16, current.b) - @as(i16, quantized.b);
+
+                if (is_safe_row and c > 0 and c < cols - 2) {
+                    const r1_offset = (r + 1) * stride;
+                    const r2_offset = (r + 2) * stride;
+                    updatePixel(&img.data[row_offset + c + 1], r_err, g_err, b_err, 1, 3);
+                    updatePixel(&img.data[row_offset + c + 2], r_err, g_err, b_err, 1, 3);
+                    updatePixel(&img.data[r1_offset + c - 1], r_err, g_err, b_err, 1, 3);
+                    updatePixel(&img.data[r1_offset + c], r_err, g_err, b_err, 1, 3);
+                    updatePixel(&img.data[r1_offset + c + 1], r_err, g_err, b_err, 1, 3);
+                    updatePixel(&img.data[r2_offset + c], r_err, g_err, b_err, 1, 3);
+                } else {
+                    for (config.distributions) |dist| {
+                        const nc_signed = @as(isize, @intCast(c)) + dist.dx;
+                        const nr_signed = @as(isize, @intCast(r)) + dist.dy;
+                        if (nr_signed >= 0 and nr_signed < rows_isize and nc_signed >= 0 and nc_signed < cols_isize) {
+                            const neighbor_idx = @as(usize, @intCast(nr_signed)) * stride + @as(usize, @intCast(nc_signed));
+                            updatePixel(&img.data[neighbor_idx], r_err, g_err, b_err, dist.weight, dist.divisor_shift);
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        // Generic fallback
+        for (0..rows) |r| {
+            const row_offset = r * stride;
+            const row_slice = img.data[row_offset .. row_offset + cols];
+            for (0..cols) |c| {
+                const current = row_slice[c];
+                const idx = lut.lookup(current);
+                const quantized = pal[idx];
+                row_slice[c] = quantized;
+
+                const r_err = @as(i16, current.r) - @as(i16, quantized.r);
+                const g_err = @as(i16, current.g) - @as(i16, quantized.g);
+                const b_err = @as(i16, current.b) - @as(i16, quantized.b);
+
+                for (config.distributions) |dist| {
+                    const nc_signed = @as(isize, @intCast(c)) + dist.dx;
+                    const nr_signed = @as(isize, @intCast(r)) + dist.dy;
+                    if (nr_signed >= 0 and nr_signed < rows_isize and nc_signed >= 0 and nc_signed < cols_isize) {
+                        const neighbor_idx = @as(usize, @intCast(nr_signed)) * stride + @as(usize, @intCast(nc_signed));
+                        updatePixel(&img.data[neighbor_idx], r_err, g_err, b_err, dist.weight, dist.divisor_shift);
+                    }
+                }
             }
         }
     }
@@ -932,9 +1009,8 @@ fn generateAdaptivePalette(
         defer releaseAdaptiveHistogram(hist_handle);
 
         // Build histogram using reusable buffers with generation tracking
-        for (0..image.rows) |r| {
-            for (0..image.cols) |c| {
-                const pixel = image.at(r, c).*;
+        if (image.stride == image.cols) {
+            for (image.data) |pixel| {
                 const rgb = convertColor(Rgb, pixel);
 
                 const r5 = rgb.r >> (8 - color_quantize_bits);
@@ -949,6 +1025,26 @@ fn generateAdaptivePalette(
                     try touched_indices.append(gpa, @intCast(hist_index));
                 }
                 hist_handle.counts[hist_index] += 1;
+            }
+        } else {
+            for (0..image.rows) |r| {
+                for (0..image.cols) |c| {
+                    const pixel = image.at(r, c).*;
+                    const rgb = convertColor(Rgb, pixel);
+
+                    const r5 = rgb.r >> (8 - color_quantize_bits);
+                    const g5 = rgb.g >> (8 - color_quantize_bits);
+                    const b5 = rgb.b >> (8 - color_quantize_bits);
+                    const key = (@as(u16, r5) << (2 * color_quantize_bits)) | (@as(u16, g5) << color_quantize_bits) | @as(u16, b5);
+                    const hist_index: usize = @intCast(key);
+
+                    if (hist_handle.stamps[hist_index] != hist_handle.generation) {
+                        hist_handle.stamps[hist_index] = hist_handle.generation;
+                        hist_handle.counts[hist_index] = 0;
+                        try touched_indices.append(gpa, @intCast(hist_index));
+                    }
+                    hist_handle.counts[hist_index] += 1;
+                }
             }
         }
 
