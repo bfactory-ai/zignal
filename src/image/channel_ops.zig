@@ -202,9 +202,12 @@ pub fn resizePlaneNearestU8(
     const y_ratio = @as(f32, @floatFromInt(src_rows)) / @as(f32, @floatFromInt(dst_rows));
 
     for (0..dst_rows) |r| {
-        const src_y = @min(src_rows - 1, @as(u32, @intFromFloat(@round(@as(f32, @floatFromInt(r)) * y_ratio))));
+        const src_y_f = (@as(f32, @floatFromInt(r)) + 0.5) * y_ratio - 0.5;
+        const src_y = @max(0, @min(src_rows - 1, @as(u32, @intFromFloat(@round(src_y_f)))));
+
         for (0..dst_cols) |c| {
-            const src_x = @min(src_cols - 1, @as(u32, @intFromFloat(@round(@as(f32, @floatFromInt(c)) * x_ratio))));
+            const src_x_f = (@as(f32, @floatFromInt(c)) + 0.5) * x_ratio - 0.5;
+            const src_x = @max(0, @min(src_cols - 1, @as(u32, @intFromFloat(@round(src_x_f)))));
             dst[r * dst_cols + c] = src[@as(usize, src_y) * src_cols + src_x];
         }
     }
@@ -506,9 +509,12 @@ pub fn resizePlaneF32(
             const y_ratio = @as(f32, @floatFromInt(src_rows)) / @as(f32, @floatFromInt(dst_rows));
 
             for (0..dst_rows) |r| {
-                const src_y = @min(src_rows - 1, @as(u32, @intFromFloat(@round(@as(f32, @floatFromInt(r)) * y_ratio))));
+                const src_y_f = (@as(f32, @floatFromInt(r)) + 0.5) * y_ratio - 0.5;
+                const src_y = @max(0, @min(src_rows - 1, @as(u32, @intFromFloat(@round(src_y_f)))));
+
                 for (0..dst_cols) |c| {
-                    const src_x = @min(src_cols - 1, @as(u32, @intFromFloat(@round(@as(f32, @floatFromInt(c)) * x_ratio))));
+                    const src_x_f = (@as(f32, @floatFromInt(c)) + 0.5) * x_ratio - 0.5;
+                    const src_x = @max(0, @min(src_cols - 1, @as(u32, @intFromFloat(@round(src_x_f)))));
                     dst[r * dst_cols + c] = src[@as(usize, src_y) * src_cols + src_x];
                 }
             }
