@@ -447,16 +447,24 @@ pub fn fromImageProfiled(
             if (width > row_buffer.len) return error.ImageTooWide;
 
             @memset(row_buffer[0..width], sixel_char_offset);
-            var last_used_col: usize = 0;
-            for (0..width) |col| {
-                const offset = c * width + col;
-                if (color_map_generation[offset] == row_generation) {
-                    row_buffer[col] = color_map_storage[offset];
-                    last_used_col = col;
+            var effective_compression_end: usize = 0;
+            if (width > 0) {
+                var current_last_used_col: usize = 0;
+                for (0..width) |col| {
+                    const offset = c * width + col;
+                    if (color_map_generation[offset] == row_generation) {
+                        row_buffer[col] = color_map_storage[offset];
+                        current_last_used_col = col;
+                    }
+                }
+                if (current_last_used_col == 0 and row_buffer[0] == sixel_char_offset) {
+                    effective_compression_end = 0;
+                } else {
+                    effective_compression_end = current_last_used_col + 1;
                 }
             }
 
-            var compressor: rle.Compressor(u8) = .{ .data = row_buffer[0 .. last_used_col + 1] };
+            var compressor: rle.Compressor(u8) = .{ .data = row_buffer[0..effective_compression_end] };
             while (compressor.next()) |entry| {
                 if (entry.count > 3) {
                     try output.print(gpa, "!{d}{c}", .{ entry.count, entry.value });
