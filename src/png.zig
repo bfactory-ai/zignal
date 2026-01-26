@@ -448,6 +448,14 @@ const crc_table = blk: {
 fn updateCrc(initial_crc: u32, buf: []const u8) u32 {
     var c = initial_crc;
     var i: usize = 0;
+
+    // Process single bytes until the buffer is aligned to a 4-byte boundary.
+    // This ensures that `std.mem.readInt` can perform efficient aligned reads.
+    while (i < buf.len and (@intFromPtr(&buf[i]) & (@alignOf(u32) - 1) != 0)) {
+        c = crc_table[0][(c ^ buf[i]) & 0xff] ^ (c >> 8);
+        i += 1;
+    }
+
     // Process 8 bytes at a time
     while (i + 8 <= buf.len) {
         // Load 8 bytes (little endian)
