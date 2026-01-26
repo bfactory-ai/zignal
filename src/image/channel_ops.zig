@@ -372,6 +372,145 @@ pub fn resizePlaneCatmullRomU8(
     }
 }
 
+/// Optimized Mitchell-Netravali resize for u8 planes using integer arithmetic.
+pub fn resizePlaneMitchellU8(
+    src: []const u8,
+    dst: []u8,
+    src_rows: u32,
+    src_cols: u32,
+    dst_rows: u32,
+    dst_cols: u32,
+) void {
+    const SCALE = 256;
+
+    // Mitchell-Netravali kernel function (b=1/3, c=1/3)
+    const mitchellKernel = struct {
+        fn eval(t: i32) i32 {
+            const at: i32 = @intCast(@abs(t));
+            if (at < SCALE) {
+                const at2 = @divTrunc(at * at, SCALE);
+                const at3 = @divTrunc(at2 * at, SCALE);
+                return @divTrunc(42 * at3 - 72 * at2 * SCALE + 32 * SCALE * SCALE, 6 * SCALE);
+            } else if (at < 2 * SCALE) {
+                const at2 = @divTrunc(at * at, SCALE);
+                const at3 = @divTrunc(at2 * at, SCALE);
+                return @divTrunc(-14 * at3 + 72 * at2 * SCALE - 120 * at * SCALE * SCALE + 64 * SCALE * SCALE * SCALE, 6 * SCALE * SCALE);
+            }
+            return 0;
+        }
+    }.eval;
+
+    const x_ratio = if (dst_cols > 1)
+        @as(f32, @floatFromInt(src_cols - 1)) / @as(f32, @floatFromInt(dst_cols - 1))
+    else
+        0;
+    const y_ratio = if (dst_rows > 1)
+        @as(f32, @floatFromInt(src_rows - 1)) / @as(f32, @floatFromInt(dst_rows - 1))
+    else
+        0;
+
+    for (0..dst_rows) |r| {
+        const src_y_f = @as(f32, @floatFromInt(r)) * y_ratio;
+        const src_y = @as(isize, @intFromFloat(@floor(src_y_f)));
+        const fy = @as(i32, @intFromFloat((src_y_f - @floor(src_y_f)) * SCALE));
+
+        for (0..dst_cols) |c| {
+            const src_x_f = @as(f32, @floatFromInt(c)) * x_ratio;
+            const src_x = @as(isize, @intFromFloat(@floor(src_x_f)));
+            const fx = @as(i32, @intFromFloat((src_x_f - @floor(src_x_f)) * SCALE));
+
+            var sum: i32 = 0;
+            var weight_sum: i32 = 0;
+
+            // 4x4 kernel
+            for (0..4) |ky| {
+                const y_idx = src_y + @as(isize, @intCast(ky)) - 1;
+                if (y_idx < 0 or y_idx >= src_rows) continue;
+                const wy = mitchellKernel(@as(i32, @intCast(ky)) * SCALE - SCALE - fy);
+
+                for (0..4) |kx| {
+                    const x_idx = src_x + @as(isize, @intCast(kx)) - 1;
+                    if (x_idx < 0 or x_idx >= src_cols) continue;
+                    const wx = mitchellKernel(@as(i32, @intCast(kx)) * SCALE - SCALE - fx);
+                    const w = @divTrunc(wx * wy, SCALE);
+
+                    const pixel_val = @as(i32, src[@as(u32, @intCast(y_idx)) * src_cols + @as(u32, @intCast(x_idx))]);
+                    sum += pixel_val * w;
+                    weight_sum += w;
+                }
+            }
+
+            const result = if (weight_sum != 0) @divTrunc(sum, weight_sum) else 0;
+            dst[r * dst_cols + c] = meta.clamp(u8, result);
+        }
+    }
+}
+
+/// Optimized Lanczos3 resize for u8 planes using float arithmetic for kernel.
+/// Although it uses float for the weights (due to sin), it processes planes efficiently.
+pub fn resizePlaneLanczosU8(
+    src: []const u8,
+    dst: []u8,
+    src_rows: u32,
+    src_cols: u32,
+    dst_rows: u32,
+    dst_cols: u32,
+) void {
+    const lanczosKernel = struct {
+        fn eval(x: f32) f32 {
+            if (x == 0) return 1.0;
+            const a = 3.0;
+            if (@abs(x) >= a) return 0.0;
+            const pi_x = std.math.pi * x;
+            return (a * @sin(pi_x) * @sin(pi_x / a)) / (pi_x * pi_x);
+        }
+    }.eval;
+
+    const x_ratio = if (dst_cols > 1)
+        @as(f32, @floatFromInt(src_cols - 1)) / @as(f32, @floatFromInt(dst_cols - 1))
+    else
+        0;
+    const y_ratio = if (dst_rows > 1)
+        @as(f32, @floatFromInt(src_rows - 1)) / @as(f32, @floatFromInt(dst_rows - 1))
+    else
+        0;
+
+    for (0..dst_rows) |r| {
+        const src_y_f = @as(f32, @floatFromInt(r)) * y_ratio;
+        const src_y = @as(isize, @intFromFloat(@floor(src_y_f)));
+        const fy = src_y_f - @floor(src_y_f);
+
+        for (0..dst_cols) |c| {
+            const src_x_f = @as(f32, @floatFromInt(c)) * x_ratio;
+            const src_x = @as(isize, @intFromFloat(@floor(src_x_f)));
+            const fx = src_x_f - @floor(src_x_f);
+
+            var sum: f32 = 0;
+            var weight_sum: f32 = 0;
+
+            // 6x6 kernel for Lanczos3
+            for (0..6) |ky| {
+                const y_idx = src_y + @as(isize, @intCast(ky)) - 2;
+                if (y_idx < 0 or y_idx >= src_rows) continue;
+                const wy = lanczosKernel(@as(f32, @floatFromInt(@as(isize, @intCast(ky)) - 2)) - fy);
+
+                for (0..6) |kx| {
+                    const x_idx = src_x + @as(isize, @intCast(kx)) - 2;
+                    if (x_idx < 0 or x_idx >= src_cols) continue;
+                    const wx = lanczosKernel(@as(f32, @floatFromInt(@as(isize, @intCast(kx)) - 2)) - fx);
+                    const w = wx * wy;
+
+                    sum += @as(f32, @floatFromInt(src[@as(u32, @intCast(y_idx)) * src_cols + @as(u32, @intCast(x_idx))])) * w;
+                    weight_sum += w;
+                }
+            }
+
+            const result = if (weight_sum != 0) sum / weight_sum else 0;
+            dst[r * dst_cols + c] = meta.clamp(u8, result);
+        }
+    }
+}
+
 /// Generic f32 plane resize with SIMD optimization.
 pub fn resizePlaneF32(
     src: []const f32,
