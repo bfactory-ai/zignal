@@ -689,14 +689,6 @@ const ColorLookupTable = struct {
     };
 };
 
-const AdaptiveHistogramHandle = struct {
-    counts: []u32,
-    stamps: []u32,
-    generation: u32,
-    /// Pointer to the internal pool node for release
-    _node: *anyopaque,
-};
-
 const AdaptiveHistogramPool = struct {
     const Node = struct {
         counts: []u32,
@@ -705,10 +697,18 @@ const AdaptiveHistogramPool = struct {
         next: ?*Node = null,
     };
 
+    pub const Handle = struct {
+        counts: []u32,
+        stamps: []u32,
+        generation: u32,
+        /// Internal pointer used for pool management.
+        node: *Node,
+    };
+
     var mutex = std.Thread.Mutex{};
     var available: ?*Node = null;
 
-    fn acquire() !AdaptiveHistogramHandle {
+    fn acquire() !Handle {
         mutex.lock();
         if (available) |node| {
             available = node.next;
@@ -724,7 +724,7 @@ const AdaptiveHistogramPool = struct {
                 .counts = node.counts,
                 .stamps = node.stamps,
                 .generation = node.generation,
-                ._node = node,
+                .node = node,
             };
         }
         mutex.unlock();
@@ -751,24 +751,23 @@ const AdaptiveHistogramPool = struct {
             .counts = node.counts,
             .stamps = node.stamps,
             .generation = node.generation,
-            ._node = node,
+            .node = node,
         };
     }
 
-    fn release(handle: AdaptiveHistogramHandle) void {
-        const node = @as(*Node, @ptrCast(@alignCast(handle._node)));
+    fn release(handle: Handle) void {
         mutex.lock();
         defer mutex.unlock();
-        node.next = available;
-        available = node;
+        handle.node.next = available;
+        available = handle.node;
     }
 };
 
-fn acquireAdaptiveHistogram() !AdaptiveHistogramHandle {
+fn acquireAdaptiveHistogram() !AdaptiveHistogramPool.Handle {
     return AdaptiveHistogramPool.acquire();
 }
 
-fn releaseAdaptiveHistogram(handle: AdaptiveHistogramHandle) void {
+fn releaseAdaptiveHistogram(handle: AdaptiveHistogramPool.Handle) void {
     AdaptiveHistogramPool.release(handle);
 }
 
