@@ -890,14 +890,32 @@ pub fn toNativeImage(allocator: Allocator, png_state: PngState) !union(enum) {
                 }
                 var output_data = try allocator.alloc(Rgb, @intCast(total_pixels));
 
-                for (0..height) |y| {
-                    const src_row_start = y * (scanline_bytes + 1) + 1;
-                    const dst_row_start = y * width;
-                    const src_row = decompressed[src_row_start .. src_row_start + scanline_bytes];
-                    const dst_row = output_data[dst_row_start .. dst_row_start + width];
+                if (png_state.header.bit_depth == 8) {
+                    // Optimized path for 8-bit RGB
+                    for (0..height) |y| {
+                        const src_row_start = y * (scanline_bytes + 1) + 1;
+                        const dst_row_start = y * width;
+                        const src_row = decompressed[src_row_start .. src_row_start + scanline_bytes];
+                        const dst_row = output_data[dst_row_start .. dst_row_start + width];
 
-                    for (dst_row, 0..) |*pixel, i| {
-                        pixel.* = extractRgbPixel(Rgb, src_row, i, png_state.header, null);
+                        for (dst_row, 0..) |*pixel, i| {
+                            const offset = i * 3;
+                            if (offset + 3 <= src_row.len) {
+                                pixel.* = Rgb{ .r = src_row[offset], .g = src_row[offset + 1], .b = src_row[offset + 2] };
+                            }
+                        }
+                    }
+                } else {
+                    // Generic path (e.g., 16-bit)
+                    for (0..height) |y| {
+                        const src_row_start = y * (scanline_bytes + 1) + 1;
+                        const dst_row_start = y * width;
+                        const src_row = decompressed[src_row_start .. src_row_start + scanline_bytes];
+                        const dst_row = output_data[dst_row_start .. dst_row_start + width];
+
+                        for (dst_row, 0..) |*pixel, i| {
+                            pixel.* = extractRgbPixel(Rgb, src_row, i, png_state.header, null);
+                        }
                     }
                 }
 
@@ -912,16 +930,30 @@ pub fn toNativeImage(allocator: Allocator, png_state: PngState) !union(enum) {
             }
             var output_data = try allocator.alloc(Rgba, @intCast(total_pixels));
 
-            for (0..height) |y| {
-                const src_row_start = y * (scanline_bytes + 1) + 1;
-                const dst_row_start = y * width;
-                const src_row = decompressed[src_row_start .. src_row_start + scanline_bytes];
-                const dst_row = output_data[dst_row_start .. dst_row_start + width];
+            if (png_state.header.bit_depth == 8) {
+                // Optimized path for 8-bit RGBA
+                for (0..height) |y| {
+                    const src_row_start = y * (scanline_bytes + 1) + 1;
+                    const dst_row_start = y * width;
+                    const src_row = decompressed[src_row_start .. src_row_start + scanline_bytes];
+                    const dst_row = output_data[dst_row_start .. dst_row_start + width];
 
-                for (dst_row, 0..) |*pixel, i| {
-                    if (png_state.header.bit_depth == 8) {
-                        pixel.* = Rgba{ .r = src_row[i * 4], .g = src_row[i * 4 + 1], .b = src_row[i * 4 + 2], .a = src_row[i * 4 + 3] };
-                    } else {
+                    for (dst_row, 0..) |*pixel, i| {
+                        const offset = i * 4;
+                        if (offset + 4 <= src_row.len) {
+                            pixel.* = Rgba{ .r = src_row[offset], .g = src_row[offset + 1], .b = src_row[offset + 2], .a = src_row[offset + 3] };
+                        }
+                    }
+                }
+            } else {
+                // Generic/16-bit path
+                for (0..height) |y| {
+                    const src_row_start = y * (scanline_bytes + 1) + 1;
+                    const dst_row_start = y * width;
+                    const src_row = decompressed[src_row_start .. src_row_start + scanline_bytes];
+                    const dst_row = output_data[dst_row_start .. dst_row_start + width];
+
+                    for (dst_row, 0..) |*pixel, i| {
                         // 16-bit to 8-bit conversion
                         const offset = i * 8;
                         if (offset + 8 > src_row.len) {
