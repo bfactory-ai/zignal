@@ -1662,7 +1662,7 @@ pub const BitReader = struct {
 
     pub fn consumeBits(self: *BitReader, num_bits: u6) void {
         if (num_bits == 0) return;
-        std.debug.assert(num_bits <= self.bit_count);
+        std.debug.assert(num_bits <= self.bit_count and num_bits <= 32);
         self.bit_buffer <<= @intCast(num_bits);
         self.bit_count -= @intCast(num_bits);
     }
