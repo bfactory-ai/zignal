@@ -1643,6 +1643,9 @@ pub const BitReader = struct {
                         if (self.byte_pos >= self.data.len) return error.UnexpectedEndOfData;
                         byte_curr = self.data[self.byte_pos];
                         self.byte_pos += 1;
+                        // After consuming a restart marker and reading the next byte,
+                        // we must check if THAT byte is also 0xFF.
+                        if (byte_curr == 0xFF) continue;
                         break;
                     } else {
                         // Marker encountered, stop filling bits here
