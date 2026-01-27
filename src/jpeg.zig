@@ -1623,7 +1623,7 @@ pub const BitReader = struct {
     pub fn fillBits(self: *BitReader, num_bits: u7) !void {
         // Optimization: process bytes in a tighter loop with a wider bit buffer to reduce call frequency
         while (self.bit_count <= 56 and self.bit_count < num_bits) {
-            if (self.byte_pos >= self.data.len) return;
+            if (self.byte_pos >= self.data.len) return error.UnexpectedEndOfData;
 
             var byte_curr: u64 = self.data[self.byte_pos];
             self.byte_pos += 1;
@@ -1647,7 +1647,7 @@ pub const BitReader = struct {
                     } else {
                         // Marker encountered, stop filling bits here
                         self.byte_pos -= 2;
-                        return;
+                        return error.UnexpectedEndOfData;
                     }
                 }
             }
