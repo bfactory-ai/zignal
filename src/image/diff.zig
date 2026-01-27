@@ -79,29 +79,27 @@ pub fn compute(
                 },
                 .@"struct" => {
                     var is_pixel_diff = false;
+                    var pixel_max_val: f64 = 0;
+                    const fields = std.meta.fields(T);
+                    var diffs: [fields.len]f32 = undefined;
 
                     // 1. Calculate raw differences and check threshold
-                    inline for (std.meta.fields(T)) |field| {
+                    inline for (fields, 0..) |field, i| {
                         const v1 = @field(p1, field.name);
                         const v2 = @field(p2, field.name);
                         const F = field.type;
-                        const d_field = switch (@typeInfo(F)) {
+                        diffs[i] = switch (@typeInfo(F)) {
                             .int => @as(f32, @floatFromInt(if (v1 > v2) v1 - v2 else v2 - v1)),
                             .float => @abs(v1 - v2),
                             else => 0,
                         };
-                        if (d_field > opts.threshold) {
-                            is_pixel_diff = true;
-                            break;
-                        }
+                        if (diffs[i] > opts.threshold) is_pixel_diff = true;
                     }
 
                     if (is_pixel_diff) diff_count += 1;
 
-                    var pixel_max_val: f64 = 0;
-
                     // 2. Write output with scaling/binary/alpha logic
-                    inline for (std.meta.fields(T)) |field| {
+                    inline for (fields, 0..) |field, i| {
                         const F = field.type;
                         const max_v: F = switch (@typeInfo(F)) {
                             .int => std.math.maxInt(F),
@@ -124,18 +122,7 @@ pub fn compute(
                             };
                             if (val_f > pixel_max_val) pixel_max_val = val_f;
                         } else {
-                            // Absolute/Scaled mode
-                            const v1 = @field(p1, field.name);
-                            const v2 = @field(p2, field.name);
-
-                            // Recalculate raw diff per channel for scaling
-                            const d_raw = switch (@typeInfo(F)) {
-                                .int => @as(f32, @floatFromInt(if (v1 > v2) v1 - v2 else v2 - v1)),
-                                .float => @abs(v1 - v2),
-                                else => 0,
-                            };
-
-                            const scaled = d_raw * opts.scale;
+                            const scaled = diffs[i] * opts.scale;
                             // Convert back to F
                             const val_out = switch (@typeInfo(F)) {
                                 .int => meta.clamp(F, scaled),
@@ -156,25 +143,22 @@ pub fn compute(
                 },
                 .array => |info| {
                     var is_pixel_diff = false;
+                    var pixel_max_val: f64 = 0;
+                    var diffs: [info.len]f32 = undefined;
 
-                    // 1. Check threshold
+                    // 1. Calculate raw differences and check threshold
                     for (0..info.len) |i| {
                         const v1 = p1[i];
                         const v2 = p2[i];
-                        const d_elem = switch (@typeInfo(info.child)) {
+                        diffs[i] = switch (@typeInfo(info.child)) {
                             .int => @as(f32, @floatFromInt(if (v1 > v2) v1 - v2 else v2 - v1)),
                             .float => @abs(v1 - v2),
                             else => 0,
                         };
-                        if (d_elem > opts.threshold) {
-                            is_pixel_diff = true;
-                            break;
-                        }
+                        if (diffs[i] > opts.threshold) is_pixel_diff = true;
                     }
 
                     if (is_pixel_diff) diff_count += 1;
-
-                    var pixel_max_val: f64 = 0;
 
                     // 2. Output
                     const max_v: info.child = switch (@typeInfo(info.child)) {
@@ -194,14 +178,7 @@ pub fn compute(
                             };
                             if (val_f > pixel_max_val) pixel_max_val = val_f;
                         } else {
-                            const v1 = p1[i];
-                            const v2 = p2[i];
-                            const d_raw = switch (@typeInfo(info.child)) {
-                                .int => @as(f32, @floatFromInt(if (v1 > v2) v1 - v2 else v2 - v1)),
-                                .float => @abs(v1 - v2),
-                                else => 0,
-                            };
-                            const scaled = d_raw * opts.scale;
+                            const scaled = diffs[i] * opts.scale;
                             const val_out = switch (@typeInfo(info.child)) {
                                 .int => meta.clamp(info.child, scaled),
                                 .float => scaled,
@@ -218,7 +195,6 @@ pub fn compute(
                     }
                     stats.add(pixel_max_val);
                 },
-
                 else => @compileError("Unsupported pixel type for diff"),
             }
         }

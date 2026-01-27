@@ -4,13 +4,13 @@ const Io = std.Io;
 
 const zignal = @import("zignal");
 
+const diff = @import("cli/diff.zig");
 const display = @import("cli/display.zig");
 const fdm = @import("cli/fdm.zig");
 const info = @import("cli/info.zig");
 const metrics = @import("cli/metrics.zig");
-const stats = @import("cli/stats.zig");
-const diff = @import("cli/diff.zig");
 const resize = @import("cli/resize.zig");
+const stats = @import("cli/stats.zig");
 const tile = @import("cli/tile.zig");
 const version = @import("cli/version.zig");
 
