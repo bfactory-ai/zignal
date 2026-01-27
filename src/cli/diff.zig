@@ -5,17 +5,30 @@ const Io = std.Io;
 const zignal = @import("zignal");
 
 const args = @import("args.zig");
+const display = @import("display.zig");
+const common = @import("common.zig");
 
 const Args = struct {
     output: ?[]const u8 = null,
     scale: ?f32 = null,
     threshold: ?u8 = null,
     binary: bool = false,
+    display: bool = false,
+    width: ?u32 = null,
+    height: ?u32 = null,
+    protocol: ?[]const u8 = null,
+    filter: ?[]const u8 = null,
 
     pub const meta = .{
         .output = .{ .help = "Path to save the difference image", .metavar = "path" },
         .scale = .{ .help = "Scale factor for difference visibility (default: 1.0)", .metavar = "float" },
         .threshold = .{ .help = "Ignore differences smaller than this value (0-255)", .metavar = "int" },
+        .binary = .{ .help = "Produce a binary output (white for difference, black for match)" },
+        .display = .{ .help = "Display the result in the terminal (default if no output file)" },
+        .width = .{ .help = "Width of each sub-image for display", .metavar = "N" },
+        .height = .{ .help = "Height of each sub-image for display", .metavar = "N" },
+        .protocol = .{ .help = "Force display protocol: kitty, sixel, sgr, braille, auto", .metavar = "p" },
+        .filter = .{ .help = "Interpolation filter for display resizing", .metavar = "name" },
     };
 };
 
@@ -45,6 +58,8 @@ pub fn run(io: Io, writer: *std.Io.Writer, gpa: Allocator, iterator: *std.proces
     const path1 = parsed.positionals[0];
     const path2 = parsed.positionals[1];
 
+    const should_display = parsed.options.display or parsed.options.output == null;
+
     // Load images
     var img1 = zignal.Image(zignal.Rgba(u8)).load(io, gpa, path1) catch |err| {
         std.log.err("Failed to load image '{s}': {}", .{ path1, err });
@@ -65,7 +80,6 @@ pub fn run(io: Io, writer: *std.Io.Writer, gpa: Allocator, iterator: *std.proces
         return;
     }
 
-    const output_path = parsed.options.output orelse "diff.png";
     const scale = parsed.options.scale orelse 1.0;
     const threshold = parsed.options.threshold orelse 0;
     const binary = parsed.options.binary;
@@ -127,7 +141,47 @@ pub fn run(io: Io, writer: *std.Io.Writer, gpa: Allocator, iterator: *std.proces
 
     std.log.info("Max difference found: {d}", .{max_diff});
     std.log.info("Pixels differing > {d}: {d}", .{ threshold, total_diff_pixels });
-    std.log.info("Saving difference image to '{s}'...", .{output_path});
 
-    try diff_img.save(io, gpa, output_path);
+    if (parsed.options.output) |output_path| {
+        std.log.info("Saving difference image to '{s}'...", .{output_path});
+        try diff_img.save(io, gpa, output_path);
+    }
+
+    if (should_display) {
+        // Calculate proportional scale factor based on user constraints
+        // Using img1 dimensions as reference (img2 and diff_img are same size)
+        const user_scale = zignal.terminal.aspectScale(
+            parsed.options.width,
+            parsed.options.height,
+            img1.rows,
+            img1.cols,
+        );
+
+        const w = @as(u32, @intFromFloat(@round(@as(f32, @floatFromInt(img1.cols)) * user_scale)));
+        const h = @as(u32, @intFromFloat(@round(@as(f32, @floatFromInt(img1.rows)) * user_scale)));
+
+        const filter = try common.resolveFilter(parsed.options.filter);
+
+        // 3 images side-by-side
+        const canvas_w = 3 * w;
+        const canvas_h = h;
+
+        var canvas = try zignal.Image(zignal.Rgba(u8)).init(gpa, canvas_h, canvas_w);
+        defer canvas.deinit(gpa);
+        canvas.fill(zignal.Rgba(u8).black);
+
+        const wf = @as(f32, @floatFromInt(w));
+        const hf = @as(f32, @floatFromInt(h));
+
+        // Insert Image 1
+        canvas.insert(img1, .{ .l = 0, .t = 0, .r = wf, .b = hf }, 0, filter, .none);
+
+        // Insert Image 2
+        canvas.insert(img2, .{ .l = wf, .t = 0, .r = 2 * wf, .b = hf }, 0, filter, .none);
+
+        // Insert Difference
+        canvas.insert(diff_img, .{ .l = 2 * wf, .t = 0, .r = 3 * wf, .b = hf }, 0, filter, .none);
+
+        try display.displayCanvas(io, writer, &canvas, parsed.options.protocol, filter);
+    }
 }
