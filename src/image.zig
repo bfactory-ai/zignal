@@ -1175,6 +1175,141 @@ pub fn Image(comptime T: type) type {
             return metrics.ssim(T, self, other);
         }
 
+        /// Specifies the mode for computing the difference between two images.
+        pub const DiffMode = union(enum) {
+            /// Computes the absolute difference per channel: |a - b|.
+            absolute,
+            /// Computes a binary mask where each pixel is either the maximum value (255 for u8)
+            /// or zero, based on whether the difference exceeds the provided threshold.
+            binary: f32,
+        };
+
+        /// Computes the difference between `self` and `other` per pixel/channel.
+        /// The result is stored in `out`, which must have the same dimensions.
+        ///
+        /// Modes:
+        /// - .absolute: out = |self - other|
+        /// - .binary(t): if |self - other| > t then max_val else 0
+        pub fn diff(self: Self, other: Self, out: Self, mode: DiffMode) !void {
+            if (!self.hasSameShape(other) or !self.hasSameShape(out)) {
+                return error.DimensionMismatch;
+            }
+
+            for (0..self.rows) |r| {
+                for (0..self.cols) |c| {
+                    const p1 = self.at(r, c).*;
+                    const p2 = other.at(r, c).*;
+                    const dest = out.at(r, c);
+
+                    switch (@typeInfo(T)) {
+                        .int => {
+                            const d_int = if (p1 > p2) p1 - p2 else p2 - p1;
+                            switch (mode) {
+                                .absolute => dest.* = d_int,
+                                .binary => |t| {
+                                    dest.* = if (@as(f32, @floatFromInt(d_int)) > t) std.math.maxInt(T) else 0;
+                                },
+                            }
+                        },
+                        .float => {
+                            const d_float = @abs(p1 - p2);
+                            switch (mode) {
+                                .absolute => dest.* = d_float,
+                                .binary => |t| {
+                                    dest.* = if (d_float > t) 1.0 else 0.0;
+                                },
+                            }
+                        },
+                        .@"struct" => {
+                            switch (mode) {
+                                .absolute => {
+                                    inline for (std.meta.fields(T)) |field| {
+                                        const v1 = @field(p1, field.name);
+                                        const v2 = @field(p2, field.name);
+                                        switch (@typeInfo(field.type)) {
+                                            .int => {
+                                                @field(dest.*, field.name) = if (v1 > v2) v1 - v2 else v2 - v1;
+                                            },
+                                            .float => {
+                                                @field(dest.*, field.name) = @abs(v1 - v2);
+                                            },
+                                            else => @compileError("Unsupported field type for diff"),
+                                        }
+                                    }
+                                },
+                                .binary => |t| {
+                                    var is_diff = false;
+                                    inline for (std.meta.fields(T)) |field| {
+                                        const v1 = @field(p1, field.name);
+                                        const v2 = @field(p2, field.name);
+                                        const d = switch (@typeInfo(field.type)) {
+                                            .int => @as(f32, @floatFromInt(if (v1 > v2) v1 - v2 else v2 - v1)),
+                                            .float => @abs(v1 - v2),
+                                            else => 0,
+                                        };
+                                        if (d > t) {
+                                            is_diff = true;
+                                            break;
+                                        }
+                                    }
+
+                                    // For binary mode in struct (e.g. RGB), if any channel differs, set all to max
+                                    inline for (std.meta.fields(T)) |field| {
+                                        const max_v = switch (@typeInfo(field.type)) {
+                                            .int => std.math.maxInt(field.type),
+                                            .float => 1.0,
+                                            else => unreachable,
+                                        };
+                                        @field(dest.*, field.name) = if (is_diff) max_v else 0;
+                                    }
+                                },
+                            }
+                        },
+                        .array => |info| {
+                            switch (mode) {
+                                .absolute => {
+                                    for (0..info.len) |i| {
+                                        const v1 = p1[i];
+                                        const v2 = p2[i];
+                                        switch (@typeInfo(info.child)) {
+                                            .int => dest.*[i] = if (v1 > v2) v1 - v2 else v2 - v1,
+                                            .float => dest.*[i] = @abs(v1 - v2),
+                                            else => @compileError("Unsupported array child type for diff"),
+                                        }
+                                    }
+                                },
+                                .binary => |t| {
+                                    var is_diff = false;
+                                    for (0..info.len) |i| {
+                                        const v1 = p1[i];
+                                        const v2 = p2[i];
+                                        const d = switch (@typeInfo(info.child)) {
+                                            .int => @as(f32, @floatFromInt(if (v1 > v2) v1 - v2 else v2 - v1)),
+                                            .float => @abs(v1 - v2),
+                                            else => 0,
+                                        };
+                                        if (d > t) {
+                                            is_diff = true;
+                                            break;
+                                        }
+                                    }
+                                    const max_v = switch (@typeInfo(info.child)) {
+                                        .int => std.math.maxInt(info.child),
+                                        .float => 1.0,
+                                        else => unreachable,
+                                    };
+                                    for (0..info.len) |i| {
+                                        dest.*[i] = if (is_diff) max_v else 0;
+                                    }
+                                },
+                            }
+                        },
+                        else => @compileError("Unsupported pixel type for diff"),
+                    }
+                }
+            }
+        }
+
         /// Computes the mean absolute pixel error normalized by the maximum channel value
         /// (e.g. 255 for `u8`). Requires both images to share the same dimensions.
         pub fn meanPixelError(self: Self, other: Self) !f64 {
