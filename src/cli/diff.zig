@@ -139,7 +139,9 @@ pub fn run(io: Io, writer: *std.Io.Writer, gpa: Allocator, iterator: *std.proces
         }
     }
 
-    std.log.info("Max difference found: {d}", .{max_diff});
+    if (!parsed.options.binary) {
+        std.log.info("Max difference found: {d}", .{max_diff});
+    }
     std.log.info("Pixels differing > {d}: {d}", .{ threshold, total_diff_pixels });
 
     if (parsed.options.output) |output_path| {
@@ -148,39 +150,19 @@ pub fn run(io: Io, writer: *std.Io.Writer, gpa: Allocator, iterator: *std.proces
     }
 
     if (should_display) {
-        // Calculate proportional scale factor based on user constraints
-        // Using img1 dimensions as reference (img2 and diff_img are same size)
-        const user_scale = zignal.terminal.aspectScale(
-            parsed.options.width,
-            parsed.options.height,
-            img1.rows,
-            img1.cols,
-        );
-
-        const w = @as(u32, @intFromFloat(@round(@as(f32, @floatFromInt(img1.cols)) * user_scale)));
-        const h = @as(u32, @intFromFloat(@round(@as(f32, @floatFromInt(img1.rows)) * user_scale)));
-
         const filter = try common.resolveFilter(parsed.options.filter);
 
-        // 3 images side-by-side
-        const canvas_w = 3 * w;
-        const canvas_h = h;
+        const images = [_]zignal.Image(zignal.Rgba(u8)){ img1, img2, diff_img };
 
-        var canvas = try zignal.Image(zignal.Rgba(u8)).init(gpa, canvas_h, canvas_w);
+        var canvas = try display.createHorizontalComposite(
+            zignal.Rgba(u8),
+            gpa,
+            &images,
+            parsed.options.width,
+            parsed.options.height,
+            filter,
+        );
         defer canvas.deinit(gpa);
-        canvas.fill(zignal.Rgba(u8).black);
-
-        const wf = @as(f32, @floatFromInt(w));
-        const hf = @as(f32, @floatFromInt(h));
-
-        // Insert Image 1
-        canvas.insert(img1, .{ .l = 0, .t = 0, .r = wf, .b = hf }, 0, filter, .none);
-
-        // Insert Image 2
-        canvas.insert(img2, .{ .l = wf, .t = 0, .r = 2 * wf, .b = hf }, 0, filter, .none);
-
-        // Insert Difference
-        canvas.insert(diff_img, .{ .l = 2 * wf, .t = 0, .r = 3 * wf, .b = hf }, 0, filter, .none);
 
         try display.displayCanvas(io, writer, &canvas, parsed.options.protocol, filter);
     }
