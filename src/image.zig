@@ -20,7 +20,9 @@ const Rectangle = @import("geometry.zig").Rectangle;
 const Point = @import("geometry/Point.zig").Point;
 const jpeg = @import("jpeg.zig");
 const png = @import("png.zig");
+const meta = @import("meta.zig");
 const metrics = @import("image/metrics.zig");
+const RunningStats = @import("stats.zig").RunningStats;
 
 // Import image sub-modules (private for internal use)
 const DisplayFormatter = @import("image/display.zig").DisplayFormatter;
@@ -1175,25 +1177,34 @@ pub fn Image(comptime T: type) type {
             return metrics.ssim(T, self, other);
         }
 
-        /// Specifies the mode for computing the difference between two images.
-        pub const DiffMode = union(enum) {
-            /// Computes the absolute difference per channel: |a - b|.
-            absolute,
-            /// Computes a binary mask where each pixel is either the maximum value (255 for u8)
-            /// or zero, based on whether the difference exceeds the provided threshold.
-            binary: f32,
+        /// Options for computing image differences.
+        pub const DiffOptions = struct {
+            /// Ignore differences smaller than this value.
+            threshold: f32 = 0,
+            /// Scale factor applied to the difference magnitude (for visualization).
+            scale: f32 = 1.0,
+            /// If true, output pixels are either 0 or MaxVal (white) based on threshold.
+            binary: bool = false,
+            /// If true and the image has an alpha channel, set it to MaxVal (opaque).
+            force_opaque: bool = false,
+        };
+
+        /// Result of a difference operation.
+        pub const DiffResult = struct {
+            stats: RunningStats(f64),
+            diff_count: usize,
         };
 
         /// Computes the difference between `self` and `other` per pixel/channel.
         /// The result is stored in `out`, which must have the same dimensions.
-        ///
-        /// Modes:
-        /// - .absolute: out = |self - other|
-        /// - .binary(t): if |self - other| > t then max_val else 0
-        pub fn diff(self: Self, other: Self, out: Self, mode: DiffMode) !void {
+        /// Applies scaling, thresholding, and visualization options in a single pass.
+        pub fn diff(self: Self, other: Self, out: Self, opts: DiffOptions) !DiffResult {
             if (!self.hasSameShape(other) or !self.hasSameShape(out)) {
                 return error.DimensionMismatch;
             }
+
+            var stats: RunningStats(f64) = .init();
+            var diff_count: usize = 0;
 
             for (0..self.rows) |r| {
                 for (0..self.cols) |c| {
@@ -1203,111 +1214,174 @@ pub fn Image(comptime T: type) type {
 
                     switch (@typeInfo(T)) {
                         .int => {
-                            const d_int = if (p1 > p2) p1 - p2 else p2 - p1;
-                            switch (mode) {
-                                .absolute => dest.* = d_int,
-                                .binary => |t| {
-                                    dest.* = if (@as(f32, @floatFromInt(d_int)) > t) std.math.maxInt(T) else 0;
-                                },
+                            const d_raw = if (p1 > p2) p1 - p2 else p2 - p1;
+                            const d_float = @as(f32, @floatFromInt(d_raw));
+
+                            if (d_float > opts.threshold) diff_count += 1;
+
+                            var val_out: T = 0;
+                            if (opts.binary) {
+                                val_out = if (d_float > opts.threshold) std.math.maxInt(T) else 0;
+                            } else {
+                                const scaled = d_float * opts.scale;
+                                val_out = meta.clamp(T, scaled);
                             }
+
+                            dest.* = val_out;
+                            stats.add(@floatFromInt(val_out));
                         },
                         .float => {
-                            const d_float = @abs(p1 - p2);
-                            switch (mode) {
-                                .absolute => dest.* = d_float,
-                                .binary => |t| {
-                                    dest.* = if (d_float > t) 1.0 else 0.0;
-                                },
+                            const d_raw = @abs(p1 - p2);
+
+                            if (d_raw > opts.threshold) diff_count += 1;
+
+                            var val_out: T = 0;
+                            if (opts.binary) {
+                                val_out = if (d_raw > opts.threshold) 1.0 else 0.0;
+                            } else {
+                                val_out = d_raw * opts.scale;
                             }
+
+                            dest.* = val_out;
+                            stats.add(val_out);
                         },
                         .@"struct" => {
-                            switch (mode) {
-                                .absolute => {
-                                    inline for (std.meta.fields(T)) |field| {
-                                        const v1 = @field(p1, field.name);
-                                        const v2 = @field(p2, field.name);
-                                        switch (@typeInfo(field.type)) {
-                                            .int => {
-                                                @field(dest.*, field.name) = if (v1 > v2) v1 - v2 else v2 - v1;
-                                            },
-                                            .float => {
-                                                @field(dest.*, field.name) = @abs(v1 - v2);
-                                            },
-                                            else => @compileError("Unsupported field type for diff"),
-                                        }
-                                    }
-                                },
-                                .binary => |t| {
-                                    var is_diff = false;
-                                    inline for (std.meta.fields(T)) |field| {
-                                        const v1 = @field(p1, field.name);
-                                        const v2 = @field(p2, field.name);
-                                        const d = switch (@typeInfo(field.type)) {
-                                            .int => @as(f32, @floatFromInt(if (v1 > v2) v1 - v2 else v2 - v1)),
-                                            .float => @abs(v1 - v2),
-                                            else => 0,
-                                        };
-                                        if (d > t) {
-                                            is_diff = true;
-                                            break;
-                                        }
-                                    }
+                            var is_pixel_diff = false;
 
-                                    // For binary mode in struct (e.g. RGB), if any channel differs, set all to max
-                                    inline for (std.meta.fields(T)) |field| {
-                                        const max_v = switch (@typeInfo(field.type)) {
-                                            .int => std.math.maxInt(field.type),
-                                            .float => 1.0,
-                                            else => unreachable,
-                                        };
-                                        @field(dest.*, field.name) = if (is_diff) max_v else 0;
-                                    }
-                                },
+                            // 1. Calculate raw differences and check threshold
+                            inline for (std.meta.fields(T)) |field| {
+                                const v1 = @field(p1, field.name);
+                                const v2 = @field(p2, field.name);
+                                const F = field.type;
+                                const d_field = switch (@typeInfo(F)) {
+                                    .int => @as(f32, @floatFromInt(if (v1 > v2) v1 - v2 else v2 - v1)),
+                                    .float => @abs(v1 - v2),
+                                    else => 0,
+                                };
+                                if (d_field > opts.threshold) {
+                                    is_pixel_diff = true;
+                                    break;
+                                }
+                            }
+
+                            if (is_pixel_diff) diff_count += 1;
+
+                            // 2. Write output with scaling/binary/alpha logic
+                            inline for (std.meta.fields(T)) |field| {
+                                const F = field.type;
+                                const max_v: F = switch (@typeInfo(F)) {
+                                    .int => std.math.maxInt(F),
+                                    .float => 1.0,
+                                    else => unreachable,
+                                };
+
+                                // Handle Alpha forcing
+                                const is_alpha = std.mem.eql(u8, field.name, "a");
+                                if (opts.force_opaque and is_alpha) {
+                                    @field(dest.*, field.name) = max_v;
+                                } else if (opts.binary) {
+                                    // Binary mode: all channels set to max if pixel differs
+                                    const val = if (is_pixel_diff) max_v else 0;
+                                    @field(dest.*, field.name) = val;
+                                    stats.add(switch (@typeInfo(F)) {
+                                        .int => @floatFromInt(val),
+                                        .float => val,
+                                        else => 0,
+                                    });
+                                } else {
+                                    // Absolute/Scaled mode
+                                    const v1 = @field(p1, field.name);
+                                    const v2 = @field(p2, field.name);
+
+                                    // Recalculate raw diff per channel for scaling
+                                    // (We could store it, but for simple structs recalc is cheap)
+                                    const d_raw = switch (@typeInfo(F)) {
+                                        .int => @as(f32, @floatFromInt(if (v1 > v2) v1 - v2 else v2 - v1)),
+                                        .float => @abs(v1 - v2),
+                                        else => 0,
+                                    };
+
+                                    const scaled = d_raw * opts.scale;
+                                    // Convert back to F
+                                    const val_out = switch (@typeInfo(F)) {
+                                        .int => meta.clamp(F, scaled),
+                                        .float => scaled,
+                                        else => 0,
+                                    };
+
+                                    @field(dest.*, field.name) = val_out;
+                                    stats.add(switch (@typeInfo(F)) {
+                                        .int => @floatFromInt(val_out),
+                                        .float => val_out,
+                                        else => 0,
+                                    });
+                                }
                             }
                         },
                         .array => |info| {
-                            switch (mode) {
-                                .absolute => {
-                                    for (0..info.len) |i| {
-                                        const v1 = p1[i];
-                                        const v2 = p2[i];
-                                        switch (@typeInfo(info.child)) {
-                                            .int => dest.*[i] = if (v1 > v2) v1 - v2 else v2 - v1,
-                                            .float => dest.*[i] = @abs(v1 - v2),
-                                            else => @compileError("Unsupported array child type for diff"),
-                                        }
-                                    }
-                                },
-                                .binary => |t| {
-                                    var is_diff = false;
-                                    for (0..info.len) |i| {
-                                        const v1 = p1[i];
-                                        const v2 = p2[i];
-                                        const d = switch (@typeInfo(info.child)) {
-                                            .int => @as(f32, @floatFromInt(if (v1 > v2) v1 - v2 else v2 - v1)),
-                                            .float => @abs(v1 - v2),
-                                            else => 0,
-                                        };
-                                        if (d > t) {
-                                            is_diff = true;
-                                            break;
-                                        }
-                                    }
-                                    const max_v = switch (@typeInfo(info.child)) {
-                                        .int => std.math.maxInt(info.child),
-                                        .float => 1.0,
-                                        else => unreachable,
+                            var is_pixel_diff = false;
+
+                            // 1. Check threshold
+                            for (0..info.len) |i| {
+                                const v1 = p1[i];
+                                const v2 = p2[i];
+                                const d_elem = switch (@typeInfo(info.child)) {
+                                    .int => @as(f32, @floatFromInt(if (v1 > v2) v1 - v2 else v2 - v1)),
+                                    .float => @abs(v1 - v2),
+                                    else => 0,
+                                };
+                                if (d_elem > opts.threshold) {
+                                    is_pixel_diff = true;
+                                    break;
+                                }
+                            }
+
+                            if (is_pixel_diff) diff_count += 1;
+
+                            // 2. Output
+                            const max_v: info.child = switch (@typeInfo(info.child)) {
+                                .int => std.math.maxInt(info.child),
+                                .float => 1.0,
+                                else => unreachable,
+                            };
+
+                            for (0..info.len) |i| {
+                                if (opts.binary) {
+                                    const val = if (is_pixel_diff) max_v else 0;
+                                    dest.*[i] = val;
+                                    stats.add(switch (@typeInfo(info.child)) {
+                                        .int => @floatFromInt(val),
+                                        .float => val,
+                                        else => 0,
+                                    });
+                                } else {
+                                    const v1 = p1[i];
+                                    const v2 = p2[i];
+                                    const d_raw = switch (@typeInfo(info.child)) {
+                                        .int => @as(f32, @floatFromInt(if (v1 > v2) v1 - v2 else v2 - v1)),
+                                        .float => @abs(v1 - v2),
+                                        else => 0,
                                     };
-                                    for (0..info.len) |i| {
-                                        dest.*[i] = if (is_diff) max_v else 0;
-                                    }
-                                },
+                                    const scaled = d_raw * opts.scale;
+                                    const val_out = switch (@typeInfo(info.child)) {
+                                        .int => meta.clamp(info.child, scaled),
+                                        .float => scaled,
+                                        else => 0,
+                                    };
+                                    dest.*[i] = val_out;
+                                    stats.add(switch (@typeInfo(info.child)) {
+                                        .int => @floatFromInt(val_out),
+                                        .float => val_out,
+                                        else => 0,
+                                    });
+                                }
                             }
                         },
                         else => @compileError("Unsupported pixel type for diff"),
                     }
                 }
             }
+            return DiffResult{ .stats = stats, .diff_count = diff_count };
         }
 
         /// Computes the mean absolute pixel error normalized by the maximum channel value

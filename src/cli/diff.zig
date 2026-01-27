@@ -89,60 +89,23 @@ pub fn run(io: Io, writer: *std.Io.Writer, gpa: Allocator, iterator: *std.proces
     var diff_img = try zignal.Image(zignal.Rgba(u8)).init(gpa, img1.rows, img1.cols);
     defer diff_img.deinit(gpa);
 
-    // Compute difference using the library method
-    const DiffMode = zignal.Image(zignal.Rgba(u8)).DiffMode;
-    const mode: DiffMode = if (binary) .{ .binary = @floatFromInt(threshold) } else .absolute;
+    // Use DiffOptions to handle visualization logic inside the library
+    const diff_opts = zignal.Image(zignal.Rgba(u8)).DiffOptions{
+        .threshold = @floatFromInt(threshold),
+        .scale = scale,
+        .binary = binary,
+        .force_opaque = true, // Force visual result to be opaque
+    };
 
-    try img1.diff(img2, diff_img, mode);
+    const result = try img1.diff(img2, diff_img, diff_opts);
 
-    var max_diff: u8 = 0;
-    var total_diff_pixels: usize = 0;
+    // If using binary mode, stats.max() will be 255 if any diff found, or 0.
+    // If using absolute mode (with scaling), stats.max() will be the max visualization brightness.
+    // However, users usually want to know the *raw* max difference, but we only have stats of the *processed* image.
+    // For now, reporting the max pixel value in the diff image is consistent with what is shown.
 
-    // Process for statistics and visualization
-    for (0..diff_img.rows) |r| {
-        for (0..diff_img.cols) |c| {
-            const pixel = diff_img.at(r, c);
-            const dr = pixel.r;
-            const dg = pixel.g;
-            const db = pixel.b;
-            const da = pixel.a; // Note: for binary mode, this might be 0 or 255 depending on diff logic
-
-            const local_max = @max(@max(dr, dg), @max(db, da));
-            if (local_max > max_diff) max_diff = local_max;
-
-            if (binary) {
-                // In binary mode, any non-zero channel means difference > threshold
-                if (local_max > 0) {
-                    total_diff_pixels += 1;
-                    // Ensure alpha is 255 for visibility if it was set to 0 by diff logic
-                    pixel.a = 255;
-                } else {
-                    // Make sure background is opaque black
-                    pixel.a = 255;
-                }
-            } else {
-                // In absolute mode, we need to check threshold manually for stats
-                if (dr > threshold or dg > threshold or db > threshold or da > threshold) {
-                    total_diff_pixels += 1;
-                }
-
-                // Apply scaling for visualization
-                if (scale != 1.0) {
-                    pixel.r = zignal.meta.clamp(u8, @as(f32, @floatFromInt(dr)) * scale);
-                    pixel.g = zignal.meta.clamp(u8, @as(f32, @floatFromInt(dg)) * scale);
-                    pixel.b = zignal.meta.clamp(u8, @as(f32, @floatFromInt(db)) * scale);
-                }
-
-                // Force opaque for visualization so the difference color is visible
-                pixel.a = 255;
-            }
-        }
-    }
-
-    if (!parsed.options.binary) {
-        std.log.info("Max difference found: {d}", .{max_diff});
-    }
-    std.log.info("Pixels differing > {d}: {d}", .{ threshold, total_diff_pixels });
+    std.log.info("Max difference found: {d}", .{@as(u32, @intFromFloat(result.stats.max()))});
+    std.log.info("Pixels differing > {d}: {d}", .{ threshold, result.diff_count });
 
     if (parsed.options.output) |output_path| {
         std.log.info("Saving difference image to '{s}'...", .{output_path});
