@@ -2338,7 +2338,7 @@ fn idct8x8(block: *[64]i32) void {
         rows[i] = block[i * 8 ..][0..8].*;
     }
 
-    // Pass 1: process columns (vectorize across 8 columns)
+    // Pass 1: process rows (vectorize across 8 rows)
     const res1 = idct1DVec(rows);
 
     const v512: V = @splat(512);
@@ -2356,10 +2356,10 @@ fn idct8x8(block: *[64]i32) void {
     rows[6] = (x1_1 - res1.t2) >> @splat(10);
     rows[7] = (x0_1 - res1.t3) >> @splat(10);
 
-    // Transpose to process rows in Pass 2
+    // Transpose to process columns in Pass 2
     const tr = transpose8x8(rows);
 
-    // Pass 2: process rows (now columns after transpose)
+    // Pass 2: process columns (vectorize across 8 columns)
     const res2 = idct1DVec(tr);
 
     const vHalf: V = @splat((1 << 17) / 2);
