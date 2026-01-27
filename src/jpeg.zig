@@ -2396,6 +2396,11 @@ fn idct1DVec(s: [8]@Vector(8, i32)) struct {
     t2: @Vector(8, i32),
     t3: @Vector(8, i32),
 } {
+    // Note: We use i32 for intermediate calculations.
+    // For 8-bit JPEGs, the maximum intermediate value is roughly 10^8, which fits
+    // comfortably within i32 (limit ~2*10^9). Using i64 would double register
+    // pressure and halve throughput on AVX2, which is not worth the theoretical
+    // safety margin for 12-bit images (which we don't support yet).
     const V = @Vector(8, i32);
     const v541: V = @splat(f2f(0.5411961));
     const v184: V = @splat(f2f(-1.847759065));
