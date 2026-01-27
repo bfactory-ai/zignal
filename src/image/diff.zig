@@ -98,6 +98,8 @@ pub fn compute(
 
                     if (is_pixel_diff) diff_count += 1;
 
+                    var pixel_max_val: f64 = 0;
+
                     // 2. Write output with scaling/binary/alpha logic
                     inline for (std.meta.fields(T)) |field| {
                         const F = field.type;
@@ -115,18 +117,18 @@ pub fn compute(
                             // Binary mode: all channels set to max if pixel differs
                             const val = if (is_pixel_diff) max_v else 0;
                             @field(dest.*, field.name) = val;
-                            stats.add(switch (@typeInfo(F)) {
-                                .int => @floatFromInt(val),
-                                .float => val,
+                            const val_f = switch (@typeInfo(F)) {
+                                .int => @as(f64, @floatFromInt(val)),
+                                .float => @as(f64, val),
                                 else => 0,
-                            });
+                            };
+                            if (val_f > pixel_max_val) pixel_max_val = val_f;
                         } else {
                             // Absolute/Scaled mode
                             const v1 = @field(p1, field.name);
                             const v2 = @field(p2, field.name);
 
                             // Recalculate raw diff per channel for scaling
-                            // (We could store it, but for simple structs recalc is cheap)
                             const d_raw = switch (@typeInfo(F)) {
                                 .int => @as(f32, @floatFromInt(if (v1 > v2) v1 - v2 else v2 - v1)),
                                 .float => @abs(v1 - v2),
@@ -142,13 +144,15 @@ pub fn compute(
                             };
 
                             @field(dest.*, field.name) = val_out;
-                            stats.add(switch (@typeInfo(F)) {
-                                .int => @floatFromInt(val_out),
-                                .float => val_out,
+                            const val_f = switch (@typeInfo(F)) {
+                                .int => @as(f64, @floatFromInt(val_out)),
+                                .float => @as(f64, val_out),
                                 else => 0,
-                            });
+                            };
+                            if (val_f > pixel_max_val) pixel_max_val = val_f;
                         }
                     }
+                    stats.add(pixel_max_val);
                 },
                 .array => |info| {
                     var is_pixel_diff = false;
@@ -170,6 +174,8 @@ pub fn compute(
 
                     if (is_pixel_diff) diff_count += 1;
 
+                    var pixel_max_val: f64 = 0;
+
                     // 2. Output
                     const max_v: info.child = switch (@typeInfo(info.child)) {
                         .int => std.math.maxInt(info.child),
@@ -181,11 +187,12 @@ pub fn compute(
                         if (opts.binary) {
                             const val = if (is_pixel_diff) max_v else 0;
                             dest.*[i] = val;
-                            stats.add(switch (@typeInfo(info.child)) {
-                                .int => @floatFromInt(val),
-                                .float => val,
+                            const val_f = switch (@typeInfo(info.child)) {
+                                .int => @as(f64, @floatFromInt(val)),
+                                .float => @as(f64, val),
                                 else => 0,
-                            });
+                            };
+                            if (val_f > pixel_max_val) pixel_max_val = val_f;
                         } else {
                             const v1 = p1[i];
                             const v2 = p2[i];
@@ -201,14 +208,17 @@ pub fn compute(
                                 else => 0,
                             };
                             dest.*[i] = val_out;
-                            stats.add(switch (@typeInfo(info.child)) {
-                                .int => @floatFromInt(val_out),
-                                .float => val_out,
+                            const val_f = switch (@typeInfo(info.child)) {
+                                .int => @as(f64, @floatFromInt(val_out)),
+                                .float => @as(f64, val_out),
                                 else => 0,
-                            });
+                            };
+                            if (val_f > pixel_max_val) pixel_max_val = val_f;
                         }
                     }
+                    stats.add(pixel_max_val);
                 },
+
                 else => @compileError("Unsupported pixel type for diff"),
             }
         }
