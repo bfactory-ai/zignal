@@ -39,10 +39,9 @@ pub fn compress(gpa: Allocator, data: []const u8, level: def.CompressionLevel, s
     try result.appendSlice(gpa, deflate_data);
 
     // Write checksum (Big Endian)
-    try result.append(gpa, @intCast((checksum >> 24) & 0xFF));
-    try result.append(gpa, @intCast((checksum >> 16) & 0xFF));
-    try result.append(gpa, @intCast((checksum >> 8) & 0xFF));
-    try result.append(gpa, @intCast(checksum & 0xFF));
+    var checksum_bytes: [4]u8 = undefined;
+    std.mem.writeInt(u32, &checksum_bytes, checksum, .big);
+    try result.appendSlice(gpa, &checksum_bytes);
 
     return result.toOwnedSlice(gpa);
 }
