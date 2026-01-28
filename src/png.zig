@@ -1226,17 +1226,15 @@ fn filterScanlines(allocator: Allocator, data: []const u8, header: Header, filte
     return filtered_data;
 }
 
-const flate = std.compress.flate;
-
 // PNG encoding options
 pub const EncodeOptions = struct {
-    filter_mode: FilterMode = .adaptive,
-    compression_strategy: compression.Strategy = compression.Strategy.filtered,
+    filter: FilterMode = .adaptive,
+    strategy: compression.Strategy = .filtered,
     gamma: ?f32 = null,
     srgb_intent: ?SrgbRenderingIntent = null,
     pub const default: EncodeOptions = .{
-        .filter_mode = .adaptive,
-        .compression_strategy = compression.Strategy.filtered,
+        .filter = .adaptive,
+        .strategy = .filtered,
     };
 };
 
@@ -1290,7 +1288,7 @@ fn encodeRaw(gpa: Allocator, image_data: []const u8, width: u32, height: u32, co
     }
 
     // Apply row filtering based on options
-    const filtered_data = switch (options.filter_mode) {
+    const filtered_data = switch (options.filter) {
         .none => try filterScanlines(gpa, image_data, header, .none),
         .adaptive => try filterScanlinesAdaptive(gpa, image_data, header),
         .fixed => |filter_type| try filterScanlines(gpa, image_data, header, filter_type),
@@ -1298,7 +1296,7 @@ fn encodeRaw(gpa: Allocator, image_data: []const u8, width: u32, height: u32, co
     defer gpa.free(filtered_data);
 
     // Compress filtered data with zlib format (required for PNG IDAT)
-    const compressed_data = try compression.deflate(gpa, filtered_data, options.compression_strategy, .zlib);
+    const compressed_data = try compression.deflate(gpa, filtered_data, options.strategy, .zlib);
     defer gpa.free(compressed_data);
 
     // Write IDAT chunk
@@ -2473,8 +2471,8 @@ test "PNG fixed filters round-trip" {
     const filters = [_]FilterType{ .none, .sub, .up, .average, .paeth };
     for (filters) |ft| {
         const png_data = try encode(Rgb, allocator, img, .{
-            .filter_mode = .{ .fixed = ft },
-            .compression_strategy = .{ .type = .filtered, .level = .level_1 },
+            .filter = .{ .fixed = ft },
+            .strategy = .{ .type = .filtered, .level = .level_1 },
         });
         defer allocator.free(png_data);
 
