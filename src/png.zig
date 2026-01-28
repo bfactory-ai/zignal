@@ -1231,12 +1231,12 @@ const flate = std.compress.flate;
 // PNG encoding options
 pub const EncodeOptions = struct {
     filter_mode: FilterMode = .adaptive,
-    compression_strategy: compression.Strategy = .{ .default = .default },
+    compression_strategy: compression.Strategy = .default,
     gamma: ?f32 = null,
     srgb_intent: ?SrgbRenderingIntent = null,
     pub const default: EncodeOptions = .{
         .filter_mode = .adaptive,
-        .compression_strategy = .{ .default = .default },
+        .compression_strategy = .default,
     };
 };
 
@@ -2472,7 +2472,10 @@ test "PNG fixed filters round-trip" {
 
     const filters = [_]FilterType{ .none, .sub, .up, .average, .paeth };
     for (filters) |ft| {
-        const png_data = try encode(Rgb, allocator, img, .{ .filter_mode = .{ .fixed = ft }, .compression_strategy = .{ .filtered = std.compress.flate.Compress.Options.level_1 } });
+        const png_data = try encode(Rgb, allocator, img, .{
+            .filter_mode = .{ .fixed = ft },
+            .compression_strategy = .{ .type = .filtered, .level = .level_1 },
+        });
         defer allocator.free(png_data);
 
         var state = try decode(allocator, png_data, .{});

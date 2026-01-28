@@ -2,11 +2,37 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const flate = std.compress.flate;
 
-pub const Strategy = union(enum) {
-    default: flate.Compress.Options,
-    filtered: flate.Compress.Options,
+pub const StrategyType = enum {
+    default,
+    filtered,
     huffman_only,
-    rle: flate.Compress.Options,
+    rle,
+};
+
+pub const Strategy = struct {
+    type: StrategyType = .default,
+    level: flate.Compress.Options = .default,
+
+    pub const default = Strategy{ .type = .default };
+    pub const filtered = Strategy{ .type = .filtered };
+    pub const huffman_only = Strategy{ .type = .huffman_only };
+    pub const rle = Strategy{ .type = .rle };
+
+    pub fn apply(self: Strategy) flate.Compress.Options {
+        var opts = self.level;
+        switch (self.type) {
+            .default => {},
+            .filtered => {
+                opts.chain = @min(opts.chain, 16);
+                opts.nice = @min(opts.nice, 32);
+            },
+            .rle => {
+                opts.chain = @min(opts.chain, 8);
+            },
+            .huffman_only => {},
+        }
+        return opts;
+    }
 };
 
 /// Generic compression function
@@ -20,18 +46,15 @@ pub fn deflate(gpa: Allocator, data: []const u8, strategy: Strategy, container: 
     const buffer = try gpa.alloc(u8, flate.max_window_len);
     defer gpa.free(buffer);
 
-    switch (strategy) {
-        .huffman_only => {
-            var huff: flate.Compress.Huffman = try .init(&aw.writer, buffer, container);
-            try huff.writer.writeAll(data);
-            try huff.writer.flush();
-        },
-        else => {
-            const opts = applyStrategy(strategy);
-            var compressor: flate.Compress = try .init(&aw.writer, buffer, container, opts);
-            try compressor.writer.writeAll(data);
-            try compressor.writer.flush();
-        },
+    if (strategy.type == .huffman_only) {
+        var huff: flate.Compress.Huffman = try .init(&aw.writer, buffer, container);
+        try huff.writer.writeAll(data);
+        try huff.writer.flush();
+    } else {
+        const opts = strategy.apply();
+        var compressor: flate.Compress = try .init(&aw.writer, buffer, container, opts);
+        try compressor.writer.writeAll(data);
+        try compressor.writer.flush();
     }
 
     return aw.toOwnedSlice();
@@ -72,22 +95,4 @@ pub fn inflate(gpa: Allocator, data: []const u8, limit: std.Io.Limit, container:
     }
 
     return aw.toOwnedSlice();
-}
-
-fn applyStrategy(strategy: Strategy) flate.Compress.Options {
-    return switch (strategy) {
-        .default => |opts| opts,
-        .filtered => |opts| blk: {
-            var new = opts;
-            new.chain = @min(new.chain, 16);
-            new.nice = @min(new.nice, 32);
-            break :blk new;
-        },
-        .rle => |opts| blk: {
-            var new = opts;
-            new.chain = @min(new.chain, 8);
-            break :blk new;
-        },
-        .huffman_only => unreachable,
-    };
 }

@@ -853,7 +853,7 @@ pub fn save(io: std.Io, gpa: Allocator, font: BitmapFont, path: []const u8) !voi
 
     if (is_compressed) {
         // Compress the BDF content
-        const compressed_data = try compression.deflate(gpa, bdf_content.items, .{ .default = std.compress.flate.Compress.Options.level_1 }, .gzip);
+        const compressed_data = try compression.deflate(gpa, bdf_content.items, .{ .type = .default, .level = .level_1 }, .gzip);
         defer gpa.free(compressed_data);
         try file.writeStreamingAll(io, compressed_data);
     } else {
