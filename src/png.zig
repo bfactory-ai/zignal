@@ -6,7 +6,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 
-const zlib = @import("compression/zlib.zig");
+const compression = @import("compression/flate.zig");
 const convertColor = @import("color.zig").convertColor;
 const Gray = @import("color.zig").Gray;
 const Image = @import("image.zig").Image;
@@ -773,7 +773,7 @@ pub fn toNativeImage(allocator: Allocator, png_state: PngState) !union(enum) {
     rgba: Image(Rgba),
 } {
     // Decompress IDAT data
-    const decompressed = try zlib.decompress(allocator, png_state.idat_data.items, .limited(png_state.scan_data_bytes));
+    const decompressed = try compression.inflate(allocator, png_state.idat_data.items, .limited(png_state.scan_data_bytes), .zlib);
     defer allocator.free(decompressed);
 
     // Apply row defiltering
@@ -1231,14 +1231,12 @@ const flate = std.compress.flate;
 // PNG encoding options
 pub const EncodeOptions = struct {
     filter_mode: FilterMode = .adaptive,
-    compression_options: flate.Compress.Options = .default,
-    compression_strategy: zlib.CompressionStrategy = .filtered,
+    compression_strategy: compression.Strategy = .{ .default = .default },
     gamma: ?f32 = null,
     srgb_intent: ?SrgbRenderingIntent = null,
     pub const default: EncodeOptions = .{
         .filter_mode = .adaptive,
-        .compression_options = .default,
-        .compression_strategy = .default,
+        .compression_strategy = .{ .default = .default },
     };
 };
 
@@ -1300,7 +1298,7 @@ fn encodeRaw(gpa: Allocator, image_data: []const u8, width: u32, height: u32, co
     defer gpa.free(filtered_data);
 
     // Compress filtered data with zlib format (required for PNG IDAT)
-    const compressed_data = try zlib.compress(gpa, filtered_data, options.compression_options, options.compression_strategy);
+    const compressed_data = try compression.deflate(gpa, filtered_data, options.compression_strategy, .zlib);
     defer gpa.free(compressed_data);
 
     // Write IDAT chunk
@@ -2474,7 +2472,7 @@ test "PNG fixed filters round-trip" {
 
     const filters = [_]FilterType{ .none, .sub, .up, .average, .paeth };
     for (filters) |ft| {
-        const png_data = try encode(Rgb, allocator, img, .{ .filter_mode = .{ .fixed = ft }, .compression_options = .level_1, .compression_strategy = .filtered });
+        const png_data = try encode(Rgb, allocator, img, .{ .filter_mode = .{ .fixed = ft }, .compression_strategy = .{ .filtered = std.compress.flate.Compress.Options.level_1 } });
         defer allocator.free(png_data);
 
         var state = try decode(allocator, png_data, .{});
