@@ -41,17 +41,7 @@ pub fn run(io: Io, writer: *std.Io.Writer, gpa: Allocator, iterator: *std.proces
 
     const width = parsed.options.width;
     const height = parsed.options.height;
-    var protocol: zignal.DisplayFormat = .{ .auto = .default };
-    var filter: zignal.Interpolation = .bilinear;
-
-    if (parsed.options.protocol) |p| {
-        protocol = parseProtocol(p) catch |err| {
-            std.log.err("Unknown protocol type: {s}", .{p});
-            return err;
-        };
-    }
-
-    filter = try common.resolveFilter(parsed.options.filter);
+    const filter = try common.resolveFilter(parsed.options.filter);
 
     const display_fmt = try resolveDisplayFormat(parsed.options.protocol, width, height, filter);
 
@@ -79,7 +69,10 @@ pub fn resolveDisplayFormat(
 ) !zignal.DisplayFormat {
     var protocol: zignal.DisplayFormat = .{ .auto = .default };
     if (protocol_name) |p| {
-        protocol = try parseProtocol(p);
+        protocol = parseProtocol(p) catch |err| {
+            std.log.err("Unknown protocol type: {s}", .{p});
+            return err;
+        };
     }
     applyOptions(&protocol, width, height, filter);
     return protocol;
