@@ -80,7 +80,6 @@ pub fn build(b: *Build) void {
         .{ .name = "perlin", .path = "src/perlin.zig" },
         .{ .name = "canvas", .path = "src/canvas.zig" },
         .{ .name = "png", .path = "src/png.zig" },
-        .{ .name = "deflate", .path = "src/compression/deflate.zig" },
         .{ .name = "zlib", .path = "src/compression/zlib.zig" },
         .{ .name = "gzip", .path = "src/compression/gzip.zig" },
         .{ .name = "fdm", .path = "src/fdm.zig" },

@@ -1,82 +1,86 @@
 //! zlib (RFC 1950) wrapper around DEFLATE
 
 const std = @import("std");
-const ArrayList = std.ArrayList;
 const Allocator = std.mem.Allocator;
-const def = @import("deflate.zig");
+const flate = std.compress.flate;
+
+pub const CompressionStrategy = enum { default, filtered, huffman_only, rle };
 
 /// Compresses data using zlib format.
-/// Returns an owned slice that must be freed by caller.
-pub fn compress(gpa: Allocator, data: []const u8, level: def.CompressionLevel, strategy: def.CompressionStrategy) ![]u8 {
-    const deflate_data = try def.deflate(gpa, data, level, strategy);
-    defer gpa.free(deflate_data);
+pub fn compress(gpa: Allocator, data: []const u8, options: flate.Compress.Options, strategy: CompressionStrategy) ![]u8 {
+    var aw = std.Io.Writer.Allocating.init(gpa);
+    defer aw.deinit();
 
-    const checksum = std.hash.Adler32.hash(data);
+    // PNG and other users might benefit from some initial capacity
+    try aw.ensureTotalCapacity(data.len / 2 + 64);
 
-    var result: ArrayList(u8) = .empty;
-    // Pre-allocate exact size: 2 bytes header + data + 4 bytes checksum
-    try result.ensureTotalCapacity(gpa, deflate_data.len + 6);
-    defer result.deinit(gpa);
+    const buffer = try gpa.alloc(u8, flate.max_window_len);
+    defer gpa.free(buffer);
 
-    const cmf: u8 = 0x78; // 32K window, deflate
-    const flevel: u2 = switch (level) {
-        .level_0, .level_1 => 0,
-        .level_2, .level_3 => 1,
-        .level_4, .level_5, .level_6 => 2,
-        .level_7, .level_8, .level_9 => 3,
-    };
-
-    var flg: u8 = @as(u8, flevel) << 6;
-    const header_base = (@as(u16, cmf) << 8) | flg;
-    const fcheck = 31 - (header_base % 31);
-    if (fcheck < 31) flg |= @intCast(fcheck);
-
-    // Write header
-    try result.append(gpa, cmf);
-    try result.append(gpa, flg);
-
-    // Write data
-    try result.appendSlice(gpa, deflate_data);
-
-    // Write checksum (Big Endian)
-    var checksum_bytes: [4]u8 = undefined;
-    std.mem.writeInt(u32, &checksum_bytes, checksum, .big);
-    try result.appendSlice(gpa, &checksum_bytes);
-
-    return result.toOwnedSlice(gpa);
-}
-
-/// Decompresses zlib data.
-/// Returns an owned slice that must be freed by caller.
-pub fn decompress(gpa: Allocator, zlib_data: []const u8, max_output_bytes: usize) ![]u8 {
-    if (zlib_data.len < 6) return error.InvalidZlibData;
-
-    const cmf = zlib_data[0];
-    const flg = zlib_data[1];
-    const header_check = (@as(u16, cmf) << 8) | flg;
-
-    if ((cmf & 0x0F) != 8) return error.UnsupportedCompressionMethod;
-    if ((header_check % 31) != 0) return error.InvalidZlibHeader;
-    if ((flg & 0x20) != 0) return error.PresetDictionaryNotSupported;
-
-    const deflate_data = zlib_data[2 .. zlib_data.len - 4];
-    const decompressed = try def.inflate(gpa, deflate_data, max_output_bytes);
-    errdefer gpa.free(decompressed);
-
-    const expected_checksum = std.mem.readInt(u32, zlib_data[zlib_data.len - 4 ..][0..4], .big);
-    const actual_checksum = std.hash.Adler32.hash(decompressed);
-
-    if (actual_checksum != expected_checksum) {
-        return error.ChecksumMismatch;
+    if (strategy == .huffman_only) {
+        var huff = try flate.Compress.Huffman.init(&aw.writer, buffer, .zlib);
+        try huff.writer.writeAll(data);
+        try huff.writer.flush();
+    } else {
+        const opts = mapOptions(options, strategy);
+        var compressor = try flate.Compress.init(&aw.writer, buffer, .zlib, opts);
+        try compressor.writer.writeAll(data);
+        try compressor.writer.flush();
     }
 
-    return decompressed;
+    return aw.toOwnedSlice();
+}
+
+/// Decompress zlib data.
+/// Returns an owned slice that must be freed by caller.
+pub fn decompress(gpa: Allocator, zlib_data: []const u8, max_output_bytes: usize) ![]u8 {
+    var in_stream = std.Io.Reader.fixed(zlib_data);
+    const buffer = try gpa.alloc(u8, flate.max_window_len);
+    defer gpa.free(buffer);
+
+    var decompressor = flate.Decompress.init(&in_stream, .zlib, buffer);
+
+    var aw = std.Io.Writer.Allocating.init(gpa);
+    errdefer aw.deinit();
+
+    // If we have a hint about output size, use it
+    if (max_output_bytes != std.math.maxInt(usize)) {
+        try aw.ensureTotalCapacity(max_output_bytes);
+    }
+
+    _ = try decompressor.reader.streamRemaining(&aw.writer);
+
+    const result = try aw.toOwnedSlice();
+    if (result.len > max_output_bytes) {
+        gpa.free(result);
+        return error.OutputLimitExceeded;
+    }
+
+    return result;
+}
+
+fn mapOptions(options: flate.Compress.Options, strategy: CompressionStrategy) flate.Compress.Options {
+    var opts = options;
+    switch (strategy) {
+        .default => {},
+        .filtered => {
+            opts.chain = @min(opts.chain, 16);
+            opts.nice = @min(opts.nice, 32);
+        },
+        .rle => {
+            opts.chain = @min(opts.chain, 8);
+        },
+        .huffman_only => {
+            // Handled separately by using Huffman-only compressor
+        },
+    }
+    return opts;
 }
 
 test "zlib round trip" {
     const allocator = std.testing.allocator;
     const original_data = "Hello, zlib compression test for PNG!";
-    const compressed = try compress(allocator, original_data, .level_0, .default);
+    const compressed = try compress(allocator, original_data, .default, .default);
     defer allocator.free(compressed);
     const decompressed = try decompress(allocator, compressed, original_data.len);
     defer allocator.free(decompressed);
@@ -86,7 +90,7 @@ test "zlib round trip" {
 test "zlib header validation" {
     const allocator = std.testing.allocator;
     const test_data = "Test";
-    const compressed = try compress(allocator, test_data, .level_0, .default);
+    const compressed = try compress(allocator, test_data, .level_1, .default);
     defer allocator.free(compressed);
     try std.testing.expect(compressed.len >= 6);
     const cmf = compressed[0];
@@ -99,7 +103,7 @@ test "zlib compression levels" {
     const allocator = std.testing.allocator;
     const base = "The quick brown fox jumps over the lazy dog. ";
     const test_data = blk: {
-        var data: ArrayList(u8) = .empty;
+        var data: std.ArrayList(u8) = .empty;
         defer data.deinit(allocator);
         for (0..10) |_| {
             try data.appendSlice(allocator, base);
@@ -107,7 +111,7 @@ test "zlib compression levels" {
         break :blk try data.toOwnedSlice(allocator);
     };
     defer allocator.free(test_data);
-    const levels = [_]def.CompressionLevel{ .level_0, .level_1, .level_3, .level_6, .level_9 };
+    const levels = [_]flate.Compress.Options{ .level_1, .level_3, .level_6, .level_9 };
     var sizes: [levels.len]usize = undefined;
     for (levels, 0..) |level, i| {
         const compressed = try compress(allocator, test_data, level, .default);
@@ -117,8 +121,8 @@ test "zlib compression levels" {
         defer allocator.free(decomp);
         try std.testing.expectEqualSlices(u8, test_data, decomp);
     }
-    // Level 0 (no compression) should be largest
-    try std.testing.expect(sizes[0] > sizes[1]);
+    // Sizes should generally decrease or stay same as level increases
+    try std.testing.expect(sizes[0] >= sizes[levels.len - 1]);
 }
 
 test "zlib interoperability" {
@@ -138,7 +142,7 @@ test "zlib interoperability" {
 
     // 2. Test verify checksum generation matches standard
     // Adler32("Hello") = 0x058c01f5
-    const compressed = try compress(allocator, hello, .level_0, .default);
+    const compressed = try compress(allocator, hello, .level_1, .default);
     defer allocator.free(compressed);
 
     // Checksum is at the last 4 bytes

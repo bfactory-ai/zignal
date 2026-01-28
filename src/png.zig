@@ -6,7 +6,6 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 
-const deflate = @import("compression/deflate.zig");
 const zlib = @import("compression/zlib.zig");
 const convertColor = @import("color.zig").convertColor;
 const Gray = @import("color.zig").Gray;
@@ -1227,16 +1226,18 @@ fn filterScanlines(allocator: Allocator, data: []const u8, header: Header, filte
     return filtered_data;
 }
 
+const flate = std.compress.flate;
+
 // PNG encoding options
 pub const EncodeOptions = struct {
     filter_mode: FilterMode = .adaptive,
-    compression_level: deflate.CompressionLevel = .level_6,
-    compression_strategy: deflate.CompressionStrategy = .filtered,
+    compression_options: flate.Compress.Options = .default,
+    compression_strategy: zlib.CompressionStrategy = .filtered,
     gamma: ?f32 = null,
     srgb_intent: ?SrgbRenderingIntent = null,
     pub const default: EncodeOptions = .{
         .filter_mode = .adaptive,
-        .compression_level = .level_6,
+        .compression_options = .default,
         .compression_strategy = .default,
     };
 };
@@ -1299,7 +1300,7 @@ fn encodeRaw(gpa: Allocator, image_data: []const u8, width: u32, height: u32, co
     defer gpa.free(filtered_data);
 
     // Compress filtered data with zlib format (required for PNG IDAT)
-    const compressed_data = try zlib.compress(gpa, filtered_data, options.compression_level, options.compression_strategy);
+    const compressed_data = try zlib.compress(gpa, filtered_data, options.compression_options, options.compression_strategy);
     defer gpa.free(compressed_data);
 
     // Write IDAT chunk
@@ -2473,7 +2474,7 @@ test "PNG fixed filters round-trip" {
 
     const filters = [_]FilterType{ .none, .sub, .up, .average, .paeth };
     for (filters) |ft| {
-        const png_data = try encode(Rgb, allocator, img, .{ .filter_mode = .{ .fixed = ft }, .compression_level = .level_1, .compression_strategy = .filtered });
+        const png_data = try encode(Rgb, allocator, img, .{ .filter_mode = .{ .fixed = ft }, .compression_options = .level_1, .compression_strategy = .filtered });
         defer allocator.free(png_data);
 
         var state = try decode(allocator, png_data, .{});
