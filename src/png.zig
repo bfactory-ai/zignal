@@ -773,7 +773,7 @@ pub fn toNativeImage(allocator: Allocator, png_state: PngState) !union(enum) {
     rgba: Image(Rgba),
 } {
     // Decompress IDAT data
-    const decompressed = try zlib.decompress(allocator, png_state.idat_data.items, png_state.scan_data_bytes);
+    const decompressed = try zlib.decompress(allocator, png_state.idat_data.items, .limited(png_state.scan_data_bytes));
     defer allocator.free(decompressed);
 
     // Apply row defiltering

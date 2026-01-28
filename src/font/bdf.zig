@@ -78,7 +78,7 @@ pub fn load(io: std.Io, gpa: std.mem.Allocator, path: []const u8, filter: LoadFi
     defer if (decompressed_data) |data| gpa.free(data);
 
     if (is_compressed) {
-        decompressed_data = gzip.decompress(gpa, raw_file_contents, max_file_size) catch |err| switch (err) {
+        decompressed_data = gzip.decompress(gpa, raw_file_contents, .limited(max_file_size)) catch |err| switch (err) {
             error.ReadFailed,
             error.OutputLimitExceeded,
             => return BdfError.InvalidCompression,

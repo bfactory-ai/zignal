@@ -33,7 +33,7 @@ pub fn compress(gpa: Allocator, data: []const u8, options: flate.Compress.Option
 
 /// Decompress zlib data.
 /// Returns an owned slice that must be freed by caller.
-pub fn decompress(gpa: Allocator, zlib_data: []const u8, max_output_bytes: usize) ![]u8 {
+pub fn decompress(gpa: Allocator, zlib_data: []const u8, limit: std.Io.Limit) ![]u8 {
     var in_stream = std.Io.Reader.fixed(zlib_data);
     const buffer = try gpa.alloc(u8, flate.max_window_len);
     defer gpa.free(buffer);
@@ -43,20 +43,30 @@ pub fn decompress(gpa: Allocator, zlib_data: []const u8, max_output_bytes: usize
     var aw = std.Io.Writer.Allocating.init(gpa);
     errdefer aw.deinit();
 
-    // If we have a hint about output size, use it
-    if (max_output_bytes != std.math.maxInt(usize)) {
-        try aw.ensureTotalCapacity(max_output_bytes);
+    if (limit.toInt()) |max| {
+        try aw.ensureTotalCapacity(max);
     }
 
-    _ = try decompressor.reader.streamRemaining(&aw.writer);
-
-    const result = try aw.toOwnedSlice();
-    if (result.len > max_output_bytes) {
-        gpa.free(result);
-        return error.OutputLimitExceeded;
+    var remaining = limit;
+    while (remaining.nonzero()) {
+        const n = decompressor.reader.stream(&aw.writer, remaining) catch |err| switch (err) {
+            error.EndOfStream => break,
+            else => |e| return e,
+        };
+        remaining = remaining.subtract(n).?;
+    } else {
+        // We reached the limit, check if there's more
+        var one_byte_buf: [1]u8 = undefined;
+        var dummy_writer = std.Io.Writer.fixed(&one_byte_buf);
+        if (decompressor.reader.stream(&dummy_writer, .limited(1))) |n| {
+            if (n > 0) return error.OutputLimitExceeded;
+        } else |err| switch (err) {
+            error.EndOfStream => {},
+            else => |e| return e,
+        }
     }
 
-    return result;
+    return aw.toOwnedSlice();
 }
 
 fn mapOptions(options: flate.Compress.Options, strategy: CompressionStrategy) flate.Compress.Options {
@@ -82,7 +92,7 @@ test "zlib round trip" {
     const original_data = "Hello, zlib compression test for PNG!";
     const compressed = try compress(allocator, original_data, .default, .default);
     defer allocator.free(compressed);
-    const decompressed = try decompress(allocator, compressed, original_data.len);
+    const decompressed = try decompress(allocator, compressed, .limited(original_data.len));
     defer allocator.free(decompressed);
     try std.testing.expectEqualSlices(u8, original_data, decompressed);
 }
@@ -90,7 +100,7 @@ test "zlib round trip" {
 test "zlib header validation" {
     const allocator = std.testing.allocator;
     const test_data = "Test";
-    const compressed = try compress(allocator, test_data, .level_1, .default);
+    const compressed = try compress(allocator, test_data, flate.Compress.Options.level_1, .default);
     defer allocator.free(compressed);
     try std.testing.expect(compressed.len >= 6);
     const cmf = compressed[0];
@@ -117,7 +127,7 @@ test "zlib compression levels" {
         const compressed = try compress(allocator, test_data, level, .default);
         defer allocator.free(compressed);
         sizes[i] = compressed.len;
-        const decomp = try decompress(allocator, compressed, test_data.len);
+        const decomp = try decompress(allocator, compressed, .limited(test_data.len));
         defer allocator.free(decomp);
         try std.testing.expectEqualSlices(u8, test_data, decomp);
     }
@@ -136,13 +146,13 @@ test "zlib interoperability" {
     // Checksum: 05 8c 01 f5 (Adler32 of "Hello")
     const valid_payload = [_]u8{ 0x78, 0x01, 0xf3, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00, 0x05, 0x8c, 0x01, 0xf5 };
 
-    const decompressed = try decompress(allocator, &valid_payload, hello.len);
+    const decompressed = try decompress(allocator, &valid_payload, .limited(hello.len));
     defer allocator.free(decompressed);
     try std.testing.expectEqualSlices(u8, hello, decompressed);
 
     // 2. Test verify checksum generation matches standard
     // Adler32("Hello") = 0x058c01f5
-    const compressed = try compress(allocator, hello, .level_1, .default);
+    const compressed = try compress(allocator, hello, flate.Compress.Options.level_1, .default);
     defer allocator.free(compressed);
 
     // Checksum is at the last 4 bytes

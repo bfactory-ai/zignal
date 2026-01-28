@@ -34,7 +34,7 @@ pub fn compress(gpa: Allocator, data: []const u8, options: flate.Compress.Option
 }
 
 /// Decompress gzip data.
-pub fn decompress(gpa: Allocator, gzip_data: []const u8, max_output_bytes: usize) ![]u8 {
+pub fn decompress(gpa: Allocator, gzip_data: []const u8, limit: std.Io.Limit) ![]u8 {
     var in_stream = std.Io.Reader.fixed(gzip_data);
     const buffer = try gpa.alloc(u8, flate.max_window_len);
     defer gpa.free(buffer);
@@ -44,19 +44,30 @@ pub fn decompress(gpa: Allocator, gzip_data: []const u8, max_output_bytes: usize
     var aw = std.Io.Writer.Allocating.init(gpa);
     errdefer aw.deinit();
 
-    if (max_output_bytes != std.math.maxInt(usize)) {
-        try aw.ensureTotalCapacity(max_output_bytes);
+    if (limit.toInt()) |max| {
+        try aw.ensureTotalCapacity(max);
     }
 
-    _ = try decompressor.reader.streamRemaining(&aw.writer);
-
-    const result = try aw.toOwnedSlice();
-    if (result.len > max_output_bytes) {
-        gpa.free(result);
-        return error.OutputLimitExceeded;
+    var remaining = limit;
+    while (remaining.nonzero()) {
+        const n = decompressor.reader.stream(&aw.writer, remaining) catch |err| switch (err) {
+            error.EndOfStream => break,
+            else => |e| return e,
+        };
+        remaining = remaining.subtract(n).?;
+    } else {
+        // We reached the limit, check if there's more
+        var one_byte_buf: [1]u8 = undefined;
+        var dummy_writer = std.Io.Writer.fixed(&one_byte_buf);
+        if (decompressor.reader.stream(&dummy_writer, .limited(1))) |n| {
+            if (n > 0) return error.OutputLimitExceeded;
+        } else |err| switch (err) {
+            error.EndOfStream => {},
+            else => |e| return e,
+        }
     }
 
-    return result;
+    return aw.toOwnedSlice();
 }
 
 fn mapOptions(options: flate.Compress.Options, strategy: CompressionStrategy) flate.Compress.Options {
@@ -82,7 +93,7 @@ test "gzip compression and decompression round-trip" {
     const original_data = "Hello, World! This is a test for gzip compression.";
 
     // Compress
-    const compressed = try compress(allocator, original_data, .level_1, .default);
+    const compressed = try compress(allocator, original_data, flate.Compress.Options.level_1, .default);
     defer allocator.free(compressed);
 
     // Verify gzip header
@@ -91,7 +102,7 @@ test "gzip compression and decompression round-trip" {
     try std.testing.expectEqual(@as(u8, 0x08), compressed[2]);
 
     // Decompress
-    const decompressed = try decompress(allocator, compressed, original_data.len);
+    const decompressed = try decompress(allocator, compressed, .limited(original_data.len));
     defer allocator.free(decompressed);
 
     // Verify round-trip
@@ -111,25 +122,26 @@ test "gzip with different compression levels" {
     };
     defer allocator.free(test_data);
 
-    const levels = [_]flate.Compress.Options{ .level_1, .level_6, .level_9 };
+    const levels = [_]flate.Compress.Options{ flate.Compress.Options.level_1, flate.Compress.Options.level_6, flate.Compress.Options.level_9 };
 
     for (levels) |level| {
         const compressed = try compress(allocator, test_data, level, .default);
         defer allocator.free(compressed);
 
-        const decompressed = try decompress(allocator, compressed, test_data.len);
+        const decompressed = try decompress(allocator, compressed, .limited(test_data.len));
         defer allocator.free(decompressed);
 
         try std.testing.expectEqualSlices(u8, test_data, decompressed);
     }
 }
+
 test "gzip decompress enforces caller limit" {
     const allocator = std.testing.allocator;
     const original = "limit me";
-    const compressed = try compress(allocator, original, .level_1, .default);
+    const compressed = try compress(allocator, original, flate.Compress.Options.level_1, .default);
     defer allocator.free(compressed);
 
-    const result = decompress(allocator, compressed, 2);
+    const result = decompress(allocator, compressed, .limited(2));
     try std.testing.expectError(error.OutputLimitExceeded, result);
 }
 
@@ -139,6 +151,6 @@ test "gzip error handling" {
     // Test invalid magic number
     const bad_magic = [_]u8{ 0x00, 0x00 } ++ @as([16]u8, @splat(0));
     // std flate might return BadGzipHeader via ReadFailed
-    const res = decompress(allocator, &bad_magic, 1);
+    const res = decompress(allocator, &bad_magic, .limited(1));
     try std.testing.expectError(error.ReadFailed, res);
 }
