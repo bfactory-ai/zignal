@@ -1231,12 +1231,12 @@ const flate = std.compress.flate;
 // PNG encoding options
 pub const EncodeOptions = struct {
     filter_mode: FilterMode = .adaptive,
-    compression_strategy: compression.Strategy = .default,
+    compression_strategy: compression.Strategy = compression.Strategy.filtered,
     gamma: ?f32 = null,
     srgb_intent: ?SrgbRenderingIntent = null,
     pub const default: EncodeOptions = .{
         .filter_mode = .adaptive,
-        .compression_strategy = .default,
+        .compression_strategy = compression.Strategy.filtered,
     };
 };
 

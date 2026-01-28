@@ -29,7 +29,9 @@ pub const Strategy = struct {
             .rle => {
                 opts.chain = @min(opts.chain, 8);
             },
-            .huffman_only => {},
+            .huffman_only => {
+                opts.chain = 0;
+            },
         }
         return opts;
     }
@@ -70,10 +72,6 @@ pub fn inflate(gpa: Allocator, data: []const u8, limit: std.Io.Limit, container:
 
     var aw: std.Io.Writer.Allocating = .init(gpa);
     errdefer aw.deinit();
-
-    if (limit.toInt()) |max| {
-        try aw.ensureTotalCapacity(max);
-    }
 
     var remaining = limit;
     while (remaining.nonzero()) {
