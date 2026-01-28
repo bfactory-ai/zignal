@@ -78,7 +78,7 @@ pub const Cli = struct {
 
         // Handle global flags
         while (arg) |a| {
-            if (cli_args.parseLogLevel(a, args) catch std.process.exit(1)) {
+            if (try cli_args.parseLogLevel(a, args)) {
                 arg = args.next();
             } else {
                 break;
@@ -135,15 +135,24 @@ pub const Cli = struct {
     }
 
     fn printGeneralHelp(self: Cli, stdout: *std.Io.Writer) !void {
+        const level_names = comptime blk: {
+            var names: []const u8 = "";
+            const fields = std.meta.fields(std.log.Level);
+            for (fields, 0..) |field, i| {
+                names = names ++ field.name;
+                if (i < fields.len - 1) names = names ++ ", ";
+            }
+            break :blk names;
+        };
         try stdout.print(
             \\Usage: zignal [options] <command> [command-options]
             \\
             \\Global Options:
-            \\  --log-level <level>   Set the logging level (err, warn, info, debug)
+            \\  --log-level <level>   Set the logging level ({s})
             \\
             \\Commands:
             \\
-        , .{});
+        , .{level_names});
 
         var max_len: usize = 0;
         for (self.commands) |cmd| {

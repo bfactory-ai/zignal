@@ -45,7 +45,16 @@ pub fn parseLogLevel(arg: []const u8, args: *std.process.Args.Iterator) !bool {
         return error.InvalidArguments;
     };
     runtime_log_level = std.meta.stringToEnum(std.log.Level, level_str) orelse {
-        std.log.err("Invalid log level: {s}. Supported levels: err, warn, info, debug", .{level_str});
+        const level_names = comptime blk: {
+            var names: []const u8 = "";
+            const fields = std.meta.fields(std.log.Level);
+            for (fields, 0..) |field, i| {
+                names = names ++ field.name;
+                if (i < fields.len - 1) names = names ++ ", ";
+            }
+            break :blk names;
+        };
+        std.log.err("Invalid log level: {s}. Supported levels: {s}", .{ level_str, level_names });
         return error.InvalidArguments;
     };
     return true;
