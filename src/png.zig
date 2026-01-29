@@ -6,7 +6,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 
-const compression = @import("compression/flate.zig");
+const flate = std.compress.flate;
 const convertColor = @import("color.zig").convertColor;
 const Gray = @import("color.zig").Gray;
 const Image = @import("image.zig").Image;
@@ -773,10 +773,26 @@ pub fn toNativeImage(allocator: Allocator, png_state: PngState) !union(enum) {
     rgba: Image(Rgba),
 } {
     // Decompress IDAT data
-    const decompressed = try compression.inflate(allocator, png_state.idat_data.items, .limited(png_state.scan_data_bytes), .zlib);
-    defer allocator.free(decompressed);
+    var reader = std.Io.Reader.fixed(png_state.idat_data.items);
 
-    // Apply row defiltering
+    const buffer = try allocator.alloc(u8, flate.max_window_len);
+    defer allocator.free(buffer);
+
+    var decompressor = flate.Decompress.init(&reader, .zlib, buffer);
+
+    var aw = std.Io.Writer.Allocating.init(allocator);
+    errdefer aw.deinit();
+
+    var remaining = std.Io.Limit.limited(png_state.scan_data_bytes);
+    while (remaining.nonzero()) {
+        const n = decompressor.reader.stream(&aw.writer, remaining) catch |err| switch (err) {
+            error.EndOfStream => break,
+            else => return err,
+        };
+        remaining = remaining.subtract(n).?;
+    }
+    const decompressed = try aw.toOwnedSlice();
+    defer allocator.free(decompressed); // Apply row defiltering
     try defilterScanlines(decompressed, png_state.header);
 
     const width = png_state.header.width;
@@ -1229,12 +1245,22 @@ fn filterScanlines(allocator: Allocator, data: []const u8, header: Header, filte
 // PNG encoding options
 pub const EncodeOptions = struct {
     filter: FilterMode = .adaptive,
-    strategy: compression.Strategy = .filtered,
+    compress_options: std.compress.flate.Compress.Options = blk: {
+        var o = std.compress.flate.Compress.Options.default;
+        o.chain = 16;
+        o.nice = 32;
+        break :blk o;
+    },
     gamma: ?f32 = null,
     srgb_intent: ?SrgbRenderingIntent = null,
     pub const default: EncodeOptions = .{
         .filter = .adaptive,
-        .strategy = .filtered,
+        .compress_options = blk: {
+            var o = std.compress.flate.Compress.Options.default;
+            o.chain = 16;
+            o.nice = 32;
+            break :blk o;
+        },
     };
 };
 
@@ -1296,7 +1322,18 @@ fn encodeRaw(gpa: Allocator, image_data: []const u8, width: u32, height: u32, co
     defer gpa.free(filtered_data);
 
     // Compress filtered data with zlib format (required for PNG IDAT)
-    const compressed_data = try compression.deflate(gpa, filtered_data, options.strategy, .zlib);
+    var aw = std.Io.Writer.Allocating.init(gpa);
+    defer aw.deinit();
+    try aw.ensureTotalCapacity(filtered_data.len / 2 + 64);
+
+    const buffer = try gpa.alloc(u8, flate.max_window_len);
+    defer gpa.free(buffer);
+
+    var compressor = try flate.Compress.init(&aw.writer, buffer, .zlib, options.compress_options);
+    try compressor.writer.writeAll(filtered_data);
+    try compressor.writer.flush(); // Ensure all data is written
+
+    const compressed_data = try aw.toOwnedSlice();
     defer gpa.free(compressed_data);
 
     // Write IDAT chunk
@@ -2472,7 +2509,7 @@ test "PNG fixed filters round-trip" {
     for (filters) |filter| {
         const png_data = try encode(Rgb, allocator, img, .{
             .filter = .{ .fixed = filter },
-            .strategy = .{ .type = .filtered, .level = .level_1 },
+            .compress_options = .level_1,
         });
         defer allocator.free(png_data);
 

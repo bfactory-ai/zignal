@@ -14,7 +14,7 @@ const testing = std.testing;
 
 const max_file_size = @import("../font.zig").max_file_size;
 const LoadFilter = @import("../font.zig").LoadFilter;
-const compression = @import("../compression/flate.zig");
+const flate = std.compress.flate;
 const BitmapFont = @import("BitmapFont.zig");
 const GlyphData = @import("GlyphData.zig");
 
@@ -202,12 +202,25 @@ pub fn load(io: std.Io, allocator: std.mem.Allocator, path: []const u8, filter: 
     defer if (decompressed_data) |data| allocator.free(data);
 
     if (is_compressed) {
-        decompressed_data = compression.inflate(allocator, raw_file_contents, .limited(max_file_size), .gzip) catch |err| switch (err) {
-            error.ReadFailed,
-            error.OutputLimitExceeded,
-            => return PcfError.InvalidCompression,
-            else => return err,
-        };
+        var reader = std.Io.Reader.fixed(raw_file_contents);
+
+        const buffer = try allocator.alloc(u8, flate.max_window_len);
+        defer allocator.free(buffer);
+
+        var decompressor = flate.Decompress.init(&reader, .gzip, buffer);
+
+        var aw = std.Io.Writer.Allocating.init(allocator);
+        defer aw.deinit();
+
+        var remaining = std.Io.Limit.limited(max_file_size);
+        while (remaining.nonzero()) {
+            const n = decompressor.reader.stream(&aw.writer, remaining) catch |err| switch (err) {
+                error.EndOfStream => break,
+                else => return PcfError.InvalidCompression,
+            };
+            remaining = remaining.subtract(n).?;
+        }
+        decompressed_data = try aw.toOwnedSlice();
         file_contents = decompressed_data.?;
     } else {
         file_contents = raw_file_contents;

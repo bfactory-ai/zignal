@@ -10,7 +10,7 @@ const expect = std.testing.expect;
 const meta = @import("meta.zig");
 const clamp = std.math.clamp;
 
-const rle = @import("compression/rle.zig");
+const rle = @import("rle.zig");
 const convertColor = @import("color.zig").convertColor;
 const Image = @import("image.zig").Image;
 const Interpolation = @import("image/interpolation.zig").Interpolation;
