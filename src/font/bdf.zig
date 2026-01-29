@@ -92,17 +92,19 @@ pub fn load(io: std.Io, gpa: std.mem.Allocator, path: []const u8, filter: LoadFi
         while (remaining.nonzero()) {
             const n = decompressor.reader.stream(&aw.writer, remaining) catch |err| switch (err) {
                 error.EndOfStream => break,
-                else => return BdfError.InvalidCompression,
+                error.ReadFailed => return BdfError.InvalidCompression,
+                else => return err,
             };
             remaining = remaining.subtract(n).?;
         } else {
             var one_byte_buf: [1]u8 = undefined;
-            var dummy_writer: std.Io.Writer = .fixed(&one_byte_buf);
+            var dummy_writer = std.Io.Writer.fixed(&one_byte_buf);
             if (decompressor.reader.stream(&dummy_writer, .limited(1))) |n| {
                 if (n > 0) return BdfError.InvalidCompression;
             } else |err| switch (err) {
                 error.EndOfStream => {},
-                else => return BdfError.InvalidCompression,
+                error.ReadFailed => return BdfError.InvalidCompression,
+                else => return err,
             }
         }
 
