@@ -11,10 +11,10 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const testing = std.testing;
+const flate = std.compress.flate;
 
 const max_file_size = @import("../font.zig").max_file_size;
 const LoadFilter = @import("../font.zig").LoadFilter;
-const flate = std.compress.flate;
 const BitmapFont = @import("BitmapFont.zig");
 const GlyphData = @import("GlyphData.zig");
 
@@ -202,17 +202,17 @@ pub fn load(io: std.Io, allocator: std.mem.Allocator, path: []const u8, filter: 
     defer if (decompressed_data) |data| allocator.free(data);
 
     if (is_compressed) {
-        var reader = std.Io.Reader.fixed(raw_file_contents);
+        var reader: std.Io.Reader = .fixed(raw_file_contents);
 
         const buffer = try allocator.alloc(u8, flate.max_window_len);
         defer allocator.free(buffer);
 
-        var decompressor = flate.Decompress.init(&reader, .gzip, buffer);
+        var decompressor: flate.Decompress = .init(&reader, .gzip, buffer);
 
-        var aw = std.Io.Writer.Allocating.init(allocator);
+        var aw: std.Io.Writer.Allocating = .init(allocator);
         defer aw.deinit();
 
-        var remaining = std.Io.Limit.limited(max_file_size);
+        var remaining: std.Io.Limit = .limited(max_file_size);
         while (remaining.nonzero()) {
             const n = decompressor.reader.stream(&aw.writer, remaining) catch |err| switch (err) {
                 error.EndOfStream => break,
@@ -221,7 +221,7 @@ pub fn load(io: std.Io, allocator: std.mem.Allocator, path: []const u8, filter: 
             remaining = remaining.subtract(n).?;
         } else {
             var one_byte_buf: [1]u8 = undefined;
-            var dummy_writer = std.Io.Writer.fixed(&one_byte_buf);
+            var dummy_writer: std.Io.Writer = .fixed(&one_byte_buf);
             if (decompressor.reader.stream(&dummy_writer, .limited(1))) |n| {
                 if (n > 0) return PcfError.InvalidCompression;
             } else |err| switch (err) {
@@ -236,7 +236,7 @@ pub fn load(io: std.Io, allocator: std.mem.Allocator, path: []const u8, filter: 
     }
 
     // Use arena for temporary allocations
-    var arena = std.heap.ArenaAllocator.init(allocator);
+    var arena: std.heap.ArenaAllocator = .init(allocator);
     defer arena.deinit();
     const arena_allocator = arena.allocator();
 

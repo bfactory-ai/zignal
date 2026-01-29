@@ -5,8 +5,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
-
 const flate = std.compress.flate;
+
 const convertColor = @import("color.zig").convertColor;
 const Gray = @import("color.zig").Gray;
 const Image = @import("image.zig").Image;
@@ -773,17 +773,17 @@ pub fn toNativeImage(allocator: Allocator, png_state: PngState) !union(enum) {
     rgba: Image(Rgba),
 } {
     // Decompress IDAT data
-    var reader = std.Io.Reader.fixed(png_state.idat_data.items);
+    var reader: std.Io.Reader = .fixed(png_state.idat_data.items);
 
     const buffer = try allocator.alloc(u8, flate.max_window_len);
     defer allocator.free(buffer);
 
-    var decompressor = flate.Decompress.init(&reader, .zlib, buffer);
+    var decompressor: flate.Decompress = .init(&reader, .zlib, buffer);
 
-    var aw = std.Io.Writer.Allocating.init(allocator);
+    var aw: std.Io.Writer.Allocating = .init(allocator);
     errdefer aw.deinit();
 
-    var remaining = std.Io.Limit.limited(png_state.scan_data_bytes);
+    var remaining: std.Io.Limit = .limited(png_state.scan_data_bytes);
     while (remaining.nonzero()) {
         const n = decompressor.reader.stream(&aw.writer, remaining) catch |err| switch (err) {
             error.EndOfStream => break,
@@ -793,7 +793,7 @@ pub fn toNativeImage(allocator: Allocator, png_state: PngState) !union(enum) {
     } else {
         // We've hit the limit, check if there's more data.
         var one_byte_buf: [1]u8 = undefined;
-        var dummy_writer = std.Io.Writer.fixed(&one_byte_buf);
+        var dummy_writer: std.Io.Writer = .fixed(&one_byte_buf);
         if (decompressor.reader.stream(&dummy_writer, .limited(1))) |n| {
             if (n > 0) return error.ImageTooLarge;
         } else |err| switch (err) {
@@ -1254,21 +1254,24 @@ fn filterScanlines(allocator: Allocator, data: []const u8, header: Header, filte
 
 // PNG encoding options
 pub const EncodeOptions = struct {
-    const default_compress_options: std.compress.flate.Compress.Options = blk: {
-        var o = std.compress.flate.Compress.Options.default;
-        o.chain = 16;
-        o.nice = 32;
-        break :blk o;
+    /// Default compression options optimized for filtered image data.
+    /// Uses shorter search chains and 'nice' lengths to balance speed and ratio,
+    /// matching the standard zlib 'filtered' strategy.
+    const filtered_preset: std.compress.flate.Compress.Options = .{
+        .good = 8,
+        .nice = 32,
+        .lazy = 16,
+        .chain = 16,
     };
 
     filter: FilterMode = .adaptive,
-    compress_options: std.compress.flate.Compress.Options = default_compress_options,
+    compress_options: std.compress.flate.Compress.Options = filtered_preset,
     gamma: ?f32 = null,
     srgb_intent: ?SrgbRenderingIntent = null,
 
     pub const default: EncodeOptions = .{
         .filter = .adaptive,
-        .compress_options = default_compress_options,
+        .compress_options = filtered_preset,
     };
 };
 
@@ -1330,14 +1333,14 @@ fn encodeRaw(gpa: Allocator, image_data: []const u8, width: u32, height: u32, co
     defer gpa.free(filtered_data);
 
     // Compress filtered data with zlib format (required for PNG IDAT)
-    var aw = std.Io.Writer.Allocating.init(gpa);
+    var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();
     try aw.ensureTotalCapacity(filtered_data.len / 2 + 64);
 
     const buffer = try gpa.alloc(u8, flate.max_window_len);
     defer gpa.free(buffer);
 
-    var compressor = try flate.Compress.init(&aw.writer, buffer, .zlib, options.compress_options);
+    var compressor: flate.Compress = try .init(&aw.writer, buffer, .zlib, options.compress_options);
     try compressor.writer.writeAll(filtered_data);
     try compressor.writer.flush(); // Ensure all data is written
 
@@ -1361,11 +1364,11 @@ pub fn encode(comptime T: type, allocator: Allocator, image: Image(T), options: 
         u8, Rgb, Rgba => {
             // Direct support - use image as-is
             const image_bytes = image.asBytes();
-            return encodeRaw(allocator, image_bytes, @intCast(image.cols), @intCast(image.rows), color_type, 8, options);
+            return encodeRaw(allocator, image_bytes, image.cols, image.rows, color_type, 8, options);
         },
         else => {
             // Convert unsupported type to RGB
-            var rgb_image = try Image(Rgb).init(allocator, image.rows, image.cols);
+            var rgb_image: Image(Rgb) = try .init(allocator, image.rows, image.cols);
             defer rgb_image.deinit(allocator);
 
             // Convert each pixel to RGB
@@ -1374,7 +1377,7 @@ pub fn encode(comptime T: type, allocator: Allocator, image: Image(T), options: 
             }
 
             const image_bytes = rgb_image.asBytes();
-            return encodeRaw(allocator, image_bytes, @intCast(image.cols), @intCast(image.rows), color_type, 8, options);
+            return encodeRaw(allocator, image_bytes, image.cols, image.rows, color_type, 8, options);
         },
     }
 }
