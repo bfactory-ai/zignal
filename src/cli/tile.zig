@@ -8,8 +8,6 @@ const args = @import("args.zig");
 const display = @import("display.zig");
 const common = @import("common.zig");
 
-// reusing parseFilter
-
 const LayoutMode = enum {
     square,
     horizontal,

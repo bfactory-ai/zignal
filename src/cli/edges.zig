@@ -9,7 +9,7 @@ const common = @import("common.zig");
 const display = @import("display.zig");
 
 const Args = struct {
-    algo: ?[]const u8 = null,
+    filter: ?[]const u8 = null,
     output: ?[]const u8 = null,
     display: bool = false,
 
@@ -26,7 +26,7 @@ const Args = struct {
     protocol: ?[]const u8 = null,
 
     pub const meta = .{
-        .algo = .{ .help = "Algorithm: sobel, canny, shen-castan (default: sobel)", .metavar = "name" },
+        .filter = .{ .help = "Filter: sobel, canny, shen-castan (default: sobel)", .metavar = "name" },
         .output = .{ .help = "Output file path (default: display only)", .metavar = "path" },
         .display = .{ .help = "Display the result in the terminal (default if no output)" },
         .sigma = .{ .help = "Canny sigma (def: 1.0) or Shen-Castan smoothing (def: 0.9)", .metavar = "float" },
@@ -70,9 +70,9 @@ pub fn run(io: Io, writer: *std.Io.Writer, gpa: Allocator, iterator: *std.proces
     });
 
     var algo: Algo = .sobel;
-    if (parsed.options.algo) |a| {
-        algo = algo_map.get(a) orelse {
-            std.log.err("Unknown algorithm: {s}. Supported: sobel, canny, shen-castan", .{a});
+    if (parsed.options.filter) |f| {
+        algo = algo_map.get(f) orelse {
+            std.log.err("Unknown filter: {s}. Supported: sobel, canny, shen-castan", .{f});
             return error.InvalidArguments;
         };
     }
