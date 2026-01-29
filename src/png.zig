@@ -1254,23 +1254,21 @@ fn filterScanlines(allocator: Allocator, data: []const u8, header: Header, filte
 
 // PNG encoding options
 pub const EncodeOptions = struct {
-    filter: FilterMode = .adaptive,
-    compress_options: std.compress.flate.Compress.Options = blk: {
+    const default_compress_options: std.compress.flate.Compress.Options = blk: {
         var o = std.compress.flate.Compress.Options.default;
         o.chain = 16;
         o.nice = 32;
         break :blk o;
-    },
+    };
+
+    filter: FilterMode = .adaptive,
+    compress_options: std.compress.flate.Compress.Options = default_compress_options,
     gamma: ?f32 = null,
     srgb_intent: ?SrgbRenderingIntent = null,
+
     pub const default: EncodeOptions = .{
         .filter = .adaptive,
-        .compress_options = blk: {
-            var o = std.compress.flate.Compress.Options.default;
-            o.chain = 16;
-            o.nice = 32;
-            break :blk o;
-        },
+        .compress_options = default_compress_options,
     };
 };
 
