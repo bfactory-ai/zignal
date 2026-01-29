@@ -144,6 +144,10 @@ fn processImage(
         },
         .median => {
             const radius = options.radius orelse 1;
+            if (radius > 256) {
+                std.log.err("Median blur radius {d} exceeds maximum limit of 256.", .{radius});
+                return error.InvalidArguments;
+            }
             try img.medianBlur(gpa, radius, out);
         },
         .motion_linear => {
