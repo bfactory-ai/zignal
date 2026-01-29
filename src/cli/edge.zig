@@ -89,7 +89,10 @@ pub fn run(io: Io, writer: *std.Io.Writer, gpa: Allocator, iterator: *std.proces
     const should_display = parsed.options.display or target == null;
 
     for (parsed.positionals) |input_path| {
-        try processImage(io, writer, gpa, input_path, target, should_display, algo, parsed.options);
+        processImage(io, writer, gpa, input_path, target, should_display, algo, parsed.options) catch |err| {
+            std.log.err("failed to process image '{s}': {t}", .{ input_path, err });
+            if (!is_batch) return err;
+        };
     }
 }
 
@@ -104,10 +107,7 @@ fn processImage(
     options: Args,
 ) !void {
     std.log.debug("Loading image: {s}", .{input_path});
-    var img = zignal.Image(u8).load(io, gpa, input_path) catch |err| {
-        std.log.err("Failed to load image '{s}': {t}", .{ input_path, err });
-        return; // Continue to next image in batch
-    };
+    var img = try zignal.Image(u8).load(io, gpa, input_path);
     defer img.deinit(gpa);
 
     var out_img = try zignal.Image(u8).init(gpa, img.rows, img.cols);
