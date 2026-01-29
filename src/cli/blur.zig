@@ -136,6 +136,10 @@ fn processImage(
         },
         .gaussian => {
             const sigma = options.sigma orelse 1.0;
+            if (sigma < 0 or !std.math.isFinite(sigma)) {
+                std.log.err("Sigma must be a non-negative finite number.", .{});
+                return error.InvalidArguments;
+            }
             try img.gaussianBlur(gpa, sigma, out);
         },
         .median => {
@@ -145,6 +149,16 @@ fn processImage(
         .motion_linear => {
             const angle_deg = options.angle orelse 0.0;
             var dist = options.distance orelse 10.0;
+
+            if (!std.math.isFinite(angle_deg) or !std.math.isFinite(dist)) {
+                std.log.err("Angle and distance must be finite numbers.", .{});
+                return error.InvalidArguments;
+            }
+            if (dist < 0) {
+                std.log.err("Distance must be non-negative.", .{});
+                return error.InvalidArguments;
+            }
+
             const max_dim = @as(f32, @floatFromInt(@max(img.rows, img.cols)));
 
             if (dist > max_dim) {
@@ -155,17 +169,31 @@ fn processImage(
             const angle_rad = std.math.degreesToRadians(angle_deg);
             try img.motionBlur(gpa, .{ .linear = .{ .angle = angle_rad, .distance = @intFromFloat(dist) } }, out);
         },
-        .motion_zoom => {
+        .motion_zoom, .motion_spin => {
             const cx = options.center_x orelse 0.5;
             const cy = options.center_y orelse 0.5;
             const strength = options.strength orelse 0.5;
-            try img.motionBlur(gpa, .{ .radial_zoom = .{ .center_x = cx, .center_y = cy, .strength = strength } }, out);
-        },
-        .motion_spin => {
-            const cx = options.center_x orelse 0.5;
-            const cy = options.center_y orelse 0.5;
-            const strength = options.strength orelse 0.5;
-            try img.motionBlur(gpa, .{ .radial_spin = .{ .center_x = cx, .center_y = cy, .strength = strength } }, out);
+
+            if (!std.math.isFinite(cx) or !std.math.isFinite(cy) or !std.math.isFinite(strength)) {
+                std.log.err("Radial blur parameters (center-x, center-y, strength) must be finite numbers.", .{});
+                return error.InvalidArguments;
+            }
+
+            if (cx < 0 or cx > 1 or cy < 0 or cy > 1) {
+                std.log.warn("Center coordinates ({d:.2}, {d:.2}) are outside the typical [0, 1] range.", .{ cx, cy });
+            }
+
+            if (strength < 0 or strength > 1) {
+                std.log.err("Strength must be between 0.0 and 1.0.", .{});
+                return error.InvalidArguments;
+            }
+
+            const motion: zignal.MotionBlur = if (blur_type == .motion_zoom)
+                .{ .radial_zoom = .{ .center_x = cx, .center_y = cy, .strength = strength } }
+            else
+                .{ .radial_spin = .{ .center_x = cx, .center_y = cy, .strength = strength } };
+
+            try img.motionBlur(gpa, motion, out);
         },
     }
 
