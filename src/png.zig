@@ -790,6 +790,16 @@ pub fn toNativeImage(allocator: Allocator, png_state: PngState) !union(enum) {
             else => return err,
         };
         remaining = remaining.subtract(n).?;
+    } else {
+        // We've hit the limit, check if there's more data.
+        var one_byte_buf: [1]u8 = undefined;
+        var dummy_writer = std.Io.Writer.fixed(&one_byte_buf);
+        if (decompressor.reader.stream(&dummy_writer, .limited(1))) |n| {
+            if (n > 0) return error.ImageTooLarge;
+        } else |err| switch (err) {
+            error.EndOfStream => {}, // This is fine, we're at the end.
+            else => return err,
+        }
     }
     const decompressed = try aw.toOwnedSlice();
     defer allocator.free(decompressed); // Apply row defiltering
