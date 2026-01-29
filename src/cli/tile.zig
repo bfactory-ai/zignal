@@ -253,7 +253,7 @@ pub fn run(io: Io, writer: *std.Io.Writer, gpa: Allocator, iterator: *std.proces
     }
 
     if (should_display) {
-        const format = try display.resolveDisplayFormat(parsed.options.protocol, null, null, filter);
+        const format = try display.resolveDisplayFormat(parsed.options.protocol, null, null);
         try display.displayCanvas(io, writer, &canvas, format);
     }
 }
