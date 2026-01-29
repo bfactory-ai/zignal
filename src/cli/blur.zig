@@ -144,7 +144,14 @@ fn processImage(
         },
         .motion_linear => {
             const angle_deg = options.angle orelse 0.0;
-            const dist = options.distance orelse 10.0;
+            var dist = options.distance orelse 10.0;
+            const max_dim = @as(f32, @floatFromInt(@max(img.rows, img.cols)));
+
+            if (dist > max_dim) {
+                std.log.warn("Motion blur distance {d:.1} exceeds image dimensions. Clamping to {d:.1}.", .{ dist, max_dim });
+                dist = max_dim;
+            }
+
             const angle_rad = std.math.degreesToRadians(angle_deg);
             try img.motionBlur(gpa, .{ .linear = .{ .angle = angle_rad, .distance = @intFromFloat(dist) } }, out);
         },
