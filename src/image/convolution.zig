@@ -414,6 +414,18 @@ inline fn isIdentityKernel(kernel: []const f32) bool {
     return kernel.len == 1 and kernel[0] == 1;
 }
 
+/// True when all taps except possibly the first are equal — the shape of a quantized
+/// uniform kernel after `renormalizeQuantized` parks the rounding residual on tap 0.
+/// Such kernels (axis-aligned motion blur) collapse to an O(1)/pixel running sum.
+fn isUniformBody(comptime TempT: type, kernel: []const TempT) bool {
+    if (kernel.len < 2) return false;
+    const k = kernel[1];
+    for (kernel[2..]) |tap| {
+        if (tap != k) return false;
+    }
+    return true;
+}
+
 /// Per-plane separable driver owning the strategy choice: identity axes skip their pass
 /// entirely (a u8 single pass carries one `fixed_point_scale`, exact because
 /// divTrunc(256*S ± 32768, 65536) == divTrunc(S ± 128, 256)), large planes take the fused
@@ -477,9 +489,17 @@ fn convolveSeparableAutoImpl(
     if (identity_x and identity_y) {
         src.copy(dst);
     } else if (identity_y) {
-        try SinglePass.horizontal(src, dst, allocator, kernel_x, border_mode);
+        if (TempT == i32 and isUniformBody(TempT, kernel_x)) {
+            try SinglePass.horizontalBox(src, dst, allocator, kernel_x, border_mode);
+        } else {
+            try SinglePass.horizontal(src, dst, allocator, kernel_x, border_mode);
+        }
     } else if (identity_x) {
-        try SinglePass.vertical(src, dst, allocator, kernel_y, border_mode);
+        if (TempT == i32 and isUniformBody(TempT, kernel_y)) {
+            try SinglePass.verticalBox(src, dst, allocator, kernel_y, border_mode);
+        } else {
+            try SinglePass.vertical(src, dst, allocator, kernel_y, border_mode);
+        }
     } else if (useFusedSeparable(TempT, src.rows, src.cols, kernel_y.len, border_mode)) {
         try convolveSeparablePlaneFused(PixelT, TempT, AccumIntT, src, dst, allocator, kernel_x, kernel_y, border_mode);
     } else if (cached_temp) |temp_slot| {
@@ -829,6 +849,111 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime dst_scale: c
                 .{ table.high_start, rows },
             };
 
+            for (border_rows) |range| {
+                for (range[0]..range[1]) |r| {
+                    for (bases, table.taps(table.ordinalOf(r))) |*b, idx| {
+                        b.* = if (idx == BorderIndexTable.zero_sentinel) idx else idx * src.stride;
+                    }
+                    verticalRowFromBases(true, src.data, bases, dst, r, kernel);
+                }
+            }
+        }
+
+        /// O(1)-per-pixel horizontal pass for uniform-body kernels (see `isUniformBody`):
+        /// out = k*S + r*window_first with a running window sum S. Integer-exact vs the
+        /// dense pass, so only used for integer kernels. Borders fall back to the dense
+        /// table-resolved accumulation.
+        fn horizontalBox(src: Image(SrcT), dst: Image(DstT), allocator: Allocator, kernel: []const KernelT, border_mode: BorderMode) !void {
+            const half = kernel.len / 2;
+            const len = kernel.len;
+            const cols = src.cols;
+            const table: BorderIndexTable = try .init(allocator, cols, len, border_mode);
+            defer table.deinit(allocator);
+
+            const k = promote(kernel[1]);
+            const residual = promote(kernel[0]) - k;
+
+            for (0..src.rows) |r| {
+                const src_offset = r * src.stride;
+                const dst_offset = r * dst.stride;
+                var c: usize = 0;
+
+                while (c < table.low_end) : (c += 1) {
+                    dst.data[dst_offset + c] = store(borderPixelResolved(src, kernel, table.taps(c), src_offset));
+                }
+
+                if (cols > 2 * half) {
+                    const interior_end = cols - half;
+                    var sum: AccumT = 0;
+                    for (0..len) |i| sum += promote(src.data[src_offset + c - half + i]);
+
+                    while (c < interior_end) : (c += 1) {
+                        const first = promote(src.data[src_offset + c - half]);
+                        dst.data[dst_offset + c] = store(k * sum + residual * first);
+                        if (c + 1 < interior_end) {
+                            sum += promote(src.data[src_offset + c - half + len]) - first;
+                        }
+                    }
+                }
+
+                while (c < cols) : (c += 1) {
+                    dst.data[dst_offset + c] = store(borderPixelResolved(src, kernel, table.taps(table.ordinalOf(c)), src_offset));
+                }
+            }
+        }
+
+        /// O(1)-per-pixel vertical pass for uniform-body kernels: SIMD column sums slide
+        /// down the rows. Same exactness contract as `horizontalBox`.
+        fn verticalBox(src: Image(SrcT), dst: Image(DstT), allocator: Allocator, kernel: []const KernelT, border_mode: BorderMode) !void {
+            const half = kernel.len / 2;
+            const len = kernel.len;
+            const rows = src.rows;
+            const cols = src.cols;
+            const table: BorderIndexTable = try .init(allocator, rows, len, border_mode);
+            defer table.deinit(allocator);
+            const bases = try allocator.alloc(usize, len);
+            defer allocator.free(bases);
+
+            const k = promote(kernel[1]);
+            const residual = promote(kernel[0]) - k;
+
+            if (rows > 2 * half) {
+                const safe_end = rows - half;
+                var c: usize = 0;
+
+                while (c + vec_len <= cols) : (c += vec_len) {
+                    const k_vec: @Vector(vec_len, AccumT) = @splat(k);
+                    const r_vec: @Vector(vec_len, AccumT) = @splat(residual);
+                    var sum: @Vector(vec_len, AccumT) = @splat(0);
+                    for (0..len) |i| sum += loadVec(src.data[i * src.stride + c ..].ptr);
+
+                    for (half..safe_end) |r| {
+                        const first = loadVec(src.data[(r - half) * src.stride + c ..].ptr);
+                        storeVec(k_vec * sum + r_vec * first, dst.data[r * dst.stride + c ..].ptr);
+                        if (r + 1 < safe_end) {
+                            sum += loadVec(src.data[(r - half + len) * src.stride + c ..].ptr) - first;
+                        }
+                    }
+                }
+
+                while (c < cols) : (c += 1) {
+                    var sum: AccumT = 0;
+                    for (0..len) |i| sum += promote(src.data[i * src.stride + c]);
+
+                    for (half..safe_end) |r| {
+                        const first = promote(src.data[(r - half) * src.stride + c]);
+                        dst.data[r * dst.stride + c] = store(k * sum + residual * first);
+                        if (r + 1 < safe_end) {
+                            sum += promote(src.data[(r - half + len) * src.stride + c]) - first;
+                        }
+                    }
+                }
+            }
+
+            const border_rows = [_][2]usize{
+                .{ 0, table.low_end },
+                .{ table.high_start, rows },
+            };
             for (border_rows) |range| {
                 for (range[0]..range[1]) |r| {
                     for (bases, table.taps(table.ordinalOf(r))) |*b, idx| {
