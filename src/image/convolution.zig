@@ -155,9 +155,10 @@ fn ConvolutionKernel(comptime T: type, comptime rows: usize, comptime cols: usiz
                 while (c + vec_len <= c_end) : (c += vec_len) {
                     var result_vecs: [n]@Vector(vec_len, AccumScalar) = @splat(@splat(0));
                     inline for (0..rows) |ky| {
-                        const maybe_base = row_offsets[ky];
-                        if (if (maybe_zero) maybe_base != null else true) {
-                            const base = if (maybe_zero) maybe_base.? else maybe_base;
+                        // Runtime `continue` is not allowed in an inline for; the wrapping
+                        // `if` folds away at comptime when `maybe_zero` is false.
+                        if (if (maybe_zero) row_offsets[ky] != null else true) {
+                            const base = if (maybe_zero) row_offsets[ky].? else row_offsets[ky];
                             inline for (0..cols) |kx| {
                                 const pixel_vec = Pixels.loadVec(src.data, base + c + kx - half_w);
                                 inline for (0..n) |i| {
@@ -175,9 +176,8 @@ fn ConvolutionKernel(comptime T: type, comptime rows: usize, comptime cols: usiz
             while (c < c_end) : (c += 1) {
                 var results: [n]AccumScalar = @splat(0);
                 inline for (0..rows) |ky| {
-                    const maybe_base = row_offsets[ky];
-                    if (if (maybe_zero) maybe_base != null else true) {
-                        const base = if (maybe_zero) maybe_base.? else maybe_base;
+                    if (if (maybe_zero) row_offsets[ky] != null else true) {
+                        const base = if (maybe_zero) row_offsets[ky].? else row_offsets[ky];
                         inline for (0..cols) |kx| {
                             const pixel_val = Pixels.load(src.data[base + c + kx - half_w]);
                             inline for (0..n) |i| {
@@ -382,23 +382,44 @@ inline fn isIdentityKernel(kernel: []const f32) bool {
     return kernel.len == 1 and kernel[0] == 1;
 }
 
-/// Single-axis separable pass straight src -> dst, used when the other axis is a 1-tap
-/// identity: no temp plane, and u8 results carry a single `fixed_point_scale` (exact —
-/// divTrunc(256*S ± 32768, 65536) == divTrunc(S ± 128, 256)).
-fn convolveSeparableSingle(
+/// Per-plane separable driver owning the strategy choice: identity axes skip their pass
+/// entirely (a u8 single pass carries one `fixed_point_scale`, exact because
+/// divTrunc(256*S ± 32768, 65536) == divTrunc(S ± 128, 256)), large planes take the fused
+/// ring path, everything else runs the standard two-pass over a temp plane.
+/// `cached_temp` lets struct-pixel callers reuse one temp allocation across planes.
+fn convolveSeparableAuto(
     comptime PixelT: type,
-    comptime vertical: bool,
-    image: Image(PixelT),
-    out: Image(PixelT),
+    comptime TempT: type,
+    src: Image(PixelT),
+    dst: Image(PixelT),
     allocator: Allocator,
-    kernel: []const (if (PixelT == u8) i32 else f32),
+    kernel_x: []const TempT,
+    kernel_y: []const TempT,
     border_mode: BorderMode,
+    cached_temp: ?*[]TempT,
 ) !void {
-    const Pass = SeparablePass(PixelT, PixelT, fixed_point_scale);
-    if (vertical) {
-        try Pass.vertical(image, out, allocator, kernel, border_mode);
+    // In TempT units a 1-tap identity is exactly `one` (1.0 quantizes to fixed_point_scale).
+    const one: TempT = if (TempT == i32) fixed_point_scale else 1;
+    const identity_x = kernel_x.len == 1 and kernel_x[0] == one;
+    const identity_y = kernel_y.len == 1 and kernel_y[0] == one;
+    const SinglePass = SeparablePass(PixelT, PixelT, if (PixelT == u8) fixed_point_scale else 1);
+
+    if (identity_x and identity_y) {
+        src.copy(dst);
+    } else if (identity_y) {
+        try SinglePass.horizontal(src, dst, allocator, kernel_x, border_mode);
+    } else if (identity_x) {
+        try SinglePass.vertical(src, dst, allocator, kernel_y, border_mode);
+    } else if (useFusedSeparable(TempT, src.rows, src.cols, kernel_y.len, border_mode)) {
+        try convolveSeparablePlaneFused(PixelT, TempT, src, dst, allocator, kernel_x, kernel_y, border_mode);
+    } else if (cached_temp) |temp_slot| {
+        if (temp_slot.len == 0) temp_slot.* = try allocator.alloc(TempT, @as(usize, src.rows) * src.cols);
+        const temp = Image(TempT).initFromSlice(src.rows, src.cols, temp_slot.*);
+        try convolveSeparablePlane(PixelT, TempT, src, dst, temp, allocator, kernel_x, kernel_y, border_mode);
     } else {
-        try Pass.horizontal(image, out, allocator, kernel, border_mode);
+        var temp = try Image(TempT).initLike(allocator, src);
+        defer temp.deinit(allocator);
+        try convolveSeparablePlane(PixelT, TempT, src, dst, temp, allocator, kernel_x, kernel_y, border_mode);
     }
 }
 
@@ -413,52 +434,21 @@ pub fn convolveSeparable(
     kernel_y: []const f32,
     border_mode: BorderMode,
 ) !void {
-    const identity_x = isIdentityKernel(kernel_x);
-    const identity_y = isIdentityKernel(kernel_y);
-    if (identity_x and identity_y) {
+    if (isIdentityKernel(kernel_x) and isIdentityKernel(kernel_y)) {
         image.copy(out);
         return;
     }
 
     switch (T) {
         u8 => {
-            if (identity_y) {
-                const kernel_x_int = try scaleKernelToInt(allocator, kernel_x);
-                defer allocator.free(kernel_x_int);
-                try convolveSeparableSingle(u8, false, image, out, allocator, kernel_x_int, border_mode);
-            } else if (identity_x) {
-                const kernel_y_int = try scaleKernelToInt(allocator, kernel_y);
-                defer allocator.free(kernel_y_int);
-                try convolveSeparableSingle(u8, true, image, out, allocator, kernel_y_int, border_mode);
-            } else {
-                const kernel_x_int = try scaleKernelToInt(allocator, kernel_x);
-                defer allocator.free(kernel_x_int);
-                const kernel_y_int = try scaleKernelToInt(allocator, kernel_y);
-                defer allocator.free(kernel_y_int);
+            const kernel_x_int = try scaleKernelToInt(allocator, kernel_x);
+            defer allocator.free(kernel_x_int);
+            const kernel_y_int = try scaleKernelToInt(allocator, kernel_y);
+            defer allocator.free(kernel_y_int);
 
-                if (useFusedSeparable(i32, image.rows, image.cols, kernel_y.len, border_mode)) {
-                    try convolveSeparablePlaneFused(u8, i32, image, out, allocator, kernel_x_int, kernel_y_int, border_mode);
-                } else {
-                    var temp = try Image(i32).initLike(allocator, image);
-                    defer temp.deinit(allocator);
-                    try convolveSeparablePlane(u8, i32, image, out, temp, allocator, kernel_x_int, kernel_y_int, border_mode);
-                }
-            }
+            try convolveSeparableAuto(u8, i32, image, out, allocator, kernel_x_int, kernel_y_int, border_mode, null);
         },
-        f32 => {
-            if (identity_y) {
-                try convolveSeparableSingle(f32, false, image, out, allocator, kernel_x, border_mode);
-            } else if (identity_x) {
-                try convolveSeparableSingle(f32, true, image, out, allocator, kernel_y, border_mode);
-            } else if (useFusedSeparable(f32, image.rows, image.cols, kernel_y.len, border_mode)) {
-                try convolveSeparablePlaneFused(f32, f32, image, out, allocator, kernel_x, kernel_y, border_mode);
-            } else {
-                var temp = try Image(T).initLike(allocator, image);
-                defer temp.deinit(allocator);
-
-                try convolveSeparablePlane(f32, f32, image, out, temp, allocator, kernel_x, kernel_y, border_mode);
-            }
-        },
+        f32 => try convolveSeparableAuto(f32, f32, image, out, allocator, kernel_x, kernel_y, border_mode, null),
         else => switch (@typeInfo(T)) {
             .@"struct" => {
                 if (comptime meta.allFieldsAreU8(T)) {
@@ -477,31 +467,13 @@ pub fn convolveSeparable(
                         allocator: Allocator,
                         kernel_x: []const i32,
                         kernel_y: []const i32,
-                        passes: enum { both, horizontal_only, vertical_only },
                         temp: []i32 = &.{},
 
                         fn convolvePlane(ctx: *@This(), src: Image(u8), dst: Image(u8), mode: BorderMode) !void {
-                            switch (ctx.passes) {
-                                .horizontal_only => try convolveSeparableSingle(u8, false, src, dst, ctx.allocator, ctx.kernel_x, mode),
-                                .vertical_only => try convolveSeparableSingle(u8, true, src, dst, ctx.allocator, ctx.kernel_y, mode),
-                                .both => {
-                                    if (useFusedSeparable(i32, src.rows, src.cols, ctx.kernel_y.len, mode)) {
-                                        try convolveSeparablePlaneFused(u8, i32, src, dst, ctx.allocator, ctx.kernel_x, ctx.kernel_y, mode);
-                                    } else {
-                                        if (ctx.temp.len == 0) ctx.temp = try ctx.allocator.alloc(i32, src.rows * src.cols);
-                                        const temp = Image(i32).initFromSlice(src.rows, src.cols, ctx.temp);
-                                        try convolveSeparablePlane(u8, i32, src, dst, temp, ctx.allocator, ctx.kernel_x, ctx.kernel_y, mode);
-                                    }
-                                },
-                            }
+                            try convolveSeparableAuto(u8, i32, src, dst, ctx.allocator, ctx.kernel_x, ctx.kernel_y, mode, &ctx.temp);
                         }
                     };
-                    var ctx: PlaneCtx = .{
-                        .allocator = allocator,
-                        .kernel_x = kernel_x_int,
-                        .kernel_y = kernel_y_int,
-                        .passes = if (identity_y) .horizontal_only else if (identity_x) .vertical_only else .both,
-                    };
+                    var ctx: PlaneCtx = .{ .allocator = allocator, .kernel_x = kernel_x_int, .kernel_y = kernel_y_int };
                     defer allocator.free(ctx.temp);
                     try convolvePlanes(T, image, out, allocator, kx_sum * ky_sum, fixed_point_scale_sq, border_mode, &ctx);
                 } else {
@@ -523,18 +495,15 @@ const BorderIndexTable = struct {
 
     indices: []usize,
     kernel_len: usize,
+    /// Border positions are [0, low_end) and [high_start, axis_len).
+    low_end: usize,
+    high_start: usize,
 
-    /// Border positions are [0, low_end) and [high_start, axis_len); callers must pass the
-    /// exact range bounds their loops use so table and loops cannot drift.
-    fn init(
-        allocator: Allocator,
-        axis_len: usize,
-        kernel_len: usize,
-        half: usize,
-        low_end: usize,
-        high_start: usize,
-        border_mode: BorderMode,
-    ) !BorderIndexTable {
+    fn init(allocator: Allocator, axis_len: usize, kernel_len: usize, border_mode: BorderMode) !BorderIndexTable {
+        const half = kernel_len / 2;
+        const low_end = @min(half, axis_len);
+        const high_start = if (axis_len > 2 * half) axis_len - half else low_end;
+
         const n_positions = low_end + (axis_len - high_start);
         const indices = try allocator.alloc(usize, n_positions * kernel_len);
         var w: usize = 0;
@@ -550,7 +519,7 @@ const BorderIndexTable = struct {
                 w += 1;
             }
         }
-        return .{ .indices = indices, .kernel_len = kernel_len };
+        return .{ .indices = indices, .kernel_len = kernel_len, .low_end = low_end, .high_start = high_start };
     }
 
     fn resolveTap(pos: usize, tap: usize, half: usize, axis_len: usize, border_mode: BorderMode) usize {
@@ -562,6 +531,11 @@ const BorderIndexTable = struct {
         allocator.free(self.indices);
     }
 
+    /// Table ordinal of a border position (low positions first, high positions after).
+    inline fn ordinalOf(self: BorderIndexTable, pos: usize) usize {
+        return if (pos < self.low_end) pos else self.low_end + (pos - self.high_start);
+    }
+
     inline fn taps(self: BorderIndexTable, ordinal: usize) []const usize {
         return self.indices[ordinal * self.kernel_len ..][0..self.kernel_len];
     }
@@ -569,8 +543,12 @@ const BorderIndexTable = struct {
 
 /// One direction of a separable convolution with load/store policies derived from the
 /// source and destination scalar types. `dst_scale` is the fixed-point divisor applied
-/// when storing to u8 (unused for i32/f32 destinations).
+/// when storing to u8; pass 1 for i32/f32 destinations.
 fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime dst_scale: comptime_int) type {
+    if (DstT != u8 and dst_scale != 1) {
+        @compileError("dst_scale only applies to u8 destinations");
+    }
+
     return struct {
         const KernelT = if (SrcT == f32 or DstT == f32) f32 else i32;
         const AccumT = if (KernelT == f32) f32 else i64;
@@ -592,7 +570,7 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime dst_scale: c
         inline fn store(val: AccumT) DstT {
             return switch (DstT) {
                 u8 => divClampU8(dst_scale, val),
-                i32 => @intCast(meta.clamp(i32, val)),
+                i32 => meta.clamp(i32, val),
                 f32 => val,
                 else => unreachable,
             };
@@ -624,13 +602,13 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime dst_scale: c
         }
 
         /// One row of the horizontal pass into a caller-provided contiguous row buffer.
-        fn horizontalRow(src: Image(SrcT), dst_row: []DstT, r: usize, kernel: []const KernelT, table: BorderIndexTable, left_end: usize, right_start: usize) void {
+        fn horizontalRow(src: Image(SrcT), dst_row: []DstT, r: usize, kernel: []const KernelT, table: BorderIndexTable) void {
             const half = kernel.len / 2;
             const cols = src.cols;
             const src_offset = r * src.stride;
             var c: usize = 0;
 
-            while (c < left_end) : (c += 1) {
+            while (c < table.low_end) : (c += 1) {
                 dst_row[c] = store(borderPixelResolved(src, kernel, table.taps(c), src_offset));
             }
 
@@ -662,22 +640,18 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime dst_scale: c
             }
 
             while (c < cols) : (c += 1) {
-                dst_row[c] = store(borderPixelResolved(src, kernel, table.taps(left_end + (c - right_start)), src_offset));
+                dst_row[c] = store(borderPixelResolved(src, kernel, table.taps(table.ordinalOf(c)), src_offset));
             }
         }
 
         /// Row-major 1D pass along columns (src -> dst).
         fn horizontal(src: Image(SrcT), dst: Image(DstT), allocator: Allocator, kernel: []const KernelT, border_mode: BorderMode) !void {
-            const half = kernel.len / 2;
             const cols = src.cols;
-            const left_end = @min(half, cols);
-            const right_start = if (cols > 2 * half) cols - half else left_end;
-
-            const table: BorderIndexTable = try .init(allocator, cols, kernel.len, half, left_end, right_start, border_mode);
+            const table: BorderIndexTable = try .init(allocator, cols, kernel.len, border_mode);
             defer table.deinit(allocator);
 
             for (0..src.rows) |r| {
-                horizontalRow(src, dst.data[r * dst.stride ..][0..cols], r, kernel, table, left_end, right_start);
+                horizontalRow(src, dst.data[r * dst.stride ..][0..cols], r, kernel, table);
             }
         }
 
@@ -766,47 +740,24 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime dst_scale: c
                 }
             }
 
-            // Top and bottom border rows: row taps resolved once per row, then SIMD across
-            // columns (each lane accumulates in the same tap order as the scalar loop).
-            const top_end = @min(half, rows);
-            const bottom_start = if (rows > half) @max(top_end, rows - half) else rows;
-
-            const table: BorderIndexTable = try .init(allocator, rows, kernel.len, half, top_end, bottom_start, border_mode);
+            // Top and bottom border rows: row taps resolved once per row, then combined with
+            // the same per-row machinery the fused path uses.
+            const table: BorderIndexTable = try .init(allocator, rows, kernel.len, border_mode);
             defer table.deinit(allocator);
+            const bases = try allocator.alloc(usize, kernel.len);
+            defer allocator.free(bases);
 
             const border_rows = [_][2]usize{
-                .{ 0, top_end },
-                .{ bottom_start, rows },
+                .{ 0, table.low_end },
+                .{ table.high_start, rows },
             };
 
             for (border_rows) |range| {
                 for (range[0]..range[1]) |r| {
-                    const ordinal = if (r < top_end) r else top_end + (r - bottom_start);
-                    const tap_idx = table.taps(ordinal);
-                    const dst_offset = r * dst.stride;
-                    var c: usize = 0;
-
-                    while (c + vec_len <= cols) : (c += vec_len) {
-                        var acc: @Vector(vec_len, AccumT) = @splat(0);
-                        for (kernel, tap_idx) |k, idx| {
-                            const vec: @Vector(vec_len, AccumT) = if (idx == BorderIndexTable.zero_sentinel)
-                                @splat(0)
-                            else
-                                loadVec(src.data[idx * src.stride + c ..].ptr);
-                            const k_vec: @Vector(vec_len, AccumT) = @splat(promote(k));
-                            acc += vec * k_vec;
-                        }
-                        storeVec(acc, dst.data[dst_offset + c ..].ptr);
+                    for (bases, table.taps(table.ordinalOf(r))) |*b, idx| {
+                        b.* = if (idx == BorderIndexTable.zero_sentinel) idx else idx * src.stride;
                     }
-
-                    while (c < cols) : (c += 1) {
-                        var result: AccumT = 0;
-                        for (kernel, tap_idx) |k, idx| {
-                            const pv: SrcT = if (idx == BorderIndexTable.zero_sentinel) 0 else src.data[idx * src.stride + c];
-                            result += promote(pv) * promote(k);
-                        }
-                        dst.data[dst_offset + c] = store(result);
-                    }
+                    verticalRowFromBases(true, src.data, bases, dst, r, kernel);
                 }
             }
         }
@@ -840,23 +791,17 @@ fn convolveSeparablePlaneFused(
     kernel_y: []const TempT,
     border_mode: BorderMode,
 ) !void {
-    const HPass = SeparablePass(PixelT, TempT, fixed_point_scale_sq);
-    const VPass = SeparablePass(TempT, PixelT, fixed_point_scale_sq);
+    const HPass = SeparablePass(PixelT, TempT, 1);
+    const VPass = SeparablePass(TempT, PixelT, if (PixelT == u8) fixed_point_scale_sq else 1);
 
     const rows = src_img.rows;
     const cols = src_img.cols;
     const klen_y = kernel_y.len;
     const half_y = klen_y / 2;
-    const half_x = kernel_x.len / 2;
 
-    const left_end = @min(half_x, cols);
-    const right_start = if (cols > 2 * half_x) cols - half_x else left_end;
-    const h_table: BorderIndexTable = try .init(allocator, cols, kernel_x.len, half_x, left_end, right_start, border_mode);
+    const h_table: BorderIndexTable = try .init(allocator, cols, kernel_x.len, border_mode);
     defer h_table.deinit(allocator);
-
-    const top_end = @min(half_y, rows);
-    const bottom_start = if (rows > half_y) @max(top_end, rows - half_y) else rows;
-    const v_table: BorderIndexTable = try .init(allocator, rows, klen_y, half_y, top_end, bottom_start, border_mode);
+    const v_table: BorderIndexTable = try .init(allocator, rows, klen_y, border_mode);
     defer v_table.deinit(allocator);
 
     // Temp row `tr` always lives in ring slot `tr % klen_y`.
@@ -867,7 +812,7 @@ fn convolveSeparablePlaneFused(
 
     var produced: usize = @min(klen_y, rows);
     for (0..produced) |tr| {
-        HPass.horizontalRow(src_img, ring[(tr % klen_y) * cols ..][0..cols], tr, kernel_x, h_table, left_end, right_start);
+        HPass.horizontalRow(src_img, ring[(tr % klen_y) * cols ..][0..cols], tr, kernel_x, h_table);
     }
 
     for (0..rows) |r| {
@@ -875,20 +820,19 @@ fn convolveSeparablePlaneFused(
             // Highest temp row this output row taps (klen_y - 1 - half_y above r).
             const need = r + klen_y - 1 - half_y;
             while (produced <= need) : (produced += 1) {
-                HPass.horizontalRow(src_img, ring[(produced % klen_y) * cols ..][0..cols], produced, kernel_x, h_table, left_end, right_start);
+                HPass.horizontalRow(src_img, ring[(produced % klen_y) * cols ..][0..cols], produced, kernel_x, h_table);
             }
             for (bases, 0..) |*b, i| b.* = ((r + i - half_y) % klen_y) * cols;
             VPass.verticalRowFromBases(false, ring, bases, dst_img, r, kernel_y);
         } else {
             // Bottom border rows read the final window; make sure it is complete. Top
             // border rows only tap the initial window, which prefill already produced.
-            if (r >= bottom_start) {
+            if (r >= v_table.high_start) {
                 while (produced < rows) : (produced += 1) {
-                    HPass.horizontalRow(src_img, ring[(produced % klen_y) * cols ..][0..cols], produced, kernel_x, h_table, left_end, right_start);
+                    HPass.horizontalRow(src_img, ring[(produced % klen_y) * cols ..][0..cols], produced, kernel_x, h_table);
                 }
             }
-            const ordinal = if (r < top_end) r else top_end + (r - bottom_start);
-            for (bases, v_table.taps(ordinal)) |*b, resolved| {
+            for (bases, v_table.taps(v_table.ordinalOf(r))) |*b, resolved| {
                 b.* = if (resolved == BorderIndexTable.zero_sentinel)
                     BorderIndexTable.zero_sentinel
                 else
@@ -897,6 +841,22 @@ fn convolveSeparablePlaneFused(
             VPass.verticalRowFromBases(true, ring, bases, dst_img, r, kernel_y);
         }
     }
+}
+
+/// Uses i64 accumulators for i32 intermediates to prevent overflow during the second pass.
+fn convolveSeparablePlane(
+    comptime PixelT: type,
+    comptime TempT: type,
+    src_img: Image(PixelT),
+    dst_img: Image(PixelT),
+    temp_img: Image(TempT),
+    allocator: Allocator,
+    kernel_x: []const TempT,
+    kernel_y: []const TempT,
+    border_mode: BorderMode,
+) !void {
+    try SeparablePass(PixelT, TempT, 1).horizontal(src_img, temp_img, allocator, kernel_x, border_mode);
+    try SeparablePass(TempT, PixelT, if (PixelT == u8) fixed_point_scale_sq else 1).vertical(temp_img, dst_img, allocator, kernel_y, border_mode);
 }
 
 test "fused separable matches standard path" {
@@ -935,20 +895,4 @@ test "fused separable matches standard path" {
             }
         }
     }
-}
-
-/// Uses i64 accumulators for i32 intermediates to prevent overflow during the second pass.
-fn convolveSeparablePlane(
-    comptime PixelT: type,
-    comptime TempT: type,
-    src_img: Image(PixelT),
-    dst_img: Image(PixelT),
-    temp_img: Image(TempT),
-    allocator: Allocator,
-    kernel_x: []const TempT,
-    kernel_y: []const TempT,
-    border_mode: BorderMode,
-) !void {
-    try SeparablePass(PixelT, TempT, fixed_point_scale_sq).horizontal(src_img, temp_img, allocator, kernel_x, border_mode);
-    try SeparablePass(TempT, PixelT, fixed_point_scale_sq).vertical(temp_img, dst_img, allocator, kernel_y, border_mode);
 }
