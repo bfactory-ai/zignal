@@ -39,11 +39,12 @@ const TwoLevelColumn = struct {
     }
 };
 
-/// Selects the value of the given rank from the sliding window: locate the coarse
-/// bucket (<=16 scalar steps), rebuild only that bucket's fine row from the window's
-/// columns (one 16-lane add per column), then scan its 16 bins. Mirrors the cumulative
-/// scan of `stats.percentileWithTotal` exactly.
-fn selectRank(rank: usize, coarse_win: Vec16, window_cols: []const *const TwoLevelColumn) u8 {
+const BucketSel = struct { bucket: usize, cum: u32 };
+
+/// Locates the coarse bucket containing `rank` (<=16 scalar steps) and the cumulative
+/// count below it. Together with `scanFine` this mirrors the cumulative scan of
+/// `stats.percentileWithTotal` exactly.
+inline fn pickBucket(rank: usize, coarse_win: Vec16) BucketSel {
     const coarse: [16]u16 = coarse_win;
     var cum: u32 = 0;
     var bucket: usize = 0;
@@ -52,11 +53,20 @@ fn selectRank(rank: usize, coarse_win: Vec16, window_cols: []const *const TwoLev
         cum += coarse[bucket];
     }
     std.debug.assert(bucket < 16);
+    return .{ .bucket = bucket, .cum = cum };
+}
 
+/// Full rebuild of one bucket's fine row: one 16-lane add per window column.
+inline fn buildFineRow(bucket: usize, window_cols: []const *const TwoLevelColumn) Vec16 {
     var fine_vec: Vec16 = @splat(0);
     for (window_cols) |col| fine_vec += @as(Vec16, col.fine[bucket]);
-    const fine: [16]u16 = fine_vec;
+    return fine_vec;
+}
 
+/// Scans the bucket's 16 fine bins, continuing the cumulative count from `pickBucket`.
+inline fn scanFine(rank: usize, cum_below: u32, bucket: usize, fine_win: Vec16) u8 {
+    const fine: [16]u16 = fine_win;
+    var cum = cum_below;
     var sub: usize = 0;
     while (sub < 16) : (sub += 1) {
         cum += fine[sub];
@@ -68,8 +78,9 @@ fn selectRank(rank: usize, coarse_win: Vec16, window_cols: []const *const TwoLev
 
 /// Constant-rank order-statistic filter over two-level histograms. Same window,
 /// border, and rank semantics as the flat path (bit-identical results), but the
-/// per-pixel cost is ~2 coarse vector ops + one fine-row rebuild instead of two
-/// 256-bin merges and a 256-bin scan.
+/// per-pixel cost is ~2 coarse vector ops + 2 fine vector ops: the fine row of the
+/// selected bucket is maintained incrementally alongside the coarse window and only
+/// rebuilt (O(window)) when the selected bucket changes between adjacent pixels.
 fn applyScalarOpTwoLevel(
     image: Image(u8),
     allocator: Allocator,
@@ -117,15 +128,35 @@ fn applyScalarOpTwoLevel(
     }
 
     for (0..rows) |row| {
+        // The fine-row cache is per-row: the vertical slide below mutates the column
+        // histograms, so it must not survive across rows.
         var coarse_win: Vec16 = @splat(0);
         for (col_ptrs[0..window]) |ptr| coarse_win += @as(Vec16, ptr.coarse);
 
-        target.at(row, 0).* = selectRank(rank, coarse_win, col_ptrs[0..window]);
+        var sel = pickBucket(rank, coarse_win);
+        var cached_bucket = sel.bucket;
+        var fine_win = buildFineRow(cached_bucket, col_ptrs[0..window]);
+        target.at(row, 0).* = scanFine(rank, sel.cum, cached_bucket, fine_win);
 
         for (1..cols) |col| {
-            coarse_win -= @as(Vec16, col_ptrs[col - 1].coarse);
-            coarse_win += @as(Vec16, col_ptrs[col + window - 1].coarse);
-            target.at(row, col).* = selectRank(rank, coarse_win, col_ptrs[col .. col + window]);
+            const leaving = col_ptrs[col - 1];
+            const entering = col_ptrs[col + window - 1];
+            coarse_win -= @as(Vec16, leaving.coarse);
+            coarse_win += @as(Vec16, entering.coarse);
+            // Unconditional: fine_win must track the window for cached_bucket on
+            // every slide, even when the bucket changes below, or the cache goes
+            // stale. The leaving column's row is contained in fine_win by this
+            // invariant, so the lane-wise subtraction cannot underflow.
+            fine_win -= @as(Vec16, leaving.fine[cached_bucket]);
+            fine_win += @as(Vec16, entering.fine[cached_bucket]);
+
+            sel = pickBucket(rank, coarse_win);
+            if (sel.bucket != cached_bucket) {
+                cached_bucket = sel.bucket;
+                fine_win = buildFineRow(cached_bucket, col_ptrs[col .. col + window]);
+            }
+            std.debug.assert(@reduce(.Add, fine_win) == @as([16]u16, coarse_win)[cached_bucket]);
+            target.at(row, col).* = scanFine(rank, sel.cum, cached_bucket, fine_win);
         }
 
         if (row + 1 == rows) break;
@@ -508,8 +539,8 @@ test "two-level rank filter matches flat histogram path" {
     var prng = std.Random.DefaultPrng.init(0x9E3779B97F4A7C15);
     const random = prng.random();
 
-    const sizes = [_][2]u32{ .{ 1, 1 }, .{ 1, 9 }, .{ 9, 1 }, .{ 5, 5 }, .{ 24, 17 } };
-    const radii = [_]usize{ 1, 2, 4, 9 };
+    const sizes = [_][2]u32{ .{ 1, 1 }, .{ 1, 9 }, .{ 9, 1 }, .{ 5, 5 }, .{ 24, 17 }, .{ 40, 70 } };
+    const radii = [_]usize{ 1, 2, 4, 9, 15, 31 };
     const borders = [_]BorderMode{ .zero, .mirror, .replicate, .wrap };
     const percentiles = [_]f64{ 0.0, 0.13, 0.5, 0.77, 1.0 };
 
@@ -526,6 +557,40 @@ test "two-level rank filter matches flat histogram path" {
         for (radii) |radius| {
             for (borders) |mode| {
                 for (percentiles) |p| {
+                    const window = radius * 2 + 1;
+                    const flat_reducer = PercentileReducer{ .percentile = p };
+                    try applyScalarOpFlat(img, allocator, radius, flat, mode, flat_reducer);
+                    try applyScalarOpTwoLevel(img, allocator, radius, two, mode, flat_reducer.rankFor(window * window));
+                    try testing.expectEqualSlices(u8, flat.data, two.data);
+                }
+            }
+        }
+    }
+
+    // Adversarial fills for the fine-row cache: constant (maximum reuse), alternating
+    // stripes (the selected bucket flips on every slide, exercising the unconditional
+    // slide-update invariant), and a horizontal ramp (adjacent-bucket transitions).
+    for (0..3) |pattern| {
+        var img = try Image(u8).init(allocator, 24, 33);
+        defer img.deinit(allocator);
+        for (0..img.rows) |r| {
+            for (0..img.cols) |c| {
+                img.at(r, c).* = switch (pattern) {
+                    0 => 128,
+                    1 => if (c % 2 == 0) 0 else 255,
+                    else => @intCast((c * 255) / (img.cols - 1)),
+                };
+            }
+        }
+
+        var flat = try Image(u8).initLike(allocator, img);
+        defer flat.deinit(allocator);
+        var two = try Image(u8).initLike(allocator, img);
+        defer two.deinit(allocator);
+
+        for ([_]usize{ 2, 9 }) |radius| {
+            for ([_]BorderMode{ .mirror, .zero }) |mode| {
+                for ([_]f64{ 0.0, 0.5, 1.0 }) |p| {
                     const window = radius * 2 + 1;
                     const flat_reducer = PercentileReducer{ .percentile = p };
                     try applyScalarOpFlat(img, allocator, radius, flat, mode, flat_reducer);
