@@ -76,7 +76,7 @@ fn applyScalarOpTwoLevel(
     radius: usize,
     out: Image(u8),
     border: BorderMode,
-    percentile: f64,
+    rank: usize,
 ) !void {
     // Aliasing is resolved by the public entry points (percentileBlur et al).
     std.debug.assert(out.data.ptr != image.data.ptr);
@@ -116,9 +116,6 @@ fn applyScalarOpTwoLevel(
             &zero_col;
     }
 
-    // Population is always window^2, so the rank is constant for the whole plane.
-    const rank = percentileRank(percentile, window * window);
-
     for (0..rows) |row| {
         var coarse_win: Vec16 = @splat(0);
         for (col_ptrs[0..window]) |ptr| coarse_win += @as(Vec16, ptr.coarse);
@@ -150,10 +147,13 @@ fn applyScalarOp(
     border: BorderMode,
     reducer_in: anytype,
 ) !void {
-    // Rank selection (median/percentile/min/max) takes the two-level fast path;
-    // u16 counts require window <= 255 (larger radii keep the flat u32 path).
-    if (@TypeOf(reducer_in) == PercentileReducer and radius * 2 + 1 <= TwoLevelColumn.max_window) {
-        return applyScalarOpTwoLevel(image, allocator, radius, out, border, reducer_in.percentile);
+    // Reducers expressible as a constant rank over the window (median/percentile/
+    // min/max) declare rankFor and take the two-level fast path; u16 counts require
+    // window <= 255 (larger radii keep the flat u32 path). The population is always
+    // window^2, so the rank is constant for the whole plane.
+    const window = radius * 2 + 1;
+    if (@hasDecl(@TypeOf(reducer_in), "rankFor") and window <= TwoLevelColumn.max_window) {
+        return applyScalarOpTwoLevel(image, allocator, radius, out, border, reducer_in.rankFor(window * window));
     }
     return applyScalarOpFlat(image, allocator, radius, out, border, reducer_in);
 }
@@ -271,6 +271,12 @@ const PercentileReducer = struct {
 
     fn compute(self: *const @This(), hist: *const Histogram(u8), area: usize) Error!u8 {
         return hist.percentileFractionWithTotal(self.percentile, area);
+    }
+
+    /// Declares this reducer rank-expressible: the two-level path serves it as a
+    /// constant-rank selection over the window population.
+    fn rankFor(self: @This(), population: usize) usize {
+        return percentileRank(self.percentile, population);
     }
 };
 
@@ -526,9 +532,10 @@ test "two-level rank filter matches flat histogram path" {
         for (radii) |radius| {
             for (borders) |mode| {
                 for (percentiles) |p| {
+                    const window = radius * 2 + 1;
                     const flat_reducer = PercentileReducer{ .percentile = p };
                     try applyScalarOpFlat(img, allocator, radius, flat, mode, flat_reducer);
-                    try applyScalarOpTwoLevel(img, allocator, radius, two, mode, p);
+                    try applyScalarOpTwoLevel(img, allocator, radius, two, mode, flat_reducer.rankFor(window * window));
                     try testing.expectEqualSlices(u8, flat.data, two.data);
                 }
             }
