@@ -1261,5 +1261,6 @@ test {
     _ = @import("image/colormaps.zig");
     _ = @import("image/border.zig");
     _ = @import("image/convolution.zig");
+    _ = @import("image/order_statistic_blur.zig");
     _ = @import("image/tests/flood_fill.zig");
 }
