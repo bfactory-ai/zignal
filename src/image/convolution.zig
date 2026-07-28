@@ -887,6 +887,28 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime dst_scale: c
                     var sum: AccumT = 0;
                     for (0..len) |i| sum += promote(src.data[src_offset + c - half + i]);
 
+                    if (AccumT == i32 and SrcT == u8) {
+                        // The serial running sum vectorizes as an exclusive prefix sum of
+                        // window deltas (exact integers -> identical to the scalar loop).
+                        const k_vec: @Vector(vec_len, AccumT) = @splat(k);
+                        const r_vec: @Vector(vec_len, AccumT) = @splat(residual);
+                        // The last slide delta reads src[c + vec_len - 1 - half + len],
+                        // hence the +1 in the bound.
+                        while (c + vec_len + 1 <= interior_end) : (c += vec_len) {
+                            const firsts = loadVec(src.data[src_offset + c - half ..].ptr);
+                            const highs = loadVec(src.data[src_offset + c - half + len ..].ptr);
+                            var deltas = highs - firsts;
+                            comptime var step = 1;
+                            inline while (step < vec_len) : (step *= 2) {
+                                deltas += std.simd.shiftElementsRight(deltas, step, 0);
+                            }
+                            const w_vec = @as(@Vector(vec_len, AccumT), @splat(sum)) +
+                                std.simd.shiftElementsRight(deltas, 1, 0);
+                            storeVec(k_vec * w_vec + r_vec * firsts, dst.data[dst_offset + c ..].ptr);
+                            sum += deltas[vec_len - 1];
+                        }
+                    }
+
                     while (c < interior_end) : (c += 1) {
                         const first = promote(src.data[src_offset + c - half]);
                         dst.data[dst_offset + c] = store(k * sum + residual * first);
