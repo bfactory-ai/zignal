@@ -14,27 +14,29 @@ const fixed_point_scale: comptime_int = 256;
 /// Squared scale for two-pass (separable) u8 convolutions.
 const fixed_point_scale_sq: comptime_int = fixed_point_scale * fixed_point_scale;
 
-/// Symmetric-rounding divide by `scale` followed by clamp to u8.
-inline fn divClampU8(comptime scale: comptime_int, accum: i64) u8 {
-    const half: i64 = scale / 2;
-    const rounded = @divTrunc(accum + (if (accum >= 0) half else -half), scale);
-    return meta.clamp(u8, rounded);
+/// Symmetric-rounding divide by the power-of-two `scale` followed by clamp to u8.
+/// `(accum + half) >> shift` is bit-identical to the symmetric `@divTrunc` form after
+/// clamping: for accum >= 0 both are floor((accum + half) / scale); for accum < 0 the two
+/// may differ by one but are both <= 0, so the clamp maps them to 0 either way.
+inline fn divClampU8(comptime scale: comptime_int, accum: anytype) u8 {
+    const T = @TypeOf(accum);
+    const shift: std.math.Log2Int(T) = comptime std.math.log2_int(u32, scale);
+    return @intCast(std.math.clamp((accum + (scale / 2)) >> shift, 0, 255));
 }
 
 /// SIMD variant of `divClampU8`.
 inline fn divClampU8Vec(
     comptime scale: comptime_int,
     comptime N: usize,
-    accum: @Vector(N, i64),
+    accum: anytype,
 ) @Vector(N, u8) {
-    const half_vec: @Vector(N, i64) = @splat(scale / 2);
-    const neg_half_vec: @Vector(N, i64) = @splat(-scale / 2);
-    const zero_vec: @Vector(N, i64) = @splat(0);
-    const scale_vec: @Vector(N, i64) = @splat(scale);
-    const max_vec: @Vector(N, i64) = @splat(255);
-    const rounding = @select(i64, accum >= zero_vec, half_vec, neg_half_vec);
-    const rounded = @divTrunc(accum + rounding, scale_vec);
-    return @intCast(@max(zero_vec, @min(max_vec, rounded)));
+    const T = @typeInfo(@TypeOf(accum)).vector.child;
+    const half_vec: @Vector(N, T) = @splat(scale / 2);
+    const shift_vec: @Vector(N, std.math.Log2Int(T)) = @splat(comptime std.math.log2_int(u32, scale));
+    const zero_vec: @Vector(N, T) = @splat(0);
+    const max_vec: @Vector(N, T) = @splat(255);
+    const shifted = (accum + half_vec) >> shift_vec;
+    return @intCast(@max(zero_vec, @min(max_vec, shifted)));
 }
 
 /// Quantizes an f32 kernel weight to `fixed_point_scale` fixed-point.
@@ -48,7 +50,9 @@ fn PixelIO(comptime T: type, comptime vec_len: usize, comptime scale: comptime_i
     }
 
     return struct {
-        const Scalar = if (T == u8) i64 else f32;
+        // i32 is safe for any u8 2D kernel: |accum| <= 255 * sum|k| stays within i32 for
+        // kernel magnitude sums up to ~8.4M fixed-point units (~32k in weight units).
+        const Scalar = if (T == u8) i32 else f32;
 
         inline fn load(value: T) Scalar {
             return value;
@@ -88,7 +92,7 @@ fn ConvolutionKernel(comptime T: type, comptime rows: usize, comptime cols: usiz
         const half_w = cols / 2;
 
         const KernelScalar = if (T == u8) i32 else f32;
-        const AccumScalar = if (T == u8) i64 else f32;
+        const AccumScalar = if (T == u8) i32 else f32;
 
         const vec_len = std.simd.suggestVectorLength(AccumScalar) orelse 1;
 
@@ -387,9 +391,47 @@ inline fn isIdentityKernel(kernel: []const f32) bool {
 /// divTrunc(256*S ± 32768, 65536) == divTrunc(S ± 128, 256)), large planes take the fused
 /// ring path, everything else runs the standard two-pass over a temp plane.
 /// `cached_temp` lets struct-pixel callers reuse one temp allocation across planes.
+/// True when i32 accumulators cannot overflow for these quantized kernels: the horizontal
+/// pass is bounded by 255*sum|kx| and the vertical pass by 255*sum|kx|*sum|ky|, with
+/// `fixed_point_scale_sq` of margin for the rounding half added before the final divide.
+/// Any normalized blur kernel passes by a factor of >100.
+fn narrowAccumFits(kernel_x: []const i32, kernel_y: []const i32) bool {
+    var sx: i64 = 0;
+    for (kernel_x) |k| sx += @abs(k);
+    var sy: i64 = 0;
+    for (kernel_y) |k| sy += @abs(k);
+    const limit = std.math.maxInt(i32) - fixed_point_scale_sq;
+    return 255 * sx <= limit and 255 * sx * sy <= limit;
+}
+
 fn convolveSeparableAuto(
     comptime PixelT: type,
     comptime TempT: type,
+    src: Image(PixelT),
+    dst: Image(PixelT),
+    allocator: Allocator,
+    kernel_x: []const TempT,
+    kernel_y: []const TempT,
+    border_mode: BorderMode,
+    cached_temp: ?*[]TempT,
+) !void {
+    // i32 accumulators run 8 real SIMD lanes; i64 halves throughput on AVX2 (emulated
+    // multiplies), so it is kept only as the overflow fallback for pathological kernels.
+    if (TempT == i32 and !narrowAccumFits(kernel_x, kernel_y)) {
+        return convolveSeparableAutoImpl(PixelT, TempT, i64, src, dst, allocator, kernel_x, kernel_y, border_mode, cached_temp);
+    }
+    return convolveSeparableAutoImpl(PixelT, TempT, i32, src, dst, allocator, kernel_x, kernel_y, border_mode, cached_temp);
+}
+
+/// Per-plane separable driver owning the strategy choice: identity axes skip their pass
+/// entirely (a u8 single pass carries one `fixed_point_scale`, exact because
+/// divTrunc(256*S ± 32768, 65536) == divTrunc(S ± 128, 256)), large planes take the fused
+/// ring path, everything else runs the standard two-pass over a temp plane.
+/// `cached_temp` lets struct-pixel callers reuse one temp allocation across planes.
+fn convolveSeparableAutoImpl(
+    comptime PixelT: type,
+    comptime TempT: type,
+    comptime AccumIntT: type,
     src: Image(PixelT),
     dst: Image(PixelT),
     allocator: Allocator,
@@ -402,7 +444,7 @@ fn convolveSeparableAuto(
     const one: TempT = if (TempT == i32) fixed_point_scale else 1;
     const identity_x = kernel_x.len == 1 and kernel_x[0] == one;
     const identity_y = kernel_y.len == 1 and kernel_y[0] == one;
-    const SinglePass = SeparablePass(PixelT, PixelT, if (PixelT == u8) fixed_point_scale else 1);
+    const SinglePass = SeparablePass(PixelT, PixelT, if (PixelT == u8) fixed_point_scale else 1, AccumIntT);
 
     if (identity_x and identity_y) {
         src.copy(dst);
@@ -411,15 +453,15 @@ fn convolveSeparableAuto(
     } else if (identity_x) {
         try SinglePass.vertical(src, dst, allocator, kernel_y, border_mode);
     } else if (useFusedSeparable(TempT, src.rows, src.cols, kernel_y.len, border_mode)) {
-        try convolveSeparablePlaneFused(PixelT, TempT, src, dst, allocator, kernel_x, kernel_y, border_mode);
+        try convolveSeparablePlaneFused(PixelT, TempT, AccumIntT, src, dst, allocator, kernel_x, kernel_y, border_mode);
     } else if (cached_temp) |temp_slot| {
         if (temp_slot.len == 0) temp_slot.* = try allocator.alloc(TempT, @as(usize, src.rows) * src.cols);
         const temp = Image(TempT).initFromSlice(src.rows, src.cols, temp_slot.*);
-        try convolveSeparablePlane(PixelT, TempT, src, dst, temp, allocator, kernel_x, kernel_y, border_mode);
+        try convolveSeparablePlane(PixelT, TempT, AccumIntT, src, dst, temp, allocator, kernel_x, kernel_y, border_mode);
     } else {
         var temp = try Image(TempT).initLike(allocator, src);
         defer temp.deinit(allocator);
-        try convolveSeparablePlane(PixelT, TempT, src, dst, temp, allocator, kernel_x, kernel_y, border_mode);
+        try convolveSeparablePlane(PixelT, TempT, AccumIntT, src, dst, temp, allocator, kernel_x, kernel_y, border_mode);
     }
 }
 
@@ -543,15 +585,19 @@ const BorderIndexTable = struct {
 
 /// One direction of a separable convolution with load/store policies derived from the
 /// source and destination scalar types. `dst_scale` is the fixed-point divisor applied
-/// when storing to u8; pass 1 for i32/f32 destinations.
-fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime dst_scale: comptime_int) type {
+/// when storing to u8; pass 1 for i32/f32 destinations. `AccumIntT` selects the integer
+/// accumulator width (i32 when `narrowAccumFits`, else i64); ignored for f32 passes.
+fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime dst_scale: comptime_int, comptime AccumIntT: type) type {
     if (DstT != u8 and dst_scale != 1) {
         @compileError("dst_scale only applies to u8 destinations");
+    }
+    if (AccumIntT != i32 and AccumIntT != i64) {
+        @compileError("AccumIntT must be i32 or i64");
     }
 
     return struct {
         const KernelT = if (SrcT == f32 or DstT == f32) f32 else i32;
-        const AccumT = if (KernelT == f32) f32 else i64;
+        const AccumT = if (KernelT == f32) f32 else AccumIntT;
         const vec_len = std.simd.suggestVectorLength(KernelT) orelse 1;
 
         inline fn isNegligible(k: KernelT) bool {
@@ -559,7 +605,7 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime dst_scale: c
         }
 
         inline fn promote(v: anytype) if (@typeInfo(@TypeOf(v)) == .vector) @Vector(vec_len, AccumT) else AccumT {
-            return if (AccumT == i64) @intCast(v) else v;
+            return if (AccumT == f32) v else @intCast(v);
         }
 
         inline fn loadVec(ptr: [*]const SrcT) @Vector(vec_len, AccumT) {
@@ -569,8 +615,9 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime dst_scale: c
 
         inline fn store(val: AccumT) DstT {
             return switch (DstT) {
+                // The narrow accumulator is in i32 range by the narrowAccumFits guard.
                 u8 => divClampU8(dst_scale, val),
-                i32 => meta.clamp(i32, val),
+                i32 => if (AccumT == i32) val else meta.clamp(i32, val),
                 f32 => val,
                 else => unreachable,
             };
@@ -579,7 +626,9 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime dst_scale: c
         inline fn storeVec(val: @Vector(vec_len, AccumT), ptr: [*]DstT) void {
             switch (DstT) {
                 u8 => ptr[0..vec_len].* = divClampU8Vec(dst_scale, vec_len, val),
-                i32 => {
+                i32 => if (AccumT == i32) {
+                    ptr[0..vec_len].* = val;
+                } else {
                     const min_vec: @Vector(vec_len, i64) = @splat(std.math.minInt(i32));
                     const max_vec: @Vector(vec_len, i64) = @splat(std.math.maxInt(i32));
                     const narrowed: @Vector(vec_len, i32) = @intCast(@max(min_vec, @min(max_vec, val)));
@@ -784,6 +833,7 @@ fn useFusedSeparable(comptime TempT: type, rows: usize, cols: usize, kernel_y_le
 fn convolveSeparablePlaneFused(
     comptime PixelT: type,
     comptime TempT: type,
+    comptime AccumIntT: type,
     src_img: Image(PixelT),
     dst_img: Image(PixelT),
     allocator: Allocator,
@@ -791,8 +841,8 @@ fn convolveSeparablePlaneFused(
     kernel_y: []const TempT,
     border_mode: BorderMode,
 ) !void {
-    const HPass = SeparablePass(PixelT, TempT, 1);
-    const VPass = SeparablePass(TempT, PixelT, if (PixelT == u8) fixed_point_scale_sq else 1);
+    const HPass = SeparablePass(PixelT, TempT, 1, AccumIntT);
+    const VPass = SeparablePass(TempT, PixelT, if (PixelT == u8) fixed_point_scale_sq else 1, AccumIntT);
 
     const rows = src_img.rows;
     const cols = src_img.cols;
@@ -847,6 +897,7 @@ fn convolveSeparablePlaneFused(
 fn convolveSeparablePlane(
     comptime PixelT: type,
     comptime TempT: type,
+    comptime AccumIntT: type,
     src_img: Image(PixelT),
     dst_img: Image(PixelT),
     temp_img: Image(TempT),
@@ -855,8 +906,8 @@ fn convolveSeparablePlane(
     kernel_y: []const TempT,
     border_mode: BorderMode,
 ) !void {
-    try SeparablePass(PixelT, TempT, 1).horizontal(src_img, temp_img, allocator, kernel_x, border_mode);
-    try SeparablePass(TempT, PixelT, if (PixelT == u8) fixed_point_scale_sq else 1).vertical(temp_img, dst_img, allocator, kernel_y, border_mode);
+    try SeparablePass(PixelT, TempT, 1, AccumIntT).horizontal(src_img, temp_img, allocator, kernel_x, border_mode);
+    try SeparablePass(TempT, PixelT, if (PixelT == u8) fixed_point_scale_sq else 1, AccumIntT).vertical(temp_img, dst_img, allocator, kernel_y, border_mode);
 }
 
 test "fused separable matches standard path" {
@@ -888,10 +939,11 @@ test "fused separable matches standard path" {
 
                 var temp: Image(TempT) = try .initLike(allocator, src);
                 defer temp.deinit(allocator);
-                try convolveSeparablePlane(T, TempT, src, expected, temp, allocator, kernel, kernel, mode);
-                try convolveSeparablePlaneFused(T, TempT, src, actual, allocator, kernel, kernel, mode);
-
-                try testing.expectEqualSlices(T, expected.data, actual.data);
+                inline for ([_]type{ i32, i64 }) |AccumIntT| {
+                    try convolveSeparablePlane(T, TempT, AccumIntT, src, expected, temp, allocator, kernel, kernel, mode);
+                    try convolveSeparablePlaneFused(T, TempT, AccumIntT, src, actual, allocator, kernel, kernel, mode);
+                    try testing.expectEqualSlices(T, expected.data, actual.data);
+                }
             }
         }
     }
