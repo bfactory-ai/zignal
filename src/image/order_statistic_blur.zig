@@ -274,32 +274,33 @@ pub fn OrderStatisticBlurOps(comptime T: type) type {
                 for (0..window) |offset| {
                     const col_idx = @as(isize, @intCast(offset)) - radius_isize;
                     if (border_module.resolveIndex(col_idx, @intCast(image.cols), border)) |resolved| {
-                        window_hist.addCounts(column_hists[resolved]);
+                        window_hist.addCounts(&column_hists[resolved]);
                     } else {
-                        window_hist.addCounts(zero_column);
+                        window_hist.addCounts(&zero_column);
                     }
                 }
 
-                const area = @as(usize, window_hist.totalPixels());
+                // Border samples are counted into the histograms, so the population is
+                // always exactly window*window; no per-pixel bin scan needed.
+                const area = window * window;
                 target.at(row, 0).* = try reducer.compute(&window_hist, area);
 
                 for (1..image.cols) |col| {
                     const left_idx = @as(isize, @intCast(col)) - radius_isize - 1;
                     if (border_module.resolveIndex(left_idx, @intCast(image.cols), border)) |resolved| {
-                        window_hist.subtractCounts(column_hists[resolved]);
+                        window_hist.subtractCounts(&column_hists[resolved]);
                     } else {
-                        window_hist.subtractCounts(zero_column);
+                        window_hist.subtractCounts(&zero_column);
                     }
 
                     const right_idx = @as(isize, @intCast(col)) + radius_isize;
                     if (border_module.resolveIndex(right_idx, @intCast(image.cols), border)) |resolved| {
-                        window_hist.addCounts(column_hists[resolved]);
+                        window_hist.addCounts(&column_hists[resolved]);
                     } else {
-                        window_hist.addCounts(zero_column);
+                        window_hist.addCounts(&zero_column);
                     }
 
-                    const local_area = @as(usize, window_hist.totalPixels());
-                    target.at(row, col).* = try reducer.compute(&window_hist, local_area);
+                    target.at(row, col).* = try reducer.compute(&window_hist, area);
                 }
 
                 if (row + 1 == image.rows) break;
@@ -338,8 +339,8 @@ pub fn OrderStatisticBlurOps(comptime T: type) type {
         const PercentileReducer = struct {
             percentile: f64,
 
-            fn compute(self: *const @This(), hist: *const Histogram(u8), _: usize) Error!u8 {
-                return hist.percentileFraction(self.percentile);
+            fn compute(self: *const @This(), hist: *const Histogram(u8), area: usize) Error!u8 {
+                return hist.percentileFractionWithTotal(self.percentile, area);
             }
         };
 
