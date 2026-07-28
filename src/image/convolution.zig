@@ -652,6 +652,19 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime dst_scale: c
             return if (KernelT == f32) @abs(k) < 1e-10 else k == 0;
         }
 
+        /// Odd, mirror-symmetric kernels (every gaussian) can fold mirrored taps:
+        /// (a + b) * k halves the multiplies. Integer-exact by distributivity, so the
+        /// folded loops are used for i32 kernels only (f32 would change summation order).
+        fn isSymmetric(kernel: []const KernelT) bool {
+            // Folding measured slower past ~32 taps (two opposing load streams); the
+            // dense multiply win only holds for short-to-medium kernels.
+            if (kernel.len % 2 == 0 or kernel.len > 32) return false;
+            for (kernel[0 .. kernel.len / 2], 0..) |k, i| {
+                if (k != kernel[kernel.len - 1 - i]) return false;
+            }
+            return true;
+        }
+
         inline fn promote(v: anytype) if (@typeInfo(@TypeOf(v)) == .vector) @Vector(vec_len, AccumT) else AccumT {
             return if (AccumT == f32) v else @intCast(v);
         }
@@ -712,16 +725,36 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime dst_scale: c
             if (cols > 2 * half) {
                 const interior_end = cols - half;
 
-                while (c + vec_len <= interior_end) : (c += vec_len) {
-                    var acc: @Vector(vec_len, AccumT) = @splat(0);
-                    for (kernel, 0..) |k, ki| {
-                        if (!isNegligible(k)) {
-                            const vec = loadVec(src.data[src_offset + c + ki - half ..].ptr);
-                            const k_vec: @Vector(vec_len, AccumT) = @splat(promote(k));
-                            acc += vec * k_vec;
+                if (KernelT == i32 and isSymmetric(kernel)) {
+                    while (c + vec_len <= interior_end) : (c += vec_len) {
+                        const base = src_offset + c - half;
+                        var acc: @Vector(vec_len, AccumT) = @splat(0);
+                        for (kernel[0..half], 0..) |k, i| {
+                            if (!isNegligible(k)) {
+                                const a = loadVec(src.data[base + i ..].ptr);
+                                const b = loadVec(src.data[base + (kernel.len - 1 - i) ..].ptr);
+                                const k_vec: @Vector(vec_len, AccumT) = @splat(promote(k));
+                                acc += (a + b) * k_vec;
+                            }
                         }
+                        if (!isNegligible(kernel[half])) {
+                            const k_vec: @Vector(vec_len, AccumT) = @splat(promote(kernel[half]));
+                            acc += loadVec(src.data[base + half ..].ptr) * k_vec;
+                        }
+                        storeVec(acc, dst_row[c..].ptr);
                     }
-                    storeVec(acc, dst_row[c..].ptr);
+                } else {
+                    while (c + vec_len <= interior_end) : (c += vec_len) {
+                        var acc: @Vector(vec_len, AccumT) = @splat(0);
+                        for (kernel, 0..) |k, ki| {
+                            if (!isNegligible(k)) {
+                                const vec = loadVec(src.data[src_offset + c + ki - half ..].ptr);
+                                const k_vec: @Vector(vec_len, AccumT) = @splat(promote(k));
+                                acc += vec * k_vec;
+                            }
+                        }
+                        storeVec(acc, dst_row[c..].ptr);
+                    }
                 }
 
                 while (c < interior_end) : (c += 1) {
@@ -759,22 +792,39 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime dst_scale: c
         fn verticalRowFromBases(comptime border_row: bool, src_data: []const SrcT, bases: []const usize, dst: Image(DstT), r: usize, kernel: []const KernelT) void {
             const cols = dst.cols;
             const dst_offset = r * dst.stride;
+            const half = kernel.len / 2;
+            const folded = !border_row and KernelT == i32 and isSymmetric(kernel);
             var c: usize = 0;
 
             while (c + vec_len <= cols) : (c += vec_len) {
                 var acc: @Vector(vec_len, AccumT) = @splat(0);
-                for (kernel, bases) |k, base| {
-                    if (border_row) {
-                        const vec: @Vector(vec_len, AccumT) = if (base == BorderIndexTable.zero_sentinel)
-                            @splat(0)
-                        else
-                            loadVec(src_data[base + c ..].ptr);
-                        const k_vec: @Vector(vec_len, AccumT) = @splat(promote(k));
-                        acc += vec * k_vec;
-                    } else if (!isNegligible(k)) {
-                        const vec = loadVec(src_data[base + c ..].ptr);
-                        const k_vec: @Vector(vec_len, AccumT) = @splat(promote(k));
-                        acc += vec * k_vec;
+                if (folded) {
+                    for (kernel[0..half], 0..) |k, i| {
+                        if (!isNegligible(k)) {
+                            const a = loadVec(src_data[bases[i] + c ..].ptr);
+                            const b = loadVec(src_data[bases[kernel.len - 1 - i] + c ..].ptr);
+                            const k_vec: @Vector(vec_len, AccumT) = @splat(promote(k));
+                            acc += (a + b) * k_vec;
+                        }
+                    }
+                    if (!isNegligible(kernel[half])) {
+                        const k_vec: @Vector(vec_len, AccumT) = @splat(promote(kernel[half]));
+                        acc += loadVec(src_data[bases[half] + c ..].ptr) * k_vec;
+                    }
+                } else {
+                    for (kernel, bases) |k, base| {
+                        if (border_row) {
+                            const vec: @Vector(vec_len, AccumT) = if (base == BorderIndexTable.zero_sentinel)
+                                @splat(0)
+                            else
+                                loadVec(src_data[base + c ..].ptr);
+                            const k_vec: @Vector(vec_len, AccumT) = @splat(promote(k));
+                            acc += vec * k_vec;
+                        } else if (!isNegligible(k)) {
+                            const vec = loadVec(src_data[base + c ..].ptr);
+                            const k_vec: @Vector(vec_len, AccumT) = @splat(promote(k));
+                            acc += vec * k_vec;
+                        }
                     }
                 }
                 storeVec(acc, dst.data[dst_offset + c ..].ptr);
