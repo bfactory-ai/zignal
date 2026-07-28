@@ -44,6 +44,21 @@ inline fn quantizeWeight(weight: f32) i32 {
     return @round(weight * fixed_point_scale);
 }
 
+/// Corrects independently-rounded taps so their sum matches the f32 kernel's intended
+/// gain: the residual lands on the largest-magnitude tap (relative error <= 1/|k_max|).
+/// Without this, correlated rounding drifts the overall gain — a uniform 1/30 kernel
+/// quantizes to 30*9 = 270/256, brightening by +5.5% and clipping highlights.
+fn renormalizeQuantized(taps: []i32, target_sum: i64) void {
+    if (taps.len == 0) return;
+    var sum: i64 = 0;
+    var largest: usize = 0;
+    for (taps, 0..) |k, i| {
+        sum += k;
+        if (@abs(k) > @abs(taps[largest])) largest = i;
+    }
+    taps[largest] += @intCast(target_sum - sum);
+}
+
 fn PixelIO(comptime T: type, comptime vec_len: usize, comptime scale: comptime_int) type {
     if (T != u8 and T != f32) {
         @compileError("PixelIO only supports u8 and f32 types");
@@ -98,16 +113,23 @@ fn ConvolutionKernel(comptime T: type, comptime rows: usize, comptime cols: usiz
 
         const Pixels = PixelIO(T, vec_len, fixed_point_scale);
 
-        /// Flattens a 2D kernel into a 1D array; for `u8` images, values are scaled by `fixed_point_scale` and rounded.
+        /// Flattens a 2D kernel into a 1D array; for `u8` images, values are scaled by
+        /// `fixed_point_scale`, rounded, and sum-corrected to preserve the kernel's gain.
         fn flatten(kernel: anytype) [size]KernelScalar {
             var result: [size]KernelScalar = undefined;
+            var weight_sum: f64 = 0;
             var idx: usize = 0;
             inline for (0..rows) |kr| {
                 inline for (0..cols) |kx| {
                     const val = as(f32, kernel[kr][kx]);
                     result[idx] = if (T == u8) quantizeWeight(val) else val;
+                    weight_sum += val;
                     idx += 1;
                 }
+            }
+            if (T == u8) {
+                const target: i64 = @round(fixed_point_scale * weight_sum);
+                renormalizeQuantized(&result, target);
             }
             return result;
         }
@@ -376,7 +398,13 @@ fn convolvePlanes(
 
 fn scaleKernelToInt(allocator: Allocator, kernel: []const f32) ![]i32 {
     const result = try allocator.alloc(i32, kernel.len);
-    for (result, kernel) |*r, k| r.* = quantizeWeight(k);
+    var weight_sum: f64 = 0;
+    for (result, kernel) |*r, k| {
+        r.* = quantizeWeight(k);
+        weight_sum += k;
+    }
+    const target: i64 = @round(fixed_point_scale * weight_sum);
+    renormalizeQuantized(result, target);
     return result;
 }
 
