@@ -9,6 +9,13 @@ const BorderMode = border_module.BorderMode;
 const channel_ops = @import("channel_ops.zig");
 const meta = @import("../meta.zig");
 
+pub const Error = error{
+    InvalidRadius,
+    InvalidPercentile,
+    UnsupportedPixelType,
+    InvalidTrim,
+};
+
 const Vec16 = @Vector(16, u16);
 
 /// Per-column two-level histogram (544 B vs 1 KiB flat): coarse[b] counts values in
@@ -135,16 +142,197 @@ fn applyScalarOpTwoLevel(
     }
 }
 
+fn applyScalarOp(
+    image: Image(u8),
+    allocator: Allocator,
+    radius: usize,
+    out: Image(u8),
+    border: BorderMode,
+    reducer_in: anytype,
+) !void {
+    // Rank selection (median/percentile/min/max) takes the two-level fast path;
+    // u16 counts require window <= 255 (larger radii keep the flat u32 path).
+    if (@TypeOf(reducer_in) == PercentileReducer and radius * 2 + 1 <= TwoLevelColumn.max_window) {
+        return applyScalarOpTwoLevel(image, allocator, radius, out, border, reducer_in.percentile);
+    }
+    return applyScalarOpFlat(image, allocator, radius, out, border, reducer_in);
+}
+
+fn applyScalarOpFlat(
+    image: Image(u8),
+    allocator: Allocator,
+    radius: usize,
+    out: Image(u8),
+    border: BorderMode,
+    reducer_in: anytype,
+) !void {
+    const window = radius * 2 + 1;
+    if (window > @as(usize, std.math.maxInt(u32))) return Error.InvalidRadius;
+
+    const alias = out.data.ptr == image.data.ptr;
+
+    var temp_out: Image(u8) = .empty;
+    defer temp_out.deinit(allocator);
+
+    var target: Image(u8) = out;
+    if (alias) {
+        temp_out = try .initLike(allocator, image);
+        target = temp_out;
+    }
+
+    var column_hists = try allocator.alloc(Histogram(u8), image.cols);
+    defer allocator.free(column_hists);
+
+    for (column_hists) |*hist| hist.* = Histogram(u8).init();
+
+    const zero_column = constantHistogram(window, 0);
+    const radius_isize: isize = @intCast(radius);
+    var reducer = reducer_in;
+
+    for (0..image.cols) |col| {
+        var hist = Histogram(u8).init();
+        for (0..window) |offset| {
+            const row_idx = @as(isize, @intCast(offset)) - radius_isize;
+            const sample = border_module.getPixel(u8, image, row_idx, @intCast(col), border);
+            hist.addValue(sample);
+        }
+        column_hists[col] = hist;
+    }
+
+    for (0..image.rows) |row| {
+        var window_hist = Histogram(u8).init();
+        for (0..window) |offset| {
+            const col_idx = @as(isize, @intCast(offset)) - radius_isize;
+            if (border_module.resolveIndex(col_idx, @intCast(image.cols), border)) |resolved| {
+                window_hist.addCounts(&column_hists[resolved]);
+            } else {
+                window_hist.addCounts(&zero_column);
+            }
+        }
+
+        // Border samples are counted into the histograms, so the population is
+        // always exactly window*window; no per-pixel bin scan needed.
+        const area = window * window;
+        target.at(row, 0).* = try reducer.compute(&window_hist, area);
+
+        for (1..image.cols) |col| {
+            const left_idx = @as(isize, @intCast(col)) - radius_isize - 1;
+            if (border_module.resolveIndex(left_idx, @intCast(image.cols), border)) |resolved| {
+                window_hist.subtractCounts(&column_hists[resolved]);
+            } else {
+                window_hist.subtractCounts(&zero_column);
+            }
+
+            const right_idx = @as(isize, @intCast(col)) + radius_isize;
+            if (border_module.resolveIndex(right_idx, @intCast(image.cols), border)) |resolved| {
+                window_hist.addCounts(&column_hists[resolved]);
+            } else {
+                window_hist.addCounts(&zero_column);
+            }
+
+            target.at(row, col).* = try reducer.compute(&window_hist, area);
+        }
+
+        if (row + 1 == image.rows) break;
+
+        const remove_row = @as(isize, @intCast(row)) - radius_isize;
+        const add_row = @as(isize, @intCast(row)) + radius_isize + 1;
+
+        for (0..image.cols) |col| {
+            if (border_module.resolveIndex(remove_row, @intCast(image.rows), border)) |resolved| {
+                const value = image.at(resolved, col).*;
+                column_hists[col].removeValue(value);
+            } else {
+                column_hists[col].removeValue(0);
+            }
+
+            if (border_module.resolveIndex(add_row, @intCast(image.rows), border)) |resolved| {
+                const value = image.at(resolved, col).*;
+                column_hists[col].addValue(value);
+            } else {
+                column_hists[col].addValue(0);
+            }
+        }
+    }
+
+    if (alias) {
+        target.copy(out);
+    }
+}
+
+fn constantHistogram(count: usize, value: u8) Histogram(u8) {
+    var hist = Histogram(u8).init();
+    hist.values[value] = @intCast(count);
+    return hist;
+}
+
+const PercentileReducer = struct {
+    percentile: f64,
+
+    fn compute(self: *const @This(), hist: *const Histogram(u8), area: usize) Error!u8 {
+        return hist.percentileFractionWithTotal(self.percentile, area);
+    }
+};
+
+const MidpointReducer = struct {
+    fn compute(_: *const @This(), hist: *const Histogram(u8), _: usize) Error!u8 {
+        const min = hist.firstNonZero() orelse 0;
+        const max = hist.lastNonZero() orelse min;
+        const sum: u16 = @as(u16, min) + @as(u16, max);
+        return @intCast((sum + 1) / 2);
+    }
+};
+
+const AlphaTrimmedMeanReducer = struct {
+    trim_fraction: f64,
+
+    fn compute(self: *const @This(), hist: *const Histogram(u8), window_area: usize) Error!u8 {
+        const total_f = @as(f64, @floatFromInt(window_area));
+        const trimmed_total = @floor(self.trim_fraction * total_f);
+        const trimmed_each: usize = @trunc(trimmed_total);
+        const trim_each = @min(trimmed_each, window_area / 2);
+
+        var total_sum: u64 = 0;
+        for (hist.values, 0..) |count, value| {
+            total_sum += @as(u64, count) * @as(u64, value);
+        }
+
+        var low_sum: u64 = 0;
+        var low_count: usize = 0;
+        var remaining = trim_each;
+        for (hist.values, 0..) |count, value| {
+            if (remaining == 0) break;
+            const take = @min(@as(usize, count), remaining);
+            low_sum += @as(u64, take) * @as(u64, value);
+            low_count += take;
+            remaining -= take;
+        }
+
+        var high_sum: u64 = 0;
+        var high_count: usize = 0;
+        remaining = trim_each;
+        var idx: usize = hist.values.len;
+        while (idx > 0 and remaining > 0) : (idx -= 1) {
+            const count = hist.values[idx - 1];
+            if (count == 0) continue;
+            const take = @min(@as(usize, count), remaining);
+            high_sum += @as(u64, take) * @as(u64, idx - 1);
+            high_count += take;
+            remaining -= take;
+        }
+
+        const kept_count = window_area - low_count - high_count;
+        if (kept_count == 0) return Error.InvalidTrim;
+
+        const kept_sum = total_sum - low_sum - high_sum;
+        const rounded = (kept_sum + @as(u64, kept_count) / 2) / @as(u64, kept_count);
+        return @intCast(@min(@as(u64, 255), rounded));
+    }
+};
+
 pub fn OrderStatisticBlurOps(comptime T: type) type {
     return struct {
         const Self = @This();
-
-        pub const Error = error{
-            InvalidRadius,
-            InvalidPercentile,
-            UnsupportedPixelType,
-            InvalidTrim,
-        };
 
         pub fn medianBlur(
             image: Image(T),
@@ -176,35 +364,7 @@ pub fn OrderStatisticBlurOps(comptime T: type) type {
                 return Error.InvalidPercentile;
             }
 
-            const alias = out.data.ptr == image.data.ptr;
-
-            var temp_out: Image(T) = .empty;
-            defer temp_out.deinit(allocator);
-
-            var target: Image(T) = out;
-            if (alias) {
-                temp_out = try Image(T).initLike(allocator, image);
-                target = temp_out;
-            }
-
-            switch (@typeInfo(T)) {
-                .int => |int_info| {
-                    _ = int_info;
-                    if (T != u8) return Error.UnsupportedPixelType;
-                    const reducer = PercentileReducer{ .percentile = percentile };
-                    try applyScalarOp(image, allocator, radius, target, border, reducer);
-                },
-                .@"struct" => {
-                    if (!comptime meta.allFieldsAreU8(T)) return Error.UnsupportedPixelType;
-                    const reducer = PercentileReducer{ .percentile = percentile };
-                    try applyStructOp(image, allocator, radius, target, border, reducer);
-                },
-                else => return Error.UnsupportedPixelType,
-            }
-
-            if (alias) {
-                target.copy(out);
-            }
+            try run(image, out, allocator, radius, border, PercentileReducer{ .percentile = percentile });
         }
 
         pub fn minBlur(
@@ -243,33 +403,7 @@ pub fn OrderStatisticBlurOps(comptime T: type) type {
                 return;
             }
 
-            const alias = out.data.ptr == image.data.ptr;
-            var temp_out: Image(T) = .empty;
-            defer temp_out.deinit(allocator);
-
-            var target: Image(T) = out;
-            if (alias) {
-                temp_out = try Image(T).initLike(allocator, image);
-                target = temp_out;
-            }
-
-            const reducer = MidpointReducer{};
-            switch (@typeInfo(T)) {
-                .int => |int_info| {
-                    _ = int_info;
-                    if (T != u8) return Error.UnsupportedPixelType;
-                    try applyScalarOp(image, allocator, radius, target, border, reducer);
-                },
-                .@"struct" => {
-                    if (!comptime meta.allFieldsAreU8(T)) return Error.UnsupportedPixelType;
-                    try applyStructOp(image, allocator, radius, target, border, reducer);
-                },
-                else => return Error.UnsupportedPixelType,
-            }
-
-            if (alias) {
-                target.copy(out);
-            }
+            try run(image, out, allocator, radius, border, MidpointReducer{});
         }
 
         pub fn alphaTrimmedMeanBlur(
@@ -293,7 +427,21 @@ pub fn OrderStatisticBlurOps(comptime T: type) type {
                 return;
             }
 
+            try run(image, out, allocator, radius, border, AlphaTrimmedMeanReducer{ .trim_fraction = trim_fraction });
+        }
+
+        /// Alias-safe dispatch shared by every entry point: route through a temp image
+        /// when out aliases image, then pick the scalar or per-plane path by pixel type.
+        fn run(
+            image: Image(T),
+            out: Image(T),
+            allocator: Allocator,
+            radius: usize,
+            border: BorderMode,
+            reducer: anytype,
+        ) !void {
             const alias = out.data.ptr == image.data.ptr;
+
             var temp_out: Image(T) = .empty;
             defer temp_out.deinit(allocator);
 
@@ -303,11 +451,8 @@ pub fn OrderStatisticBlurOps(comptime T: type) type {
                 target = temp_out;
             }
 
-            const reducer = AlphaTrimmedMeanReducer{ .trim_fraction = trim_fraction };
-
             switch (@typeInfo(T)) {
-                .int => |int_info| {
-                    _ = int_info;
+                .int => {
                     if (T != u8) return Error.UnsupportedPixelType;
                     try applyScalarOp(image, allocator, radius, target, border, reducer);
                 },
@@ -354,194 +499,6 @@ pub fn OrderStatisticBlurOps(comptime T: type) type {
 
             channel_ops.mergeChannels(T, dst_planes, target);
         }
-
-        fn applyScalarOp(
-            image: Image(u8),
-            allocator: Allocator,
-            radius: usize,
-            out: Image(u8),
-            border: BorderMode,
-            reducer_in: anytype,
-        ) !void {
-            // Rank selection (median/percentile/min/max) takes the two-level fast path;
-            // u16 counts require window <= 255 (larger radii keep the flat u32 path).
-            if (@TypeOf(reducer_in) == PercentileReducer and radius * 2 + 1 <= TwoLevelColumn.max_window) {
-                return applyScalarOpTwoLevel(image, allocator, radius, out, border, reducer_in.percentile);
-            }
-            return applyScalarOpFlat(image, allocator, radius, out, border, reducer_in);
-        }
-
-        fn applyScalarOpFlat(
-            image: Image(u8),
-            allocator: Allocator,
-            radius: usize,
-            out: Image(u8),
-            border: BorderMode,
-            reducer_in: anytype,
-        ) !void {
-            const window = radius * 2 + 1;
-            if (window > @as(usize, std.math.maxInt(u32))) return Error.InvalidRadius;
-
-            const alias = out.data.ptr == image.data.ptr;
-
-            var temp_out: Image(u8) = .empty;
-            defer temp_out.deinit(allocator);
-
-            var target: Image(u8) = out;
-            if (alias) {
-                temp_out = try .initLike(allocator, image);
-                target = temp_out;
-            }
-
-            var column_hists = try allocator.alloc(Histogram(u8), image.cols);
-            defer allocator.free(column_hists);
-
-            for (column_hists) |*hist| hist.* = Histogram(u8).init();
-
-            const zero_column = constantHistogram(window, 0);
-            const radius_isize: isize = @intCast(radius);
-            var reducer = reducer_in;
-
-            for (0..image.cols) |col| {
-                var hist = Histogram(u8).init();
-                for (0..window) |offset| {
-                    const row_idx = @as(isize, @intCast(offset)) - radius_isize;
-                    const sample = border_module.getPixel(u8, image, row_idx, @intCast(col), border);
-                    hist.addValue(sample);
-                }
-                column_hists[col] = hist;
-            }
-
-            for (0..image.rows) |row| {
-                var window_hist = Histogram(u8).init();
-                for (0..window) |offset| {
-                    const col_idx = @as(isize, @intCast(offset)) - radius_isize;
-                    if (border_module.resolveIndex(col_idx, @intCast(image.cols), border)) |resolved| {
-                        window_hist.addCounts(&column_hists[resolved]);
-                    } else {
-                        window_hist.addCounts(&zero_column);
-                    }
-                }
-
-                // Border samples are counted into the histograms, so the population is
-                // always exactly window*window; no per-pixel bin scan needed.
-                const area = window * window;
-                target.at(row, 0).* = try reducer.compute(&window_hist, area);
-
-                for (1..image.cols) |col| {
-                    const left_idx = @as(isize, @intCast(col)) - radius_isize - 1;
-                    if (border_module.resolveIndex(left_idx, @intCast(image.cols), border)) |resolved| {
-                        window_hist.subtractCounts(&column_hists[resolved]);
-                    } else {
-                        window_hist.subtractCounts(&zero_column);
-                    }
-
-                    const right_idx = @as(isize, @intCast(col)) + radius_isize;
-                    if (border_module.resolveIndex(right_idx, @intCast(image.cols), border)) |resolved| {
-                        window_hist.addCounts(&column_hists[resolved]);
-                    } else {
-                        window_hist.addCounts(&zero_column);
-                    }
-
-                    target.at(row, col).* = try reducer.compute(&window_hist, area);
-                }
-
-                if (row + 1 == image.rows) break;
-
-                const remove_row = @as(isize, @intCast(row)) - radius_isize;
-                const add_row = @as(isize, @intCast(row)) + radius_isize + 1;
-
-                for (0..image.cols) |col| {
-                    if (border_module.resolveIndex(remove_row, @intCast(image.rows), border)) |resolved| {
-                        const value = image.at(resolved, col).*;
-                        column_hists[col].removeValue(value);
-                    } else {
-                        column_hists[col].removeValue(0);
-                    }
-
-                    if (border_module.resolveIndex(add_row, @intCast(image.rows), border)) |resolved| {
-                        const value = image.at(resolved, col).*;
-                        column_hists[col].addValue(value);
-                    } else {
-                        column_hists[col].addValue(0);
-                    }
-                }
-            }
-
-            if (alias) {
-                target.copy(out);
-            }
-        }
-
-        fn constantHistogram(count: usize, value: u8) Histogram(u8) {
-            var hist = Histogram(u8).init();
-            hist.values[value] = @intCast(count);
-            return hist;
-        }
-
-        const PercentileReducer = struct {
-            percentile: f64,
-
-            fn compute(self: *const @This(), hist: *const Histogram(u8), area: usize) Error!u8 {
-                return hist.percentileFractionWithTotal(self.percentile, area);
-            }
-        };
-
-        const MidpointReducer = struct {
-            fn compute(_: *const @This(), hist: *const Histogram(u8), _: usize) Error!u8 {
-                const min = hist.firstNonZero() orelse 0;
-                const max = hist.lastNonZero() orelse min;
-                const sum: u16 = @as(u16, min) + @as(u16, max);
-                return @intCast((sum + 1) / 2);
-            }
-        };
-
-        const AlphaTrimmedMeanReducer = struct {
-            trim_fraction: f64,
-
-            fn compute(self: *const @This(), hist: *const Histogram(u8), window_area: usize) Error!u8 {
-                const total_f = @as(f64, @floatFromInt(window_area));
-                const trimmed_total = @floor(self.trim_fraction * total_f);
-                const trimmed_each: usize = @trunc(trimmed_total);
-                const trim_each = @min(trimmed_each, window_area / 2);
-
-                var total_sum: u64 = 0;
-                for (hist.values, 0..) |count, value| {
-                    total_sum += @as(u64, count) * @as(u64, value);
-                }
-
-                var low_sum: u64 = 0;
-                var low_count: usize = 0;
-                var remaining = trim_each;
-                for (hist.values, 0..) |count, value| {
-                    if (remaining == 0) break;
-                    const take = @min(@as(usize, count), remaining);
-                    low_sum += @as(u64, take) * @as(u64, value);
-                    low_count += take;
-                    remaining -= take;
-                }
-
-                var high_sum: u64 = 0;
-                var high_count: usize = 0;
-                remaining = trim_each;
-                var idx: usize = hist.values.len;
-                while (idx > 0 and remaining > 0) : (idx -= 1) {
-                    const count = hist.values[idx - 1];
-                    if (count == 0) continue;
-                    const take = @min(@as(usize, count), remaining);
-                    high_sum += @as(u64, take) * @as(u64, idx - 1);
-                    high_count += take;
-                    remaining -= take;
-                }
-
-                const kept_count = window_area - low_count - high_count;
-                if (kept_count == 0) return Error.InvalidTrim;
-
-                const kept_sum = total_sum - low_sum - high_sum;
-                const rounded = (kept_sum + @as(u64, kept_count) / 2) / @as(u64, kept_count);
-                return @intCast(@min(@as(u64, 255), rounded));
-            }
-        };
     };
 }
 
@@ -569,9 +526,8 @@ test "two-level rank filter matches flat histogram path" {
         for (radii) |radius| {
             for (borders) |mode| {
                 for (percentiles) |p| {
-                    const Ops = OrderStatisticBlurOps(u8);
-                    const flat_reducer = Ops.PercentileReducer{ .percentile = p };
-                    try Ops.applyScalarOpFlat(img, allocator, radius, flat, mode, flat_reducer);
+                    const flat_reducer = PercentileReducer{ .percentile = p };
+                    try applyScalarOpFlat(img, allocator, radius, flat, mode, flat_reducer);
                     try applyScalarOpTwoLevel(img, allocator, radius, two, mode, p);
                     try testing.expectEqualSlices(u8, flat.data, two.data);
                 }
