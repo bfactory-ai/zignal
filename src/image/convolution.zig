@@ -843,7 +843,7 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime dst_scale: c
 
 /// Cache thresholds for the fused (ring-buffer) separable path: fuse only when the full
 /// temp plane would clearly exceed cache but the ring of kernel rows stays resident.
-const fused_min_temp_bytes: usize = 8 << 20;
+const fused_min_temp_bytes: usize = 1 << 20;
 const fused_max_ring_bytes: usize = 1 << 20;
 
 fn useFusedSeparable(comptime TempT: type, rows: usize, cols: usize, kernel_y_len: usize, border_mode: BorderMode) bool {
