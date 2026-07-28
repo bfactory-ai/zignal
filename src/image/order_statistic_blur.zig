@@ -488,19 +488,13 @@ pub fn OrderStatisticBlurOps(comptime T: type) type {
             const src_planes = try channel_ops.splitChannels(T, image, allocator);
             defer inline for (src_planes) |plane| allocator.free(plane);
 
-            var dst_planes: [num_channels][]u8 = undefined;
-            var plane_wrappers: [num_channels]Image(u8) = undefined;
+            const dst_planes = try channel_ops.allocPlanes(u8, num_channels, allocator, plane_size);
+            defer for (dst_planes) |plane| allocator.free(plane);
 
-            var allocated: usize = 0;
-            defer for (dst_planes[0..allocated]) |plane| allocator.free(plane);
-
-            inline for (src_planes, 0..) |plane, idx| {
-                dst_planes[idx] = try allocator.alloc(u8, plane_size);
-                allocated += 1;
-                plane_wrappers[idx] = Image(u8).initFromSlice(image.rows, image.cols, dst_planes[idx]);
-
-                const src_plane = Image(u8).initFromSlice(image.rows, image.cols, plane);
-                try applyScalarOp(src_plane, allocator, radius, plane_wrappers[idx], border, reducer);
+            inline for (src_planes, dst_planes) |src_data, dst_data| {
+                const src_plane = Image(u8).initFromSlice(image.rows, image.cols, src_data);
+                const dst_plane = Image(u8).initFromSlice(image.rows, image.cols, dst_data);
+                try applyScalarOp(src_plane, allocator, radius, dst_plane, border, reducer);
             }
 
             channel_ops.mergeChannels(T, dst_planes, target);
