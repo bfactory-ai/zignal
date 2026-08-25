@@ -1896,32 +1896,64 @@ pub fn Canvas(comptime T: type) type {
             const height = @as(u32, @intFromFloat(@ceil(area.b))) - top;
             if (height == 0 or width == 0) return;
 
-            const coverage = try self.allocator.alloc(u8, height * width);
-            defer self.allocator.free(coverage);
-            @memset(coverage, 0);
+            // Source coverage plus the dilated result, then per-row scratch for the running max.
+            const radius_px: usize = radius;
+            const padded = width + 2 * radius_px;
+            const buffers = try self.allocator.alloc(u8, 2 * height * width + 4 * padded);
+            defer self.allocator.free(buffers);
+            @memset(buffers, 0);
+            const coverage = buffers[0 .. height * width];
+            const dilated = buffers[height * width .. 2 * height * width];
             const mask: Canvas(u8) = .init(self.allocator, .initFromSlice(height, width, coverage));
             const origin: Point(2, f32) = .init(.{ position.x() - as(f32, left), position.y() - as(f32, top) });
-            mask.blitBitmapLine(text, origin, .init(@as(u8, 255), .normal), font, scale, letter_spacing, mode);
+            mask.blitBitmapLine(text, origin, .init(@as(u8, 255), .none), font, scale, letter_spacing, mode);
 
-            // Dilate by a disc and paint the result.
-            const r: i32 = @intCast(radius);
-            for (0..height) |row| {
-                for (0..width) |col| {
-                    var max: u8 = 0;
-                    var dy: i32 = -r;
-                    while (dy <= r) : (dy += 1) {
-                        const sy = @as(i32, @intCast(row)) + dy;
-                        if (sy < 0 or sy >= height) continue;
-                        var dx: i32 = -r;
-                        while (dx <= r) : (dx += 1) {
-                            const sx = @as(i32, @intCast(col)) + dx;
-                            if (sx < 0 or sx >= width or dx * dx + dy * dy > r * r) continue;
-                            max = @max(max, coverage[@as(usize, @intCast(sy)) * width + @as(usize, @intCast(sx))]);
-                        }
+            // Dilate by a disc: every source row, widened by the disc's half-width at each
+            // vertical offset, is max-merged into the rows it reaches.
+            const row_max = buffers[2 * height * width ..][0..padded];
+            const prefix = buffers[2 * height * width + padded ..][0..padded];
+            const suffix = buffers[2 * height * width + 2 * padded ..][0..padded];
+            const widened = buffers[2 * height * width + 3 * padded ..][0..padded];
+            for (0..height) |sy| {
+                const source = coverage[sy * width ..][0..width];
+                if (std.mem.allEqual(u8, source, 0)) continue;
+                var dy: usize = 0;
+                while (dy <= radius_px) : (dy += 1) {
+                    const half: usize = @intFromFloat(@sqrt(as(f32, radius_px * radius_px - dy * dy)));
+                    runningMax(source, half, row_max, prefix, suffix, widened[0..width]);
+                    for ([_]bool{ false, true }) |up| {
+                        if (up and dy == 0) continue;
+                        const ty = if (up) std.math.sub(usize, sy, dy) catch continue else sy + dy;
+                        if (ty >= height) continue;
+                        const target = dilated[ty * width ..][0..width];
+                        for (target, widened[0..width]) |*t, w| t.* = @max(t.*, w);
                     }
-                    if (max > 0) paint.cover(&self.image.data[(top + row) * self.image.stride + left + col], as(f32, max) / 255);
                 }
             }
+            for (0..height) |row| {
+                for (dilated[row * width ..][0..width], 0..) |value, col| {
+                    if (value > 0) paint.cover(&self.image.data[(top + row) * self.image.stride + left + col], as(f32, value) / 255);
+                }
+            }
+        }
+
+        /// `out[i] = max(src[i - half ..= i + half])`, clipped to the row, in O(n) (van Herk):
+        /// block prefix/suffix maxima over the zero-padded row.
+        fn runningMax(src: []const u8, half: usize, padded: []u8, prefix: []u8, suffix: []u8, out: []u8) void {
+            const n = src.len;
+            if (half == 0) return @memcpy(out, src);
+            const window = 2 * half + 1;
+            const m = n + 2 * half;
+            @memset(padded[0..half], 0);
+            @memcpy(padded[half..][0..n], src);
+            @memset(padded[half + n .. m], 0);
+            for (0..m) |j| prefix[j] = if (j % window == 0) padded[j] else @max(prefix[j - 1], padded[j]);
+            var j = m;
+            while (j > 0) {
+                j -= 1;
+                suffix[j] = if (j % window == window - 1 or j == m - 1) padded[j] else @max(suffix[j + 1], padded[j]);
+            }
+            for (0..n) |i| out[i] = @max(suffix[i], prefix[i + window - 1]);
         }
 
         /// Blits one line of bitmap glyphs at `position`.
