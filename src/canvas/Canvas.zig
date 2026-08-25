@@ -50,7 +50,8 @@ pub const FillRule = enum {
 /// new coverage, so shapes accumulated over several calls never lighten each other.
 const CoverageMax = struct {
     inline fn cover(_: CoverageMax, dest: *u8, alpha: f32) void {
-        dest.* = @max(dest.*, @as(u8, @intFromFloat(@round(@min(alpha, 1) * 255))));
+        const coverage: u8 = @round(@min(alpha, 1) * 255);
+        dest.* = @max(dest.*, coverage);
     }
 };
 
@@ -1649,13 +1650,15 @@ pub fn Canvas(comptime T: type) type {
         }
 
         /// Draws `text` with its top-left corner at `position`, at `font_size` pixels: the em height
-        /// for vector fonts, the character height for bitmap fonts. `\n` starts a new line.
-        pub fn drawText(self: Self, text: []const u8, position: Point(2, f32), color: anytype, font: Font, font_size: f32, opts: DrawOptions) !void {
+        /// for vector fonts, the character height for bitmap fonts. `null` draws at
+        /// `font.defaultSize()`, a bitmap font's native size. `\n` starts a new line.
+        pub fn drawText(self: Self, text: []const u8, position: Point(2, f32), color: anytype, font: Font, font_size: ?f32, opts: DrawOptions) !void {
             comptime assert(isColor(@TypeOf(color)));
-            if (font_size <= 0) return;
+            const px = font_size orelse font.defaultSize();
+            if (px <= 0) return;
             switch (font) {
-                .bitmap => |bitmap| self.drawTextBitmap(text, position, color, bitmap, bitmap.scaleFor(font_size), opts),
-                .vector => |vector| try self.drawTextVector(text, position, color, vector, font_size, opts),
+                .bitmap => |bitmap| self.drawTextBitmap(text, position, color, bitmap, bitmap.scaleFor(px), opts),
+                .vector => |vector| try self.drawTextVector(text, position, color, vector, px, opts),
             }
         }
 

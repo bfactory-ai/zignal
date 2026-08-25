@@ -50,7 +50,7 @@ pub fn main(init: std.process.Init) !void {
     for (sizes) |size| height += font.lineHeight(size) + 6;
     height += 2 * font.lineHeight(24) + 16;
 
-    var image: Image(Rgb) = try .init(gpa, @intFromFloat(@ceil(height)), 1000);
+    var image: Image(Rgb) = try .init(gpa, @ceil(height), 1000);
     defer image.deinit(gpa);
     image.fill(.{ .r = 255, .g = 255, .b = 255 });
     const canvas: Canvas(Rgb) = .init(gpa, image);

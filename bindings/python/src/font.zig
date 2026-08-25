@@ -27,14 +27,6 @@ fn fontDeinit(self: *FontObject) void {
 
 const font_dealloc = python.genericDealloc(FontObject, fontDeinit);
 
-/// The size a bitmap font is drawn at 1:1; TrueType fonts have none.
-pub fn naturalSize(font: Font) ?u8 {
-    return switch (font) {
-        .bitmap => |b| b.char_height,
-        .vector => null,
-    };
-}
-
 /// Wraps an owned font in a new Python object, freeing the font on failure.
 fn wrap(font: Font) ?*c.PyObject {
     var owned = font;
@@ -268,7 +260,10 @@ fn fontName(font: *Font) ?*c.PyObject {
 }
 
 fn fontHeight(font: *Font) ?*c.PyObject {
-    return python.create(naturalSize(font.*));
+    return switch (font.*) {
+        .bitmap => |b| python.create(b.char_height),
+        .vector => python.none(),
+    };
 }
 
 pub const font_methods_metadata = [_]python.MethodWithMetadata{
@@ -356,7 +351,7 @@ pub const font_properties_metadata = [_]python.PropertyWithMetadata{
     .{
         .name = "height",
         .get = python.getterOptionalPtr(FontObject, "font", fontHeight),
-        .doc = "Character height in pixels of a bitmap font (its natural size); None for TrueType fonts",
+        .doc = "Character height in pixels of a bitmap font (its native size); None for TrueType fonts",
         .type = "int | None",
     },
 };

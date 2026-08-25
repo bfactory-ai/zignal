@@ -32,6 +32,9 @@ pub const Font = union(enum) {
     bitmap: BitmapFont,
     vector: VectorFont,
 
+    /// Size a vector font is drawn at when none is given; bitmap fonts use their own.
+    pub const default_vector_size: f32 = 16;
+
     /// Loads any supported format by sniffing the file; bitmap fonts load all characters.
     pub fn load(io: Io, gpa: Allocator, path: []const u8) !Font {
         const format = try FontFormat.detectFromPath(io, path) orelse return error.UnsupportedFontFormat;
@@ -46,6 +49,15 @@ pub const Font = union(enum) {
             .bitmap => |*b| b.deinit(gpa),
             .vector => |*v| v.deinit(gpa),
         }
+    }
+
+    /// The size used when a caller gives none: a bitmap font's character height (1:1
+    /// pixels), `default_vector_size` for vector fonts.
+    pub fn defaultSize(self: Font) f32 {
+        return switch (self) {
+            .bitmap => |b| @floatFromInt(b.char_height),
+            .vector => default_vector_size,
+        };
     }
 
     /// Distance from the top of a line to its baseline, in pixels.
@@ -225,7 +237,9 @@ test "Font.load dispatches on the format" {
     try std.testing.expectEqual(@as(f32, 57.5), font.lineHeight(50));
     try std.testing.expectError(error.UnsupportedFontFormat, BitmapFont.load(std.testing.io, std.testing.allocator, path, .all));
 
+    try std.testing.expectEqual(@as(f32, 16), font.defaultSize());
     const bitmap: Font = .{ .bitmap = font8x8.basic };
+    try std.testing.expectEqual(@as(f32, 8), bitmap.defaultSize());
     try std.testing.expectEqual(@as(f32, 24), font8x8.basic.getTextBounds("abc", 1).r);
     try std.testing.expectEqual(@as(f32, 48), bitmap.getTextBounds("abc", 16).r);
     try std.testing.expectEqual(@as(f32, 16), bitmap.lineHeight(16));

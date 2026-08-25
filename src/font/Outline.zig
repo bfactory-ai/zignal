@@ -140,7 +140,8 @@ fn curve(t: Transform, p0: Point, c: Point, p1: Point, closing: bool, sink: *Sin
     // The second derivative is constant, so n chords deviate by at most |p0 - 2c + p1| / (4n²).
     const dx = d0.x() - 2 * d1.x() + d2.x();
     const dy = d0.y() - 2 * d1.y() + d2.y();
-    const n: u32 = @intFromFloat(@min(@max(@ceil(@sqrt(@sqrt(dx * dx + dy * dy) / (4 * flatness_tolerance))), 1), @as(f32, max_curve_segments)));
+    const chords = @min(@max(@ceil(@sqrt(@sqrt(dx * dx + dy * dy) / (4 * flatness_tolerance))), 1), @as(f32, max_curve_segments));
+    const n: u32 = @trunc(chords);
     const last = if (closing) n - 1 else n;
     for (1..last + 1) |s| {
         const u: f32 = @as(f32, @floatFromInt(s)) / @as(f32, @floatFromInt(n));

@@ -286,7 +286,7 @@ fn fillSplinePolygonFast(canvas: Canvas(Rgba)) void {
 
 fn drawTextScale1(canvas: Canvas(Rgba)) void {
     const color: Rgba = .{ .r = 32, .g = 32, .b = 32, .a = 255 };
-    canvas.drawText("Zignal!", .init(.{ 8, 46 }), color, .{ .bitmap = font8x8.basic }, 8, .fast) catch {};
+    canvas.drawText("Zignal!", .init(.{ 8, 46 }), color, .{ .bitmap = font8x8.basic }, null, .fast) catch {};
 }
 
 fn drawTextFastScaled(canvas: Canvas(Rgba)) void {

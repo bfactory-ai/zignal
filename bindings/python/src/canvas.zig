@@ -161,8 +161,8 @@ pub const PyCanvas = struct {
         }
     }
 
-    /// Draw text at `size` pixels.
-    pub fn drawText(self: *Self, text: []const u8, position: anytype, color: Rgba, font: Font, size: f32, opts: DrawOptions) !void {
+    /// Draw text at `size` pixels, or the font's default size.
+    pub fn drawText(self: *Self, text: []const u8, position: anytype, color: Rgba, font: Font, size: ?f32, opts: DrawOptions) !void {
         switch (self.data) {
             inline else => |*canvas| try canvas.drawText(text, position, color, font, size, opts),
         }
@@ -214,9 +214,6 @@ fn parseDrawOptions(mode: c_long, blending: ?*c.PyObject) !DrawOptions {
         .blending = try enum_utils.pyToEnumOpt(Blending, blending, .{ .missing = .normal, .none = .none }),
     };
 }
-
-/// Size in pixels when a TrueType font is drawn without one.
-const default_vector_size: f32 = 16;
 
 pub const CanvasObject = extern struct {
     ob_base: c.PyObject,
@@ -860,10 +857,7 @@ fn canvas_draw_text(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     }
     const font = python.unwrap(font_module.FontObject, "font", font_obj, "Font") orelse return null;
 
-    const size: f32 = if (params.size == null or params.size == c.Py_None())
-        (if (font_module.naturalSize(font.*)) |h| @floatFromInt(h) else default_vector_size)
-    else
-        python.parse(f32, params.size) catch return null;
+    const size: ?f32 = if (params.size == null or params.size == c.Py_None()) null else python.parse(f32, params.size) catch return null;
 
     canvas.drawText(text, position, rgba, font.*, size, opts) catch {
         python.setRuntimeError("Failed to draw text", .{});
@@ -993,7 +987,7 @@ const canvas_draw_text_doc =
     \\- `color` (int, tuple or color object): Text color.
     \\- `font` (Font, optional): Font to render with. If `None`, uses `Font.font8x8()`
     \\- `size` (float, optional): Font size in pixels: the em height for TrueType fonts, the character
-    \\  height for bitmap fonts. Defaults to the bitmap font's natural size, or 16 for TrueType fonts
+    \\  height for bitmap fonts. Defaults to the bitmap font's native size, or 16 for TrueType fonts
     \\- `mode` (`DrawMode`, optional): Drawing mode (default: `DrawMode.FAST`)
     \\- `blending` (`Blending` | None, optional): Blend mode for compositing (default: `Blending.NORMAL`; `None` disables blending)
 ;

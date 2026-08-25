@@ -58,7 +58,7 @@ const Builder = struct {
     }
 
     fn f2dot14(b: *Builder, v: f32) void {
-        b.putI16(@intFromFloat(v * 16384));
+        b.putI16(@trunc(v * 16384));
     }
 
     fn zeros(b: *Builder, n: usize) void {

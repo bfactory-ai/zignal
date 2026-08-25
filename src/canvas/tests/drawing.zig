@@ -627,8 +627,8 @@ test "glyph coverage into a caller-sized mask" {
     // gid 1 spans 100..700 x 0..700 font units; at 0.05 px/unit that is 30x35 px.
     const scale: f32 = 0.05;
     const bounds = font.glyphBounds(1).?;
-    const w: u32 = @intFromFloat(@ceil(@as(f32, @floatFromInt(bounds.x_max)) * scale) + 2);
-    const h: u32 = @intFromFloat(@ceil(@as(f32, @floatFromInt(bounds.y_max - bounds.y_min)) * scale) + 2);
+    const w: u32 = @ceil(@as(f32, @floatFromInt(bounds.x_max)) * scale + 2);
+    const h: u32 = @ceil(@as(f32, @floatFromInt(bounds.y_max - bounds.y_min)) * scale + 2);
     const buf = try testing.allocator.alloc(u8, w * h);
     defer testing.allocator.free(buf);
     @memset(buf, 0);

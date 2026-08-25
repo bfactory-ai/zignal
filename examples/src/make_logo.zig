@@ -114,6 +114,7 @@ fn drawZignalText(canvas: *Canvas(Rgb)) !void {
 
     // Scale factor for the text
     const scale: f32 = 10;
+    const size = scale * (zignal.Font{ .bitmap = font }).defaultSize();
 
     // Calculate text dimensions
     const text = "ZIGNAL";
@@ -143,10 +144,10 @@ fn drawZignalText(canvas: *Canvas(Rgb)) !void {
         const char_str = [_]u8{char};
 
         // Shadow layer for depth
-        try canvas.drawText(&char_str, .init(.{ current_x + 2, y_pos + 2 }), shadow_color, .{ .bitmap = font }, scale * 8, .fast);
+        try canvas.drawText(&char_str, .init(.{ current_x + 2, y_pos + 2 }), shadow_color, .{ .bitmap = font }, size, .fast);
 
         // Main character
-        try canvas.drawText(&char_str, .init(.{ current_x, y_pos }), text_color, .{ .bitmap = font }, scale * 8, .fast);
+        try canvas.drawText(&char_str, .init(.{ current_x, y_pos }), text_color, .{ .bitmap = font }, size, .fast);
 
         // Calculate next position using tight bounds
         const tight_bounds = font.getTextBoundsTight(&char_str, scale);
