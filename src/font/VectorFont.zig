@@ -171,6 +171,8 @@ pub const Layout = struct {
     x: f32 = 0,
     baseline: f32,
     prev: ?u16 = null,
+    /// Extra device pixels after every glyph's advance.
+    letter_spacing: f32 = 0,
 
     pub fn init(font: VectorFont, text: []const u8, size: f32) Layout {
         const scale = font.scaleFor(size);
@@ -202,7 +204,7 @@ pub const Layout = struct {
                 .origin = .init(.{ self.x + shift * self.scale, self.baseline }),
                 .bounds = bounds,
             };
-            self.x += as(f32, metrics.advance) * self.scale;
+            self.x += as(f32, metrics.advance) * self.scale + self.letter_spacing;
             self.prev = gid;
             return item;
         }

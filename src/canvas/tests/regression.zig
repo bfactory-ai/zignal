@@ -336,6 +336,29 @@ fn drawTextVectorComposite(canvas: Canvas(Rgba)) void {
     canvas.drawText("DE\nF", .init(.{ 2, 2 }), color, .{ .vector = font }, 40, .soft) catch {};
 }
 
+fn drawTextBoxWrapped(canvas: Canvas(Rgba)) void {
+    var buf: [synthetic.buffer_size]u8 = undefined;
+    const font = synthetic.font(&buf, .{});
+    const color: Rgba = .{ .r = 32, .g = 96, .b = 32, .a = 255 };
+    const box: Rectangle(f32) = .{ .l = 5, .t = 5, .r = 95, .b = 95 };
+    canvas.drawTextBox("AB CD EF", box, color, .{ .vector = font }, 30, .{ .wrap = true, .halign = .center, .valign = .middle, .line_spacing = 0.9, .letter_spacing = 1 }, .soft) catch {};
+}
+
+fn drawTextOutlineVector(canvas: Canvas(Rgba)) void {
+    var buf: [synthetic.buffer_size]u8 = undefined;
+    const font = synthetic.font(&buf, .{});
+    const color: Rgba = .{ .r = 160, .g = 32, .b = 96, .a = 255 };
+    canvas.drawTextOutline("AC", .init(.{ 4, 10 }), color, .{ .vector = font }, 60, 5, .soft) catch {};
+    canvas.drawTextOutline("F", .init(.{ 4, 55 }), color, .{ .vector = font }, 40, 2, .fast) catch {};
+}
+
+fn drawTextBitmapHalo(canvas: Canvas(Rgba)) void {
+    const halo: Rgba = .{ .r = 255, .g = 200, .b = 0, .a = 255 };
+    const ink: Rgba = .{ .r = 0, .g = 0, .b = 0, .a = 255 };
+    canvas.drawTextOutline("Zig", .init(.{ 10, 30 }), halo, .{ .bitmap = font8x8.basic }, 24, 4, .fast) catch {};
+    canvas.drawText("Zig", .init(.{ 10, 30 }), ink, .{ .bitmap = font8x8.basic }, 24, .fast) catch {};
+}
+
 fn fillGlyphCoverageSheared(canvas: Canvas(Rgba)) void {
     var buf: [synthetic.buffer_size]u8 = undefined;
     const font = synthetic.font(&buf, .{});
@@ -394,6 +417,9 @@ const md5_checksums = [_]DrawTestCase{
     .{ .name = "drawTextVectorFast", .md5sum = "e0add7efb36c574cf74c97fcdfa96179", .draw_fn = drawTextVectorFast },
     .{ .name = "drawTextVectorComposite", .md5sum = "dd1f8e58c1b993af3a37c396c4f5d241", .draw_fn = drawTextVectorComposite },
     .{ .name = "fillGlyphCoverageSheared", .md5sum = "04c03333d556cd12e9dcdb41eaa912a1", .draw_fn = fillGlyphCoverageSheared },
+    .{ .name = "drawTextBoxWrapped", .md5sum = "70f7230f878dc887d39ca09f1d3ed945", .draw_fn = drawTextBoxWrapped },
+    .{ .name = "drawTextOutlineVector", .md5sum = "362b42ad03e5b46d7f7e4b51a46a75a1", .draw_fn = drawTextOutlineVector },
+    .{ .name = "drawTextBitmapHalo", .md5sum = "2cfd43cc906ccf59dd373fd533064e36", .draw_fn = drawTextBitmapHalo },
 };
 
 test "MD5 checksum regression tests" {

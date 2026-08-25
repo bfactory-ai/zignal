@@ -644,3 +644,144 @@ test "glyph coverage into a caller-sized mask" {
     for (buf) |v| inked += @intFromBool(v != 0);
     try expect(inked > 500 and inked < 30 * 35);
 }
+
+const Font = @import("../../font.zig").Font;
+const TextLayout = @import("../../font.zig").TextLayout;
+const font8x8 = @import("../../font/font8x8.zig");
+
+const paper: Rgba = .{ .r = 255, .g = 255, .b = 255, .a = 255 };
+const ink: Rgba = .{ .r = 0, .g = 0, .b = 0, .a = 255 };
+
+fn blankImage(allocator: std.mem.Allocator) !Image(Rgba) {
+    const img: Image(Rgba) = try .init(allocator, 60, 100);
+    for (img.data) |*px| px.* = paper;
+    return img;
+}
+
+fn samePixels(a: Image(Rgba), b: Image(Rgba)) bool {
+    return std.mem.eql(u8, std.mem.sliceAsBytes(a.data), std.mem.sliceAsBytes(b.data));
+}
+
+fn inkCount(img: Image(Rgba)) usize {
+    var count: usize = 0;
+    for (img.data) |px| count += @intFromBool(px.r != 255 or px.g != 255 or px.b != 255);
+    return count;
+}
+
+fn isWhite(img: Image(Rgba), row: usize, col: usize) bool {
+    const px = img.data[row * img.stride + col];
+    return px.r == 255 and px.g == 255 and px.b == 255;
+}
+
+test "drawTextBox places lines where drawText would" {
+    const allocator = testing.allocator;
+    var expected = try blankImage(allocator);
+    defer expected.deinit(allocator);
+    var actual = try blankImage(allocator);
+    defer actual.deinit(allocator);
+    const reference: Canvas(Rgba) = .init(allocator, expected);
+    const canvas: Canvas(Rgba) = .init(allocator, actual);
+
+    var buf: [synthetic.buffer_size]u8 = undefined;
+    const fonts = [_]Font{ .{ .bitmap = font8x8.basic }, .{ .vector = synthetic.font(&buf, .{}) } };
+    for (fonts) |font| {
+        const size: f32 = 10;
+        const box: Rectangle(f32) = .{ .l = 10, .t = 10, .r = 90, .b = 50 };
+        const width = font.getTextBounds("AB", size).r;
+        const height = font.lineHeight(size);
+        const Case = struct { layout: TextLayout, x: f32, y: f32 };
+        const cases = [_]Case{
+            .{ .layout = .default, .x = 10, .y = 10 },
+            .{ .layout = .{ .halign = .center, .valign = .middle }, .x = 10 + (80 - width) / 2, .y = 10 + (40 - height) / 2 },
+            .{ .layout = .{ .halign = .right, .valign = .bottom }, .x = 90 - width, .y = 50 - height },
+        };
+        for (cases) |case| {
+            for (expected.data) |*px| px.* = paper;
+            for (actual.data) |*px| px.* = paper;
+            try reference.drawText("AB", .init(.{ case.x, case.y }), ink, font, size, .soft);
+            try canvas.drawTextBox("AB", box, ink, font, size, case.layout, .soft);
+            try expect(inkCount(actual) > 0);
+            try expect(samePixels(expected, actual));
+        }
+
+        // Wrapping breaks like an explicit newline; line spacing scales the advance.
+        for (expected.data) |*px| px.* = paper;
+        for (actual.data) |*px| px.* = paper;
+        try reference.drawText("AB", .init(.{ 10, 10 }), ink, font, size, .soft);
+        try reference.drawText("AB", .init(.{ 10, 10 + 1.5 * height }), ink, font, size, .soft);
+        try canvas.drawTextBox("AB AB", .{ .l = 10, .t = 10, .r = 10 + width + 1, .b = 60 }, ink, font, size, .{ .wrap = true, .line_spacing = 1.5 }, .soft);
+        try expect(samePixels(expected, actual));
+
+        // Letter spacing shifts every following glyph.
+        for (expected.data) |*px| px.* = paper;
+        for (actual.data) |*px| px.* = paper;
+        const a_width = font.getTextBounds("A", size).r;
+        try reference.drawText("A", .init(.{ 10, 10 }), ink, font, size, .soft);
+        try reference.drawText("B", .init(.{ 10 + a_width + 3, 10 }), ink, font, size, .soft);
+        try canvas.drawTextBox("AB", box, ink, font, size, .{ .letter_spacing = 3 }, .soft);
+        // The vector font kerns A→B, which the two-call reference lacks.
+        if (font == .bitmap) try expect(samePixels(expected, actual)) else try expect(inkCount(actual) > 0);
+    }
+}
+
+test "outlined glyphs are hollow, halos dilate bitmaps" {
+    const allocator = testing.allocator;
+    var img = try blankImage(allocator);
+    defer img.deinit(allocator);
+    const canvas: Canvas(Rgba) = .init(allocator, img);
+    var buf: [synthetic.buffer_size]u8 = undefined;
+    const font: Font = .{ .vector = synthetic.font(&buf, .{}) };
+
+    // Glyph A at 50 px: a square from (5, 10) to (35, 45) with a hole from (15, 20) to (25, 35).
+    for ([_]DrawOptions{ .soft, .fast }) |opts| {
+        for (img.data) |*px| px.* = paper;
+        try canvas.drawTextOutline("A", .init(.{ 0, 0 }), ink, font, 50, 3, opts);
+        try expect(!isWhite(img, 27, 5)); // outer edge
+        try expect(!isWhite(img, 27, 15)); // hole edge
+        try expect(isWhite(img, 27, 10)); // between the edges
+        try expect(isWhite(img, 27, 20)); // inside the hole
+        try expect(isWhite(img, 27, 45)); // outside
+        const hollow = inkCount(img);
+        for (img.data) |*px| px.* = paper;
+        try canvas.drawText("A", .init(.{ 0, 0 }), ink, font, 50, opts);
+        try expect(!isWhite(img, 27, 10));
+        try expect(inkCount(img) > hollow);
+    }
+
+    // A thicker stroke covers more, and the box variant places it like the fill.
+    for (img.data) |*px| px.* = paper;
+    try canvas.drawTextOutline("A", .init(.{ 0, 0 }), ink, font, 50, 7, .soft);
+    const thick = inkCount(img);
+    for (img.data) |*px| px.* = paper;
+    try canvas.drawTextOutline("A", .init(.{ 0, 0 }), ink, font, 50, 3, .soft);
+    try expect(thick > inkCount(img));
+    var boxed = try blankImage(allocator);
+    defer boxed.deinit(allocator);
+    const box_canvas: Canvas(Rgba) = .init(allocator, boxed);
+    try box_canvas.drawTextBoxOutline("A", .{ .l = 0, .t = 0, .r = 100, .b = 60 }, ink, font, 50, 3, .default, .soft);
+    try expect(samePixels(img, boxed));
+
+    // Bitmap halo: a superset of the glyph's own pixels.
+    const bitmap: Font = .{ .bitmap = font8x8.basic };
+    for (img.data) |*px| px.* = paper;
+    try canvas.drawText("H", .init(.{ 20, 20 }), ink, bitmap, null, .fast);
+    var plain = try blankImage(allocator);
+    defer plain.deinit(allocator);
+    @memcpy(plain.data, img.data);
+    for (img.data) |*px| px.* = paper;
+    try canvas.drawTextOutline("H", .init(.{ 20, 20 }), ink, bitmap, null, 4, .fast);
+    try expect(inkCount(img) > inkCount(plain));
+    for (plain.data, img.data) |p, q| if (p.r == 0) try expect(q.r == 0);
+}
+
+test "text boxes on a grayscale canvas" {
+    const allocator = testing.allocator;
+    var img: Image(u8) = try .init(allocator, 40, 80);
+    defer img.deinit(allocator);
+    @memset(img.data, 0);
+    const canvas: Canvas(u8) = .init(allocator, img);
+    try canvas.drawTextBox("hi", .{ .l = 0, .t = 0, .r = 80, .b = 40 }, @as(u8, 255), .{ .bitmap = font8x8.basic }, 16, .{ .halign = .center, .valign = .middle }, .soft);
+    var lit: usize = 0;
+    for (img.data) |px| lit += @intFromBool(px > 0);
+    try expect(lit > 0);
+}
