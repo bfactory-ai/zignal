@@ -32,14 +32,13 @@ pub fn main(init: std.process.Init) !void {
     defer args.deinit();
     _ = args.skip();
 
-    var font: Font = if (args.next()) |path|
+    var loaded: ?Font = if (args.next()) |path|
         try Font.load(io, gpa, path)
     else for (system_fonts) |path| {
         break Font.load(io, gpa, path) catch continue;
-    } else .{ .bitmap = zignal.font.font8x8.basic };
-    // The built-in font borrows static data; only loaded fonts own memory.
-    const owned = font != .bitmap or font.bitmap.data.ptr != zignal.font.font8x8.basic.data.ptr;
-    defer if (owned) font.deinit(gpa);
+    } else null;
+    defer if (loaded) |*f| f.deinit(gpa);
+    const font: Font = loaded orelse .{ .bitmap = zignal.font.font8x8.basic };
 
     switch (font) {
         .bitmap => |b| std.debug.print("bitmap font {f}\n", .{b}),
@@ -59,7 +58,9 @@ pub fn main(init: std.process.Init) !void {
     const accent: Rgb = .{ .r = 190, .g = 40, .b = 40 };
 
     var y: f32 = 8;
+    var last_top: f32 = y;
     for (sizes) |size| {
+        last_top = y;
         try canvas.drawText(sample, p(.{ 8, y }), ink, font, size, .soft);
         y += font.lineHeight(size) + 6;
     }
@@ -69,8 +70,8 @@ pub fn main(init: std.process.Init) !void {
     try canvas.drawText(kerning_pairs, p(.{ 8, y }), accent, font, 24, .fast);
 
     // Underline the widest line using the measured bounds.
-    const bounds = font.getTextBounds(sample, 56);
-    const baseline = 8 + (font.lineHeight(12) + 6) + (font.lineHeight(16) + 6) + (font.lineHeight(24) + 6) + (font.lineHeight(36) + 6) + font.ascent(56);
+    const bounds = font.getTextBounds(sample, sizes[sizes.len - 1]);
+    const baseline = last_top + font.ascent(sizes[sizes.len - 1]);
     canvas.drawLine(p(.{ 8, baseline + 4 }), p(.{ 8 + bounds.r, baseline + 4 }), accent, 1, .soft);
 
     try image.save(io, gpa, "font_demo.png");

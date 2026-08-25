@@ -15,17 +15,12 @@ pub const Point = struct {
     on_curve: bool,
 };
 
-/// Glyph bounding box from the font, in font units.
-x_min: i16,
-y_min: i16,
-x_max: i16,
-y_max: i16,
 /// All contours back to back.
 points: []Point,
 /// Exclusive end index of each contour in `points`.
 contour_ends: []u32,
 
-pub const empty: Outline = .{ .x_min = 0, .y_min = 0, .x_max = 0, .y_max = 0, .points = &.{}, .contour_ends = &.{} };
+pub const empty: Outline = .{ .points = &.{}, .contour_ends = &.{} };
 
 /// Chord deviation allowed when flattening curves, in device pixels.
 pub const flatness_tolerance: f32 = 0.1;
@@ -61,67 +56,53 @@ pub const Transform = struct {
 
 /// Exact number of points `flatten` writes for this transform.
 pub fn flattenedPointCount(self: Outline, t: Transform) usize {
-    var counter: Counter = .{};
-    self.walk(t, &counter);
-    return counter.count;
+    var sink: Sink = .{};
+    self.walk(t, &sink);
+    return sink.n;
 }
 
 /// Writes one closed polygon per contour into `points_buf` (at least `flattenedPointCount`
 /// long) and returns the polygons as slices stored in `contours_buf` (at least
 /// `contourCount` long).
 pub fn flatten(self: Outline, t: Transform, points_buf: []Point2, contours_buf: [][]const Point2) [][]const Point2 {
-    var filler: Filler = .{ .points = points_buf, .contours = contours_buf };
-    self.walk(t, &filler);
-    return contours_buf[0..filler.c];
+    var sink: Sink = .{ .points = points_buf, .contours = contours_buf };
+    self.walk(t, &sink);
+    return contours_buf[0..sink.c];
 }
 
-const Counter = struct {
-    count: usize = 0,
-
-    fn emit(self: *Counter, _: Point2) void {
-        self.count += 1;
-    }
-
-    fn endContour(_: *Counter) void {}
-};
-
-const Filler = struct {
-    points: []Point2,
-    contours: [][]const Point2,
+/// Receives flattened points; counts only when the output slices are absent.
+const Sink = struct {
+    points: ?[]Point2 = null,
+    contours: ?[][]const Point2 = null,
     n: usize = 0,
     c: usize = 0,
     start: usize = 0,
 
-    fn emit(self: *Filler, p: Point2) void {
-        self.points[self.n] = p;
+    fn emit(self: *Sink, p: Point2) void {
+        if (self.points) |points| points[self.n] = p;
         self.n += 1;
     }
 
-    fn endContour(self: *Filler) void {
-        self.contours[self.c] = self.points[self.start..self.n];
+    fn endContour(self: *Sink) void {
+        if (self.contours) |contours| contours[self.c] = self.points.?[self.start..self.n];
         self.c += 1;
         self.start = self.n;
     }
 };
 
-fn walk(self: Outline, t: Transform, sink: anytype) void {
+fn walk(self: Outline, t: Transform, sink: *Sink) void {
     for (0..self.contourCount()) |i| {
         const pts = self.contour(i);
         if (pts.len < 2) continue;
 
         // A contour starts on its first on-curve point; with none, on the implied
         // midpoint between the first two control points.
-        var start_index: usize = 0;
-        var found = false;
-        for (pts, 0..) |p, k| {
-            if (p.on_curve) {
-                start_index = k;
-                found = true;
-                break;
-            }
-        }
-        const start: Point = if (found) pts[start_index] else midpoint(pts[0], pts[1]);
-        const steps = if (found) pts.len - 1 else pts.len;
+        const on_curve: ?usize = for (pts, 0..) |p, k| {
+            if (p.on_curve) break k;
+        } else null;
+        const start_index = on_curve orelse 0;
+        const start: Point = if (on_curve != null) pts[start_index] else midpoint(pts[0], pts[1]);
+        const steps = if (on_curve != null) pts.len - 1 else pts.len;
 
         sink.emit(t.apply(start.x, start.y));
         var prev_on = start;
@@ -152,7 +133,7 @@ fn midpoint(a: Point, b: Point) Point {
 
 /// Flattens the quadratic p0-c-p1 into uniform chords, skipping the end point when it
 /// closes the contour (the polygon closes implicitly).
-fn curve(t: Transform, p0: Point, c: Point, p1: Point, closing: bool, sink: anytype) void {
+fn curve(t: Transform, p0: Point, c: Point, p1: Point, closing: bool, sink: *Sink) void {
     const d0 = t.apply(p0.x, p0.y);
     const d1 = t.apply(c.x, c.y);
     const d2 = t.apply(p1.x, p1.y);
@@ -163,19 +144,12 @@ fn curve(t: Transform, p0: Point, c: Point, p1: Point, closing: bool, sink: anyt
     const last = if (closing) n - 1 else n;
     for (1..last + 1) |s| {
         const u: f32 = @as(f32, @floatFromInt(s)) / @as(f32, @floatFromInt(n));
-        const w0 = (1 - u) * (1 - u);
-        const w1 = 2 * (1 - u) * u;
-        const w2 = u * u;
-        sink.emit(.init(.{
-            w0 * d0.x() + w1 * d1.x() + w2 * d2.x(),
-            w0 * d0.y() + w1 * d1.y() + w2 * d2.y(),
-        }));
+        sink.emit(d0.lerp(d1, u).lerp(d1.lerp(d2, u), u));
     }
 }
 
 const testing = std.testing;
 const synthetic = @import("truetype/synthetic.zig");
-const VectorFont = @import("VectorFont.zig");
 
 test "transform" {
     const t: Transform = .{ .scale = 0.1, .origin = .init(.{ 10.25, 80 }), .shear = 0.25 };
@@ -189,7 +163,7 @@ test "transform" {
 
 test "flatten a polygonal glyph" {
     var buf: [synthetic.buffer_size]u8 = undefined;
-    const font: VectorFont = try .loadFromBytes(synthetic.build(&buf, .{}));
+    const font = synthetic.font(&buf, .{});
     var o = try font.outline(testing.allocator, 1);
     defer o.deinit(testing.allocator);
     const t: Transform = .{ .scale = 0.1, .origin = .init(.{ 10, 80 }) };
@@ -206,7 +180,7 @@ test "flatten a polygonal glyph" {
 
 test "flatten curves: count matches, grows with size, stays closed" {
     var buf: [synthetic.buffer_size]u8 = undefined;
-    const font: VectorFont = try .loadFromBytes(synthetic.build(&buf, .{}));
+    const font = synthetic.font(&buf, .{});
     var o = try font.outline(testing.allocator, 3);
     defer o.deinit(testing.allocator);
     var prev: usize = 0;
@@ -232,7 +206,7 @@ test "flatten curves: count matches, grows with size, stays closed" {
 
 test "fractional origin moves the polygon exactly" {
     var buf: [synthetic.buffer_size]u8 = undefined;
-    const font: VectorFont = try .loadFromBytes(synthetic.build(&buf, .{}));
+    const font = synthetic.font(&buf, .{});
     var o = try font.outline(testing.allocator, 6);
     defer o.deinit(testing.allocator);
     var a: [64]Point2 = undefined;

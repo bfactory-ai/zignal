@@ -14,6 +14,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 const Rectangle = @import("../geometry.zig").Rectangle;
+const Point2 = @import("../geometry/Point.zig").Point(2, f32);
 const as = @import("../meta.zig").as;
 const font_mod = @import("../font.zig");
 const truetype = @import("truetype.zig");
@@ -61,8 +62,6 @@ strikeout_size: i16,
 strikeout_position: i16,
 tables: truetype.Tables,
 cmap: truetype.cmap.Subtable,
-/// The font has GPOS pair adjustment; the legacy `kern` table is then ignored.
-has_pair_pos: bool,
 
 /// Parses the header tables of `data`, which must outlive the font. No allocation, no I/O.
 pub fn loadFromBytes(data: []const u8) Error!VectorFont {
@@ -104,12 +103,8 @@ pub fn glyphMetrics(self: VectorFont, gid: u16) GlyphMetrics {
     return .{ .advance = advance, .lsb = lsb };
 }
 
-/// Whether the glyph has any contours (spaces and `.notdef` often have none).
-pub fn hasOutline(self: VectorFont, gid: u16) bool {
-    return truetype.glyf.hasOutline(self, gid);
-}
-
-/// The glyph's bounding box from its header, without parsing the outline.
+/// The glyph's bounding box from its header, without parsing the outline; null for
+/// glyphs without contours (spaces, `.notdef`).
 pub fn glyphBounds(self: VectorFont, gid: u16) ?Bounds {
     return truetype.glyf.bounds(self, gid);
 }
@@ -122,7 +117,7 @@ pub fn outline(self: VectorFont, gpa: Allocator, gid: u16) (Error || Allocator.E
 /// Horizontal kerning to add to `left`'s advance when followed by `right`, in font units.
 pub fn kern(self: VectorFont, left: u16, right: u16) i16 {
     const r: truetype.Reader = .init(self.data);
-    if (self.has_pair_pos) return truetype.gpos.pairAdjust(r.table(self.tables.gpos.?), left, right);
+    if (self.tables.gpos) |t| return truetype.gpos.pairAdjust(r.table(t), left, right);
     if (self.tables.kern) |t| return truetype.kern.lookup(r.table(t), left, right);
     return 0;
 }
@@ -137,21 +132,16 @@ pub fn lineHeight(self: VectorFont, size: f32) f32 {
     return as(f32, @as(i32, self.ascent) - self.descent + self.line_gap) * self.scaleFor(size);
 }
 
-/// Horizontal shift of the outline so its left side bearing lands on the pen, in font units.
-pub fn outlineShift(self: VectorFont, gid: u16) f32 {
-    if (self.lsb_is_at_x_zero) return 0;
-    const b = self.glyphBounds(gid) orelse return 0;
-    return as(f32, @as(i32, self.glyphMetrics(gid).lsb) - b.x_min);
-}
-
-/// Iterates the pen positions of `text` laid out from a top-left origin with `\n` line
-/// breaks: yields each glyph with its device-space pen x and baseline y.
+/// Lays out `text` from a top-left origin with `\n` line breaks, yielding each glyph
+/// placed in device pixels.
 pub const Layout = struct {
     pub const Item = struct {
-        codepoint: u21,
         gid: u16,
-        x: f32,
-        baseline: f32,
+        /// Pen position on the baseline, relative to the text's top-left corner, with the
+        /// outline's side-bearing shift already applied.
+        origin: Point2,
+        /// Font-unit box of the glyph; null when it has no ink.
+        bounds: ?Bounds,
     };
 
     font: VectorFont,
@@ -183,12 +173,36 @@ pub const Layout = struct {
             }
             const gid = self.font.glyphIndex(codepoint);
             if (self.prev) |p| self.x += as(f32, self.font.kern(p, gid)) * self.scale;
-            const item: Item = .{ .codepoint = codepoint, .gid = gid, .x = self.x, .baseline = self.baseline };
-            self.x += as(f32, self.font.glyphMetrics(gid).advance) * self.scale;
+            const metrics = self.font.glyphMetrics(gid);
+            const bounds = self.font.glyphBounds(gid);
+            // Unless head says the outline already starts at its bearing, shift it there.
+            const shift: f32 = if (self.font.lsb_is_at_x_zero or bounds == null) 0 else as(f32, @as(i32, metrics.lsb) - bounds.?.x_min);
+            const item: Item = .{
+                .gid = gid,
+                .origin = .init(.{ self.x + shift * self.scale, self.baseline }),
+                .bounds = bounds,
+            };
+            self.x += as(f32, metrics.advance) * self.scale;
             self.prev = gid;
             return item;
         }
         return null;
+    }
+
+    /// Device-pixel box of the glyph's ink, relative to the text's top-left corner.
+    pub fn inkBounds(self: Layout, item: Item) ?Rectangle(f32) {
+        const b = item.bounds orelse return null;
+        return .{
+            .l = item.origin.x() + as(f32, b.x_min) * self.scale,
+            .t = item.origin.y() - as(f32, b.y_max) * self.scale,
+            .r = item.origin.x() + as(f32, b.x_max) * self.scale,
+            .b = item.origin.y() - as(f32, b.y_min) * self.scale,
+        };
+    }
+
+    /// The transform that places the glyph's outline when the text starts at `position`.
+    pub fn transform(self: Layout, item: Item, position: Point2) Outline.Transform {
+        return .{ .scale = self.scale, .origin = position.add(item.origin) };
     }
 };
 
@@ -208,14 +222,7 @@ pub fn getTextBoundsTight(self: VectorFont, text: []const u8, size: f32) Rectang
     var layout: Layout = .init(self, text, size);
     var bounds: ?Rectangle(f32) = null;
     while (layout.next()) |item| {
-        const b = self.glyphBounds(item.gid) orelse continue;
-        const shift = self.outlineShift(item.gid);
-        const box: Rectangle(f32) = .{
-            .l = item.x + (as(f32, b.x_min) + shift) * layout.scale,
-            .t = item.baseline - as(f32, b.y_max) * layout.scale,
-            .r = item.x + (as(f32, b.x_max) + shift) * layout.scale,
-            .b = item.baseline - as(f32, b.y_min) * layout.scale,
-        };
+        const box = layout.inkBounds(item) orelse continue;
         bounds = if (bounds) |acc| acc.merge(box) else box;
     }
     return bounds orelse .{ .l = 0, .t = 0, .r = 0, .b = 0 };
@@ -235,7 +242,7 @@ const synthetic = @import("truetype/synthetic.zig");
 
 test "header metrics" {
     var buf: [synthetic.buffer_size]u8 = undefined;
-    const font: VectorFont = try .loadFromBytes(synthetic.build(&buf, .{}));
+    const font = synthetic.font(&buf, .{});
     try testing.expectEqual(@as(u16, 1000), font.units_per_em);
     try testing.expectEqual(@as(u16, 7), font.num_glyphs);
     try testing.expectEqual(@as(u16, 3), font.num_h_metrics);
@@ -252,16 +259,19 @@ test "header metrics" {
     try testing.expectEqual(@as(f32, 0.024), font.scaleFor(24));
     try testing.expectEqual(@as(f32, 57.5), font.lineHeight(50));
 
-    const long: VectorFont = try .loadFromBytes(synthetic.build(&buf, .{ .long_loca = true, .lsb_at_x_zero = false }));
+    const long = synthetic.font(&buf, .{ .long_loca = true, .lsb_at_x_zero = false });
     try testing.expectEqual(.long, long.index_to_loc_format);
     try testing.expect(!long.lsb_is_at_x_zero);
-    try testing.expectEqual(@as(f32, -40), long.outlineShift(1));
-    try testing.expectEqual(@as(f32, 0), font.outlineShift(1));
+    // Glyph 1 has lsb 60 but starts at x = 100, so its outline shifts left by 40 units.
+    var shifted: Layout = .init(long, "A", 1000);
+    try testing.expectEqual(@as(f32, -40), shifted.next().?.origin.x());
+    var unshifted: Layout = .init(font, "A", 1000);
+    try testing.expectEqual(@as(f32, 0), unshifted.next().?.origin.x());
 }
 
 test "glyph metrics incl. the hmtx tail" {
     var buf: [synthetic.buffer_size]u8 = undefined;
-    const font: VectorFont = try .loadFromBytes(synthetic.build(&buf, .{}));
+    const font = synthetic.font(&buf, .{});
     try testing.expectEqual(GlyphMetrics{ .advance = 500, .lsb = 0 }, font.glyphMetrics(0));
     try testing.expectEqual(GlyphMetrics{ .advance = 800, .lsb = 100 }, font.glyphMetrics(1));
     try testing.expectEqual(GlyphMetrics{ .advance = 800, .lsb = 100 }, font.glyphMetrics(2));
@@ -272,7 +282,7 @@ test "glyph metrics incl. the hmtx tail" {
 
 test "text bounds" {
     var buf: [synthetic.buffer_size]u8 = undefined;
-    const font: VectorFont = try .loadFromBytes(synthetic.build(&buf, .{}));
+    const font = synthetic.font(&buf, .{});
     // A then B: 800 + kern(1, 2) = -30, then 800; two lines of 1150 units.
     const bounds = font.getTextBounds("AB\nA", 50);
     try testing.expectApproxEqAbs(@as(f32, (800 - 30 + 800) * 0.05), bounds.r, 1e-4);

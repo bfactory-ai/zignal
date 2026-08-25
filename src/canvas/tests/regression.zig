@@ -9,7 +9,6 @@ const Point = @import("../../geometry/Point.zig").Point;
 const Image = @import("../../image.zig").Image;
 const Canvas = @import("../Canvas.zig").Canvas;
 const font8x8 = @import("../../font.zig").font8x8;
-const VectorFont = @import("../../font.zig").VectorFont;
 const synthetic = @import("../../font/truetype/synthetic.zig");
 
 const DrawTestCase = struct {
@@ -300,10 +299,6 @@ fn drawTextSoftScaled(canvas: Canvas(Rgba)) void {
     canvas.drawText("Hi", .init(.{ 12, 30 }), color, .{ .bitmap = font8x8.basic }, 24, .soft) catch {};
 }
 
-fn syntheticFont(buf: *[synthetic.buffer_size]u8) VectorFont {
-    return VectorFont.loadFromBytes(synthetic.build(buf, .{})) catch unreachable;
-}
-
 // Two same-winding overlapping squares: even-odd leaves the overlap empty, nonzero fills it.
 const overlapping_squares = [_][]const Point(2, f32){
     &.{ .init(.{ 15, 15 }), .init(.{ 15, 60 }), .init(.{ 60, 60 }), .init(.{ 60, 15 }) },
@@ -322,28 +317,28 @@ fn fillPolygonsNonzero(canvas: Canvas(Rgba)) void {
 
 fn drawTextVectorSoft(canvas: Canvas(Rgba)) void {
     var buf: [synthetic.buffer_size]u8 = undefined;
-    const font = syntheticFont(&buf);
+    const font = synthetic.font(&buf, .{});
     const color: Rgba = .{ .r = 32, .g = 32, .b = 32, .a = 255 };
     canvas.drawText("ABC", .init(.{ 4, 20 }), color, .{ .vector = font }, 36, .soft) catch {};
 }
 
 fn drawTextVectorFast(canvas: Canvas(Rgba)) void {
     var buf: [synthetic.buffer_size]u8 = undefined;
-    const font = syntheticFont(&buf);
+    const font = synthetic.font(&buf, .{});
     const color: Rgba = .{ .r = 192, .g = 32, .b = 32, .a = 255 };
     canvas.drawText("ABC", .init(.{ 4, 20 }), color, .{ .vector = font }, 36, .fast) catch {};
 }
 
 fn drawTextVectorComposite(canvas: Canvas(Rgba)) void {
     var buf: [synthetic.buffer_size]u8 = undefined;
-    const font = syntheticFont(&buf);
+    const font = synthetic.font(&buf, .{});
     const color: Rgba = .{ .r = 32, .g = 32, .b = 192, .a = 255 };
     canvas.drawText("DE\nF", .init(.{ 2, 2 }), color, .{ .vector = font }, 40, .soft) catch {};
 }
 
 fn fillGlyphCoverageSheared(canvas: Canvas(Rgba)) void {
     var buf: [synthetic.buffer_size]u8 = undefined;
-    const font = syntheticFont(&buf);
+    const font = synthetic.font(&buf, .{});
     var outline = font.outline(canvas.allocator, 1) catch return;
     defer outline.deinit(canvas.allocator);
 

@@ -12,7 +12,7 @@ const lookup_type_pair = 2;
 const lookup_type_extension = 9;
 const value_x_advance: u16 = 0x0004;
 
-/// Whether the font has any pair-positioning lookup, so `kern` tables can be ignored.
+/// Whether the font has any pair-positioning lookup; without one the table is useless here.
 pub fn hasPairPos(r: Reader) bool {
     return hasPairPosInner(r) catch false;
 }
@@ -123,26 +123,31 @@ fn coverageIndex(r: Reader, cov: usize, gid: u16) Error!?u16 {
             return null;
         },
         2 => {
-            const range_count = try r.u16At(cov + 2);
-            var lo: usize = 0;
-            var hi: usize = range_count;
-            while (lo < hi) {
-                const mid = lo + (hi - lo) / 2;
-                const rec = cov + 4 + 6 * mid;
-                const start = try r.u16At(rec);
-                const end = try r.u16At(rec + 2);
-                if (gid < start) {
-                    hi = mid;
-                } else if (gid > end) {
-                    lo = mid + 1;
-                } else {
-                    return (try r.u16At(rec + 4)) +% (gid - start);
-                }
-            }
-            return null;
+            const rec = try rangeRecord(r, cov + 4, try r.u16At(cov + 2), gid) orelse return null;
+            return rec.value +% (gid - rec.start);
         },
         else => return null,
     }
+}
+
+/// The `{start, end, value}` range record containing `gid`, or null.
+fn rangeRecord(r: Reader, base: usize, count: u16, gid: u16) Error!?struct { start: u16, value: u16 } {
+    var lo: usize = 0;
+    var hi: usize = count;
+    while (lo < hi) {
+        const mid = lo + (hi - lo) / 2;
+        const rec = base + 6 * mid;
+        const start = try r.u16At(rec);
+        const end = try r.u16At(rec + 2);
+        if (gid < start) {
+            hi = mid;
+        } else if (gid > end) {
+            lo = mid + 1;
+        } else {
+            return .{ .start = start, .value = try r.u16At(rec + 4) };
+        }
+    }
+    return null;
 }
 
 /// Class of `gid` in a class definition table; 0 when unlisted.
@@ -155,23 +160,8 @@ fn classOf(r: Reader, class_def: usize, gid: u16) Error!u16 {
             return try r.u16At(class_def + 6 + 2 * @as(usize, gid - start));
         },
         2 => {
-            const range_count = try r.u16At(class_def + 2);
-            var lo: usize = 0;
-            var hi: usize = range_count;
-            while (lo < hi) {
-                const mid = lo + (hi - lo) / 2;
-                const rec = class_def + 4 + 6 * mid;
-                const start = try r.u16At(rec);
-                const end = try r.u16At(rec + 2);
-                if (gid < start) {
-                    hi = mid;
-                } else if (gid > end) {
-                    lo = mid + 1;
-                } else {
-                    return try r.u16At(rec + 4);
-                }
-            }
-            return 0;
+            const rec = try rangeRecord(r, class_def + 4, try r.u16At(class_def + 2), gid) orelse return 0;
+            return rec.value;
         },
         else => return 0,
     }
@@ -182,8 +172,8 @@ const VectorFont = @import("../VectorFont.zig");
 
 test "pair adjustment: format 1, format 2 via extension, GPOS over kern" {
     var buf: [synthetic.buffer_size]u8 = undefined;
-    const font: VectorFont = try .loadFromBytes(synthetic.build(&buf, .{}));
-    try std.testing.expect(font.has_pair_pos);
+    const font = synthetic.font(&buf, .{});
+    try std.testing.expect(font.tables.gpos != null);
     // Format 1 pair set of glyph 1; the class lookup adds 0 for (class 1, class 0).
     try std.testing.expectEqual(@as(i16, -80), font.kern(1, 3));
     // Not in the pair set, so only the format 2 class pair (1, 1) applies; the kern
@@ -196,7 +186,7 @@ test "pair adjustment: format 1, format 2 via extension, GPOS over kern" {
 
 test "truncated GPOS reads as no kerning" {
     var buf: [synthetic.buffer_size]u8 = undefined;
-    var font: VectorFont = try .loadFromBytes(synthetic.build(&buf, .{}));
+    var font = synthetic.font(&buf, .{});
     font.tables.gpos.?.len = 12;
     try std.testing.expectEqual(@as(i16, 0), font.kern(1, 3));
 }

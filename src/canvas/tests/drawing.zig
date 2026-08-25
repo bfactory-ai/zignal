@@ -541,7 +541,7 @@ const VectorFont = @import("../../font.zig").VectorFont;
 const synthetic = @import("../../font/truetype/synthetic.zig");
 
 fn whiteCanvas(img: Image(Rgba)) Canvas(Rgba) {
-    for (img.data) |*pixel| pixel.* = .{ .r = 255, .g = 255, .b = 255, .a = 255 };
+    img.fill(Rgba.white);
     return .init(testing.allocator, img);
 }
 

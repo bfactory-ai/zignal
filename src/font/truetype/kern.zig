@@ -51,12 +51,11 @@ fn lookupFormat0(r: Reader, off: usize, left: u16, right: u16) Error!i16 {
 }
 
 const synthetic = @import("synthetic.zig");
-const VectorFont = @import("../VectorFont.zig");
 
 test "kern table pair" {
     var buf: [synthetic.buffer_size]u8 = undefined;
-    const font: VectorFont = try .loadFromBytes(synthetic.build(&buf, .{ .with_gpos = false }));
-    try std.testing.expect(!font.has_pair_pos);
+    const font = synthetic.font(&buf, .{ .with_gpos = false });
+    try std.testing.expect(font.tables.gpos == null);
     try std.testing.expectEqual(@as(i16, -50), font.kern(1, 2));
     try std.testing.expectEqual(@as(i16, 0), font.kern(2, 1));
     try std.testing.expectEqual(@as(i16, 0), font.kern(1, 3));
@@ -64,6 +63,6 @@ test "kern table pair" {
 
 test "no kern table" {
     var buf: [synthetic.buffer_size]u8 = undefined;
-    const font: VectorFont = try .loadFromBytes(synthetic.build(&buf, .{ .with_gpos = false, .with_kern = false }));
+    const font = synthetic.font(&buf, .{ .with_gpos = false, .with_kern = false });
     try std.testing.expectEqual(@as(i16, 0), font.kern(1, 2));
 }

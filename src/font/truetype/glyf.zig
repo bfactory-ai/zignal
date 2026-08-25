@@ -16,19 +16,19 @@ pub const max_composite_depth = 8;
 pub const max_composite_components = 1024;
 pub const max_outline_points = 0xFFFF;
 
-const flag_on_curve: u8 = 0x01;
+pub const flag_on_curve: u8 = 0x01;
 const flag_x_short: u8 = 0x02;
 const flag_y_short: u8 = 0x04;
 const flag_repeat: u8 = 0x08;
 const flag_x_same_or_positive: u8 = 0x10;
 const flag_y_same_or_positive: u8 = 0x20;
 
-const comp_arg_words: u16 = 0x0001;
-const comp_args_are_xy: u16 = 0x0002;
-const comp_have_scale: u16 = 0x0008;
-const comp_more: u16 = 0x0020;
-const comp_xy_scale: u16 = 0x0040;
-const comp_two_by_two: u16 = 0x0080;
+pub const comp_arg_words: u16 = 0x0001;
+pub const comp_args_are_xy: u16 = 0x0002;
+pub const comp_have_scale: u16 = 0x0008;
+pub const comp_more: u16 = 0x0020;
+pub const comp_xy_scale: u16 = 0x0040;
+pub const comp_two_by_two: u16 = 0x0080;
 
 const Range = struct { offset: u32, len: u32 };
 
@@ -44,10 +44,6 @@ fn glyphRange(font: VectorFont, gid: u16) Error!?Range {
     if (end < start or end > font.tables.glyf.len) return error.InvalidGlyph;
     if (end == start) return null;
     return .{ .offset = start, .len = end - start };
-}
-
-pub fn hasOutline(font: VectorFont, gid: u16) bool {
-    return (glyphRange(font, gid) catch null) != null;
 }
 
 pub fn bounds(font: VectorFont, gid: u16) ?VectorFont.Bounds {
@@ -70,65 +66,37 @@ fn glyphReader(font: VectorFont, range: Range) Error!Reader {
 /// Resolves `gid` (composites included) into an owned `Outline`: one walk to count,
 /// one to fill, so exactly two allocations.
 pub fn outline(font: VectorFont, gpa: Allocator, gid: u16) (Error || Allocator.Error)!Outline {
-    const range = try glyphRange(font, gid);
-    var counter: Counter = .{};
+    var sink: Sink = .{};
     var budget: u32 = max_composite_components;
-    try walk(font, gid, .identity, 0, &budget, &counter);
-    if (counter.points > max_outline_points or counter.contours > max_outline_points) return error.TooManyPoints;
+    try walk(font, gid, .identity, 0, &budget, &sink);
+    if (sink.n > max_outline_points or sink.c > max_outline_points) return error.TooManyPoints;
 
-    const points = try gpa.alloc(Outline.Point, counter.points);
+    const points = try gpa.alloc(Outline.Point, sink.n);
     errdefer gpa.free(points);
-    const contour_ends = try gpa.alloc(u32, counter.contours);
+    const contour_ends = try gpa.alloc(u32, sink.c);
     errdefer gpa.free(contour_ends);
 
-    var filler: Filler = .{ .points = points, .contour_ends = contour_ends };
+    sink = .{ .points = points, .contour_ends = contour_ends };
     budget = max_composite_components;
-    try walk(font, gid, .identity, 0, &budget, &filler);
-
-    var result: Outline = .{
-        .x_min = 0,
-        .y_min = 0,
-        .x_max = 0,
-        .y_max = 0,
-        .points = points,
-        .contour_ends = contour_ends,
-    };
-    if (range) |rg| {
-        const r = try glyphReader(font, rg);
-        result.x_min = try r.i16At(2);
-        result.y_min = try r.i16At(4);
-        result.x_max = try r.i16At(6);
-        result.y_max = try r.i16At(8);
-    }
-    return result;
+    try walk(font, gid, .identity, 0, &budget, &sink);
+    return .{ .points = points, .contour_ends = contour_ends };
 }
 
-const Counter = struct {
-    points: u32 = 0,
-    contours: u32 = 0,
-
-    fn point(self: *Counter, _: f32, _: f32, _: bool) void {
-        self.points += 1;
-    }
-
-    fn endContour(self: *Counter) void {
-        self.contours += 1;
-    }
-};
-
-const Filler = struct {
-    points: []Outline.Point,
-    contour_ends: []u32,
+/// Receives decoded points; counts only when the output slices are absent, which lets
+/// simple glyphs be sized from their header without decoding.
+const Sink = struct {
+    points: ?[]Outline.Point = null,
+    contour_ends: ?[]u32 = null,
     n: u32 = 0,
     c: u32 = 0,
 
-    fn point(self: *Filler, x: f32, y: f32, on_curve: bool) void {
-        self.points[self.n] = .{ .x = x, .y = y, .on_curve = on_curve };
+    fn point(self: *Sink, x: f32, y: f32, on_curve: bool) void {
+        if (self.points) |points| points[self.n] = .{ .x = x, .y = y, .on_curve = on_curve };
         self.n += 1;
     }
 
-    fn endContour(self: *Filler) void {
-        self.contour_ends[self.c] = self.n;
+    fn endContour(self: *Sink) void {
+        if (self.contour_ends) |ends| ends[self.c] = self.n;
         self.c += 1;
     }
 };
@@ -161,7 +129,7 @@ const Affine = struct {
     }
 };
 
-fn walk(font: VectorFont, gid: u16, transform: Affine, depth: u8, budget: *u32, sink: anytype) Error!void {
+fn walk(font: VectorFont, gid: u16, transform: Affine, depth: u8, budget: *u32, sink: *Sink) Error!void {
     const range = try glyphRange(font, gid) orelse return;
     if (range.len < 10) return error.InvalidGlyph;
     const r = try glyphReader(font, range);
@@ -211,12 +179,17 @@ fn coordDelta(r: Reader, off: *usize, flag: u8, short: u8, same: u8) Error!i32 {
     return v;
 }
 
-fn simple(r: Reader, num_contours: u16, transform: Affine, sink: anytype) Error!void {
+fn simple(r: Reader, num_contours: u16, transform: Affine, sink: *Sink) Error!void {
     var num_points: u32 = 0;
     for (0..num_contours) |i| {
         const end = try r.u16At(10 + 2 * i);
         if (@as(u32, end) + 1 <= num_points) return error.InvalidGlyph;
         num_points = @as(u32, end) + 1;
+    }
+    if (sink.points == null) {
+        sink.n += num_points;
+        sink.c += num_contours;
+        return;
     }
     const instructions_off = 10 + 2 * @as(usize, num_contours);
     const flags_off = instructions_off + 2 + try r.u16At(instructions_off);
@@ -254,7 +227,7 @@ fn simple(r: Reader, num_contours: u16, transform: Affine, sink: anytype) Error!
     }
 }
 
-fn composite(font: VectorFont, r: Reader, transform: Affine, depth: u8, budget: *u32, sink: anytype) Error!void {
+fn composite(font: VectorFont, r: Reader, transform: Affine, depth: u8, budget: *u32, sink: *Sink) Error!void {
     if (depth >= max_composite_depth) return error.CompositeTooDeep;
     var off: usize = 10;
     while (true) {
@@ -313,7 +286,7 @@ fn expectPoint(p: Outline.Point, x: f32, y: f32, on_curve: bool) !void {
 test "simple glyph with a hole" {
     var buf: [synthetic.buffer_size]u8 = undefined;
     for ([_]bool{ false, true }) |long_loca| {
-        const font: VectorFont = try .loadFromBytes(synthetic.build(&buf, .{ .long_loca = long_loca }));
+        const font = synthetic.font(&buf, .{ .long_loca = long_loca });
         var o = try font.outline(testing.allocator, 1);
         defer o.deinit(testing.allocator);
         try testing.expectEqual(@as(usize, 2), o.contourCount());
@@ -322,10 +295,6 @@ test "simple glyph with a hole" {
         try expectPoint(o.contour(0)[0], 100, 0, true);
         try expectPoint(o.contour(0)[2], 700, 700, true);
         try expectPoint(o.contour(1)[0], 300, 200, true);
-        try testing.expectEqual(@as(i16, 100), o.x_min);
-        try testing.expectEqual(@as(i16, 700), o.y_max);
-        try testing.expect(font.hasOutline(1));
-        try testing.expect(!font.hasOutline(0));
         try testing.expectEqual(VectorFont.Bounds{ .x_min = 100, .y_min = 0, .x_max = 700, .y_max = 700 }, font.glyphBounds(1).?);
         try testing.expectEqual(null, font.glyphBounds(0));
     }
@@ -333,7 +302,7 @@ test "simple glyph with a hole" {
 
 test "empty glyph" {
     var buf: [synthetic.buffer_size]u8 = undefined;
-    const font: VectorFont = try .loadFromBytes(synthetic.build(&buf, .{}));
+    const font = synthetic.font(&buf, .{});
     var o = try font.outline(testing.allocator, 0);
     defer o.deinit(testing.allocator);
     try testing.expectEqual(@as(usize, 0), o.contourCount());
@@ -343,7 +312,7 @@ test "empty glyph" {
 
 test "all off-curve contour" {
     var buf: [synthetic.buffer_size]u8 = undefined;
-    const font: VectorFont = try .loadFromBytes(synthetic.build(&buf, .{}));
+    const font = synthetic.font(&buf, .{});
     var o = try font.outline(testing.allocator, 3);
     defer o.deinit(testing.allocator);
     try testing.expectEqual(@as(usize, 1), o.contourCount());
@@ -352,7 +321,7 @@ test "all off-curve contour" {
 
 test "composite glyphs" {
     var buf: [synthetic.buffer_size]u8 = undefined;
-    const font: VectorFont = try .loadFromBytes(synthetic.build(&buf, .{}));
+    const font = synthetic.font(&buf, .{});
     var d = try font.outline(testing.allocator, 4);
     defer d.deinit(testing.allocator);
     try testing.expectEqual(@as(usize, 3), d.contourCount());
@@ -369,17 +338,17 @@ test "composite glyphs" {
 
 test "composite limits" {
     var buf: [synthetic.buffer_size]u8 = undefined;
-    const looping: VectorFont = try .loadFromBytes(synthetic.build(&buf, .{ .self_referencing = true }));
+    const looping = synthetic.font(&buf, .{ .self_referencing = true });
     try testing.expectError(error.CompositeTooDeep, looping.outline(testing.allocator, 5));
 
-    const fanout: VectorFont = try .loadFromBytes(synthetic.build(&buf, .{ .fanout = true }));
+    const fanout = synthetic.font(&buf, .{ .fanout = true });
     try testing.expectError(error.CompositeTooDeep, fanout.outline(testing.allocator, 5));
 }
 
 test "truncated glyph data" {
     var buf: [synthetic.buffer_size]u8 = undefined;
-    var font: VectorFont = try .loadFromBytes(synthetic.build(&buf, .{}));
+    var font = synthetic.font(&buf, .{});
     font.tables.glyf.len = 40;
     try testing.expectError(error.InvalidGlyph, font.outline(testing.allocator, 2));
-    try testing.expect(!font.hasOutline(2));
+    try testing.expectEqual(null, font.glyphBounds(2));
 }

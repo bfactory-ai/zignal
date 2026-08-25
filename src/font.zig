@@ -48,15 +48,10 @@ pub const Font = union(enum) {
         }
     }
 
-    /// Pixel scale applied to a bitmap font drawn at `size`.
-    pub fn bitmapScale(font: BitmapFont, size: f32) f32 {
-        return size / @as(f32, @floatFromInt(font.char_height));
-    }
-
     /// Distance from the top of a line to its baseline, in pixels.
     pub fn ascent(self: Font, size: f32) f32 {
         return switch (self) {
-            .bitmap => |b| @as(f32, @floatFromInt(b.ascent())) * bitmapScale(b, size),
+            .bitmap => |b| @as(f32, @floatFromInt(b.ascent())) * b.scaleFor(size),
             .vector => |v| @as(f32, @floatFromInt(v.ascent)) * v.scaleFor(size),
         };
     }
@@ -79,7 +74,7 @@ pub const Font = union(enum) {
     /// Box occupied by `text` relative to its top-left corner.
     pub fn getTextBounds(self: Font, text: []const u8, size: f32) Rectangle(f32) {
         return switch (self) {
-            .bitmap => |b| b.getTextBounds(text, bitmapScale(b, size)),
+            .bitmap => |b| b.getTextBounds(text, b.scaleFor(size)),
             .vector => |v| v.getTextBounds(text, size),
         };
     }
@@ -87,7 +82,7 @@ pub const Font = union(enum) {
     /// Box of the inked pixels of `text` relative to its top-left corner.
     pub fn getTextBoundsTight(self: Font, text: []const u8, size: f32) Rectangle(f32) {
         return switch (self) {
-            .bitmap => |b| b.getTextBoundsTight(text, bitmapScale(b, size)),
+            .bitmap => |b| b.getTextBoundsTight(text, b.scaleFor(size)),
             .vector => |v| v.getTextBoundsTight(text, size),
         };
     }

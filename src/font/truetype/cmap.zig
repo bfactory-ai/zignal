@@ -7,6 +7,7 @@ const truetype = @import("../truetype.zig");
 const Error = truetype.Error;
 const Reader = truetype.Reader;
 
+/// In order of preference.
 pub const Format = enum { format4, format12 };
 
 pub const Subtable = struct {
@@ -25,7 +26,6 @@ const windows_full = 10;
 /// Picks the best Unicode subtable: format 12 over format 4, regardless of record order.
 pub fn select(r: Reader) Error!Subtable {
     var best: ?Subtable = null;
-    var best_rank: u8 = 0;
     const num_records = try r.u16At(2);
     for (0..num_records) |i| {
         const rec = 4 + i * 8;
@@ -35,14 +35,13 @@ pub fn select(r: Reader) Error!Subtable {
         const unicode = platform == platform_unicode or
             (platform == platform_windows and (encoding == windows_bmp or encoding == windows_full));
         if (!unicode) continue;
-        const rank: u8 = switch (try r.u16At(offset)) {
-            4 => 1,
-            12 => 2,
+        const format: Format = switch (try r.u16At(offset)) {
+            4 => .format4,
+            12 => .format12,
             else => continue,
         };
-        if (rank <= best_rank) continue;
-        best = try validate(r, offset, if (rank == 2) .format12 else .format4);
-        best_rank = rank;
+        if (best) |b| if (@backingInt(format) <= @backingInt(b.format)) continue;
+        best = try validate(r, offset, format);
     }
     return best orelse error.UnsupportedCmap;
 }
@@ -115,11 +114,10 @@ fn lookup12(r: Reader, st: Subtable, codepoint: u21) Error!u16 {
 }
 
 const synthetic = @import("synthetic.zig");
-const VectorFont = @import("../VectorFont.zig");
 
 test "format 4: delta and glyphIdArray segments" {
     var buf: [synthetic.buffer_size]u8 = undefined;
-    const font: VectorFont = try .loadFromBytes(synthetic.build(&buf, .{}));
+    const font = synthetic.font(&buf, .{});
     try std.testing.expectEqual(.format4, font.cmap.format);
     try std.testing.expectEqual(@as(u16, 1), font.glyphIndex('A'));
     try std.testing.expectEqual(@as(u16, 6), font.glyphIndex('F'));
@@ -131,7 +129,7 @@ test "format 4: delta and glyphIdArray segments" {
 
 test "format 12 is preferred and still resolves the BMP" {
     var buf: [synthetic.buffer_size]u8 = undefined;
-    const font: VectorFont = try .loadFromBytes(synthetic.build(&buf, .{ .with_format12 = true }));
+    const font = synthetic.font(&buf, .{ .with_format12 = true });
     try std.testing.expectEqual(.format12, font.cmap.format);
     try std.testing.expectEqual(@as(u16, 3), font.glyphIndex(0x1F600));
     try std.testing.expectEqual(@as(u16, 2), font.glyphIndex('B'));
@@ -140,7 +138,7 @@ test "format 12 is preferred and still resolves the BMP" {
 
 test "glyph ids past maxp map to notdef" {
     var buf: [synthetic.buffer_size]u8 = undefined;
-    var font: VectorFont = try .loadFromBytes(synthetic.build(&buf, .{}));
+    var font = synthetic.font(&buf, .{});
     font.num_glyphs = 3;
     try std.testing.expectEqual(@as(u16, 2), font.glyphIndex('B'));
     try std.testing.expectEqual(@as(u16, 0), font.glyphIndex('C'));

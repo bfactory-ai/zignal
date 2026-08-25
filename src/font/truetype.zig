@@ -10,7 +10,7 @@ const std = @import("std");
 
 const VectorFont = @import("VectorFont.zig");
 
-pub const reader = @import("truetype/reader.zig");
+const reader = @import("truetype/reader.zig");
 pub const Reader = reader.Reader;
 pub const Table = reader.Table;
 pub const cmap = @import("truetype/cmap.zig");
@@ -37,7 +37,7 @@ pub const Error = error{
     TooManyPoints,
 };
 
-pub const max_tables = 512;
+const max_tables = 512;
 
 /// Where the per-glyph data lives; the fixed-size header tables are folded into
 /// `VectorFont`'s fields at load time.
@@ -47,13 +47,14 @@ pub const Tables = struct {
     hmtx: Table,
     cmap: Table,
     kern: ?Table = null,
+    /// Present only when it holds pair adjustment; it then takes precedence over `kern`.
     gpos: ?Table = null,
 };
 
-const sfnt_true_type: u32 = 0x00010000;
-const sfnt_apple: u32 = std.mem.readInt(u32, "true", .big);
-const sfnt_cff: u32 = std.mem.readInt(u32, "OTTO", .big);
-const sfnt_collection: u32 = std.mem.readInt(u32, "ttcf", .big);
+pub const sfnt_true_type: u32 = 0x00010000;
+const sfnt_apple = tag("true");
+const sfnt_cff = tag("OTTO");
+const sfnt_collection = tag("ttcf");
 
 fn tag(comptime name: *const [4]u8) u32 {
     return std.mem.readInt(u32, name, .big);
@@ -175,8 +176,6 @@ pub fn parse(data: []const u8) Error!VectorFont {
     const cmap_t = cmap_table orelse return error.MissingTable;
     const cmap_subtable = try cmap.select(r.table(cmap_t));
 
-    const has_pair_pos = if (gpos_table) |t| gpos.hasPairPos(r.table(t)) else false;
-
     return .{
         .data = data,
         .units_per_em = units_per_em,
@@ -198,10 +197,10 @@ pub fn parse(data: []const u8) Error!VectorFont {
             .hmtx = hmtx_t,
             .cmap = cmap_t,
             .kern = kern_table,
-            .gpos = gpos_table,
+            // A GPOS without pair adjustment has nothing this parser reads.
+            .gpos = if (gpos_table) |t| (if (gpos.hasPairPos(r.table(t))) t else null) else null,
         },
         .cmap = cmap_subtable,
-        .has_pair_pos = has_pair_pos,
     };
 }
 

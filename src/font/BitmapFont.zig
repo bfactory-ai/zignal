@@ -68,6 +68,11 @@ pub fn ascent(self: BitmapFont) i16 {
     return self.font_ascent orelse self.char_height;
 }
 
+/// Scale that renders the font `size` pixels tall.
+pub fn scaleFor(self: BitmapFont, size: f32) f32 {
+    return size / @as(f32, @floatFromInt(self.char_height));
+}
+
 /// Glyph data from the glyph map, if this codepoint has an entry
 fn mappedGlyph(self: BitmapFont, codepoint: u21) ?GlyphData {
     const map = self.glyph_map orelse return null;

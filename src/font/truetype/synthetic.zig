@@ -16,6 +16,10 @@
 
 const std = @import("std");
 
+const truetype = @import("../truetype.zig");
+const glyf_mod = @import("glyf.zig");
+const VectorFont = @import("../VectorFont.zig");
+
 pub const buffer_size = 16384;
 
 pub const Options = struct {
@@ -57,11 +61,6 @@ const Builder = struct {
         b.putI16(@intFromFloat(v * 16384));
     }
 
-    fn bytes(b: *Builder, s: []const u8) void {
-        @memcpy(b.buf[b.pos..][0..s.len], s);
-        b.pos += s.len;
-    }
-
     fn zeros(b: *Builder, n: usize) void {
         @memset(b.buf[b.pos..][0..n], 0);
         b.pos += n;
@@ -91,7 +90,7 @@ fn simpleGlyph(b: *Builder, bbox: [4]i16, contours: []const []const Pt) void {
         b.putU16(n - 1);
     }
     b.putU16(0); // no instructions
-    for (contours) |c| for (c) |p| b.putU8(if (p.on) 0x01 else 0x00);
+    for (contours) |c| for (c) |p| b.putU8(if (p.on) glyf_mod.flag_on_curve else 0);
     var prev: i16 = 0;
     for (contours) |c| for (c) |p| {
         b.putI16(p.x - prev);
@@ -104,14 +103,8 @@ fn simpleGlyph(b: *Builder, bbox: [4]i16, contours: []const []const Pt) void {
     };
 }
 
-const comp_arg_words: u16 = 0x0001;
-const comp_args_are_xy: u16 = 0x0002;
-const comp_have_scale: u16 = 0x0008;
-const comp_more: u16 = 0x0020;
-const comp_two_by_two: u16 = 0x0080;
-
 fn component(b: *Builder, flags: u16, gid: u16, dx: i16, dy: i16) void {
-    b.putU16(flags | comp_arg_words | comp_args_are_xy);
+    b.putU16(flags | glyf_mod.comp_arg_words | glyf_mod.comp_args_are_xy);
     b.putU16(gid);
     b.putI16(dx);
     b.putI16(dy);
@@ -138,17 +131,17 @@ fn glyf(b: *Builder, opts: Options) [8]u32 {
     offsets[4] = @intCast(b.pos - base);
     b.putI16(-1);
     for ([_]i16{ 100, 0, 800, 700 }) |v| b.putI16(v);
-    component(b, comp_more, 1, 0, 0);
-    component(b, comp_have_scale, 3, 400, 0);
+    component(b, glyf_mod.comp_more, 1, 0, 0);
+    component(b, glyf_mod.comp_have_scale, 3, 400, 0);
     b.f2dot14(0.5);
     offsets[5] = @intCast(b.pos - base);
     b.putI16(-1);
     for ([_]i16{ 100, 0, 800, 700 }) |v| b.putI16(v);
     if (opts.fanout) {
-        for (0..399) |_| component(b, comp_more, 4, 0, 0);
+        for (0..399) |_| component(b, glyf_mod.comp_more, 4, 0, 0);
         component(b, 0, 4, 0, 0);
     } else {
-        component(b, comp_two_by_two, if (opts.self_referencing) 5 else 4, 0, 0);
+        component(b, glyf_mod.comp_two_by_two, if (opts.self_referencing) 5 else 4, 0, 0);
         b.f2dot14(1);
         b.f2dot14(0);
         b.f2dot14(0);
@@ -234,7 +227,6 @@ fn kernTable(b: *Builder) void {
 }
 
 fn gposTable(b: *Builder) void {
-    const start = b.pos;
     b.putU16(1);
     b.putU16(0);
     b.putU16(10); // ScriptList
@@ -330,7 +322,6 @@ fn gposTable(b: *Builder) void {
     b.putU16(2); // startGlyph
     b.putU16(1);
     b.putU16(1);
-    _ = start;
 }
 
 const TableRecord = struct { tag: *const [4]u8, offset: u32, len: u32 };
@@ -342,7 +333,7 @@ pub fn build(buf: []u8, opts: Options) []const u8 {
     var count: usize = 0;
     const num_tables: usize = @as(usize, 9) + @intFromBool(opts.with_kern) + @intFromBool(opts.with_gpos);
 
-    b.putU32(0x00010000);
+    b.putU32(truetype.sfnt_true_type);
     b.putU16(@intCast(num_tables));
     b.putU16(0);
     b.putU16(0);
@@ -438,6 +429,11 @@ pub fn build(buf: []u8, opts: Options) []const u8 {
         b.patchU32(at + 12, rec.len);
     }
     return b.buf[0..b.pos];
+}
+
+/// The synthetic font, parsed; `buf` must outlive it.
+pub fn font(buf: *[buffer_size]u8, opts: Options) VectorFont {
+    return VectorFont.loadFromBytes(build(buf, opts)) catch unreachable;
 }
 
 test "builds within the buffer" {
