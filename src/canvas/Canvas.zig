@@ -1595,10 +1595,11 @@ pub fn Canvas(comptime T: type) type {
             }
         };
 
-        /// Where an edge crosses a scanline, with its winding direction.
+        /// Where an edge crosses a scanline, with its winding direction. `dir` is a full
+        /// word so that sorting's whole-struct copies never read a byte-wide store.
         const Crossing = struct {
             x: f32,
-            dir: i8,
+            dir: i32,
 
             fn lessThan(_: void, a: Crossing, b: Crossing) bool {
                 return a.x < b.x;
