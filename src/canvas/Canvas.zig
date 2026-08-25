@@ -9,6 +9,9 @@ const isColor = @import("../color.zig").isColor;
 const Rgba = @import("../color.zig").Rgba(u8);
 const Blending = @import("../color.zig").Blending;
 const BitmapFont = @import("../font.zig").BitmapFont;
+const Font = @import("../font.zig").Font;
+const VectorFont = @import("../font.zig").VectorFont;
+const Outline = @import("../font.zig").Outline;
 const Rectangle = @import("../geometry.zig").Rectangle;
 const Point = @import("../geometry/Point.zig").Point;
 const Image = @import("../image.zig").Image;
@@ -32,6 +35,15 @@ pub const DrawOptions = struct {
 
     pub const soft: DrawOptions = .{ .mode = .soft, .blending = .normal };
     pub const fast: DrawOptions = .{ .mode = .fast, .blending = .none };
+};
+
+/// How the contours passed to `fillPolygons` combine.
+pub const FillRule = enum {
+    /// Inside where a ray from the point crosses an odd number of edges.
+    even_odd,
+    /// Inside where the contours wind around the point a nonzero net number of times;
+    /// the rule glyph outlines are designed for.
+    nonzero,
 };
 
 /// A drawing context for an image, providing methods to draw shapes and lines.
@@ -62,9 +74,11 @@ pub fn Canvas(comptime T: type) type {
         const antialias_edge_offset = 0.5;
         /// Vertical samples per pixel row for antialiased polygon fills
         const polygon_subscanlines = 8;
-        /// Stack scratch (bytes) for polygon fills: edges and crossings for 64 vertices plus a
+        /// Stack scratch (bytes) for polygon fills: edges and crossings for 512 vertices plus a
         /// 1024-pixel coverage row; larger inputs spill to the heap.
-        const polygon_scratch_size = 64 * (@sizeOf(Edge) + @sizeOf(f32)) + 1024 * @sizeOf(CoverageCell);
+        const polygon_scratch_size = 512 * (@sizeOf(Edge) + @sizeOf(Crossing)) + 1024 * @sizeOf(CoverageCell);
+        /// Stack scratch (bytes) for flattening a glyph outline; spills to heap beyond
+        const glyph_scratch_size = 1024 * @sizeOf(Point(2, f32)) + 64 * @sizeOf([]const Point(2, f32));
         /// Stack scratch (points) for spline polygon tessellation; spills to heap beyond
         const spline_polygon_stack_buffer_size = 400;
 
@@ -908,35 +922,88 @@ pub fn Canvas(comptime T: type) type {
         /// - **DrawMode.soft**: antialiased edges in every direction — each row is sampled at
         ///   `polygon_subscanlines` heights with exact horizontal coverage.
         pub fn fillPolygon(self: Self, polygon: []const Point(2, f32), color: anytype, opts: DrawOptions) !void {
+            return self.fillPolygons(&.{polygon}, color, .even_odd, opts);
+        }
+
+        /// Fills several closed contours as one shape under `fill_rule`. Glyph outlines need
+        /// `.nonzero`: their holes are reverse-winding contours and their strokes may overlap.
+        pub fn fillPolygons(self: Self, contours: []const []const Point(2, f32), color: anytype, fill_rule: FillRule, opts: DrawOptions) !void {
             comptime assert(isColor(@TypeOf(color)));
-            if (polygon.len < 3) return;
+            const paint: Paint = .init(color, opts.blending);
+            switch (opts.mode) {
+                inline else => |mode| return self.fillContours(contours, fill_rule, mode, paint),
+            }
+        }
+
+        /// Accumulates antialiased coverage of `contours` into an 8-bit mask:
+        /// `dest = max(dest, 255 * coverage)`. Pixels outside the shape are never written, so
+        /// clear the mask first. Only for `Canvas(u8)`.
+        pub fn fillPolygonsCoverage(self: Self, contours: []const []const Point(2, f32), fill_rule: FillRule) !void {
+            comptime assert(T == u8);
+            return self.fillContours(contours, fill_rule, .soft, CoverageMax{});
+        }
+
+        /// Fills a glyph outline with the nonzero rule; `transform` maps font units to pixels.
+        pub fn fillGlyph(self: Self, outline: Outline, transform: Outline.Transform, color: anytype, opts: DrawOptions) !void {
+            comptime assert(isColor(@TypeOf(color)));
+            const paint: Paint = .init(color, opts.blending);
+            switch (opts.mode) {
+                inline else => |mode| return self.fillOutline(outline, transform, mode, paint),
+            }
+        }
+
+        /// Antialiased coverage of a glyph outline into an 8-bit mask, as `fillPolygonsCoverage`.
+        pub fn fillGlyphCoverage(self: Self, outline: Outline, transform: Outline.Transform) !void {
+            comptime assert(T == u8);
+            return self.fillOutline(outline, transform, .soft, CoverageMax{});
+        }
+
+        fn fillOutline(self: Self, outline: Outline, transform: Outline.Transform, comptime mode: DrawMode, sink: anytype) !void {
+            var stack: [glyph_scratch_size]u8 align(16) = undefined;
+            var buffer_first: std.heap.BufferFirstAllocator = .init(&stack, self.allocator);
+            const scratch = buffer_first.allocator();
+            const points = try scratch.alloc(Point(2, f32), outline.flattenedPointCount(transform));
+            defer scratch.free(points);
+            const contours = try scratch.alloc([]const Point(2, f32), outline.contourCount());
+            defer scratch.free(contours);
+            return self.fillContours(outline.flatten(transform, points, contours), .nonzero, mode, sink);
+        }
+
+        /// Scanline fill shared by every polygon entry point. `sink` is a `Paint` or, for
+        /// `.soft` masks, a `CoverageMax`.
+        fn fillContours(self: Self, contours: []const []const Point(2, f32), fill_rule: FillRule, comptime mode: DrawMode, sink: anytype) !void {
+            var vertices: usize = 0;
+            var bounds: ?Rectangle(f32) = null;
+            for (contours) |polygon| {
+                if (polygon.len < 3) continue;
+                vertices += polygon.len;
+                const box: Rectangle(f32) = .fromPoints(polygon);
+                bounds = if (bounds) |acc| acc.merge(box) else box;
+            }
+            const shape_bounds = bounds orelse return;
 
             var stack: [polygon_scratch_size]u8 align(16) = undefined;
             var buffer_first: std.heap.BufferFirstAllocator = .init(&stack, self.allocator);
             const scratch = buffer_first.allocator();
-            const edges_buf = try scratch.alloc(Edge, polygon.len);
+            const edges_buf = try scratch.alloc(Edge, vertices);
             defer scratch.free(edges_buf);
-            const crossings_buf = try scratch.alloc(f32, polygon.len);
+            const crossings_buf = try scratch.alloc(Crossing, vertices);
             defer scratch.free(crossings_buf);
 
-            const edges = polygonEdges(polygon, edges_buf);
-            const bounds: Rectangle(f32) = .fromPoints(polygon);
-            const paint: Paint = .init(color, opts.blending);
-
-            switch (opts.mode) {
+            const edges = polygonEdges(contours, edges_buf);
+            switch (mode) {
                 .fast => {
+                    if (@TypeOf(sink) != Paint) unreachable;
                     const frows: f32 = @floatFromInt(self.image.rows);
-                    var y = @max(0, @floor(bounds.t));
-                    const end_y = @min(frows - 1, @ceil(bounds.b));
+                    var y = @max(0, @floor(shape_bounds.t));
+                    const end_y = @min(frows - 1, @ceil(shape_bounds.b));
                     while (y <= end_y) : (y += 1) {
                         const crossings = scanlineCrossings(edges, y, crossings_buf);
-                        var i: usize = 0;
-                        while (i + 1 < crossings.len) : (i += 2) {
-                            self.fillSpan(crossings[i], crossings[i + 1], y, paint);
-                        }
+                        const row: SpanRow = .{ .canvas = self, .y = y, .paint = sink };
+                        forEachSpan(crossings, fill_rule, row, SpanRow.emit);
                     }
                 },
-                .soft => try self.fillPolygonSoft(edges, bounds, crossings_buf, paint, scratch),
+                .soft => try self.fillPolygonSoft(edges, shape_bounds, crossings_buf, fill_rule, sink, scratch),
             }
         }
 
@@ -946,6 +1013,8 @@ pub fn Canvas(comptime T: type) type {
             p2: Point(2, f32),
             y_min: f32,
             y_max: f32,
+            /// +1 when the edge runs down the screen, -1 up; the winding contribution.
+            dir: i8,
 
             /// x where the edge crosses the horizontal line at `y`, for y in [y_min, y_max).
             inline fn xAt(e: Edge, y: f32) f32 {
@@ -953,46 +1022,134 @@ pub fn Canvas(comptime T: type) type {
             }
         };
 
-        /// Fills `buf` with the polygon's non-horizontal edges (horizontal ones never cross a scanline).
-        fn polygonEdges(polygon: []const Point(2, f32), buf: []Edge) []Edge {
+        /// Where an edge crosses a scanline, with its winding direction.
+        const Crossing = struct {
+            x: f32,
+            dir: i8,
+
+            fn lessThan(_: void, a: Crossing, b: Crossing) bool {
+                return a.x < b.x;
+            }
+        };
+
+        /// Fills `buf` with the non-horizontal edges of every contour (horizontal ones never
+        /// cross a scanline).
+        fn polygonEdges(contours: []const []const Point(2, f32), buf: []Edge) []Edge {
             var count: usize = 0;
-            for (polygon, 0..) |p1, i| {
-                const p2 = polygon[(i + 1) % polygon.len];
-                if (p1.y() == p2.y()) continue;
-                buf[count] = .{ .p1 = p1, .p2 = p2, .y_min = @min(p1.y(), p2.y()), .y_max = @max(p1.y(), p2.y()) };
-                count += 1;
+            for (contours) |polygon| {
+                if (polygon.len < 3) continue;
+                for (polygon, 0..) |p1, i| {
+                    const p2 = polygon[(i + 1) % polygon.len];
+                    if (p1.y() == p2.y()) continue;
+                    buf[count] = .{
+                        .p1 = p1,
+                        .p2 = p2,
+                        .y_min = @min(p1.y(), p2.y()),
+                        .y_max = @max(p1.y(), p2.y()),
+                        .dir = if (p1.y() < p2.y()) 1 else -1,
+                    };
+                    count += 1;
+                }
             }
             return buf[0..count];
         }
 
-        /// Sorted x-coordinates where `edges` cross the horizontal line at `y`.
-        fn scanlineCrossings(edges: []const Edge, y: f32, buf: []f32) []f32 {
+        /// Crossings of `edges` with the horizontal line at `y`, sorted by x.
+        fn scanlineCrossings(edges: []const Edge, y: f32, buf: []Crossing) []Crossing {
             var count: usize = 0;
             for (edges) |e| {
                 if (y >= e.y_min and y < e.y_max) {
-                    buf[count] = e.xAt(y);
+                    buf[count] = .{ .x = e.xAt(y), .dir = e.dir };
                     count += 1;
                 }
             }
             const crossings = buf[0..count];
             if (count == 2) {
-                if (crossings[0] > crossings[1]) std.mem.swap(f32, &crossings[0], &crossings[1]);
+                if (crossings[0].x > crossings[1].x) std.mem.swap(Crossing, &crossings[0], &crossings[1]);
             } else if (count > 2) {
-                std.mem.sort(f32, crossings, {}, std.sort.asc(f32));
+                std.mem.sort(Crossing, crossings, {}, Crossing.lessThan);
             }
             return crossings;
         }
+
+        /// Calls `emit(ctx, left, right)` for every span of one scanline that is inside the
+        /// shape under `rule`. Even-odd toggles on every crossing, so it pairs them exactly
+        /// as a pairwise walk would; nonzero sums the edge directions.
+        inline fn forEachSpan(crossings: []const Crossing, rule: FillRule, ctx: anytype, comptime emit: anytype) void {
+            var winding: i32 = 0;
+            var left: f32 = 0;
+            for (crossings) |c| {
+                const was_inside = winding != 0;
+                winding = switch (rule) {
+                    .even_odd => winding ^ 1,
+                    .nonzero => winding + c.dir,
+                };
+                const inside = winding != 0;
+                if (inside and !was_inside) left = c.x else if (was_inside and !inside) emit(ctx, left, c.x);
+            }
+        }
+
+        /// `.fast` span sink: writes each span straight into the row.
+        const SpanRow = struct {
+            canvas: Self,
+            y: f32,
+            paint: Paint,
+
+            fn emit(row: SpanRow, left: f32, right: f32) void {
+                row.canvas.fillSpan(left, right, row.y, row.paint);
+            }
+        };
+
+        /// Coverage sink for `Canvas(u8)` masks: keeps the larger of the existing value and the
+        /// new coverage, so shapes accumulated over several calls never lighten each other.
+        const CoverageMax = struct {
+            inline fn cover(_: CoverageMax, dest: *u8, alpha: f32) void {
+                dest.* = @max(dest.*, @as(u8, @intFromFloat(@round(@min(alpha, 1) * 255))));
+            }
+        };
 
         /// One pixel of a `fillPolygonSoft` row: `area` accumulates partial coverage at span
         /// ends, `run` is a difference array for fully covered interiors.
         const CoverageCell = struct { area: f32 = 0, run: f32 = 0 };
 
-        /// Antialiased even-odd fill. Each pixel row is sampled at `polygon_subscanlines` heights;
+        /// `.soft` span sink for one pixel row: spreads each sub-scanline span over the cells.
+        const RowCoverage = struct {
+            cells: []CoverageCell,
+            /// Buffer-relative x: cell j covers [j, j+1), i.e. image column col_start + j.
+            x_lo: f32,
+            x_hi: f32,
+            width: usize,
+            weight: f32,
+            touched_lo: usize,
+            touched_hi: usize = 0,
+
+            fn emit(acc: *RowCoverage, span_left: f32, span_right: f32) void {
+                const left = @max(span_left, acc.x_lo) - acc.x_lo;
+                const right = @min(span_right, acc.x_hi) - acc.x_lo;
+                if (right <= left) return;
+
+                const first: usize = @floor(left);
+                const last_raw: usize = @floor(right);
+                const last = @min(last_raw, acc.width - 1);
+                if (first == last) {
+                    acc.cells[first].area += (right - left) * acc.weight;
+                } else {
+                    acc.cells[first].area += (as(f32, first + 1) - left) * acc.weight;
+                    acc.cells[last].area += (right - as(f32, last)) * acc.weight;
+                    acc.cells[first + 1].run += acc.weight;
+                    acc.cells[last].run -= acc.weight;
+                }
+                acc.touched_lo = @min(acc.touched_lo, first);
+                acc.touched_hi = @max(acc.touched_hi, last);
+            }
+        };
+
+        /// Antialiased fill. Each pixel row is sampled at `polygon_subscanlines` heights;
         /// span ends contribute their exact horizontal overlap and fully covered interiors go
         /// through a difference array, so per-row cost does not scale with the sample count.
         /// Polygons have no closed-form distance field, hence supersampling rather than the
         /// analytic coverage used for rings and lines.
-        fn fillPolygonSoft(self: Self, edges: []Edge, bounds: Rectangle(f32), crossings_buf: []f32, paint: Paint, scratch: std.mem.Allocator) !void {
+        fn fillPolygonSoft(self: Self, edges: []Edge, bounds: Rectangle(f32), crossings_buf: []Crossing, rule: FillRule, sink: anytype, scratch: std.mem.Allocator) !void {
             const frows: f32 = @floatFromInt(self.image.rows);
             const end_y = @min(frows - 1, @ceil(bounds.b));
             const col_start = clampToImageBounds(@floor(bounds.l - 0.5), self.image.cols);
@@ -1004,10 +1161,14 @@ pub fn Canvas(comptime T: type) type {
             defer scratch.free(cells);
             @memset(cells, .{});
 
-            // Buffer-relative x: cell j covers [j, j+1), i.e. image column col_start + j.
-            const x_lo = as(f32, col_start) - 0.5;
-            const x_hi = as(f32, col_end) - 0.5;
-            const weight = 1.0 / as(f32, polygon_subscanlines);
+            var acc: RowCoverage = .{
+                .cells = cells,
+                .x_lo = as(f32, col_start) - 0.5,
+                .x_hi = as(f32, col_end) - 0.5,
+                .width = width,
+                .weight = 1.0 / as(f32, polygon_subscanlines),
+                .touched_lo = width,
+            };
 
             var y = @max(0, @floor(bounds.t));
             while (y <= end_y) : (y += 1) {
@@ -1021,42 +1182,23 @@ pub fn Canvas(comptime T: type) type {
                     }
                 }
 
-                var touched_lo: usize = width;
-                var touched_hi: usize = 0;
+                acc.touched_lo = width;
+                acc.touched_hi = 0;
                 for (0..polygon_subscanlines) |k| {
-                    const sy = y - 0.5 + (as(f32, k) + 0.5) * weight;
+                    const sy = y - 0.5 + (as(f32, k) + 0.5) * acc.weight;
                     const crossings = scanlineCrossings(edges[0..active], sy, crossings_buf);
-                    var i: usize = 0;
-                    while (i + 1 < crossings.len) : (i += 2) {
-                        const left = @max(crossings[i], x_lo) - x_lo;
-                        const right = @min(crossings[i + 1], x_hi) - x_lo;
-                        if (right <= left) continue;
-
-                        const first: usize = @floor(left);
-                        const last_raw: usize = @floor(right);
-                        const last = @min(last_raw, width - 1);
-                        if (first == last) {
-                            cells[first].area += (right - left) * weight;
-                        } else {
-                            cells[first].area += (as(f32, first + 1) - left) * weight;
-                            cells[last].area += (right - as(f32, last)) * weight;
-                            cells[first + 1].run += weight;
-                            cells[last].run -= weight;
-                        }
-                        touched_lo = @min(touched_lo, first);
-                        touched_hi = @max(touched_hi, last);
-                    }
+                    forEachSpan(crossings, rule, &acc, RowCoverage.emit);
                 }
-                if (touched_lo > touched_hi) continue;
+                if (acc.touched_lo > acc.touched_hi) continue;
 
                 const row: u32 = @trunc(y);
                 const row_px = self.image.data[row * self.image.stride + col_start ..][0..width];
                 var run: f32 = 0;
-                for (cells[touched_lo .. touched_hi + 1], row_px[touched_lo .. touched_hi + 1]) |*cell, *px| {
+                for (cells[acc.touched_lo .. acc.touched_hi + 1], row_px[acc.touched_lo .. acc.touched_hi + 1]) |*cell, *px| {
                     run += cell.run;
                     const alpha = @min(cell.area + run, 1);
                     cell.* = .{};
-                    paint.cover(px, alpha);
+                    sink.cover(px, alpha);
                 }
             }
         }
@@ -1524,13 +1666,47 @@ pub fn Canvas(comptime T: type) type {
                 font.bytesPerRow();
         }
 
-        /// Draws text at the specified position using a bitmap font.
-        /// The position specifies the top-left corner of the text.
-        /// Supports newlines for multi-line text.
-        pub fn drawText(self: Self, text: []const u8, position: Point(2, f32), color: anytype, font: BitmapFont, scale: f32, opts: DrawOptions) void {
+        /// Draws `text` with its top-left corner at `position`, at `font_size` pixels: the em height
+        /// for vector fonts, the character height for bitmap fonts. `\n` starts a new line.
+        pub fn drawText(self: Self, text: []const u8, position: Point(2, f32), color: anytype, font: Font, font_size: f32, opts: DrawOptions) !void {
             comptime assert(isColor(@TypeOf(color)));
-            if (scale <= 0) return;
+            if (font_size <= 0) return;
+            switch (font) {
+                .bitmap => |bitmap| self.drawTextBitmap(text, position, color, bitmap, Font.bitmapScale(bitmap, font_size), opts),
+                .vector => |vector| try self.drawTextVector(text, position, color, vector, font_size, opts),
+            }
+        }
 
+        /// Lays out each glyph with `VectorFont.Layout`, then fills its outline with the
+        /// nonzero rule. Glyphs that fail to parse are skipped; only allocation errors propagate.
+        fn drawTextVector(self: Self, text: []const u8, position: Point(2, f32), color: anytype, font: VectorFont, font_size: f32, opts: DrawOptions) !void {
+            const paint: Paint = .init(color, opts.blending);
+            const canvas_rect: Rectangle(f32) = .{ .l = 0, .t = 0, .r = as(f32, self.cols()), .b = as(f32, self.rows()) };
+            var layout: VectorFont.Layout = .init(font, text, font_size);
+            while (layout.next()) |item| {
+                const bounds = font.glyphBounds(item.gid) orelse continue;
+                const shift = font.outlineShift(item.gid);
+                const origin: Point(2, f32) = .init(.{ position.x() + item.x + shift * layout.scale, position.y() + item.baseline });
+                const glyph_rect: Rectangle(f32) = .{
+                    .l = origin.x() + as(f32, bounds.x_min) * layout.scale - 1,
+                    .t = origin.y() - as(f32, bounds.y_max) * layout.scale - 1,
+                    .r = origin.x() + as(f32, bounds.x_max) * layout.scale + 1,
+                    .b = origin.y() - as(f32, bounds.y_min) * layout.scale + 1,
+                };
+                if (glyph_rect.intersect(canvas_rect) == null) continue;
+                var outline = font.outline(self.allocator, item.gid) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => continue,
+                };
+                defer outline.deinit(self.allocator);
+                const transform: Outline.Transform = .{ .scale = layout.scale, .origin = origin };
+                switch (opts.mode) {
+                    inline else => |mode| try self.fillOutline(outline, transform, mode, paint),
+                }
+            }
+        }
+
+        fn drawTextBitmap(self: Self, text: []const u8, position: Point(2, f32), color: anytype, font: BitmapFont, scale: f32, opts: DrawOptions) void {
             const text_bounds = font.getTextBounds(text, scale);
             const text_rect: Rectangle(f32) = .{
                 .l = position.x() + text_bounds.l,

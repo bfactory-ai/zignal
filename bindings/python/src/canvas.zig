@@ -161,10 +161,11 @@ pub const PyCanvas = struct {
         }
     }
 
-    /// Draw text.
-    pub fn drawText(self: *Self, text: []const u8, position: anytype, color: Rgba, font: BitmapFont, scale: f32, opts: DrawOptions) void {
+    /// Draw text with a bitmap font scaled by `scale`.
+    pub fn drawText(self: *Self, text: []const u8, position: anytype, color: Rgba, font: BitmapFont, scale: f32, opts: DrawOptions) !void {
+        const size = scale * @as(f32, @floatFromInt(font.char_height));
         switch (self.data) {
-            inline else => |*canvas| canvas.drawText(text, position, color, font, scale, opts),
+            inline else => |*canvas| try canvas.drawText(text, position, color, .{ .bitmap = font }, size, opts),
         }
     }
 
@@ -869,13 +870,19 @@ fn canvas_draw_text(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
         }
 
         const font_ptr = python.unwrap(bitmap_font_module.BitmapFontObject, "font", font, "BitmapFont") orelse return null;
-        canvas.drawText(text, position, rgba, font_ptr.*, @floatCast(params.scale), opts);
+        canvas.drawText(text, position, rgba, font_ptr.*, @floatCast(params.scale), opts) catch {
+            python.setRuntimeError("Failed to draw text", .{});
+            return null;
+        };
     } else {
         const font = getFont8x8() catch {
             python.setRuntimeError("Failed to initialize default font", .{});
             return null;
         };
-        canvas.drawText(text, position, rgba, font, @floatCast(params.scale), opts);
+        canvas.drawText(text, position, rgba, font, @floatCast(params.scale), opts) catch {
+            python.setRuntimeError("Failed to draw text", .{});
+            return null;
+        };
     }
 
     return python.none();

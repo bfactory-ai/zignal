@@ -54,6 +54,7 @@ pub fn load(io: Io, allocator: Allocator, file_path: []const u8, filter: LoadFil
     return switch (font_format) {
         .bdf => bdf.load(io, allocator, file_path, filter),
         .pcf => pcf.load(io, allocator, file_path, filter),
+        .ttf => error.UnsupportedFontFormat,
     };
 }
 
@@ -295,6 +296,7 @@ pub fn save(self: BitmapFont, io: Io, allocator: Allocator, file_path: []const u
     return switch (font_format) {
         .bdf => bdf.save(io, allocator, self, file_path),
         .pcf => pcf.save(io, allocator, self, file_path),
+        .ttf => error.UnsupportedFontFormat,
     };
 }
 
