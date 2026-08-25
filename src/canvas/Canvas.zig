@@ -632,15 +632,12 @@ pub fn Canvas(comptime T: type) type {
             return 1 - fpart(x);
         }
 
-        /// Draws the outline of a polygon on the given image.
-        /// The polygon is defined by a sequence of vertices. Lines are drawn between consecutive
-        /// vertices, and a final line is drawn from the last vertex to the first to close the shape.
-        /// Each edge is an independent `drawLine`; vertices get no joins.
+        /// Draws the outline of a polygon: its edges in order, closed from the last vertex back
+        /// to the first. Widths above 1 get round joins; width 1 draws pixel lines.
         pub fn drawPolygon(self: Self, polygon: []const Point(2, f32), color: anytype, width: u32, opts: DrawOptions) void {
             comptime assert(isColor(@TypeOf(color)));
-            if (width == 0) return;
-
-            // Draw all line segments
+            if (width == 0 or polygon.len == 0) return;
+            if (width > 1) return self.strokePath(&.{polygon}, true, width, color, opts);
             for (0..polygon.len) |i| {
                 self.drawLine(polygon[i], polygon[@mod(i + 1, polygon.len)], color, width, opts);
             }
@@ -1012,11 +1009,11 @@ pub fn Canvas(comptime T: type) type {
             return self.fillContours(flat.polys, .nonzero, mode, sink);
         }
 
-        /// Strokes closed polylines `width` pixels wide with round joins and caps: each becomes
-        /// a union of one quad per segment plus a polygonal disc at every vertex whose turn
-        /// would otherwise leave a visible gap, all wound the same way and filled in a single
-        /// nonzero pass so the overlaps never double-blend.
-        fn strokePolylines(self: Self, scratch: std.mem.Allocator, polys: []const []const Point(2, f32), width: f32, comptime mode: DrawMode, sink: anytype) !void {
+        /// Strokes polylines `width` pixels wide with round joins and caps: each becomes a
+        /// union of one quad per segment plus a polygonal disc at every vertex whose turn (or
+        /// open end) would otherwise leave a visible gap, all wound the same way and filled in
+        /// a single nonzero pass so the overlaps never double-blend.
+        fn strokePolylines(self: Self, scratch: std.mem.Allocator, polys: []const []const Point(2, f32), closed: bool, width: f32, comptime mode: DrawMode, sink: anytype) !void {
             const radius = @max(width, 0.5) / 2;
             const sides: usize = @intFromFloat(@min(64, @max(8, @ceil(radius * 2))));
             // The quads' vertex order and the disc's descending angle wind the same way.
@@ -1033,9 +1030,10 @@ pub fn Canvas(comptime T: type) type {
             var n: usize = 0;
             var k: usize = 0;
             for (polys) |poly| {
-                var incoming: ?Point(2, f32) = if (poly.len > 1) unitDirection(poly[poly.len - 1], poly[0]) else null;
+                var incoming: ?Point(2, f32) = if (closed and poly.len > 1) unitDirection(poly[poly.len - 1], poly[0]) else null;
                 for (poly, 0..) |p, i| {
-                    const outgoing = if (poly.len > 1) unitDirection(p, poly[(i + 1) % poly.len]) else null;
+                    const last = i + 1 == poly.len;
+                    const outgoing = if (poly.len > 1 and (closed or !last)) unitDirection(p, poly[(i + 1) % poly.len]) else null;
                     if (outgoing) |d| {
                         const q = poly[(i + 1) % poly.len];
                         const normal: Point(2, f32) = .init(.{ -d.y() * radius, d.x() * radius });
@@ -1063,6 +1061,16 @@ pub fn Canvas(comptime T: type) type {
             const d = q.sub(p);
             const len = d.norm();
             return if (len > 0) d.scale(1 / len) else null;
+        }
+
+        /// `strokePolylines` for the shape API: thick outlines of polygons and curves.
+        fn strokePath(self: Self, polys: []const []const Point(2, f32), closed: bool, width: u32, color: anytype, opts: DrawOptions) void {
+            var stack: [glyph_scratch_size]u8 align(16) = undefined;
+            var buffer_first: std.heap.BufferFirstAllocator = .init(&stack, self.allocator);
+            const paint: Paint = .init(color, opts.blending);
+            switch (opts.mode) {
+                inline else => |mode| self.strokePolylines(buffer_first.allocator(), polys, closed, as(f32, width), mode, paint) catch return,
+            }
         }
 
         /// Scanline fill shared by every polygon entry point. `sink` is a `Paint` or, for
@@ -1530,13 +1538,43 @@ pub fn Canvas(comptime T: type) type {
             comptime assert(isColor(@TypeOf(color)));
             if (width == 0 or polygon.len < 3) return;
 
+            if (width == 1) {
+                for (0..polygon.len) |i| {
+                    const p0 = polygon[i];
+                    const p1 = polygon[(i + 1) % polygon.len];
+                    const p2 = polygon[(i + 2) % polygon.len];
+                    const control_points = calculateSmoothControlPoints(p0, p1, p2, tension);
+                    self.drawCubicBezier(p0, control_points.cp1, control_points.cp2, p1, color, width, opts);
+                }
+                return;
+            }
+
+            // Thick strokes join the segments: tessellate the whole closed curve first.
+            var stack: [spline_polygon_stack_buffer_size * @sizeOf(Point(2, f32))]u8 align(16) = undefined;
+            var buffer_first: std.heap.BufferFirstAllocator = .init(&stack, self.allocator);
+            const scratch = buffer_first.allocator();
+            const points = scratch.alloc(Point(2, f32), polygon.len * bezier_max_segments_count) catch return;
+            defer scratch.free(points);
+            const pixels_per_segment: f32 = if (opts.mode == .soft or width > 2) pixels_per_segment_soft else pixels_per_segment_fast;
+            var n: usize = 0;
             for (0..polygon.len) |i| {
                 const p0 = polygon[i];
                 const p1 = polygon[(i + 1) % polygon.len];
                 const p2 = polygon[(i + 2) % polygon.len];
                 const control_points = calculateSmoothControlPoints(p0, p1, p2, tension);
-                self.drawCubicBezier(p0, control_points.cp1, control_points.cp2, p1, color, width, opts);
+                const segments = tessellateBezier(
+                    estimateCubicBezierLength(p0, control_points.cp1, control_points.cp2, p1),
+                    pixels_per_segment,
+                    spline_min_segments_count,
+                    bezier_max_segments_count,
+                    evalCubicBezier,
+                    .{ p0, control_points.cp1, control_points.cp2, p1 },
+                    points[n..],
+                );
+                // The next segment starts on this one's end point.
+                n += segments - 1;
             }
+            self.strokePath(&.{points[0..n]}, true, width, color, opts);
         }
 
         /// Fills a spline polygon with Bézier curves connecting vertices.
@@ -1693,9 +1731,10 @@ pub fn Canvas(comptime T: type) type {
                 &stack_buffer,
             );
 
-            // Draw lines between consecutive points
-            for (1..actual_segments) |i| {
-                self.drawLine(stack_buffer[i - 1], stack_buffer[i], color, width, opts);
+            const points = stack_buffer[0..actual_segments];
+            if (width > 1) return self.strokePath(&.{points}, false, width, color, opts);
+            for (1..points.len) |i| {
+                self.drawLine(points[i - 1], points[i], color, width, opts);
             }
         }
 
@@ -1828,7 +1867,7 @@ pub fn Canvas(comptime T: type) type {
                 switch (mode) {
                     inline else => |m| switch (style) {
                         .fill => try self.fillContours(flat.polys, .nonzero, m, paint),
-                        .outline => |width| try self.strokePolylines(scratch, flat.polys, width, m, paint),
+                        .outline => |width| try self.strokePolylines(scratch, flat.polys, true, width, m, paint),
                     },
                 }
             }
