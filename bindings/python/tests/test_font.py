@@ -82,7 +82,7 @@ def test_truetype_font(tmp_path):
     assert font.ascent(24) > 0
     assert font.line_height(24) > font.ascent(24)
     assert font.has_glyph("A")
-    assert not font.has_glyph("\U0001F600")
+    assert not font.has_glyph("\U0010FFFF")  # a noncharacter no font maps
 
     bounds = font.get_text_bounds("Hello", 24)
     assert bounds.width > 24 and bounds.height == pytest.approx(font.line_height(24))
