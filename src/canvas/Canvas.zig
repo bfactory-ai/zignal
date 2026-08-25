@@ -506,9 +506,29 @@ pub fn Canvas(comptime T: type) type {
             };
             const bbox = self.clampRectToImage(line_rect) orelse return;
 
+            // Per row, only the pixels within reach: the band around the line (its horizontal
+            // cross-section widens as the line flattens) plus the two end caps.
+            const reach = half_width + antialias_edge_offset;
+            const band_half = reach * @sqrt(length_sq) / @abs(dy);
+            const seg_lo = @min(p1.x(), p2.x()) - reach;
+            const seg_hi = @max(p1.x(), p2.x()) + reach;
             for (bbox.t..bbox.b) |r| {
                 const py = as(f32, r);
-                for (bbox.l..bbox.r) |c| {
+                const x_on_line = p1.x() + (py - p1.y()) * dx / dy;
+                var lo = @max(x_on_line - band_half, seg_lo);
+                var hi = @min(x_on_line + band_half, seg_hi);
+                inline for (.{ p1, p2 }) |cap| {
+                    const dcy = py - cap.y();
+                    if (@abs(dcy) <= reach) {
+                        const half = @sqrt(reach * reach - dcy * dcy);
+                        lo = @min(lo, cap.x() - half);
+                        hi = @max(hi, cap.x() + half);
+                    }
+                }
+                if (hi < lo) continue;
+                const col_lo: u32 = @intFromFloat(@max(@floor(lo), as(f32, bbox.l)));
+                const col_hi: u32 = @intFromFloat(@min(@ceil(hi) + 1, as(f32, bbox.r)));
+                for (col_lo..col_hi) |c| {
                     const px = as(f32, c);
                     const dpx = px - p1.x();
                     const dpy = py - p1.y();
@@ -1082,13 +1102,18 @@ pub fn Canvas(comptime T: type) type {
                 return p.add(perpendicular(dir).scale(side * b.radius));
             }
 
-            /// Points on the circle around `center` from angle `from`, sweeping `sweep`
-            /// radians: the end included, the start not.
-            fn arc(b: *StrokeBuilder, center: Point(2, f32), from: f32, sweep: f32) void {
+            /// Points on the circle around `center` from the radius vector `start`, sweeping
+            /// `sweep` radians: the end included, the start not. The vector is rotated step by
+            /// step, so an arc costs one sine and cosine.
+            fn arc(b: *StrokeBuilder, center: Point(2, f32), start: Point(2, f32), sweep: f32) void {
                 const steps: usize = @intFromFloat(@max(1, @ceil(@abs(sweep) / b.step)));
-                for (1..steps + 1) |i| {
-                    const angle = from + sweep * as(f32, i) / as(f32, steps);
-                    b.emit(.init(.{ center.x() + b.radius * @cos(angle), center.y() + b.radius * @sin(angle) }));
+                const angle = sweep / as(f32, steps);
+                const c = @cos(angle);
+                const sn = @sin(angle);
+                var v = start;
+                for (0..steps) |_| {
+                    v = .init(.{ v.x() * c - v.y() * sn, v.x() * sn + v.y() * c });
+                    b.emit(center.add(v));
                 }
             }
 
@@ -1101,8 +1126,7 @@ pub fn Canvas(comptime T: type) type {
                 const outer = if (side > 0) cross < 0 or (cross == 0 and dot < 0) else cross > 0;
                 b.emit(b.offset(v, in_dir, side));
                 if (outer) {
-                    const start = perpendicular(in_dir).scale(side);
-                    b.arc(v, std.math.atan2(start.y(), start.x()), std.math.atan2(cross, dot));
+                    b.arc(v, perpendicular(in_dir).scale(side * b.radius), std.math.atan2(cross, dot));
                 } else if (cross != 0 or dot < 0) {
                     // The inner offsets cross each other; the loop they close is invisible
                     // below the flatness tolerance, otherwise detouring through the vertex
@@ -1120,7 +1144,7 @@ pub fn Canvas(comptime T: type) type {
                 } else {
                     // Every point coincides: a dot.
                     b.emit(input[0].add(.init(.{ b.radius, 0 })));
-                    b.arc(input[0], 0, 2 * std.math.pi);
+                    b.arc(input[0], .init(.{ b.radius, 0 }), 2 * std.math.pi);
                     return;
                 };
                 // Direction of each segment, degenerate ones borrowing their predecessor's.
@@ -1134,8 +1158,7 @@ pub fn Canvas(comptime T: type) type {
                 const last = input[(m - 1) % input.len];
                 b.emit(b.offset(last, dir, 1));
                 // End cap: from the left offset around the tip to the right one.
-                const tip = perpendicular(dir);
-                b.arc(last, std.math.atan2(tip.y(), tip.x()), -std.math.pi);
+                b.arc(last, perpendicular(dir).scale(b.radius), -std.math.pi);
                 // Back along the right side; the incoming direction is now the later segment's.
                 var i = m - 1;
                 while (i > 1) : (i -= 1) {
@@ -1144,8 +1167,7 @@ pub fn Canvas(comptime T: type) type {
                     dir = prev;
                 }
                 b.emit(b.offset(input[0], dir, -1));
-                const tail = perpendicular(dir).scale(-1);
-                b.arc(input[0], std.math.atan2(tail.y(), tail.x()), -std.math.pi);
+                b.arc(input[0], perpendicular(dir).scale(-b.radius), -std.math.pi);
             }
         };
 
@@ -1210,6 +1232,15 @@ pub fn Canvas(comptime T: type) type {
                     if (first_row > end_y) return;
                     const num_rows: usize = @intFromFloat(end_y - first_row + 1);
 
+                    // Few edges: test them all per row.
+                    if (edges.len < 64) {
+                        var y = first_row;
+                        while (y <= end_y) : (y += 1) {
+                            var spans: SpanIter = .{ .crossings = scanlineCrossings(edges, y, crossings_buf), .rule = fill_rule };
+                            while (spans.next()) |span| self.fillSpan(span[0], span[1], y, sink);
+                        }
+                        return;
+                    }
                     // Bucket the edges by the row they start on (counting sort), then sweep:
                     // a row only tests the edges spanning it.
                     const starts = try scratch.alloc(u32, num_rows + 1);
@@ -2217,6 +2248,29 @@ pub fn Canvas(comptime T: type) type {
         fn drawTextBitmap(self: Self, text: []const u8, position: Point(2, f32), paint: Paint, font: BitmapFont, scale: f32, letter_spacing: f32, style: GlyphStyle, mode: DrawMode) !void {
             const radius: u32 = @intFromFloat(@ceil(style.reach()));
             if (radius == 0) return self.blitBitmapLine(text, position, paint, font, scale, letter_spacing, mode);
+            // A few overwriting hard-edged stamps cannot double-blend and beat the mask.
+            if (paint.overwrite and mode == .fast and scale == 1 and radius <= 2) {
+                const r: i32 = @intCast(radius);
+                var x = position.x();
+                var utf8_iter = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
+                while (utf8_iter.nextCodepoint()) |codepoint| {
+                    if (font.getGlyph(codepoint)) |glyph| {
+                        var dy: i32 = -r;
+                        while (dy <= r) : (dy += 1) {
+                            var dx: i32 = -r;
+                            while (dx <= r) : (dx += 1) {
+                                if (dx * dx + dy * dy > r * r) continue;
+                                self.renderGlyphUnscaled(glyph.info, glyph.data, font, x + as(f32, dx), position.y() + as(f32, dy), paint);
+                            }
+                        }
+                        x += as(f32, glyph.info.advanceWidth());
+                    } else {
+                        x += as(f32, font.char_width);
+                    }
+                    x += letter_spacing;
+                }
+                return;
+            }
 
             // The line's box grown by the radius, clipped to the image, in whole pixels.
             const glyphs = std.unicode.utf8CountCodepoints(text) catch text.len;
