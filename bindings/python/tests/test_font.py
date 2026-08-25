@@ -5,13 +5,17 @@ import pytest
 
 import zignal
 
-SYSTEM_FONTS = [
+# fonts-dejavu-core is installed on GitHub's Ubuntu runners; other paths keep the test
+# running on local machines, and ZIGNAL_FONT overrides both.
+DEJAVU_SANS = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+FALLBACK_FONTS = [
     "/usr/share/fonts/TTF/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
     "/usr/share/fonts/TTF/Roboto-Regular.ttf",
 ]
-SYSTEM_FONT = next((p for p in SYSTEM_FONTS if os.path.exists(p)), None)
+SYSTEM_FONT = os.environ.get("ZIGNAL_FONT") or next(
+    (p for p in [DEJAVU_SANS, *FALLBACK_FONTS] if os.path.exists(p)), None
+)
 
 
 def inked(img):
@@ -82,15 +86,29 @@ def test_truetype_font(tmp_path):
     assert font.ascent(24) > 0
     assert font.line_height(24) > font.ascent(24)
     assert font.has_glyph("A")
-    assert not font.has_glyph("\U0010FFFF")  # a noncharacter no font maps
+    assert not font.has_glyph("\U0010ffff")  # a noncharacter no font maps
 
     bounds = font.get_text_bounds("Hello", 24)
     assert bounds.width > 24 and bounds.height == pytest.approx(font.line_height(24))
     assert font.get_text_bounds("Hello", 48).width == pytest.approx(2 * bounds.width)
-    # Kerning pulls "AV" closer than two "A"s worth of advance.
-    assert font.get_text_bounds("AV", 24).width < font.get_text_bounds("A", 24).width + font.get_text_bounds("V", 24).width
+    # Kerning pulls "AV" closer than the two advances.
+    assert (
+        font.get_text_bounds("AV", 24).width
+        < font.get_text_bounds("A", 24).width + font.get_text_bounds("V", 24).width
+    )
     tight = font.get_text_bounds_tight("Hello", 24)
     assert 0 < tight.width <= bounds.width
+
+    if "DejaVuSans" in SYSTEM_FONT:
+        # DejaVu Sans 2.37: exact values from its tables.
+        assert repr(font) == 'Font(kind="vector", units_per_em=2048, glyphs=6253)'
+        assert font.ascent(24) == pytest.approx(22.277, abs=1e-3)
+        assert font.line_height(24) == pytest.approx(27.9375, abs=1e-3)
+        assert bounds.width == pytest.approx(60.832, abs=1e-3)
+        assert font.get_text_bounds("AV", 24).width == pytest.approx(31.301, abs=1e-3)
+        assert (
+            font.has_glyph("\U0001f600") and font.has_glyph("\u0627") and font.has_glyph("\u03a9")
+        )
 
     small = render("Hello", font, rows=60, cols=200, size=24, mode=zignal.DrawMode.SOFT)
     big = render("Hello", font, rows=60, cols=200, size=48, mode=zignal.DrawMode.SOFT)
