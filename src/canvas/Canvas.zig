@@ -6,6 +6,7 @@ const clamp = std.math.clamp;
 
 const convertColor = @import("../color.zig").convertColor;
 const isColor = @import("../color.zig").isColor;
+const Rgb = @import("../color.zig").Rgb(u8);
 const Rgba = @import("../color.zig").Rgba(u8);
 const Blending = @import("../color.zig").Blending;
 const BitmapFont = @import("../font.zig").BitmapFont;
@@ -100,9 +101,12 @@ pub fn Canvas(comptime T: type) type {
         const antialias_edge_offset = 0.5;
         /// Vertical samples per pixel row for antialiased polygon fills
         const polygon_subscanlines = 8;
-        /// Stack scratch (bytes) for polygon fills: edges and crossings for 256 vertices plus a
-        /// 1024-pixel coverage row; larger inputs spill to the heap.
-        const polygon_scratch_size = 256 * (@sizeOf(Edge) + @sizeOf(Crossing)) + 1024 * @sizeOf(CoverageCell);
+        /// Cells per touched-block flag in the area rasterizer.
+        const area_block = 8;
+        /// Stack scratch (bytes) for polygon fills: edges and crossings for 256 vertices, a
+        /// 1024-pixel coverage row and a 12k-cell area accumulator (a 110x110 shape); larger
+        /// inputs spill to the heap.
+        const polygon_scratch_size = 256 * (@sizeOf(Edge) + @sizeOf(Crossing)) + 1024 * @sizeOf(CoverageCell) + 12 * 1024 * (@sizeOf(f32) + 1);
         /// Stack scratch (bytes) for flattening a glyph outline; spills to heap beyond
         const glyph_scratch_size = 1024 * @sizeOf(Point(2, f32)) + 64 * @sizeOf([]const Point(2, f32));
         /// Stack scratch (points) for spline polygon tessellation; spills to heap beyond
@@ -231,7 +235,26 @@ pub fn Canvas(comptime T: type) type {
 
             /// Writes the color scaled by `alpha` coverage; full coverage takes the overwrite path.
             inline fn cover(p: Paint, dest: *T, alpha: f32) void {
-                if (alpha >= 1) p.put(dest) else if (alpha > 0) assignPixel(dest, p.rgba.fade(alpha), p.blending);
+                if (alpha >= 1) return p.put(dest);
+                if (alpha <= 0) return;
+                if (comptime T == Rgb or T == Rgba) {
+                    if (p.blending == .normal and p.rgba.a == 255 and (T == Rgb or dest.a == 255)) return p.coverOpaque(dest, alpha);
+                }
+                assignPixel(dest, p.rgba.fade(alpha), p.blending);
+            }
+
+            /// Normal blending of the opaque paint over an opaque pixel: `blendColors`'
+            /// arithmetic, in its order, without the generic conversions around it.
+            inline fn coverOpaque(p: Paint, dest: *T, alpha: f32) void {
+                const a8: u8 = @trunc(255 * @min(alpha, 1));
+                if (a8 == 0) return;
+                if (a8 == 255) return p.put(dest);
+                const t: u32 = a8;
+                const w: u32 = 255 - t;
+                inline for (.{ "r", "g", "b" }) |channel| {
+                    const mixed = @as(u32, @field(p.rgba, channel)) * t + @as(u32, @field(dest, channel)) * w;
+                    @field(dest, channel) = @intCast((mixed + 127) / 255);
+                }
             }
         };
 
@@ -1182,14 +1205,236 @@ pub fn Canvas(comptime T: type) type {
                 .fast => {
                     comptime assert(@TypeOf(sink) == Paint);
                     const frows: f32 = @floatFromInt(self.image.rows);
-                    var y = @max(0, @floor(shape_bounds.t));
+                    const first_row = @max(0, @floor(shape_bounds.t));
                     const end_y = @min(frows - 1, @ceil(shape_bounds.b));
-                    while (y <= end_y) : (y += 1) {
-                        var spans: SpanIter = .{ .crossings = scanlineCrossings(edges, y, crossings_buf), .rule = fill_rule };
+                    if (first_row > end_y) return;
+                    const num_rows: usize = @intFromFloat(end_y - first_row + 1);
+
+                    // Bucket the edges by the row they start on (counting sort), then sweep:
+                    // a row only tests the edges spanning it.
+                    const starts = try scratch.alloc(u32, num_rows + 1);
+                    defer scratch.free(starts);
+                    @memset(starts, 0);
+                    const bucket = try scratch.alloc(u32, edges.len);
+                    defer scratch.free(bucket);
+                    for (edges, 0..) |e, i| {
+                        bucket[i] = @intFromFloat(@min(@max(@floor(e.y_min) - first_row, 0), as(f32, num_rows - 1)));
+                        starts[bucket[i] + 1] += 1;
+                    }
+                    for (1..num_rows + 1) |r| starts[r] += starts[r - 1];
+                    const order = try scratch.alloc(u32, edges.len);
+                    defer scratch.free(order);
+                    for (bucket, 0..) |b, i| {
+                        order[starts[b]] = @intCast(i);
+                        starts[b] += 1;
+                    }
+                    const active = try scratch.alloc(u32, edges.len);
+                    defer scratch.free(active);
+
+                    var next: usize = 0;
+                    var count: usize = 0;
+                    var y = first_row;
+                    var row: usize = 0;
+                    while (row < num_rows) : ({
+                        row += 1;
+                        y += 1;
+                    }) {
+                        while (next < starts[row]) : (next += 1) {
+                            active[count] = order[next];
+                            count += 1;
+                        }
+                        var crossings: usize = 0;
+                        var i: usize = 0;
+                        while (i < count) {
+                            const e = edges[active[i]];
+                            if (e.y_max <= y) {
+                                count -= 1;
+                                active[i] = active[count];
+                                continue;
+                            }
+                            if (y >= e.y_min) {
+                                crossings_buf[crossings] = .{ .x = e.xAt(y), .dir = e.dir };
+                                crossings += 1;
+                            }
+                            i += 1;
+                        }
+                        var spans: SpanIter = .{ .crossings = sortCrossings(crossings_buf[0..crossings]), .rule = fill_rule };
                         while (spans.next()) |span| self.fillSpan(span[0], span[1], y, sink);
                     }
                 },
-                .soft => try self.fillPolygonSoft(edges, shape_bounds, crossings_buf, fill_rule, sink, scratch),
+                .soft => switch (fill_rule) {
+                    .nonzero => try self.fillPolygonArea(edges, shape_bounds, sink, scratch),
+                    .even_odd => try self.fillPolygonSoft(edges, shape_bounds, crossings_buf, fill_rule, sink, scratch),
+                },
+            }
+        }
+
+        /// Antialiased nonzero fill by signed-area accumulation: every edge deposits its exact
+        /// area and cover contribution into the cells of the rows it crosses, and a running
+        /// sum along each row turns them into coverage (the winding's magnitude, clamped).
+        /// Work follows the edges and the cells they touch rather than the rows of the shape,
+        /// so tall hollow outlines cost their perimeter, not their area.
+        fn fillPolygonArea(self: Self, edges: []const Edge, bounds: Rectangle(f32), sink: anytype, scratch: std.mem.Allocator) !void {
+            // Pixel (r, c) spans [c - 0.5, c + 0.5) x [r - 0.5, r + 0.5); in accumulation space
+            // it is the unit cell at (r - row_start, c - col_start).
+            const frows: f32 = @floatFromInt(self.image.rows);
+            const row_start: usize = @intFromFloat(@max(0, @floor(bounds.t + 0.5)));
+            const row_end: usize = @intFromFloat(@min(frows, @ceil(bounds.b + 0.5)));
+            if (row_start >= row_end) return;
+            const height = row_end - row_start;
+            const col_start: i64 = @intFromFloat(@floor(bounds.l + 0.5));
+            const col_end: i64 = @intFromFloat(@ceil(bounds.r + 0.5));
+            // One spare cell on the right for the last contribution.
+            const width: usize = @intCast(col_end - col_start + 2);
+
+            // Cells are zeroed block by block as edges first touch them; the resolve leaps
+            // over untouched blocks while the running sum is zero.
+            const blocks = (width + area_block - 1) / area_block;
+            const acc = try scratch.alloc(f32, blocks * area_block * height);
+            defer scratch.free(acc);
+            const touched = try scratch.alloc(u8, blocks * height);
+            defer scratch.free(touched);
+            @memset(touched, 0);
+            const shift_x = 0.5 - as(f32, col_start);
+            const shift_y = 0.5 - as(f32, row_start);
+            for (edges) |e| {
+                accumulateEdge(acc, touched, width, height, .init(.{ e.p1.x() + shift_x, e.p1.y() + shift_y }), .init(.{ e.p2.x() + shift_x, e.p2.y() + shift_y }));
+            }
+
+            // Cells left of the image still feed the running sum; only the visible ones paint.
+            const image_cols: i64 = @intCast(self.image.cols);
+            const visible_lo: usize = @intCast(clamp(-col_start, 0, @as(i64, @intCast(width))));
+            const visible_hi: usize = @intCast(clamp(image_cols - col_start, 0, @as(i64, @intCast(width))));
+            if (visible_lo >= visible_hi) return;
+            const threshold = 1.0 / 512.0;
+            for (0..height) |r| {
+                const row_acc = acc[r * blocks * area_block ..][0 .. blocks * area_block];
+                const row_touched = touched[r * blocks ..][0..blocks];
+                const row_px = self.image.data[(row_start + r) * self.image.stride ..];
+                var sum: f32 = 0;
+                for (row_touched, 0..) |flag, b| {
+                    if (flag == 0 and @abs(sum) <= threshold) continue;
+                    // Cells before the visible range only feed the sum.
+                    const lo = b * area_block;
+                    const hi = @min(lo + area_block, visible_hi);
+                    const paint_from = @max(lo, visible_lo);
+                    for (row_acc[lo..paint_from]) |a| sum += a;
+                    if (paint_from >= hi) continue;
+                    const px_base: usize = @intCast(col_start + @as(i64, @intCast(paint_from)));
+                    for (row_acc[paint_from..hi], row_px[px_base..][0 .. hi - paint_from]) |a, *px| {
+                        sum += a;
+                        // Snap accumulation error to full or no coverage so the paint takes its
+                        // overwrite path on the interior.
+                        const alpha = @abs(sum);
+                        if (alpha >= 1 - threshold) sink.cover(px, 1) else if (alpha > threshold) sink.cover(px, alpha);
+                    }
+                }
+            }
+        }
+
+        /// Marks the blocks holding cells `first..=last` of a row as touched, zeroing each
+        /// block the first time.
+        inline fn touchBlocks(row: []f32, row_touched: []u8, first: usize, last: usize) void {
+            for (first / area_block..last / area_block + 1) |b| {
+                if (row_touched[b] == 0) {
+                    row_touched[b] = 1;
+                    row[b * area_block ..][0..area_block].* = @splat(0);
+                }
+            }
+        }
+
+        /// Adds one edge's contributions to the accumulation buffer: `d` per row is the
+        /// signed height crossed, split between the cells the edge passes through by area.
+        fn accumulateEdge(acc: []f32, touched: []u8, width: usize, height: usize, p0: Point(2, f32), p1: Point(2, f32)) void {
+            if (p0.y() == p1.y()) return;
+            const dir: f32 = if (p0.y() < p1.y()) 1 else -1;
+            const top = if (dir > 0) p0 else p1;
+            const bottom = if (dir > 0) p1 else p0;
+            if (bottom.y() <= 0 or top.y() >= as(f32, height)) return;
+            const dxdy = (bottom.x() - top.x()) / (bottom.y() - top.y());
+            const x_max: f32 = as(f32, width - 2);
+            const blocks = (width + area_block - 1) / area_block;
+            const row_len = blocks * area_block;
+            var x = top.x();
+            var y: usize = 0;
+            if (top.y() >= 0) {
+                y = @intFromFloat(@floor(top.y()));
+            } else {
+                x -= top.y() * dxdy;
+            }
+            const y_end: usize = @intFromFloat(@min(as(f32, height), @ceil(bottom.y())));
+            if (dxdy == 0) {
+                // Vertical: the same two cells in every row, fully crossed except at the ends.
+                const xc = @max(0, @min(x, x_max));
+                const x_floor = @floor(xc);
+                const xi: usize = @intFromFloat(x_floor);
+                const xmf = xc - x_floor;
+                const full_start: usize = @intFromFloat(@min(@ceil(@max(top.y(), 0)), as(f32, height)));
+                const full_end: usize = @intFromFloat(@max(@floor(@min(bottom.y(), as(f32, height))), 0));
+                const b0 = xi / area_block;
+                const b1 = (xi + 1) / area_block;
+                const full_lo = dir - dir * xmf;
+                const full_hi = dir * xmf;
+                while (y < y_end) : (y += 1) {
+                    const row_touched = touched[y * blocks ..][0..blocks];
+                    const row = acc[y * row_len ..][0..row_len];
+                    if (row_touched[b0] == 0) {
+                        row_touched[b0] = 1;
+                        row[b0 * area_block ..][0..area_block].* = @splat(0);
+                    }
+                    if (b1 != b0 and row_touched[b1] == 0) {
+                        row_touched[b1] = 1;
+                        row[b1 * area_block ..][0..area_block].* = @splat(0);
+                    }
+                    if (y >= full_start and y < full_end) {
+                        row[xi] += full_lo;
+                        row[xi + 1] += full_hi;
+                    } else {
+                        const fy = as(f32, y);
+                        const d = (@min(fy + 1, bottom.y()) - @max(fy, top.y())) * dir;
+                        row[xi] += d - d * xmf;
+                        row[xi + 1] += d * xmf;
+                    }
+                }
+                return;
+            }
+            while (y < y_end) : (y += 1) {
+                const row = acc[y * row_len ..][0..row_len];
+                const fy = as(f32, y);
+                const dy = @min(fy + 1, bottom.y()) - @max(fy, top.y());
+                const x_next = x + dxdy * dy;
+                const d = dy * dir;
+                const x0 = @max(0, @min(@min(x, x_next), x_max));
+                const x1 = @max(0, @min(@max(x, x_next), x_max));
+                const x0_floor = @floor(x0);
+                const x0i: usize = @intFromFloat(x0_floor);
+                const x1_ceil = @ceil(x1);
+                const x1i: usize = @intFromFloat(x1_ceil);
+                touchBlocks(row, touched[y * blocks ..][0..blocks], x0i, x1i);
+                if (x1i <= x0i + 1) {
+                    // Within one cell: split by the midpoint.
+                    const xmf = 0.5 * (x0 + x1) - x0_floor;
+                    row[x0i] += d - d * xmf;
+                    row[x0i + 1] += d * xmf;
+                } else {
+                    const s = 1 / (x1 - x0);
+                    const x0f = x0 - x0_floor;
+                    const a0 = 0.5 * s * (1 - x0f) * (1 - x0f);
+                    const x1f = x1 - x1_ceil + 1;
+                    const am = 0.5 * s * x1f * x1f;
+                    row[x0i] += d * a0;
+                    if (x1i == x0i + 2) {
+                        row[x0i + 1] += d * (1 - a0 - am);
+                    } else {
+                        const a1 = s * (1.5 - x0f);
+                        row[x0i + 1] += d * (a1 - a0);
+                        for (x0i + 2..x1i - 1) |xi| row[xi] += d * s;
+                        const a2 = a1 + as(f32, x1i - x0i - 3) * s;
+                        row[x1i - 1] += d * (1 - a2 - am);
+                    }
+                    row[x1i] += d * am;
+                }
+                x = x_next;
             }
         }
 
@@ -1249,11 +1494,14 @@ pub fn Canvas(comptime T: type) type {
                     count += 1;
                 }
             }
-            const crossings = buf[0..count];
-            // Rows rarely have more than a handful of crossings, where a plain insertion sort
-            // beats the generic sorts' setup many times over.
-            if (count <= 32) {
-                for (1..@max(count, 1)) |i| {
+            return sortCrossings(buf[0..count]);
+        }
+
+        /// Sorts crossings by x. Rows rarely have more than a handful, where a plain
+        /// insertion sort beats the generic sorts' setup many times over.
+        fn sortCrossings(crossings: []Crossing) []Crossing {
+            if (crossings.len <= 32) {
+                for (1..@max(crossings.len, 1)) |i| {
                     const c = crossings[i];
                     var j = i;
                     while (j > 0 and crossings[j - 1].x > c.x) : (j -= 1) crossings[j] = crossings[j - 1];
