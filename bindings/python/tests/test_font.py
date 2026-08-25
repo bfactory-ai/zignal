@@ -5,17 +5,15 @@ import pytest
 
 import zignal
 
-# fonts-dejavu-core is installed on GitHub's Ubuntu runners; other paths keep the test
-# running on local machines, and ZIGNAL_FONT overrides both.
-DEJAVU_SANS = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-FALLBACK_FONTS = [
+# In order of preference: DejaVu Sans first (fonts-dejavu-core ships on GitHub's Ubuntu
+# runners; ttf-dejavu on Arch), then fonts that keep the generic checks running elsewhere.
+SYSTEM_FONTS = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/TTF/DejaVuSans.ttf",
     "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
     "/usr/share/fonts/TTF/Roboto-Regular.ttf",
 ]
-SYSTEM_FONT = os.environ.get("ZIGNAL_FONT") or next(
-    (p for p in [DEJAVU_SANS, *FALLBACK_FONTS] if os.path.exists(p)), None
-)
+SYSTEM_FONT = next((p for p in SYSTEM_FONTS if os.path.exists(p)), None)
 
 
 def inked(img):
