@@ -868,6 +868,10 @@ pub fn setErrorWithPath(err: anyerror, path: []const u8) void {
 
         error.UnsupportedImageFormat,
         error.UnsupportedFontFormat,
+        error.InvalidFormat,
+        error.UnexpectedEof,
+        error.MissingTable,
+        error.UnsupportedCmap,
         => c.PyExc_ValueError,
 
         error.OutOfMemory => c.PyExc_MemoryError,
