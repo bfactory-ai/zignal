@@ -359,7 +359,7 @@ fn drawTextBitmapHalo(canvas: Canvas(Rgba)) void {
     canvas.drawText("Zig", .init(.{ 10, 30 }), ink, .{ .bitmap = font8x8.basic }, 24, .fast) catch {};
 }
 
-fn fillGlyphCoverageSheared(canvas: Canvas(Rgba)) void {
+fn rasterizeGlyphSheared(canvas: Canvas(Rgba)) void {
     var buf: [synthetic.buffer_size]u8 = undefined;
     const font = synthetic.font(&buf, .{});
     var outline = font.outline(canvas.allocator, 1) catch return;
@@ -367,7 +367,7 @@ fn fillGlyphCoverageSheared(canvas: Canvas(Rgba)) void {
 
     var mask_buf: [100 * 100]u8 = @splat(0);
     const mask: Canvas(u8) = .init(canvas.allocator, .initFromSlice(100, 100, &mask_buf));
-    mask.fillGlyphCoverage(outline, .{ .scale = 0.1, .origin = .init(.{ 10.5, 85 }), .shear = 0.25 }) catch {};
+    mask.rasterizeGlyph(outline, .{ .scale = 0.1, .origin = .init(.{ 10.5, 85 }), .shear = 0.25 }) catch {};
     for (canvas.image.data, mask_buf) |*px, coverage| {
         const v = 255 - coverage;
         px.* = .{ .r = v, .g = v, .b = v, .a = 255 };
@@ -416,9 +416,9 @@ const md5_checksums = [_]DrawTestCase{
     .{ .name = "drawTextVectorSoft", .md5sum = "c1c2727d255903c559a0a76822bd9ce1", .draw_fn = drawTextVectorSoft },
     .{ .name = "drawTextVectorFast", .md5sum = "e0add7efb36c574cf74c97fcdfa96179", .draw_fn = drawTextVectorFast },
     .{ .name = "drawTextVectorComposite", .md5sum = "dd1f8e58c1b993af3a37c396c4f5d241", .draw_fn = drawTextVectorComposite },
-    .{ .name = "fillGlyphCoverageSheared", .md5sum = "04c03333d556cd12e9dcdb41eaa912a1", .draw_fn = fillGlyphCoverageSheared },
+    .{ .name = "rasterizeGlyphSheared", .md5sum = "04c03333d556cd12e9dcdb41eaa912a1", .draw_fn = rasterizeGlyphSheared },
     .{ .name = "drawTextBoxWrapped", .md5sum = "70f7230f878dc887d39ca09f1d3ed945", .draw_fn = drawTextBoxWrapped },
-    .{ .name = "drawTextOutlineVector", .md5sum = "362b42ad03e5b46d7f7e4b51a46a75a1", .draw_fn = drawTextOutlineVector },
+    .{ .name = "drawTextOutlineVector", .md5sum = "971d8e1ae700c9aff2e88ffacb342d36", .draw_fn = drawTextOutlineVector },
     .{ .name = "drawTextBitmapHalo", .md5sum = "2cfd43cc906ccf59dd373fd533064e36", .draw_fn = drawTextBitmapHalo },
 };
 

@@ -600,7 +600,7 @@ test "coverage masks accumulate with max" {
     const mask: Canvas(u8) = .init(testing.allocator, .initFromSlice(20, 20, &buf));
     // A square whose left edge sits on a pixel centre: that column is half covered.
     const square = [_]Point(2, f32){ .init(.{ 5, 5 }), .init(.{ 15, 5 }), .init(.{ 15, 15 }), .init(.{ 5, 15 }) };
-    try mask.fillPolygonsCoverage(&.{&square}, .nonzero);
+    try mask.rasterizePolygons(&.{&square}, .nonzero);
     try expectEqual(@as(u8, 255), buf[10 * 20 + 10]);
     try expectEqual(@as(u8, 0), buf[10 * 20 + 2]);
     try expectEqual(@as(u8, 0), buf[2 * 20 + 10]);
@@ -609,7 +609,7 @@ test "coverage masks accumulate with max" {
 
     var again = buf;
     const mask2: Canvas(u8) = .init(testing.allocator, .initFromSlice(20, 20, &again));
-    try mask2.fillPolygonsCoverage(&.{&square}, .nonzero);
+    try mask2.rasterizePolygons(&.{&square}, .nonzero);
     try testing.expectEqualSlices(u8, &buf, &again);
 
     // Conservation: each interior row sums to the square's width in pixels.
@@ -634,7 +634,7 @@ test "glyph coverage into a caller-sized mask" {
     @memset(buf, 0);
     const mask: Canvas(u8) = .init(testing.allocator, .initFromSlice(h, w, buf));
     const t: Outline.Transform = .{ .scale = scale, .origin = .init(.{ 0, @as(f32, @floatFromInt(h - 1)) }) };
-    try mask.fillGlyphCoverage(outline, t);
+    try mask.rasterizeGlyph(outline, t);
 
     // Centre of the counter is empty, the frame around it is inked.
     try expectEqual(@as(u8, 0), buf[(h - 1 - 17) * w + 20]);
@@ -649,12 +649,9 @@ const Font = @import("../../font.zig").Font;
 const TextLayout = @import("../../font.zig").TextLayout;
 const font8x8 = @import("../../font/font8x8.zig");
 
-const paper: Rgba = .{ .r = 255, .g = 255, .b = 255, .a = 255 };
-const ink: Rgba = .{ .r = 0, .g = 0, .b = 0, .a = 255 };
-
 fn blankImage(allocator: std.mem.Allocator) !Image(Rgba) {
     const img: Image(Rgba) = try .init(allocator, 60, 100);
-    for (img.data) |*px| px.* = paper;
+    img.fill(Rgba.white);
     return img;
 }
 
@@ -664,13 +661,12 @@ fn samePixels(a: Image(Rgba), b: Image(Rgba)) bool {
 
 fn inkCount(img: Image(Rgba)) usize {
     var count: usize = 0;
-    for (img.data) |px| count += @intFromBool(px.r != 255 or px.g != 255 or px.b != 255);
+    for (img.data) |px| count += @intFromBool(!std.meta.eql(px, Rgba.white));
     return count;
 }
 
 fn isWhite(img: Image(Rgba), row: usize, col: usize) bool {
-    const px = img.data[row * img.stride + col];
-    return px.r == 255 and px.g == 255 and px.b == 255;
+    return std.meta.eql(img.data[row * img.stride + col], Rgba.white);
 }
 
 test "drawTextBox places lines where drawText would" {
@@ -696,29 +692,29 @@ test "drawTextBox places lines where drawText would" {
             .{ .layout = .{ .halign = .right, .valign = .bottom }, .x = 90 - width, .y = 50 - height },
         };
         for (cases) |case| {
-            for (expected.data) |*px| px.* = paper;
-            for (actual.data) |*px| px.* = paper;
-            try reference.drawText("AB", .init(.{ case.x, case.y }), ink, font, size, .soft);
-            try canvas.drawTextBox("AB", box, ink, font, size, case.layout, .soft);
+            expected.fill(Rgba.white);
+            actual.fill(Rgba.white);
+            try reference.drawText("AB", .init(.{ case.x, case.y }), Rgba.black, font, size, .soft);
+            try canvas.drawTextBox("AB", box, Rgba.black, font, size, case.layout, .soft);
             try expect(inkCount(actual) > 0);
             try expect(samePixels(expected, actual));
         }
 
         // Wrapping breaks like an explicit newline; line spacing scales the advance.
-        for (expected.data) |*px| px.* = paper;
-        for (actual.data) |*px| px.* = paper;
-        try reference.drawText("AB", .init(.{ 10, 10 }), ink, font, size, .soft);
-        try reference.drawText("AB", .init(.{ 10, 10 + 1.5 * height }), ink, font, size, .soft);
-        try canvas.drawTextBox("AB AB", .{ .l = 10, .t = 10, .r = 10 + width + 1, .b = 60 }, ink, font, size, .{ .wrap = true, .line_spacing = 1.5 }, .soft);
+        expected.fill(Rgba.white);
+        actual.fill(Rgba.white);
+        try reference.drawText("AB", .init(.{ 10, 10 }), Rgba.black, font, size, .soft);
+        try reference.drawText("AB", .init(.{ 10, 10 + 1.5 * height }), Rgba.black, font, size, .soft);
+        try canvas.drawTextBox("AB AB", .{ .l = 10, .t = 10, .r = 10 + width + 1, .b = 60 }, Rgba.black, font, size, .{ .wrap = true, .line_spacing = 1.5 }, .soft);
         try expect(samePixels(expected, actual));
 
         // Letter spacing shifts every following glyph.
-        for (expected.data) |*px| px.* = paper;
-        for (actual.data) |*px| px.* = paper;
+        expected.fill(Rgba.white);
+        actual.fill(Rgba.white);
         const a_width = font.getTextBounds("A", size).r;
-        try reference.drawText("A", .init(.{ 10, 10 }), ink, font, size, .soft);
-        try reference.drawText("B", .init(.{ 10 + a_width + 3, 10 }), ink, font, size, .soft);
-        try canvas.drawTextBox("AB", box, ink, font, size, .{ .letter_spacing = 3 }, .soft);
+        try reference.drawText("A", .init(.{ 10, 10 }), Rgba.black, font, size, .soft);
+        try reference.drawText("B", .init(.{ 10 + a_width + 3, 10 }), Rgba.black, font, size, .soft);
+        try canvas.drawTextBox("AB", box, Rgba.black, font, size, .{ .letter_spacing = 3 }, .soft);
         // The vector font kerns A→B, which the two-call reference lacks.
         if (font == .bitmap) try expect(samePixels(expected, actual)) else try expect(inkCount(actual) > 0);
     }
@@ -734,42 +730,42 @@ test "outlined glyphs are hollow, halos dilate bitmaps" {
 
     // Glyph A at 50 px: a square from (5, 10) to (35, 45) with a hole from (15, 20) to (25, 35).
     for ([_]DrawOptions{ .soft, .fast }) |opts| {
-        for (img.data) |*px| px.* = paper;
-        try canvas.drawTextOutline("A", .init(.{ 0, 0 }), ink, font, 50, 3, opts);
+        img.fill(Rgba.white);
+        try canvas.drawTextOutline("A", .init(.{ 0, 0 }), Rgba.black, font, 50, 3, opts);
         try expect(!isWhite(img, 27, 5)); // outer edge
         try expect(!isWhite(img, 27, 15)); // hole edge
         try expect(isWhite(img, 27, 10)); // between the edges
         try expect(isWhite(img, 27, 20)); // inside the hole
         try expect(isWhite(img, 27, 45)); // outside
         const hollow = inkCount(img);
-        for (img.data) |*px| px.* = paper;
-        try canvas.drawText("A", .init(.{ 0, 0 }), ink, font, 50, opts);
+        img.fill(Rgba.white);
+        try canvas.drawText("A", .init(.{ 0, 0 }), Rgba.black, font, 50, opts);
         try expect(!isWhite(img, 27, 10));
         try expect(inkCount(img) > hollow);
     }
 
     // A thicker stroke covers more, and the box variant places it like the fill.
-    for (img.data) |*px| px.* = paper;
-    try canvas.drawTextOutline("A", .init(.{ 0, 0 }), ink, font, 50, 7, .soft);
+    img.fill(Rgba.white);
+    try canvas.drawTextOutline("A", .init(.{ 0, 0 }), Rgba.black, font, 50, 7, .soft);
     const thick = inkCount(img);
-    for (img.data) |*px| px.* = paper;
-    try canvas.drawTextOutline("A", .init(.{ 0, 0 }), ink, font, 50, 3, .soft);
+    img.fill(Rgba.white);
+    try canvas.drawTextOutline("A", .init(.{ 0, 0 }), Rgba.black, font, 50, 3, .soft);
     try expect(thick > inkCount(img));
     var boxed = try blankImage(allocator);
     defer boxed.deinit(allocator);
     const box_canvas: Canvas(Rgba) = .init(allocator, boxed);
-    try box_canvas.drawTextBoxOutline("A", .{ .l = 0, .t = 0, .r = 100, .b = 60 }, ink, font, 50, 3, .default, .soft);
+    try box_canvas.drawTextBoxOutline("A", .{ .l = 0, .t = 0, .r = 100, .b = 60 }, Rgba.black, font, 50, 3, .default, .soft);
     try expect(samePixels(img, boxed));
 
     // Bitmap halo: a superset of the glyph's own pixels.
     const bitmap: Font = .{ .bitmap = font8x8.basic };
-    for (img.data) |*px| px.* = paper;
-    try canvas.drawText("H", .init(.{ 20, 20 }), ink, bitmap, null, .fast);
+    img.fill(Rgba.white);
+    try canvas.drawText("H", .init(.{ 20, 20 }), Rgba.black, bitmap, null, .fast);
     var plain = try blankImage(allocator);
     defer plain.deinit(allocator);
-    @memcpy(plain.data, img.data);
-    for (img.data) |*px| px.* = paper;
-    try canvas.drawTextOutline("H", .init(.{ 20, 20 }), ink, bitmap, null, 4, .fast);
+    img.copy(plain);
+    img.fill(Rgba.white);
+    try canvas.drawTextOutline("H", .init(.{ 20, 20 }), Rgba.black, bitmap, null, 4, .fast);
     try expect(inkCount(img) > inkCount(plain));
     for (plain.data, img.data) |p, q| if (p.r == 0) try expect(q.r == 0);
 }

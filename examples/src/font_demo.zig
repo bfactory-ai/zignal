@@ -62,7 +62,8 @@ pub fn main(init: std.process.Init) !void {
 
     var image: Image(Rgb) = try .init(gpa, @ceil(height), 1000);
     defer image.deinit(gpa);
-    image.fill(.{ .r = 255, .g = 255, .b = 255 });
+    const paper: Rgb = .{ .r = 255, .g = 255, .b = 255 };
+    image.fill(paper);
     const canvas: Canvas(Rgb) = .init(gpa, image);
     const ink: Rgb = .{ .r = 24, .g = 24, .b = 24 };
     const accent: Rgb = .{ .r = 190, .g = 40, .b = 40 };
@@ -100,7 +101,7 @@ pub fn main(init: std.process.Init) !void {
     // get a halo instead of an outline.
     const outline: Rgb = .{ .r = 30, .g = 80, .b = 180 };
     try canvas.drawTextOutline("Outlined", p(.{ 8, y }), outline, font, 48, 5, .soft);
-    try canvas.drawText("Outlined", p(.{ 8, y }), Rgb{ .r = 255, .g = 255, .b = 255 }, font, 48, .soft);
+    try canvas.drawText("Outlined", p(.{ 8, y }), paper, font, 48, .soft);
     const measured = font.measureText("Outlined", 48, null, .default);
     try canvas.drawTextOutline("& hollow", p(.{ 8 + measured.r + 24, y }), accent, font, 48, 2, .soft);
 

@@ -878,34 +878,31 @@ const TextArgs = struct {
     size: ?f32,
     opts: DrawOptions,
 
-    fn parse(text_obj: ?*c.PyObject, color: ?*c.PyObject, font_obj: ?*c.PyObject, size_obj: ?*c.PyObject, mode: c_long, blending: ?*c.PyObject) ?TextArgs {
-        const text_cstr = c.PyUnicode_AsUTF8(text_obj) orelse {
-            python.setTypeError("string", text_obj);
-            return null;
-        };
-        const rgba = color_utils.parseColor(Rgba, @ptrCast(color)) catch return null;
-        const opts = parseDrawOptions(mode, blending) catch return null;
+    /// `params` is the method's parsed `Params` struct; only the shared fields are read.
+    fn parse(params: anytype) ?TextArgs {
+        const rgba = color_utils.parseColor(Rgba, @ptrCast(params.color)) catch return null;
+        const opts = parseDrawOptions(params.mode, params.blending) catch return null;
 
         const font_module = @import("font.zig");
-        const resolved_font = if (font_obj == null or font_obj == c.Py_None()) font_module.font8x8Object() orelse return null else font_obj;
-        if (c.PyObject_IsInstance(resolved_font, @ptrCast(&font_module.FontType)) <= 0) {
-            python.setTypeError("Font instance or None", resolved_font);
+        const font_obj = if (params.font == null or params.font == c.Py_None()) font_module.font8x8Object() orelse return null else params.font;
+        if (c.PyObject_IsInstance(font_obj, @ptrCast(&font_module.FontType)) <= 0) {
+            python.setTypeError("Font instance or None", font_obj);
             return null;
         }
-        const font = python.unwrap(font_module.FontObject, "font", resolved_font, "Font") orelse return null;
-        const size: ?f32 = if (size_obj == null or size_obj == c.Py_None()) null else python.parse(f32, size_obj) catch return null;
-        return .{ .text = std.mem.span(text_cstr), .rgba = rgba, .font = font, .size = size, .opts = opts };
+        const font = python.unwrap(font_module.FontObject, "font", font_obj, "Font") orelse return null;
+        const size: ?f32 = if (params.size == null or params.size == c.Py_None()) null else python.parse(f32, params.size) catch return null;
+        return .{ .text = std.mem.span(params.text), .rgba = rgba, .font = font, .size = size, .opts = opts };
     }
 };
 
 /// A `TextLayout` from the keyword arguments of the box methods.
-fn parseTextLayout(halign: c_long, valign: c_long, wrap: c_int, line_spacing: f64, letter_spacing: f64) !zignal.TextLayout {
+fn parseTextLayout(params: anytype) !zignal.TextLayout {
     return .{
-        .halign = try enum_utils.longToEnum(zignal.TextAlign, halign),
-        .valign = try enum_utils.longToEnum(zignal.VerticalAlign, valign),
-        .wrap = wrap != 0,
-        .line_spacing = @floatCast(line_spacing),
-        .letter_spacing = @floatCast(letter_spacing),
+        .halign = try enum_utils.longToEnum(zignal.TextAlign, params.halign),
+        .valign = try enum_utils.longToEnum(zignal.VerticalAlign, params.valign),
+        .wrap = params.wrap != 0,
+        .line_spacing = @floatCast(params.line_spacing),
+        .letter_spacing = @floatCast(params.letter_spacing),
     };
 }
 
@@ -913,7 +910,7 @@ fn canvas_draw_text(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     const canvas = python.unwrap(CanvasObject, "py_canvas", self_obj, "Canvas") orelse return null;
 
     const Params = struct {
-        text: ?*c.PyObject,
+        text: [*c]const u8,
         position: ?*c.PyObject,
         color: ?*c.PyObject,
         font: ?*c.PyObject = null,
@@ -925,7 +922,7 @@ fn canvas_draw_text(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
     const position = python.parse(zignal.Point(2, f32), params.position) catch return null;
-    const t = TextArgs.parse(params.text, params.color, params.font, params.size, params.mode, params.blending) orelse return null;
+    const t = TextArgs.parse(params) orelse return null;
 
     canvas.drawText(t.text, position, t.rgba, t.font.*, t.size, t.opts) catch {
         python.setRuntimeError("Failed to draw text", .{});
@@ -939,7 +936,7 @@ fn canvas_draw_text_box(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.Py
     const canvas = python.unwrap(CanvasObject, "py_canvas", self_obj, "Canvas") orelse return null;
 
     const Params = struct {
-        text: ?*c.PyObject,
+        text: [*c]const u8,
         rect: ?*c.PyObject,
         color: ?*c.PyObject,
         font: ?*c.PyObject = null,
@@ -956,8 +953,8 @@ fn canvas_draw_text_box(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.Py
     python.parseArgs(Params, args, kwds, &params) catch return null;
 
     const rect = python.parse(zignal.Rectangle(f32), params.rect) catch return null;
-    const t = TextArgs.parse(params.text, params.color, params.font, params.size, params.mode, params.blending) orelse return null;
-    const layout = parseTextLayout(params.halign, params.valign, params.wrap, params.line_spacing, params.letter_spacing) catch return null;
+    const t = TextArgs.parse(params) orelse return null;
+    const layout = parseTextLayout(params) catch return null;
 
     canvas.drawTextBox(t.text, rect, t.rgba, t.font.*, t.size, layout, t.opts) catch {
         python.setRuntimeError("Failed to draw text", .{});
@@ -971,7 +968,7 @@ fn canvas_draw_text_outline(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*
     const canvas = python.unwrap(CanvasObject, "py_canvas", self_obj, "Canvas") orelse return null;
 
     const Params = struct {
-        text: ?*c.PyObject,
+        text: [*c]const u8,
         position: ?*c.PyObject,
         color: ?*c.PyObject,
         width: f64,
@@ -985,7 +982,7 @@ fn canvas_draw_text_outline(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*
 
     const position = python.parse(zignal.Point(2, f32), params.position) catch return null;
     const width = python.validateNonNegative(f32, params.width, "Width") catch return null;
-    const t = TextArgs.parse(params.text, params.color, params.font, params.size, params.mode, params.blending) orelse return null;
+    const t = TextArgs.parse(params) orelse return null;
 
     canvas.drawTextOutline(t.text, position, t.rgba, t.font.*, t.size, width, t.opts) catch {
         python.setRuntimeError("Failed to draw text", .{});
@@ -999,7 +996,7 @@ fn canvas_draw_text_box_outline(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds
     const canvas = python.unwrap(CanvasObject, "py_canvas", self_obj, "Canvas") orelse return null;
 
     const Params = struct {
-        text: ?*c.PyObject,
+        text: [*c]const u8,
         rect: ?*c.PyObject,
         color: ?*c.PyObject,
         width: f64,
@@ -1018,8 +1015,8 @@ fn canvas_draw_text_box_outline(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds
 
     const rect = python.parse(zignal.Rectangle(f32), params.rect) catch return null;
     const width = python.validateNonNegative(f32, params.width, "Width") catch return null;
-    const t = TextArgs.parse(params.text, params.color, params.font, params.size, params.mode, params.blending) orelse return null;
-    const layout = parseTextLayout(params.halign, params.valign, params.wrap, params.line_spacing, params.letter_spacing) catch return null;
+    const t = TextArgs.parse(params) orelse return null;
+    const layout = parseTextLayout(params) catch return null;
 
     canvas.drawTextBoxOutline(t.text, rect, t.rgba, t.font.*, t.size, width, layout, t.opts) catch {
         python.setRuntimeError("Failed to draw text", .{});
