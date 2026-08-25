@@ -6,16 +6,12 @@ const Font = zignal.Font;
 const python = @import("python.zig");
 const ctx = python.ctx;
 const allocator = ctx.allocator;
-pub const registerType = python.register;
 const c = python.c;
 
 pub const FontObject = extern struct {
     ob_base: c.PyObject,
     font: ?*Font,
 };
-
-/// Default size in pixels when a TrueType font is drawn without one.
-pub const default_vector_size: f32 = 16;
 
 // Cached singleton Python object for the built-in 8x8 font
 var cached_font8x8: ?*c.PyObject = null;
@@ -31,10 +27,18 @@ fn fontDeinit(self: *FontObject) void {
 
 const font_dealloc = python.genericDealloc(FontObject, fontDeinit);
 
-/// Wraps an owned font in a new Python object of `type_obj`, freeing the font on failure.
-fn wrap(type_obj: *c.PyObject, font: Font) ?*c.PyObject {
+/// The size a bitmap font is drawn at 1:1; TrueType fonts have none.
+pub fn naturalSize(font: Font) ?u8 {
+    return switch (font) {
+        .bitmap => |b| b.char_height,
+        .vector => null,
+    };
+}
+
+/// Wraps an owned font in a new Python object, freeing the font on failure.
+fn wrap(font: Font) ?*c.PyObject {
     var owned = font;
-    const instance = c.PyObject_CallObject(type_obj, null) orelse {
+    const instance = c.PyObject_CallObject(@ptrCast(&FontType), null) orelse {
         owned.deinit(allocator);
         return null;
     };
@@ -77,6 +81,7 @@ const font_load_doc =
 ;
 
 fn font_load(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+    _ = type_obj;
     const Params = struct {
         path: [*c]const u8,
     };
@@ -88,7 +93,7 @@ fn font_load(type_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) cal
         python.setErrorWithPath(err, path);
         return null;
     };
-    return wrap(@ptrCast(type_obj), font);
+    return wrap(font);
 }
 
 const font_save_doc =
@@ -143,22 +148,17 @@ const font_font8x8_doc =
     \\```
 ;
 
-/// The shared built-in font object, created on first use and kept for the module's lifetime.
-fn font8x8Object() ?*c.PyObject {
+/// The shared built-in font object (a borrowed reference), created on first use and kept
+/// for the module's lifetime.
+pub fn font8x8Object() ?*c.PyObject {
     if (cached_font8x8 == null) {
         const bitmap = zignal.font.font8x8.create(allocator, .all) catch {
             python.setRuntimeError("Failed to create font8x8 with all characters", .{});
             return null;
         };
-        cached_font8x8 = wrap(@ptrCast(&FontType), .{ .bitmap = bitmap }) orelse return null;
+        cached_font8x8 = wrap(.{ .bitmap = bitmap }) orelse return null;
     }
     return cached_font8x8;
-}
-
-/// The built-in font, for callers that draw without a font argument.
-pub fn defaultFont() ?*Font {
-    const obj = font8x8Object() orelse return null;
-    return python.safeCast(FontObject, obj).font;
 }
 
 fn font_font8x8(type_obj: ?*c.PyObject, args: ?*c.PyObject) callconv(.c) ?*c.PyObject {
@@ -183,30 +183,28 @@ const font_line_height_doc =
     \\- `size` (float): Font size in pixels
 ;
 
-fn sizedMetric(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject, comptime method: []const u8) ?*c.PyObject {
-    const font = python.unwrap(FontObject, "font", self_obj, "Font") orelse return null;
-    const Params = struct {
-        size: f64,
-    };
-    var params: Params = undefined;
-    python.parseArgs(Params, args, kwds, &params) catch return null;
-    const value: f32 = @field(Font, method)(font.*, @floatCast(params.size));
-    return python.create(@as(f64, value));
-}
+const PyMethod = fn (?*c.PyObject, ?*c.PyObject, ?*c.PyObject) callconv(.c) ?*c.PyObject;
 
-fn font_ascent(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-    return sizedMetric(self_obj, args, kwds, "ascent");
-}
-
-fn font_line_height(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-    return sizedMetric(self_obj, args, kwds, "lineHeight");
+/// A method calling `Font.<method>(size)` and returning the number.
+fn sizedMetric(comptime method: []const u8) PyMethod {
+    return struct {
+        fn call(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+            const font = python.unwrap(FontObject, "font", self_obj, "Font") orelse return null;
+            const Params = struct {
+                size: f64,
+            };
+            var params: Params = undefined;
+            python.parseArgs(Params, args, kwds, &params) catch return null;
+            return python.create(@field(Font, method)(font.*, @floatCast(params.size)));
+        }
+    }.call;
 }
 
 const font_has_glyph_doc =
     \\Whether the font has a glyph for a character.
     \\
     \\## Parameters
-    \\- `char` (str | int): A single character, or its Unicode code point
+    \\- `char` (str): A single character
 ;
 
 fn font_has_glyph(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
@@ -216,28 +214,11 @@ fn font_has_glyph(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject
     };
     var params: Params = undefined;
     python.parseArgs(Params, args, kwds, &params) catch return null;
-
-    const codepoint: i64 = blk: {
-        if (c.PyUnicode_Check(params.char) != 0) {
-            if (c.PyUnicode_GetLength(params.char) != 1) {
-                python.setTypeError("single character", params.char);
-                return null;
-            }
-            break :blk c.PyUnicode_ReadChar(params.char, 0);
-        }
-        if (c.PyLong_Check(params.char) != 0) {
-            const v = c.PyLong_AsLongLong(params.char);
-            if (v == -1 and c.PyErr_Occurred() != null) return null;
-            break :blk v;
-        }
-        python.setTypeError("str or int", params.char);
-        return null;
-    };
-    if (codepoint < 0 or codepoint > 0x10FFFF) {
-        python.setValueError("code point out of range: {d}", .{codepoint});
+    if (c.PyUnicode_Check(params.char) == 0 or c.PyUnicode_GetLength(params.char) != 1) {
+        python.setTypeError("single character", params.char);
         return null;
     }
-    return python.create(font.hasGlyph(@intCast(codepoint)));
+    return python.create(font.hasGlyph(@intCast(c.PyUnicode_ReadChar(params.char, 0))));
 }
 
 const font_get_text_bounds_doc =
@@ -258,24 +239,21 @@ const font_get_text_bounds_tight_doc =
     \\- `size` (float): Font size in pixels
 ;
 
-fn textBounds(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject, comptime method: []const u8) ?*c.PyObject {
-    const font = python.unwrap(FontObject, "font", self_obj, "Font") orelse return null;
-    const Params = struct {
-        text: [*c]const u8,
-        size: f64,
-    };
-    var params: Params = undefined;
-    python.parseArgs(Params, args, kwds, &params) catch return null;
-    const rect = @field(Font, method)(font.*, std.mem.span(params.text), @as(f32, @floatCast(params.size)));
-    return python.create(rect.as(f64));
-}
-
-fn font_get_text_bounds(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-    return textBounds(self_obj, args, kwds, "getTextBounds");
-}
-
-fn font_get_text_bounds_tight(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
-    return textBounds(self_obj, args, kwds, "getTextBoundsTight");
+/// A method calling `Font.<method>(text, size)` and returning the `Rectangle`.
+fn textBounds(comptime method: []const u8) PyMethod {
+    return struct {
+        fn call(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObject) callconv(.c) ?*c.PyObject {
+            const font = python.unwrap(FontObject, "font", self_obj, "Font") orelse return null;
+            const Params = struct {
+                text: [*c]const u8,
+                size: f64,
+            };
+            var params: Params = undefined;
+            python.parseArgs(Params, args, kwds, &params) catch return null;
+            const rect = @field(Font, method)(font.*, std.mem.span(params.text), @floatCast(params.size));
+            return python.create(rect.as(f64));
+        }
+    }.call;
 }
 
 fn fontKind(font: *Font) ?*c.PyObject {
@@ -290,10 +268,7 @@ fn fontName(font: *Font) ?*c.PyObject {
 }
 
 fn fontHeight(font: *Font) ?*c.PyObject {
-    return switch (font.*) {
-        .bitmap => |b| python.create(b.char_height),
-        .vector => python.none(),
-    };
+    return python.create(naturalSize(font.*));
 }
 
 pub const font_methods_metadata = [_]python.MethodWithMetadata{
@@ -323,7 +298,7 @@ pub const font_methods_metadata = [_]python.MethodWithMetadata{
     },
     .{
         .name = "ascent",
-        .meth = @ptrCast(&font_ascent),
+        .meth = @ptrCast(&sizedMetric("ascent")),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = font_ascent_doc,
         .params = "self, size: float",
@@ -331,7 +306,7 @@ pub const font_methods_metadata = [_]python.MethodWithMetadata{
     },
     .{
         .name = "line_height",
-        .meth = @ptrCast(&font_line_height),
+        .meth = @ptrCast(&sizedMetric("lineHeight")),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = font_line_height_doc,
         .params = "self, size: float",
@@ -342,12 +317,12 @@ pub const font_methods_metadata = [_]python.MethodWithMetadata{
         .meth = @ptrCast(&font_has_glyph),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = font_has_glyph_doc,
-        .params = "self, char: str | int",
+        .params = "self, char: str",
         .returns = "bool",
     },
     .{
         .name = "get_text_bounds",
-        .meth = @ptrCast(&font_get_text_bounds),
+        .meth = @ptrCast(&textBounds("getTextBounds")),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = font_get_text_bounds_doc,
         .params = "self, text: str, size: float",
@@ -355,7 +330,7 @@ pub const font_methods_metadata = [_]python.MethodWithMetadata{
     },
     .{
         .name = "get_text_bounds_tight",
-        .meth = @ptrCast(&font_get_text_bounds_tight),
+        .meth = @ptrCast(&textBounds("getTextBoundsTight")),
         .flags = c.METH_VARARGS | c.METH_KEYWORDS,
         .doc = font_get_text_bounds_tight_doc,
         .params = "self, text: str, size: float",

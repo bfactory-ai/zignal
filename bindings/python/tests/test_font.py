@@ -1,5 +1,6 @@
 import os
 
+import numpy as np
 import pytest
 
 import zignal
@@ -14,7 +15,13 @@ SYSTEM_FONT = next((p for p in SYSTEM_FONTS if os.path.exists(p)), None)
 
 
 def inked(img):
-    return sum(1 for row in range(img.rows) for col in range(img.cols) if img[row, col] != 0)
+    return np.count_nonzero(img.to_numpy())
+
+
+def render(text, *args, rows=40, cols=80, **kwargs):
+    img = zignal.Image(rows, cols, 0)
+    img.canvas().draw_text(text, (5, 5), 255, *args, **kwargs)
+    return img
 
 
 def test_font8x8_metrics_and_draw():
@@ -27,21 +34,14 @@ def test_font8x8_metrics_and_draw():
     assert font.line_height(16) == 16
     assert font.ascent(16) > 0
     assert font.has_glyph("A")
-    assert font.has_glyph(ord("A"))
     assert font.get_text_bounds("abc", 8).width == 24
     assert font.get_text_bounds("abc", 16).width == 48
     assert 'kind="bitmap"' in repr(font)
 
-    small = zignal.Image(40, 80, 0)
-    small.canvas().draw_text("Hi", (5, 5), 255, font)
+    small = render("Hi", font)
     assert inked(small) > 0
-    big = zignal.Image(40, 80, 0)
-    big.canvas().draw_text("Hi", (5, 5), 255, font, size=16)
-    assert inked(big) == 4 * inked(small)
-
-    default = zignal.Image(40, 80, 0)
-    default.canvas().draw_text("Hi", (5, 5), 255)
-    assert default == small
+    assert inked(render("Hi", font, size=16)) == 4 * inked(small)
+    assert render("Hi") == small
 
 
 def test_bitmap_font_round_trip(tmp_path):
@@ -65,10 +65,11 @@ def test_font_errors(tmp_path):
     junk.write_bytes(b"\x00\x01\x00\x00" + b"\xff" * 64)
     with pytest.raises(ValueError):
         zignal.Font.load(str(junk))
+    font = zignal.Font.font8x8()
     with pytest.raises(TypeError):
-        zignal.Font.font8x8().has_glyph("ab")
+        font.has_glyph("ab")
     with pytest.raises(TypeError):
-        zignal.Font.font8x8().has_glyph(1.5)
+        font.has_glyph(65)
 
 
 @pytest.mark.skipif(SYSTEM_FONT is None, reason="no TrueType font installed")
@@ -91,10 +92,8 @@ def test_truetype_font(tmp_path):
     tight = font.get_text_bounds_tight("Hello", 24)
     assert 0 < tight.width <= bounds.width
 
-    small = zignal.Image(60, 200, 0)
-    small.canvas().draw_text("Hello", (2, 2), 255, font, size=24, mode=zignal.DrawMode.SOFT)
-    big = zignal.Image(60, 200, 0)
-    big.canvas().draw_text("Hello", (2, 2), 255, font, size=48, mode=zignal.DrawMode.SOFT)
+    small = render("Hello", font, rows=60, cols=200, size=24, mode=zignal.DrawMode.SOFT)
+    big = render("Hello", font, rows=60, cols=200, size=48, mode=zignal.DrawMode.SOFT)
     assert 0 < inked(small) < inked(big)
 
     with pytest.raises(ValueError):

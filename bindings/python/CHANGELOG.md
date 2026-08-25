@@ -3,10 +3,10 @@
 ## [Unreleased]
 
 ### Added
-- **TrueType fonts**: `Font.load(path)` detects BDF, PCF (optionally gzipped) and TrueType (`.ttf`) files. `Font` exposes `ascent(size)`, `line_height(size)`, `has_glyph(char)`, `get_text_bounds(text, size)` and `get_text_bounds_tight(text, size)`, plus the `kind` (`"bitmap"` / `"vector"`), `name` and `height` properties. `Canvas.draw_text` renders TrueType text with antialiased outlines and kerning.
+- **TrueType fonts**: `Font.load(path)` detects BDF, PCF (optionally gzipped) and TrueType (`.ttf`) files, and `Canvas.draw_text` renders TrueType text with antialiased outlines and kerning. New `Font` members: `ascent(size)`, `line_height(size)`, `has_glyph(char)`, `get_text_bounds(text, size)`, `get_text_bounds_tight(text, size)` and the `kind` (`"bitmap"` / `"vector"`), `name` and `height` properties.
 
 ### Changed
-- **`BitmapFont` is now `Font`** (breaking): one class for every font format. `Font.font8x8()` returns the built-in font and `Font.save` still writes BDF/PCF (it raises `ValueError` for TrueType fonts); the `width` property was removed.
+- **`BitmapFont` is now `Font`** (breaking): one class for every font format; `save` still writes BDF/PCF and raises `ValueError` for TrueType fonts; the `width` property was removed.
 - **`Canvas.draw_text` takes `size=` in pixels instead of `scale=`** (breaking): the em height for TrueType fonts, the character height for bitmap fonts. Omitted, it is the bitmap font's natural size (the old `scale=1.0`) or 16 px for TrueType fonts; `font=None` selects the built-in font.
 - **iTerm2 inline images**: `f"{img:iterm2}"` (and `iterm2:WIDTHxHEIGHT` / `iterm2:WIDTHx` / `iterm2:xHEIGHT`) renders via the iTerm2 inline image protocol. `f"{img:auto}"` now prefers kitty → iterm2 → sixel → sgr.
 - **QR codes**: `qrcode_encode(data, ec_level=EcLevel.MEDIUM, version=None, module_size=8, quiet_zone=4)` renders text or bytes as a grayscale `Image`; `qrcode_decode(image)` scans clean images and photographs (perspective, uneven lighting, rotation, mirroring) and returns a `QrDecodeResult` (`data`, `text`, `version`, `ec_level`, `corrected_errors`, `corners`) or `None` when no symbol is found. Adds the `EcLevel` enum (LOW/MEDIUM/QUARTILE/HIGH).

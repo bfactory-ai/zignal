@@ -215,6 +215,9 @@ fn parseDrawOptions(mode: c_long, blending: ?*c.PyObject) !DrawOptions {
     };
 }
 
+/// Size in pixels when a TrueType font is drawn without one.
+const default_vector_size: f32 = 16;
+
 pub const CanvasObject = extern struct {
     ob_base: c.PyObject,
     // Keep reference to parent Image to prevent garbage collection
@@ -850,25 +853,17 @@ fn canvas_draw_text(self_obj: ?*c.PyObject, args: ?*c.PyObject, kwds: ?*c.PyObje
     const opts = parseDrawOptions(params.mode, params.blending) catch return null;
 
     const font_module = @import("font.zig");
-    const font: *Font = if (params.font != null and params.font != c.Py_None()) blk: {
-        if (c.PyObject_IsInstance(params.font, @ptrCast(&font_module.FontType)) <= 0) {
-            if (c.PyErr_Occurred() == null) {
-                python.setTypeError("Font instance or None", params.font);
-            }
-            return null;
-        }
-        break :blk python.unwrap(font_module.FontObject, "font", params.font, "Font") orelse return null;
-    } else font_module.defaultFont() orelse return null;
+    const font_obj = if (params.font == null or params.font == c.Py_None()) font_module.font8x8Object() orelse return null else params.font;
+    if (c.PyObject_IsInstance(font_obj, @ptrCast(&font_module.FontType)) <= 0) {
+        python.setTypeError("Font instance or None", font_obj);
+        return null;
+    }
+    const font = python.unwrap(font_module.FontObject, "font", font_obj, "Font") orelse return null;
 
-    // Default size: a bitmap font's natural size, a fixed size for TrueType.
-    const size: f32 = if (params.size == null or params.size == c.Py_None()) switch (font.*) {
-        .bitmap => |b| @floatFromInt(b.char_height),
-        .vector => font_module.default_vector_size,
-    } else blk: {
-        const v = c.PyFloat_AsDouble(params.size);
-        if (v == -1.0 and c.PyErr_Occurred() != null) return null;
-        break :blk @floatCast(v);
-    };
+    const size: f32 = if (params.size == null or params.size == c.Py_None())
+        (if (font_module.naturalSize(font.*)) |h| @floatFromInt(h) else default_vector_size)
+    else
+        python.parse(f32, params.size) catch return null;
 
     canvas.drawText(text, position, rgba, font.*, size, opts) catch {
         python.setRuntimeError("Failed to draw text", .{});
