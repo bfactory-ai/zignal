@@ -1799,7 +1799,7 @@ pub fn Canvas(comptime T: type) type {
                 };
                 const position: Point(2, f32) = .init(.{ x, y });
                 switch (font) {
-                    .bitmap => |bitmap| self.drawTextBitmap(line.text, position, paint, bitmap, bitmap.scaleFor(px), layout.letter_spacing, style, mode),
+                    .bitmap => |bitmap| try self.drawTextBitmap(line.text, position, paint, bitmap, bitmap.scaleFor(px), layout.letter_spacing, style, mode),
                     .vector => |vector| try self.drawTextVector(line.text, position, paint, vector, px, layout.letter_spacing, style, mode),
                 }
             }
@@ -1834,11 +1834,59 @@ pub fn Canvas(comptime T: type) type {
             }
         }
 
-        /// Draws one line of bitmap glyphs. An `.outline` style blits every glyph at each
-        /// integer offset within its reach, dilating it into a halo; the stamps blend
-        /// independently, so translucent halos darken where they overlap.
-        fn drawTextBitmap(self: Self, text: []const u8, position: Point(2, f32), paint: Paint, font: BitmapFont, scale: f32, letter_spacing: f32, style: GlyphStyle, mode: DrawMode) void {
-            const radius: i32 = @intFromFloat(@ceil(style.reach()));
+        /// Draws one line of bitmap glyphs. An `.outline` style renders the line into a
+        /// coverage mask, dilates it by the stroke radius and paints it once, so the halo
+        /// composites like any other shape.
+        fn drawTextBitmap(self: Self, text: []const u8, position: Point(2, f32), paint: Paint, font: BitmapFont, scale: f32, letter_spacing: f32, style: GlyphStyle, mode: DrawMode) !void {
+            const radius: u32 = @intFromFloat(@ceil(style.reach()));
+            if (radius == 0) return self.blitBitmapLine(text, position, paint, font, scale, letter_spacing, mode);
+
+            // The line's box grown by the radius, clipped to the image, in whole pixels.
+            const glyphs = std.unicode.utf8CountCodepoints(text) catch text.len;
+            const bounds = font.getTextBounds(text, scale);
+            const line_rect: Rectangle(f32) = .{
+                .l = position.x(),
+                .t = position.y(),
+                .r = position.x() + bounds.r + @max(letter_spacing, 0) * as(f32, glyphs),
+                .b = position.y() + bounds.b,
+            };
+            const area = line_rect.grow(as(f32, radius)).intersect(self.imageRect()) orelse return;
+            const left: u32 = @intFromFloat(@floor(area.l));
+            const top: u32 = @intFromFloat(@floor(area.t));
+            const width = @as(u32, @intFromFloat(@ceil(area.r))) - left;
+            const height = @as(u32, @intFromFloat(@ceil(area.b))) - top;
+            if (height == 0 or width == 0) return;
+
+            const coverage = try self.allocator.alloc(u8, height * width);
+            defer self.allocator.free(coverage);
+            @memset(coverage, 0);
+            const mask: Canvas(u8) = .init(self.allocator, .initFromSlice(height, width, coverage));
+            const origin: Point(2, f32) = .init(.{ position.x() - as(f32, left), position.y() - as(f32, top) });
+            mask.blitBitmapLine(text, origin, .init(@as(u8, 255), .normal), font, scale, letter_spacing, mode);
+
+            // Dilate by a disc and paint the result.
+            const r: i32 = @intCast(radius);
+            for (0..height) |row| {
+                for (0..width) |col| {
+                    var max: u8 = 0;
+                    var dy: i32 = -r;
+                    while (dy <= r) : (dy += 1) {
+                        const sy = @as(i32, @intCast(row)) + dy;
+                        if (sy < 0 or sy >= height) continue;
+                        var dx: i32 = -r;
+                        while (dx <= r) : (dx += 1) {
+                            const sx = @as(i32, @intCast(col)) + dx;
+                            if (sx < 0 or sx >= width or dx * dx + dy * dy > r * r) continue;
+                            max = @max(max, coverage[@as(usize, @intCast(sy)) * width + @as(usize, @intCast(sx))]);
+                        }
+                    }
+                    if (max > 0) paint.cover(&self.image.data[(top + row) * self.image.stride + left + col], as(f32, max) / 255);
+                }
+            }
+        }
+
+        /// Blits one line of bitmap glyphs at `position`.
+        fn blitBitmapLine(self: Self, text: []const u8, position: Point(2, f32), paint: Paint, font: BitmapFont, scale: f32, letter_spacing: f32, mode: DrawMode) void {
             const glyphs = std.unicode.utf8CountCodepoints(text) catch text.len;
             const text_bounds = font.getTextBounds(text, scale);
             const text_rect: Rectangle(f32) = .{
@@ -1847,27 +1895,18 @@ pub fn Canvas(comptime T: type) type {
                 .r = position.x() + text_bounds.r + @max(letter_spacing, 0) * as(f32, glyphs),
                 .b = position.y() + text_bounds.b,
             };
-            const clip_rect = text_rect.grow(as(f32, radius)).intersect(self.imageRect()) orelse return;
+            const clip_rect = text_rect.intersect(self.imageRect()) orelse return;
 
             var x = position.x();
             const y = position.y();
             var utf8_iter = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
             while (utf8_iter.nextCodepoint()) |codepoint| {
                 if (font.getGlyph(codepoint)) |glyph| {
-                    var dy: i32 = -radius;
-                    while (dy <= radius) : (dy += 1) {
-                        var dx: i32 = -radius;
-                        while (dx <= radius) : (dx += 1) {
-                            if (dx * dx + dy * dy > radius * radius) continue;
-                            const gx = x + as(f32, dx);
-                            const gy = y + as(f32, dy);
-                            if (scale == 1.0) {
-                                self.renderGlyphUnscaled(glyph.info, glyph.data, font, gx, gy, paint);
-                            } else switch (mode) {
-                                .fast => self.renderGlyphFastScaled(glyph.info, glyph.data, font, gx, gy, scale, clip_rect, paint),
-                                .soft => self.renderGlyphSoftScaled(glyph.info, glyph.data, font, gx, gy, scale, paint),
-                            }
-                        }
+                    if (scale == 1.0) {
+                        self.renderGlyphUnscaled(glyph.info, glyph.data, font, x, y, paint);
+                    } else switch (mode) {
+                        .fast => self.renderGlyphFastScaled(glyph.info, glyph.data, font, x, y, scale, clip_rect, paint),
+                        .soft => self.renderGlyphSoftScaled(glyph.info, glyph.data, font, x, y, scale, paint),
                     }
                     x += as(f32, glyph.info.advanceWidth()) * scale;
                 } else {
