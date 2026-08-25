@@ -1009,51 +1009,134 @@ pub fn Canvas(comptime T: type) type {
             return self.fillContours(flat.polys, .nonzero, mode, sink);
         }
 
-        /// Strokes polylines `width` pixels wide with round joins and caps: each becomes a
-        /// union of one quad per segment plus a polygonal disc at every vertex whose turn (or
-        /// open end) would otherwise leave a visible gap, all wound the same way and filled in
-        /// a single nonzero pass so the overlaps never double-blend.
+        /// Strokes polylines `width` pixels wide with round joins and caps. Each polyline
+        /// becomes one outline: its left offsets forward, a round end cap, its right offsets
+        /// backward and a round start cap; outer joins are arcs, inner joins detour through
+        /// the vertex so the overlap winds like the rest and a single nonzero pass fills it.
+        /// Closed polylines repeat their first point, which turns the two caps into a join.
         fn strokePolylines(self: Self, scratch: std.mem.Allocator, polys: []const []const Point(2, f32), closed: bool, width: f32, comptime mode: DrawMode, sink: anytype) !void {
             const radius = @max(width, 0.5) / 2;
-            const sides: usize = @intFromFloat(@min(64, @max(8, @ceil(radius * 2))));
-            // The quads' vertex order and the disc's descending angle wind the same way.
-            var disc: [64]Point(2, f32) = undefined;
-            fillArcRing(disc[0..sides], .init(.{ 0, 0 }), radius, 0, -2 * std.math.pi / as(f32, sides));
+            // Chords of an arc stay within the flatness tolerance at this angular step.
+            const step: f32 = if (radius <= Outline.flatness_tolerance) std.math.pi else 2 * std.math.acos(1 - Outline.flatness_tolerance / radius);
+            const arc_points: usize = @intFromFloat(@ceil(std.math.pi / step) + 1);
 
-            var vertices: usize = 0;
-            for (polys) |poly| vertices += poly.len;
-            const piece_points = try scratch.alloc(Point(2, f32), vertices * (4 + sides));
-            defer scratch.free(piece_points);
-            const pieces = try scratch.alloc([]const Point(2, f32), vertices * 2);
-            defer scratch.free(pieces);
+            var total: usize = 0;
+            for (polys) |poly| total += (poly.len + 1) * 2 * (arc_points + 3) + 2 * arc_points + 4;
+            const points = try scratch.alloc(Point(2, f32), total);
+            defer scratch.free(points);
+            const contours = try scratch.alloc([]const Point(2, f32), polys.len);
+            defer scratch.free(contours);
 
             var n: usize = 0;
             var k: usize = 0;
             for (polys) |poly| {
-                var incoming: ?Point(2, f32) = if (closed and poly.len > 1) unitDirection(poly[poly.len - 1], poly[0]) else null;
-                for (poly, 0..) |p, i| {
-                    const last = i + 1 == poly.len;
-                    const outgoing = if (poly.len > 1 and (closed or !last)) unitDirection(p, poly[(i + 1) % poly.len]) else null;
-                    if (outgoing) |d| {
-                        const q = poly[(i + 1) % poly.len];
-                        const normal: Point(2, f32) = .init(.{ -d.y() * radius, d.x() * radius });
-                        piece_points[n..][0..4].* = .{ p.add(normal), q.add(normal), q.sub(normal), p.sub(normal) };
-                        pieces[k] = piece_points[n..][0..4];
-                        n += 4;
-                        k += 1;
-                    }
-                    // A join's gap is r·(1 − cos(θ/2)); below the flatness tolerance it is invisible.
-                    const gap = if (incoming) |a| if (outgoing) |b| radius * (1 - @sqrt(@max(0, (1 + a.x() * b.x() + a.y() * b.y()) / 2))) else radius else radius;
-                    if (gap >= Outline.flatness_tolerance) {
-                        for (disc[0..sides], 0..) |offset, j| piece_points[n + j] = p.add(offset);
-                        pieces[k] = piece_points[n..][0..sides];
-                        n += sides;
-                        k += 1;
-                    }
-                    if (outgoing) |d| incoming = d;
+                if (poly.len == 0) continue;
+                var builder: StrokeBuilder = .{ .out = points[n..], .radius = radius, .step = step };
+                builder.polyline(poly, closed);
+                const contour = points[n..][0..builder.len];
+                // Every stroke winds the same way, so overlapping strokes add up instead of cancelling.
+                if (signedArea(contour) < 0) std.mem.reverse(Point(2, f32), contour);
+                contours[k] = contour;
+                k += 1;
+                n += builder.len;
+            }
+            return self.fillContours(contours[0..k], .nonzero, mode, sink);
+        }
+
+        /// Writes the outline of one stroked polyline.
+        const StrokeBuilder = struct {
+            out: []Point(2, f32),
+            len: usize = 0,
+            radius: f32,
+            step: f32,
+
+            fn emit(b: *StrokeBuilder, p: Point(2, f32)) void {
+                b.out[b.len] = p;
+                b.len += 1;
+            }
+
+            fn offset(b: StrokeBuilder, p: Point(2, f32), dir: Point(2, f32), side: f32) Point(2, f32) {
+                return p.add(perpendicular(dir).scale(side * b.radius));
+            }
+
+            /// Points on the circle around `center` from angle `from`, sweeping `sweep`
+            /// radians: the end included, the start not.
+            fn arc(b: *StrokeBuilder, center: Point(2, f32), from: f32, sweep: f32) void {
+                const steps: usize = @intFromFloat(@max(1, @ceil(@abs(sweep) / b.step)));
+                for (1..steps + 1) |i| {
+                    const angle = from + sweep * as(f32, i) / as(f32, steps);
+                    b.emit(.init(.{ center.x() + b.radius * @cos(angle), center.y() + b.radius * @sin(angle) }));
                 }
             }
-            return self.fillContours(pieces[0..k], .nonzero, mode, sink);
+
+            /// The join at `v` on `side` (+1 left, -1 right) between the incoming direction
+            /// `in_dir` and the outgoing `out_dir`, both in traversal order.
+            fn join(b: *StrokeBuilder, v: Point(2, f32), in_dir: Point(2, f32), out_dir: Point(2, f32), side: f32) void {
+                const cross = in_dir.x() * out_dir.y() - in_dir.y() * out_dir.x();
+                const dot = in_dir.x() * out_dir.x() + in_dir.y() * out_dir.y();
+                // The left side lies outside a turn with negative cross (and a reversal).
+                const outer = if (side > 0) cross < 0 or (cross == 0 and dot < 0) else cross > 0;
+                b.emit(b.offset(v, in_dir, side));
+                if (outer) {
+                    const start = perpendicular(in_dir).scale(side);
+                    b.arc(v, std.math.atan2(start.y(), start.x()), std.math.atan2(cross, dot));
+                } else if (cross != 0 or dot < 0) {
+                    // The inner offsets cross each other; the loop they close is invisible
+                    // below the flatness tolerance, otherwise detouring through the vertex
+                    // makes it wind like the stroke.
+                    const turn = std.math.atan2(@abs(cross), dot);
+                    if (b.radius * @tan(turn / 2) >= Outline.flatness_tolerance) b.emit(v);
+                    b.emit(b.offset(v, out_dir, side));
+                }
+            }
+
+            fn polyline(b: *StrokeBuilder, input: []const Point(2, f32), closed: bool) void {
+                const m = input.len + @intFromBool(closed and input.len > 1);
+                const first_dir = for (0..m -| 1) |i| {
+                    if (unitDirection(input[i], input[(i + 1) % input.len])) |d| break d;
+                } else {
+                    // Every point coincides: a dot.
+                    b.emit(input[0].add(.init(.{ b.radius, 0 })));
+                    b.arc(input[0], 0, 2 * std.math.pi);
+                    return;
+                };
+                // Direction of each segment, degenerate ones borrowing their predecessor's.
+                var dir = first_dir;
+                b.emit(b.offset(input[0], dir, 1));
+                for (1..m - 1) |i| {
+                    const next = unitDirection(input[i % input.len], input[(i + 1) % input.len]) orelse dir;
+                    b.join(input[i % input.len], dir, next, 1);
+                    dir = next;
+                }
+                const last = input[(m - 1) % input.len];
+                b.emit(b.offset(last, dir, 1));
+                // End cap: from the left offset around the tip to the right one.
+                const tip = perpendicular(dir);
+                b.arc(last, std.math.atan2(tip.y(), tip.x()), -std.math.pi);
+                // Back along the right side; the incoming direction is now the later segment's.
+                var i = m - 1;
+                while (i > 1) : (i -= 1) {
+                    const prev = unitDirection(input[(i - 2) % input.len], input[(i - 1) % input.len]) orelse dir;
+                    b.join(input[(i - 1) % input.len], dir, prev, -1);
+                    dir = prev;
+                }
+                b.emit(b.offset(input[0], dir, -1));
+                const tail = perpendicular(dir).scale(-1);
+                b.arc(input[0], std.math.atan2(tail.y(), tail.x()), -std.math.pi);
+            }
+        };
+
+        fn perpendicular(d: Point(2, f32)) Point(2, f32) {
+            return .init(.{ -d.y(), d.x() });
+        }
+
+        fn signedArea(polygon: []const Point(2, f32)) f32 {
+            var area: f32 = 0;
+            for (polygon, 0..) |p, i| {
+                const q = polygon[(i + 1) % polygon.len];
+                area += p.x() * q.y() - q.x() * p.y();
+            }
+            return area / 2;
         }
 
         /// Unit vector from `p` to `q`, or null when they coincide.
@@ -1167,10 +1250,17 @@ pub fn Canvas(comptime T: type) type {
                 }
             }
             const crossings = buf[0..count];
-            if (count == 2) {
-                if (crossings[0].x > crossings[1].x) std.mem.swap(Crossing, &crossings[0], &crossings[1]);
-            } else if (count > 2) {
-                std.mem.sort(Crossing, crossings, {}, Crossing.lessThan);
+            // Rows rarely have more than a handful of crossings, where a plain insertion sort
+            // beats the generic sorts' setup many times over.
+            if (count <= 32) {
+                for (1..@max(count, 1)) |i| {
+                    const c = crossings[i];
+                    var j = i;
+                    while (j > 0 and crossings[j - 1].x > c.x) : (j -= 1) crossings[j] = crossings[j - 1];
+                    crossings[j] = c;
+                }
+            } else {
+                std.sort.pdq(Crossing, crossings, {}, Crossing.lessThan);
             }
             return crossings;
         }
