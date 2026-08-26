@@ -22,6 +22,49 @@ const Image = @import("../image.zig").Image;
 const assignPixel = @import("../image.zig").assignPixel;
 const as = @import("../meta.zig").as;
 
+// The pixel-type independent machinery, by concern.
+const polygons = @import("polygon.zig");
+const area_block = polygons.area_block;
+const Edge = polygons.Edge;
+const Crossing = polygons.Crossing;
+const polygonEdges = polygons.polygonEdges;
+const EdgeSweep = polygons.EdgeSweep;
+const scanlineCrossings = polygons.scanlineCrossings;
+const sortCrossings = polygons.sortCrossings;
+const SpanIter = polygons.SpanIter;
+const CoverageCell = polygons.CoverageCell;
+const touchBlocks = polygons.touchBlocks;
+const accumulateEdge = polygons.accumulateEdge;
+const strokes = @import("stroke.zig");
+const StrokeBuilder = strokes.StrokeBuilder;
+const perpendicular = strokes.perpendicular;
+const signedArea = strokes.signedArea;
+const unitDirection = strokes.unitDirection;
+const curves = @import("curve.zig");
+const bezier_max_segments_count = curves.bezier_max_segments_count;
+const spline_max_segments_count = curves.spline_max_segments_count;
+const spline_min_segments_count = curves.spline_min_segments_count;
+const quadratic_min_segments_count = curves.quadratic_min_segments_count;
+const pixels_per_segment_soft = curves.pixels_per_segment_soft;
+const pixels_per_segment_fast = curves.pixels_per_segment_fast;
+const pixels_per_segment_quadratic = curves.pixels_per_segment_quadratic;
+const CubicBezier = curves.CubicBezier;
+const evalQuadraticBezier = curves.evalQuadraticBezier;
+const evalCubicBezier = curves.evalCubicBezier;
+const estimateQuadraticBezierLength = curves.estimateQuadraticBezierLength;
+const estimateCubicBezierLength = curves.estimateCubicBezierLength;
+const bezierSegments = curves.bezierSegments;
+const tessellateBezier = curves.tessellateBezier;
+const calculateSmoothControlPoints = curves.calculateSmoothControlPoints;
+const splineEdge = curves.splineEdge;
+const tessellateSpline = curves.tessellateSpline;
+const arcs = @import("arc.zig");
+const antialias_edge_offset = arcs.antialias_edge_offset;
+const ArcRange = arcs.ArcRange;
+const ringCoverage = arcs.ringCoverage;
+const calculateArcCoverage = arcs.calculateArcCoverage;
+const fillArcRing = arcs.fillArcRing;
+
 /// Rendering quality mode for drawing operations
 pub const DrawMode = enum {
     /// Fast rendering - hard edges, maximum performance
@@ -83,30 +126,11 @@ pub fn Canvas(comptime T: type) type {
         const Self = @This();
 
         // Drawing-related constants
-        /// Maximum number of line segments when tessellating Bézier curves for line drawing
-        const bezier_max_segments_count = 200;
-        /// Maximum number of line segments when tessellating spline polygons
-        const spline_max_segments_count = 50;
-        /// Minimum number of line segments for spline curves to ensure reasonable quality
-        const spline_min_segments_count = 4;
-        /// Minimum number of line segments for quadratic Bézier curves
-        const quadratic_min_segments_count = 3;
-        /// Target pixels per segment for smooth/antialiased rendering (higher quality, more segments)
-        const pixels_per_segment_soft = 1.5;
-        /// Target pixels per segment for solid/fast rendering (lower quality, fewer segments)
-        const pixels_per_segment_fast = 3.0;
-        /// Target pixels per segment specifically for quadratic Bézier curves
-        const pixels_per_segment_quadratic = 2.0;
-        /// Offset for antialiasing edge calculations (0.5 = pixel center alignment). Soft paths
-        /// treat pixel (r, c) as centered at (c, r); fast span writes are top-left inclusive.
-        const antialias_edge_offset = 0.5;
         /// Vertical samples per pixel row for antialiased polygon fills
         const polygon_subscanlines = 8;
         /// Below this many edges the fast fill tests them all on every row; the sweep's
         /// setup only pays off above it.
         const few_edges = 64;
-        /// Cells per touched-block flag in the area rasterizer.
-        const area_block = 8;
         /// Widest rectangle outline whose wall coverage profile is precomputed.
         const max_ring_profile = 64;
         /// Stack scratch (bytes) for the lines of a text block: 64 lines, longer texts spill
@@ -851,83 +875,6 @@ pub fn Canvas(comptime T: type) type {
             self.renderRing(center, radius - half, radius + half, color, arc, opts);
         }
 
-        /// Angular range for arc filtering. `start`/`end` are
-        /// normalized to [0, 2π] with `end` shifted by +2π when the arc wraps past 0,
-        /// so that per-pixel `contains` checks need no `@mod`.
-        const ArcRange = struct {
-            start: f32,
-            end: f32,
-
-            const full: ArcRange = .{ .start = 0, .end = 2 * std.math.pi };
-
-            /// The arc swept from `start` to `end`: null for non-finite angles, `.full` when
-            /// the sweep covers the whole circle.
-            fn fromAngles(start: f32, end: f32) ?ArcRange {
-                if (!std.math.isFinite(start) or !std.math.isFinite(end)) return null;
-                if (@abs(end - start) >= 2 * std.math.pi) return .full;
-                const ns = normalize(start);
-                var ne = normalize(end);
-                if (ne < ns) ne += 2 * std.math.pi;
-                return .{ .start = ns, .end = ne };
-            }
-
-            /// Normalizes an angle to the [0, 2π] range. Use only when the input range is unknown;
-            /// for atan2 outputs (already in [-π, π]) prefer the cheaper inline form in `contains`.
-            fn normalize(angle: f32) f32 {
-                var normalized = @mod(angle, 2 * std.math.pi);
-                if (normalized < 0) normalized += 2 * std.math.pi;
-                return normalized;
-            }
-
-            /// Tests whether an `atan2`-produced angle lies within the precomputed arc range.
-            /// Caller must pass a value in [-π, π] (i.e., the output of `std.math.atan2`); other
-            /// inputs require a prior `normalize` call.
-            inline fn contains(self: ArcRange, angle: f32) bool {
-                // atan2 ∈ [-π, π] — one conditional add suffices to reach [0, 2π].
-                const norm_angle = if (angle < 0) angle + 2 * std.math.pi else angle;
-                if (norm_angle >= self.start and norm_angle <= self.end) return true;
-                const shifted = norm_angle + 2 * std.math.pi;
-                return shifted >= self.start and shifted <= self.end;
-            }
-
-            /// Returns the absolute angular span of the arc.
-            inline fn span(self: ArcRange) f32 {
-                return self.end - self.start;
-            }
-
-            /// Returns the absolute geometric length of the arc along the specified radius.
-            inline fn length(self: ArcRange, radius: f32) f32 {
-                return self.span() * radius;
-            }
-
-            /// Returns true if the arc spans more than half a circle (π radians).
-            inline fn isLong(self: ArcRange) bool {
-                return self.span() > std.math.pi;
-            }
-
-            /// Returns true if the arc spans a full circle (≥ 2π radians).
-            inline fn isFull(self: ArcRange) bool {
-                return self.span() >= 2 * std.math.pi;
-            }
-
-            /// Returns the directional vector for the start of the arc.
-            inline fn startVector(self: ArcRange) Point(2, f32) {
-                return .init(.{ @cos(self.start), @sin(self.start) });
-            }
-
-            /// Returns the directional vector for the end of the arc.
-            inline fn endVector(self: ArcRange) Point(2, f32) {
-                return .init(.{ @cos(self.end), @sin(self.end) });
-            }
-
-            /// Half-plane test for "angle in arc" using precomputed cross-product components.
-            inline fn containsCross(self: ArcRange, start_cross: f32, end_cross: f32) bool {
-                const a = start_cross <= 0;
-                const b = end_cross >= 0;
-                return if (self.isLong()) (a or b) else (a and b);
-            }
-        };
-
         /// Screen-space bounding box of the outer circle (padded by one pixel for the AA ramp),
         /// clamped to image bounds. Returns null when the box has zero area.
         inline fn ringBoundingBox(self: Self, center: Point(2, f32), outer_radius: f32) ?Rectangle(u32) {
@@ -938,27 +885,6 @@ pub fn Canvas(comptime T: type) type {
                 .r = @ceil(center.x() + pad),
                 .b = @ceil(center.y() + pad),
             });
-        }
-
-        /// Coverage in the annulus [inner_r, outer_r] for a pixel at offset (x,y) from the
-        /// center. `aa=true` returns boundary-centered coverage in [0,1] (~0.5 at the
-        /// geometric edge); `aa=false` returns 1.0 strictly inside the ring, 0.0 otherwise.
-        /// `inner_r <= 0` disables the inner edge — pass 0 to fill a disk.
-        inline fn ringCoverage(x: f32, y: f32, inner_r: f32, outer_r: f32, comptime mode: DrawMode) f32 {
-            const dist_sq = x * x + y * y;
-            if (mode == .soft) {
-                const dist = @sqrt(dist_sq);
-                if (dist > outer_r + antialias_edge_offset) return 0;
-                if (inner_r > 0 and dist < inner_r - antialias_edge_offset) return 0;
-                var alpha: f32 = 1.0;
-                if (dist > outer_r - antialias_edge_offset) alpha = @min(alpha, outer_r + antialias_edge_offset - dist);
-                if (inner_r > 0 and dist < inner_r + antialias_edge_offset) alpha = @min(alpha, dist - (inner_r - antialias_edge_offset));
-                return clamp(alpha, 0, 1);
-            } else {
-                const inside_outer = dist_sq <= outer_r * outer_r;
-                const outside_inner = inner_r <= 0 or dist_sq >= inner_r * inner_r;
-                return if (inside_outer and outside_inner) 1.0 else 0.0;
-            }
         }
 
         /// Renders a thick ring outline (or arc segment); `.fast` uses binary coverage. Each
@@ -1060,18 +986,6 @@ pub fn Canvas(comptime T: type) type {
             fillArcRing(outer, center, radius + half, arc.start, angle_step);
             fillArcRing(points[segments + 1 .. 2 * (segments + 1)], center, radius - half, arc.end, -angle_step);
             try self.fillPolygon(points[0 .. 2 * (segments + 1)], color, opts);
-        }
-
-        /// Populates `buf` with points along a circular arc, starting at `start_angle` and
-        /// stepping by `angle_step` for each successive index.
-        fn fillArcRing(buf: []Point(2, f32), center: Point(2, f32), radius: f32, start_angle: f32, angle_step: f32) void {
-            for (buf, 0..) |*p, i| {
-                const angle = start_angle + as(f32, i) * angle_step;
-                p.* = .init(.{
-                    center.x() + radius * @cos(angle),
-                    center.y() + radius * @sin(angle),
-                });
-            }
         }
 
         /// Fills the given polygon on an image using an even-odd scanline algorithm.
@@ -1183,108 +1097,6 @@ pub fn Canvas(comptime T: type) type {
                 n += builder.len;
             }
             return self.fillContours(contours[0..k], .nonzero, mode, sink);
-        }
-
-        /// Writes the outline of one stroked polyline.
-        const StrokeBuilder = struct {
-            out: []Point(2, f32),
-            len: usize = 0,
-            radius: f32,
-            step: f32,
-
-            fn emit(b: *StrokeBuilder, p: Point(2, f32)) void {
-                b.out[b.len] = p;
-                b.len += 1;
-            }
-
-            fn offset(b: StrokeBuilder, p: Point(2, f32), dir: Point(2, f32), side: f32) Point(2, f32) {
-                return p.add(perpendicular(dir).scale(side * b.radius));
-            }
-
-            /// Points on the circle around `center` from the unit direction `start`, sweeping
-            /// `sweep` radians: the end included, the start not. The radius vector is rotated
-            /// step by step, so an arc costs one sine and cosine.
-            fn arc(b: *StrokeBuilder, center: Point(2, f32), start: Point(2, f32), sweep: f32) void {
-                const steps: usize = @ceil(@max(1, @abs(sweep) / b.step));
-                const angle = sweep / as(f32, steps);
-                const c = @cos(angle);
-                const sn = @sin(angle);
-                var v = start.scale(b.radius);
-                for (0..steps) |_| {
-                    v = .init(.{ v.x() * c - v.y() * sn, v.x() * sn + v.y() * c });
-                    b.emit(center.add(v));
-                }
-            }
-
-            /// The join at `v` on `side` (+1 left, -1 right) between the incoming direction
-            /// `in_dir` and the outgoing `out_dir`, both in traversal order.
-            fn join(b: *StrokeBuilder, v: Point(2, f32), in_dir: Point(2, f32), out_dir: Point(2, f32), side: f32) void {
-                const cross = in_dir.cross(out_dir);
-                const dot = in_dir.dot(out_dir);
-                // The left side lies outside a turn with negative cross (and a reversal).
-                const outer = if (side > 0) cross < 0 or (cross == 0 and dot < 0) else cross > 0;
-                b.emit(b.offset(v, in_dir, side));
-                if (outer) {
-                    b.arc(v, perpendicular(in_dir).scale(side), std.math.atan2(cross, dot));
-                } else if (cross != 0 or dot < 0) {
-                    // The inner offsets cross each other; the loop they close is invisible
-                    // below the flatness tolerance, otherwise detouring through the vertex
-                    // makes it wind like the stroke.
-                    const turn = std.math.atan2(@abs(cross), dot);
-                    if (b.radius * @tan(turn / 2) >= Outline.flatness_tolerance) b.emit(v);
-                    b.emit(b.offset(v, out_dir, side));
-                }
-            }
-
-            fn polyline(b: *StrokeBuilder, input: []const Point(2, f32), closed: bool) void {
-                const m = input.len + @intFromBool(closed and input.len > 1);
-                const first_dir = for (0..m -| 1) |i| {
-                    if (unitDirection(input[i], input[(i + 1) % input.len])) |d| break d;
-                } else {
-                    // Every point coincides: a dot.
-                    b.emit(input[0].add(.init(.{ b.radius, 0 })));
-                    b.arc(input[0], .init(.{ 1, 0 }), 2 * std.math.pi);
-                    return;
-                };
-                // Direction of each segment, degenerate ones borrowing their predecessor's.
-                var dir = first_dir;
-                b.emit(b.offset(input[0], dir, 1));
-                for (1..m - 1) |i| {
-                    const next = unitDirection(input[i % input.len], input[(i + 1) % input.len]) orelse dir;
-                    b.join(input[i % input.len], dir, next, 1);
-                    dir = next;
-                }
-                const last = input[(m - 1) % input.len];
-                b.emit(b.offset(last, dir, 1));
-                // End cap: from the left offset around the tip to the right one.
-                b.arc(last, perpendicular(dir), -std.math.pi);
-                // Back along the right side; the incoming direction is now the later segment's.
-                var i = m - 1;
-                while (i > 1) : (i -= 1) {
-                    const prev = unitDirection(input[(i - 2) % input.len], input[(i - 1) % input.len]) orelse dir;
-                    b.join(input[(i - 1) % input.len], dir, prev, -1);
-                    dir = prev;
-                }
-                b.emit(b.offset(input[0], dir, -1));
-                b.arc(input[0], perpendicular(dir).scale(-1), -std.math.pi);
-            }
-        };
-
-        fn perpendicular(d: Point(2, f32)) Point(2, f32) {
-            return .init(.{ -d.y(), d.x() });
-        }
-
-        fn signedArea(polygon: []const Point(2, f32)) f32 {
-            var area: f32 = 0;
-            for (polygon, 0..) |p, i| area += p.cross(polygon[(i + 1) % polygon.len]);
-            return area / 2;
-        }
-
-        /// Unit vector from `p` to `q`, or null when they coincide.
-        fn unitDirection(p: Point(2, f32), q: Point(2, f32)) ?Point(2, f32) {
-            const d = q.sub(p);
-            const len = d.norm();
-            return if (len > 0) d.scale(1 / len) else null;
         }
 
         /// Outlines for the shape API: width 1 draws each polyline's segments as pixel lines,
@@ -1415,279 +1227,6 @@ pub fn Canvas(comptime T: type) type {
                 }
             }
         }
-
-        /// Marks the blocks holding cells `first..=last` of a row as touched, zeroing each
-        /// block the first time.
-        inline fn touchBlocks(row: []f32, row_touched: []u8, first: usize, last: usize) void {
-            for (first / area_block..last / area_block + 1) |b| {
-                if (row_touched[b] == 0) {
-                    row_touched[b] = 1;
-                    row[b * area_block ..][0..area_block].* = @splat(0);
-                }
-            }
-        }
-
-        /// Adds one edge's contributions to the accumulation buffer: `d` per row is the
-        /// signed height crossed, split between the cells the edge passes through by area.
-        fn accumulateEdge(acc: []f32, touched: []u8, width: usize, height: usize, p0: Point(2, f32), p1: Point(2, f32)) void {
-            if (p0.y() == p1.y()) return;
-            const dir: f32 = if (p0.y() < p1.y()) 1 else -1;
-            const top = if (dir > 0) p0 else p1;
-            const bottom = if (dir > 0) p1 else p0;
-            if (bottom.y() <= 0 or top.y() >= as(f32, height)) return;
-            const dxdy = (bottom.x() - top.x()) / (bottom.y() - top.y());
-            const x_max: f32 = as(f32, width - 2);
-            const blocks = (width + area_block - 1) / area_block;
-            const row_len = blocks * area_block;
-            var x = top.x();
-            var y: usize = 0;
-            if (top.y() >= 0) {
-                y = @floor(top.y());
-            } else {
-                x -= top.y() * dxdy;
-            }
-            const y_end: usize = @min(height, @as(usize, @ceil(bottom.y())));
-            if (dxdy == 0) {
-                // Vertical: the same two cells in every row, fully crossed except at the ends.
-                const xc = @max(0, @min(x, x_max));
-                const x_floor = @floor(xc);
-                const xi: usize = @trunc(x_floor);
-                const xmf = xc - x_floor;
-                const full_start: usize = @ceil(clamp(top.y(), 0, as(f32, height)));
-                const full_end: usize = @floor(clamp(bottom.y(), 0, as(f32, height)));
-                const full_lo = dir - dir * xmf;
-                const full_hi = dir * xmf;
-                while (y < y_end) : (y += 1) {
-                    const row = acc[y * row_len ..][0..row_len];
-                    touchBlocks(row, touched[y * blocks ..][0..blocks], xi, xi + 1);
-                    if (y >= full_start and y < full_end) {
-                        row[xi] += full_lo;
-                        row[xi + 1] += full_hi;
-                    } else {
-                        const fy = as(f32, y);
-                        const d = (@min(fy + 1, bottom.y()) - @max(fy, top.y())) * dir;
-                        row[xi] += d - d * xmf;
-                        row[xi + 1] += d * xmf;
-                    }
-                }
-                return;
-            }
-            while (y < y_end) : (y += 1) {
-                const row = acc[y * row_len ..][0..row_len];
-                const fy = as(f32, y);
-                const dy = @min(fy + 1, bottom.y()) - @max(fy, top.y());
-                const x_next = x + dxdy * dy;
-                const d = dy * dir;
-                const x0 = @max(0, @min(@min(x, x_next), x_max));
-                const x1 = @max(0, @min(@max(x, x_next), x_max));
-                const x0_floor = @floor(x0);
-                const x0i: usize = @trunc(x0_floor);
-                const x1_ceil = @ceil(x1);
-                const x1i: usize = @trunc(x1_ceil);
-                touchBlocks(row, touched[y * blocks ..][0..blocks], x0i, x1i);
-                if (x1i <= x0i + 1) {
-                    // Within one cell: split by the midpoint.
-                    const xmf = 0.5 * (x0 + x1) - x0_floor;
-                    row[x0i] += d - d * xmf;
-                    row[x0i + 1] += d * xmf;
-                } else {
-                    const s = 1 / (x1 - x0);
-                    const x0f = x0 - x0_floor;
-                    const a0 = 0.5 * s * (1 - x0f) * (1 - x0f);
-                    const x1f = x1 - x1_ceil + 1;
-                    const am = 0.5 * s * x1f * x1f;
-                    row[x0i] += d * a0;
-                    if (x1i == x0i + 2) {
-                        row[x0i + 1] += d * (1 - a0 - am);
-                    } else {
-                        const a1 = s * (1.5 - x0f);
-                        row[x0i + 1] += d * (a1 - a0);
-                        for (x0i + 2..x1i - 1) |xi| row[xi] += d * s;
-                        const a2 = a1 + as(f32, x1i - x0i - 3) * s;
-                        row[x1i - 1] += d * (1 - a2 - am);
-                    }
-                    row[x1i] += d * am;
-                }
-                x = x_next;
-            }
-        }
-
-        /// Polygon edge with its y-extent precomputed for scanline crossing tests.
-        const Edge = struct {
-            p1: Point(2, f32),
-            p2: Point(2, f32),
-            y_min: f32,
-            y_max: f32,
-            /// +1 when the edge runs down the screen, -1 up; the winding contribution.
-            dir: i8,
-
-            /// x where the edge crosses the horizontal line at `y`, for y in [y_min, y_max).
-            inline fn xAt(e: Edge, y: f32) f32 {
-                return e.p1.x() + (y - e.p1.y()) * (e.p2.x() - e.p1.x()) / (e.p2.y() - e.p1.y());
-            }
-        };
-
-        /// Where an edge crosses a scanline, with its winding direction. `dir` is a full
-        /// word so that sorting's whole-struct copies never read a byte-wide store.
-        const Crossing = struct {
-            x: f32,
-            dir: i32,
-
-            fn lessThan(_: void, a: Crossing, b: Crossing) bool {
-                return a.x < b.x;
-            }
-        };
-
-        /// Fills `buf` with the non-horizontal edges of every contour (horizontal ones never
-        /// cross a scanline).
-        fn polygonEdges(contours: []const []const Point(2, f32), buf: []Edge) []Edge {
-            var count: usize = 0;
-            for (contours) |polygon| {
-                if (polygon.len < 3) continue;
-                for (polygon, 0..) |p1, i| {
-                    const p2 = polygon[(i + 1) % polygon.len];
-                    if (p1.y() == p2.y()) continue;
-                    buf[count] = .{
-                        .p1 = p1,
-                        .p2 = p2,
-                        .y_min = @min(p1.y(), p2.y()),
-                        .y_max = @max(p1.y(), p2.y()),
-                        .dir = if (p1.y() < p2.y()) 1 else -1,
-                    };
-                    count += 1;
-                }
-            }
-            return buf[0..count];
-        }
-
-        /// The edges bucketed by the row they start on (a counting sort) and swept downward
-        /// once: `crossingsAt` activates the edges of each row as it comes and forgets those
-        /// passed, so a scanline only tests the edges spanning it. Scanlines must not move
-        /// back up.
-        const EdgeSweep = struct {
-            edges: []const Edge,
-            /// Edge indices grouped by starting row; row `r`'s group ends at `ends[r]`.
-            order: []u32,
-            ends: []u32,
-            /// Edges started but not yet passed.
-            active: []u32,
-            slab: []u32,
-            next: usize = 0,
-            count: usize = 0,
-
-            /// Sweeps `row_count` rows from `first_row`. An edge starts on the row of
-            /// `y_min + shift`: 0.5 when rows are the bands around pixel centers.
-            fn init(scratch: std.mem.Allocator, edges: []const Edge, first_row: f32, row_count: usize, shift: f32) !EdgeSweep {
-                const slab = try scratch.alloc(u32, 2 * edges.len + row_count + 1);
-                const order = slab[0..edges.len];
-                const active = slab[edges.len..][0..edges.len];
-                const ends = slab[2 * edges.len ..];
-                @memset(ends, 0);
-                for (edges) |e| ends[rowOf(e, first_row, row_count, shift) + 1] += 1;
-                for (1..row_count + 1) |r| ends[r] += ends[r - 1];
-                // Placing each edge at its row's cursor leaves the cursor at the row's end.
-                for (edges, 0..) |e, i| {
-                    const row = rowOf(e, first_row, row_count, shift);
-                    order[ends[row]] = @intCast(i);
-                    ends[row] += 1;
-                }
-                return .{ .edges = edges, .order = order, .ends = ends, .active = active, .slab = slab };
-            }
-
-            fn rowOf(e: Edge, first_row: f32, row_count: usize, shift: f32) usize {
-                return @floor(clamp(e.y_min + shift - first_row, 0, as(f32, row_count - 1)));
-            }
-
-            fn deinit(self: EdgeSweep, scratch: std.mem.Allocator) void {
-                scratch.free(self.slab);
-            }
-
-            /// Crossings with the scanline at `y`, on row `row` (counted from `first_row`),
-            /// sorted by x. Edges ending at or above `y` are dropped on the way.
-            fn crossingsAt(self: *EdgeSweep, row: usize, y: f32, buf: []Crossing) []Crossing {
-                while (self.next < self.ends[row]) : (self.next += 1) {
-                    self.active[self.count] = self.order[self.next];
-                    self.count += 1;
-                }
-                var count: usize = 0;
-                var i: usize = 0;
-                while (i < self.count) {
-                    const e = self.edges[self.active[i]];
-                    if (e.y_max <= y) {
-                        self.count -= 1;
-                        self.active[i] = self.active[self.count];
-                        continue;
-                    }
-                    if (y >= e.y_min) {
-                        buf[count] = .{ .x = e.xAt(y), .dir = e.dir };
-                        count += 1;
-                    }
-                    i += 1;
-                }
-                return sortCrossings(buf[0..count]);
-            }
-        };
-
-        /// Crossings of all `edges` with the horizontal line at `y`, sorted by x.
-        fn scanlineCrossings(edges: []const Edge, y: f32, buf: []Crossing) []Crossing {
-            var count: usize = 0;
-            for (edges) |e| {
-                if (y >= e.y_min and y < e.y_max) {
-                    buf[count] = .{ .x = e.xAt(y), .dir = e.dir };
-                    count += 1;
-                }
-            }
-            return sortCrossings(buf[0..count]);
-        }
-
-        /// Sorts crossings by x. Rows rarely have more than a handful, where a plain
-        /// insertion sort beats the generic sorts' setup many times over.
-        fn sortCrossings(crossings: []Crossing) []Crossing {
-            if (crossings.len <= 32) {
-                for (1..@max(crossings.len, 1)) |i| {
-                    const c = crossings[i];
-                    var j = i;
-                    while (j > 0 and crossings[j - 1].x > c.x) : (j -= 1) crossings[j] = crossings[j - 1];
-                    crossings[j] = c;
-                }
-            } else {
-                std.sort.pdq(Crossing, crossings, {}, Crossing.lessThan);
-            }
-            return crossings;
-        }
-
-        /// The spans of one scanline inside the shape under `rule`, from x-sorted crossings.
-        /// Even-odd toggles on every crossing, pairing them as a pairwise walk would; nonzero
-        /// sums the edge directions.
-        const SpanIter = struct {
-            crossings: []const Crossing,
-            rule: FillRule,
-            i: usize = 0,
-            winding: i32 = 0,
-            left: f32 = 0,
-
-            fn next(it: *SpanIter) ?[2]f32 {
-                while (it.i < it.crossings.len) {
-                    const c = it.crossings[it.i];
-                    it.i += 1;
-                    const was_inside = it.winding != 0;
-                    it.winding = switch (it.rule) {
-                        .even_odd => it.winding ^ 1,
-                        .nonzero => it.winding + c.dir,
-                    };
-                    if (it.winding != 0) {
-                        if (!was_inside) it.left = c.x;
-                    } else if (was_inside) {
-                        return .{ it.left, c.x };
-                    }
-                }
-                return null;
-            }
-        };
-
-        /// One pixel of a `fillPolygonSoft` row: `area` accumulates partial coverage at span
-        /// ends, `run` is a difference array for fully covered interiors.
-        const CoverageCell = struct { area: f32 = 0, run: f32 = 0 };
 
         /// Antialiased fill. Each pixel row is sampled at `polygon_subscanlines` heights;
         /// span ends contribute their exact horizontal overlap and fully covered interiors go
@@ -1870,36 +1409,6 @@ pub fn Canvas(comptime T: type) type {
             }
         }
 
-        /// Helper: Calculate antialiased coverage for arc boundaries
-        inline fn calculateArcCoverage(dist: f32, radius: f32, in_arc: bool, start_cross_product: f32, end_cross_product: f32) f32 {
-            const start_cross = @abs(start_cross_product);
-            const end_cross = @abs(end_cross_product);
-
-            // Circular boundary coverage
-            const circ_coverage = if (dist <= radius - 1.0)
-                1.0
-            else if (dist < radius + 1.0)
-                clamp(radius - dist + 0.5, 0, 1)
-            else
-                0.0;
-
-            const eps = 1e-5;
-
-            if (!in_arc) {
-                // Outside arc - apply edge antialiasing
-                var edge_coverage: f32 = 0;
-                if (start_cross < 1.0 and start_cross_product < eps) edge_coverage = @max(edge_coverage, 1.0 - start_cross);
-                if (end_cross < 1.0 and end_cross_product > -eps) edge_coverage = @max(edge_coverage, 1.0 - end_cross);
-                return circ_coverage * edge_coverage;
-            } else {
-                // Inside arc - reduce coverage near edges
-                var coverage = circ_coverage;
-                if (start_cross < 1.0 and start_cross_product >= -eps) coverage = @min(coverage, start_cross);
-                if (end_cross < 1.0 and end_cross_product <= eps) coverage = @min(coverage, end_cross);
-                return coverage;
-            }
-        }
-
         /// Internal function for filling smooth (anti-aliased) arcs.
         fn fillArcSoft(self: Self, center: Point(2, f32), radius: f32, arc: ArcRange, color: anytype, blending: Blending) !void {
             // Precompute edge vectors
@@ -2026,101 +1535,6 @@ pub fn Canvas(comptime T: type) type {
             try self.fillPolygon(points, color, opts);
         }
 
-        /// Edge `i` of the closed spline through `polygon`: its cubic Bézier and how many
-        /// points render it.
-        fn splineEdge(polygon: []const Point(2, f32), i: usize, tension: f32, pixels_per_segment: f32, max_segments: u32) struct { curve: CubicBezier, segments: u32 } {
-            const p0 = polygon[i];
-            const p1 = polygon[(i + 1) % polygon.len];
-            const p2 = polygon[(i + 2) % polygon.len];
-            const cps = calculateSmoothControlPoints(p0, p1, p2, tension);
-            const length = estimateCubicBezierLength(p0, cps.cp1, cps.cp2, p1);
-            return .{
-                .curve = .{ p0, cps.cp1, cps.cp2, p1 },
-                .segments = bezierSegments(length, pixels_per_segment, spline_min_segments_count, max_segments),
-            };
-        }
-
-        /// The closed spline through `polygon` as a polyline in `scratch` memory, one cubic
-        /// Bézier per edge. With `overlap` each edge starts on the previous one's end point
-        /// instead of repeating it, and the last point closes the loop back onto the first.
-        fn tessellateSpline(scratch: std.mem.Allocator, polygon: []const Point(2, f32), tension: f32, pixels_per_segment: f32, max_segments: u32, overlap: bool) ![]Point(2, f32) {
-            const shared: usize = @intFromBool(overlap);
-            var total: usize = shared;
-            for (0..polygon.len) |i| total += splineEdge(polygon, i, tension, pixels_per_segment, max_segments).segments - shared;
-            const points = try scratch.alloc(Point(2, f32), total);
-            var n: usize = 0;
-            for (0..polygon.len) |i| {
-                const edge = splineEdge(polygon, i, tension, pixels_per_segment, max_segments);
-                tessellateBezier(evalCubicBezier, edge.curve, points[n..][0..edge.segments]);
-                n += edge.segments - shared;
-            }
-            return points;
-        }
-
-        /// The arguments of `evalCubicBezier` before `t`.
-        const CubicBezier = struct { Point(2, f32), Point(2, f32), Point(2, f32), Point(2, f32) };
-
-        /// Evaluates a quadratic Bézier curve at parameter t.
-        /// Uses the standard quadratic Bézier formula: (1-t)²P₀ + 2t(1-t)P₁ + t²P₂
-        /// Parameter t is in range [0, 1] where 0=start point, 1=end point.
-        fn evalQuadraticBezier(p0: Point(2, f32), p1: Point(2, f32), p2: Point(2, f32), t: f32) Point(2, f32) {
-            const u = 1 - t;
-            const uu = u * u;
-            const tt = t * t;
-            return .init(.{
-                uu * p0.x() + 2 * u * t * p1.x() + tt * p2.x(),
-                uu * p0.y() + 2 * u * t * p1.y() + tt * p2.y(),
-            });
-        }
-
-        /// Evaluates a cubic Bézier curve at parameter t.
-        /// Uses the standard cubic Bézier formula: (1-t)³P₀ + 3t(1-t)²P₁ + 3t²(1-t)P₂ + t³P₃
-        /// Parameter t is in range [0, 1] where 0=start point, 1=end point.
-        fn evalCubicBezier(p0: Point(2, f32), p1: Point(2, f32), p2: Point(2, f32), p3: Point(2, f32), t: f32) Point(2, f32) {
-            const u = 1 - t;
-            const uu = u * u;
-            const uuu = uu * u;
-            const tt = t * t;
-            const ttt = tt * t;
-            return .init(.{
-                uuu * p0.x() + 3 * uu * t * p1.x() + 3 * u * tt * p2.x() + ttt * p3.x(),
-                uuu * p0.y() + 3 * uu * t * p1.y() + 3 * u * tt * p2.y() + ttt * p3.y(),
-            });
-        }
-
-        /// Estimates the length of a quadratic Bézier curve segment.
-        /// Uses chord + control polygon approximation for fast, reasonably accurate estimation.
-        /// The estimate is (chord_length + control_polygon_length) / 2.
-        fn estimateQuadraticBezierLength(p0: Point(2, f32), p1: Point(2, f32), p2: Point(2, f32)) f32 {
-            // Use chord + control polygon approximation
-            const chord = p0.distance(p2);
-            const control_net = p0.distance(p1) + p1.distance(p2);
-            return (chord + control_net) / 2.0;
-        }
-
-        /// Estimates the length of a cubic Bézier curve segment.
-        /// Uses chord + control polygon approximation for fast, reasonably accurate estimation.
-        /// The estimate is (chord_length + control_polygon_length) / 2.
-        fn estimateCubicBezierLength(p0: Point(2, f32), p1: Point(2, f32), p2: Point(2, f32), p3: Point(2, f32)) f32 {
-            // Use chord + control polygon approximation
-            const chord = p0.distance(p3);
-            const control_net = p0.distance(p1) + p1.distance(p2) + p2.distance(p3);
-            return (chord + control_net) / 2.0;
-        }
-
-        /// Points that render a curve `estimated_length` pixels long at `pixels_per_segment`.
-        fn bezierSegments(estimated_length: f32, pixels_per_segment: f32, min_segments: u32, max_segments: u32) u32 {
-            return @max(min_segments, @min(max_segments, @as(u32, @trunc(estimated_length / pixels_per_segment))));
-        }
-
-        /// Evaluates a curve at parameters evenly spaced over [0, 1], one per point of `buffer`.
-        fn tessellateBezier(comptime evalFn: anytype, evalArgs: anytype, buffer: []Point(2, f32)) void {
-            for (buffer, 0..) |*p, i| {
-                const t = as(f32, i) / as(f32, buffer.len - 1);
-                p.* = @call(.auto, evalFn, evalArgs ++ .{t});
-            }
-        }
-
         /// Draws a Bézier curve by tessellating it into line segments.
         fn drawBezierTessellated(
             self: Self,
@@ -2137,23 +1551,6 @@ pub fn Canvas(comptime T: type) type {
             const points = stack_buffer[0..bezierSegments(estimated_length, pixels_per_segment, min_segments, bezier_max_segments_count)];
             tessellateBezier(evalFn, evalArgs, points);
             self.strokePath(&.{points}, false, width, color, opts);
-        }
-
-        /// Calculates cubic Bézier control points (`cp1` outgoing from p0, `cp2` incoming to p1)
-        /// for a smooth curve through `p1` influenced by neighbors `p0`/`p2`. `tension` ranges
-        /// from 0 (sharp corners) to 1 (maximum smoothness).
-        fn calculateSmoothControlPoints(p0: Point(2, f32), p1: Point(2, f32), p2: Point(2, f32), tension: f32) struct { cp1: Point(2, f32), cp2: Point(2, f32) } {
-            const tension_factor = 1 - clamp(tension, 0, 1);
-            return .{
-                .cp1 = .init(.{
-                    p0.x() + (p1.x() - p0.x()) * tension_factor,
-                    p0.y() + (p1.y() - p0.y()) * tension_factor,
-                }),
-                .cp2 = .init(.{
-                    p1.x() - (p2.x() - p1.x()) * tension_factor,
-                    p1.y() - (p2.y() - p1.y()) * tension_factor,
-                }),
-            };
         }
 
         /// Draws `text` with its top-left corner at `position`, at `font_size` pixels: the em height
