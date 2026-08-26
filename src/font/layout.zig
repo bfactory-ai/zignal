@@ -3,11 +3,13 @@
 //! `Font.getTextBounds`, so vector kerning is honored when deciding breaks.
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 const Font = @import("../font.zig").Font;
 const BitmapFont = @import("BitmapFont.zig");
 const VectorFont = @import("VectorFont.zig");
 const Rectangle = @import("../geometry.zig").Rectangle;
+const Point2 = @import("../geometry/Point.zig").Point(2, f32);
 
 pub const TextAlign = enum { left, center, right };
 pub const VerticalAlign = enum { top, middle, bottom };
@@ -205,6 +207,66 @@ pub fn measure(font: Font, text: []const u8, size: f32, max_width: ?f32, layout:
     return .{ .l = 0, .t = 0, .r = width, .b = @as(f32, @floatFromInt(count)) * lineAdvance(font, size, layout) };
 }
 
+/// The lines of `text` placed inside `box` as `layout` says: the block aligned vertically,
+/// each line horizontally, wrapped to the box when asked. Placing the block needs the
+/// line count first, so the lines from the one wrapping pass are kept in `scratch`.
+pub const PlacedLines = struct {
+    pub const Line = struct {
+        text: []const u8,
+        /// Top-left corner of the line.
+        origin: Point2,
+    };
+
+    lines: Lines,
+    kept: []Lines.Line,
+    box: Rectangle(f32),
+    halign: TextAlign,
+    top: f32,
+    advance: f32,
+    index: usize = 0,
+
+    pub fn init(scratch: Allocator, font: Font, text: []const u8, size: f32, box: Rectangle(f32), layout: TextLayout) Allocator.Error!PlacedLines {
+        const max_width: ?f32 = if (layout.wrap) box.width() else null;
+        var lines: Lines = .init(font, text, size, max_width, layout.letter_spacing);
+        var kept: std.ArrayList(Lines.Line) = .empty;
+        errdefer kept.deinit(scratch);
+        while (lines.next()) |line| try kept.append(scratch, line);
+
+        const advance = lineAdvance(font, size, layout);
+        const block = @as(f32, @floatFromInt(kept.items.len)) * advance;
+        return .{
+            .lines = lines,
+            .kept = try kept.toOwnedSlice(scratch),
+            .box = box,
+            .halign = layout.halign,
+            .top = switch (layout.valign) {
+                .top => box.t,
+                .middle => box.t + (box.height() - block) / 2,
+                .bottom => box.b - block,
+            },
+            .advance = advance,
+        };
+    }
+
+    pub fn deinit(self: *PlacedLines, scratch: Allocator) void {
+        scratch.free(self.kept);
+        self.* = undefined;
+    }
+
+    pub fn next(self: *PlacedLines) ?Line {
+        if (self.index == self.kept.len) return null;
+        const line = self.kept[self.index];
+        const y = self.top + @as(f32, @floatFromInt(self.index)) * self.advance;
+        const x: f32 = switch (self.halign) {
+            .left => self.box.l,
+            .center => self.box.l + (self.box.width() - self.lines.width(line)) / 2,
+            .right => self.box.r - self.lines.width(line),
+        };
+        self.index += 1;
+        return .{ .text = line.text, .origin = .init(.{ x, y }) };
+    }
+};
+
 const testing = std.testing;
 const font8x8 = @import("font8x8.zig");
 const synthetic = @import("truetype/synthetic.zig");
@@ -267,6 +329,25 @@ test "spacing and measure" {
     try testing.expectEqual(Rectangle(f32){ .l = 0, .t = 0, .r = 28, .b = 36 }, box);
     try testing.expectEqual(Rectangle(f32){ .l = 0, .t = 0, .r = 0, .b = 8 }, measure(font, "", 8, null, .default));
     try testing.expectEqual(font.getTextBounds("ab\ncd", 8), measure(font, "ab\ncd", 8, null, .default));
+}
+
+test "placed lines align the block and each line" {
+    const font: Font = .{ .bitmap = font8x8.basic };
+    const box: Rectangle(f32) = .{ .l = 10, .t = 20, .r = 74, .b = 60 };
+    var placed: PlacedLines = try .init(testing.allocator, font, "aaa bbb ccc", 8, box, .{ .wrap = true, .halign = .center, .valign = .middle });
+    defer placed.deinit(testing.allocator);
+    // Two lines of 8 px in a 40 px box start 12 px down; "aaa bbb" is 56 px wide, "ccc" 24.
+    const first = placed.next().?;
+    try testing.expectEqualStrings("aaa bbb", first.text);
+    try testing.expectEqual(Point2.init(.{ 14, 32 }), first.origin);
+    const second = placed.next().?;
+    try testing.expectEqualStrings("ccc", second.text);
+    try testing.expectEqual(Point2.init(.{ 30, 40 }), second.origin);
+    try testing.expectEqual(null, placed.next());
+
+    var bottom_right: PlacedLines = try .init(testing.allocator, font, "ab", 8, box, .{ .halign = .right, .valign = .bottom });
+    defer bottom_right.deinit(testing.allocator);
+    try testing.expectEqual(Point2.init(.{ 58, 52 }), bottom_right.next().?.origin);
 }
 
 test "pen walks bitmap and vector lines alike" {

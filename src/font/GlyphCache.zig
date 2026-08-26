@@ -8,6 +8,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const Point2 = @import("../geometry/Point.zig").Point(2, f32);
+const Rectangle = @import("../geometry.zig").Rectangle;
 const as = @import("../meta.zig").as;
 const VectorFont = @import("VectorFont.zig");
 const Outline = @import("Outline.zig");
@@ -48,25 +49,45 @@ pub const MaskKey = packed struct(u64) {
 };
 
 /// Where a glyph's mask goes: its key, the integer pen position the mask is offset from,
-/// and the snapped fraction the mask is rendered at.
+/// the snapped fraction the mask is rendered at, and the mask's box.
 pub const Placement = struct {
     key: MaskKey,
     x: i32,
     y: i32,
     /// In [0, 1) per axis.
     phase: Point2,
+    /// The mask's box relative to (`x`, `y`): the snapped glyph's ink with a pixel of
+    /// antialiasing margin, on whole pixels.
+    left: i32,
+    top: i32,
+    width: u32,
+    height: u32,
+    /// Places the outline inside the mask.
+    transform: Outline.Transform,
 };
 
-pub fn place(gid: u16, transform: Outline.Transform) Placement {
+/// The placement of glyph `gid` drawn with `transform`, whose ink covers `ink` when its
+/// pen is at `pen` (both relative to the same origin). Shear is not part of a mask's key.
+pub fn place(gid: u16, transform: Outline.Transform, ink: Rectangle(f32), pen: Point2) Placement {
+    std.debug.assert(transform.shear == 0);
     const ox = @floor(transform.origin.x());
     const oy = @floor(transform.origin.y());
     const bx = phase(transform.origin.x() - ox);
     const by = phase(transform.origin.y() - oy);
+    const snapped: Point2 = .init(.{ as(f32, bx) / phases, as(f32, by) / phases });
+    const box = ink.translate(snapped.x() - pen.x(), snapped.y() - pen.y()).grow(1);
+    const left = @floor(box.l);
+    const top = @floor(box.t);
     return .{
         .key = .{ .scale_bits = @bitCast(transform.scale), .gid = gid, .bx = bx, .by = by },
         .x = @trunc(ox),
         .y = @trunc(oy),
-        .phase = .init(.{ as(f32, bx) / phases, as(f32, by) / phases }),
+        .phase = snapped,
+        .left = @trunc(left),
+        .top = @trunc(top),
+        .width = @trunc(@ceil(box.r) - left),
+        .height = @trunc(@ceil(box.b) - top),
+        .transform = .{ .scale = transform.scale, .origin = .init(.{ snapped.x() - left, snapped.y() - top }) },
     };
 }
 
@@ -125,20 +146,20 @@ pub fn getMask(self: *GlyphCache, key: MaskKey) ?Mask {
 
 /// Whether a `width` x `height` mask may be stored: no more than a sixteenth of the budget,
 /// so one headline glyph cannot keep flushing the rest.
-pub fn fits(self: GlyphCache, width: f32, height: f32) bool {
-    return width * height <= as(f32, self.max_mask_bytes / 16);
+pub fn fits(self: GlyphCache, width: u32, height: u32) bool {
+    return @as(usize, width) * height <= self.max_mask_bytes / 16;
 }
 
-/// Stores a zeroed mask for `key` (which must be new and `fits`) and returns it to be
-/// rasterized into; every other mask is dropped first when the budget would overflow.
-pub fn reserve(self: *GlyphCache, key: MaskKey, left: i32, top: i32, width: u32, height: u32) Allocator.Error!Mask {
-    const bytes = @as(usize, width) * height;
+/// Stores a zeroed mask for `placed` (whose key must be new and box `fits`) and returns it
+/// to be rasterized into; every other mask is dropped first when the budget would overflow.
+pub fn reserve(self: *GlyphCache, placed: Placement) Allocator.Error!Mask {
+    const bytes = @as(usize, placed.width) * placed.height;
     if (self.mask_bytes + bytes > self.max_mask_bytes) self.clearMasks();
     const data = try self.gpa.alloc(u8, bytes);
     errdefer self.gpa.free(data);
     @memset(data, 0);
-    const mask: Mask = .{ .left = left, .top = top, .width = width, .height = height, .data = data };
-    try self.masks.putNoClobber(self.gpa, key, mask);
+    const mask: Mask = .{ .left = placed.left, .top = placed.top, .width = placed.width, .height = placed.height, .data = data };
+    try self.masks.putNoClobber(self.gpa, placed.key, mask);
     self.mask_bytes += bytes;
     return mask;
 }
@@ -231,12 +252,20 @@ test "level 1 matches the uncached font" {
 }
 
 test "placement snaps the origin to a quarter pixel" {
-    const placed = place(7, .{ .scale = 0.5, .origin = .init(.{ 10.3, -0.9 }) });
+    // A glyph inked over [1, 3) x [-2, 0) around its pen at the text origin.
+    const placed = place(7, .{ .scale = 0.5, .origin = .init(.{ 10.3, -0.9 }) }, .{ .l = 1, .t = -2, .r = 3, .b = 0 }, .origin);
     try testing.expectEqual(MaskKey{ .scale_bits = @bitCast(@as(f32, 0.5)), .gid = 7, .bx = 1, .by = 0 }, placed.key);
     try testing.expectEqual(@as(i32, 10), placed.x);
     try testing.expectEqual(@as(i32, -1), placed.y);
     try testing.expectEqual(@as(f32, 0.25), placed.phase.x());
     try testing.expectEqual(@as(f32, 0), placed.phase.y());
+    // The ink at the snapped phase, a pixel of margin around it, on whole pixels.
+    try testing.expectEqual(@as(i32, 0), placed.left);
+    try testing.expectEqual(@as(i32, -3), placed.top);
+    try testing.expectEqual(@as(u32, 5), placed.width);
+    try testing.expectEqual(@as(u32, 4), placed.height);
+    try testing.expectEqual(Point2.init(.{ 0.25, 3 }), placed.transform.origin);
+    try testing.expectEqual(@as(f32, 0.5), placed.transform.scale);
     // The fraction never rounds up into the next pixel.
     try testing.expectEqual(@as(u2, 3), phase(0.9999999));
 }
@@ -251,7 +280,11 @@ test "mask store honors the budget" {
     const key: MaskKey = .{ .scale_bits = 0, .gid = 1, .bx = 0, .by = 0 };
     try testing.expect(cache.getMask(key) == null);
     for (0..3) |i| {
-        const mask = try cache.reserve(.{ .scale_bits = 0, .gid = @intCast(i), .bx = 0, .by = 0 }, 0, 0, 6, 10);
+        var placed = place(@intCast(i), .{ .scale = 0, .origin = .origin }, .{ .l = 0, .t = 0, .r = 4, .b = 8 }, .origin);
+        placed.key.scale_bits = 0;
+        try testing.expectEqual(@as(u32, 6), placed.width);
+        try testing.expectEqual(@as(u32, 10), placed.height);
+        const mask = try cache.reserve(placed);
         try testing.expect(std.mem.allEqual(u8, mask.data, 0));
     }
     // The third insert would have exceeded 160 bytes: the first two were dropped.

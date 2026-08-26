@@ -2197,41 +2197,20 @@ pub fn Canvas(comptime T: type) type {
             return self.image.getRectangle().as(f32);
         }
 
-        /// Shared by every text entry point: breaks `text` into lines, places the block and
-        /// each line inside `box` per `layout`, and draws the lines. The lines are kept from
-        /// the one wrapping pass, since placing the block needs their count first.
+        /// Shared by every text entry point: draws the lines of `text` where `layout` places
+        /// them in `box`.
         fn renderText(self: Self, text: []const u8, box: Rectangle(f32), paint: Paint, font: Font, font_size: ?f32, layout: TextLayout, style: GlyphStyle, mode: DrawMode) !void {
             const px = font_size orelse font.defaultSize();
             if (px <= 0) return;
-            const max_width: ?f32 = if (layout.wrap) box.width() else null;
-            var lines: text_layout.Lines = .init(font, text, px, max_width, layout.letter_spacing);
             var stack: [lines_scratch_size]u8 align(16) = undefined;
             var buffer_first: std.heap.BufferFirstAllocator = .init(&stack, self.allocator);
             const scratch = buffer_first.allocator();
-            var kept: std.ArrayList(text_layout.Lines.Line) = .empty;
-            defer kept.deinit(scratch);
-            while (lines.next()) |line| try kept.append(scratch, line);
-
-            const advance = text_layout.lineAdvance(font, px, layout);
-            const block = as(f32, kept.items.len) * advance;
-            const top: f32 = switch (layout.valign) {
-                .top => box.t,
-                .middle => box.t + (box.height() - block) / 2,
-                .bottom => box.b - block,
+            var placed: text_layout.PlacedLines = try .init(scratch, font, text, px, box, layout);
+            defer placed.deinit(scratch);
+            while (placed.next()) |line| switch (font) {
+                .bitmap => |bitmap| try self.drawTextBitmap(line.text, line.origin, paint, bitmap, bitmap.scaleFor(px), layout.letter_spacing, style, mode),
+                .vector => |vector| try self.drawTextVector(line.text, line.origin, paint, vector, px, layout.letter_spacing, style, mode),
             };
-            for (kept.items, 0..) |line, i| {
-                const y = top + as(f32, i) * advance;
-                const x: f32 = switch (layout.halign) {
-                    .left => box.l,
-                    .center => box.l + (box.width() - lines.width(line)) / 2,
-                    .right => box.r - lines.width(line),
-                };
-                const position: Point(2, f32) = .init(.{ x, y });
-                switch (font) {
-                    .bitmap => |bitmap| try self.drawTextBitmap(line.text, position, paint, bitmap, bitmap.scaleFor(px), layout.letter_spacing, style, mode),
-                    .vector => |vector| try self.drawTextVector(line.text, position, paint, vector, px, layout.letter_spacing, style, mode),
-                }
-            }
         }
 
         /// Lays out one line with `VectorFont.Layout`, then fills or strokes each glyph's
@@ -2265,29 +2244,20 @@ pub fn Canvas(comptime T: type) type {
             };
         }
 
-        /// Paints `item` from its cached coverage mask, rasterizing one on a miss with the pen
-        /// origin snapped to a quarter pixel. False when the mask is over the cache's size
-        /// limit or cannot be allocated, so the caller draws the glyph directly.
+        /// Paints `item` from its cached coverage mask, rasterizing one on a miss where
+        /// `GlyphCache.place` puts it. False when the mask is over the cache's size limit or
+        /// cannot be allocated, so the caller draws the glyph directly.
         fn drawCachedGlyph(self: Self, font: VectorFont, item: VectorFont.Layout.Item, ink: Rectangle(f32), transform: Outline.Transform, paint: Paint) !bool {
-            assert(transform.shear == 0);
             const cache = font.cache.?;
-            const placed = GlyphCache.place(item.gid, transform);
+            const placed = GlyphCache.place(item.gid, transform, ink, item.origin);
             const mask = cache.getMask(placed.key) orelse blk: {
-                // The snapped glyph's box relative to the integer pen position, with a pixel
-                // of antialiasing margin.
-                const box = ink.translate(placed.phase.x() - item.origin.x(), placed.phase.y() - item.origin.y()).grow(1);
-                const left = @floor(box.l);
-                const top = @floor(box.t);
-                const width = @ceil(box.r) - left;
-                const height = @ceil(box.b) - top;
-                if (!cache.fits(width, height)) return false;
+                if (!cache.fits(placed.width, placed.height)) return false;
                 var ref = (try self.glyphOutline(font, item.gid)) orelse return true;
                 defer ref.deinit(self.allocator);
-                const mask = cache.reserve(placed.key, @trunc(left), @trunc(top), @trunc(width), @trunc(height)) catch return false;
+                const mask = cache.reserve(placed) catch return false;
                 errdefer cache.drop(placed.key);
                 const mask_canvas: Canvas(u8) = .init(self.allocator, .initFromSlice(mask.height, mask.width, mask.data));
-                const origin: Point(2, f32) = .init(.{ placed.phase.x() - left, placed.phase.y() - top });
-                try mask_canvas.rasterizeGlyph(ref.outline, .{ .scale = transform.scale, .origin = origin });
+                try mask_canvas.rasterizeGlyph(ref.outline, placed.transform);
                 break :blk mask;
             };
             self.blitMask(.initFromSlice(mask.height, mask.width, mask.data), placed.x + mask.left, placed.y + mask.top, paint);
