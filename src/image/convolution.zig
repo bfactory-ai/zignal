@@ -100,17 +100,29 @@ fn ConvolutionKernel(comptime T: type, comptime rows: usize, comptime cols: usiz
             return result;
         }
 
-        fn convolvePixelWithBorder(comptime n: usize, src: Image(T), dsts: [n]Image(T), r: usize, c: usize, kernels: [n][size]Scalar, border_mode: BorderMode) void {
-            const ir: isize = @intCast(r);
-            const ic: isize = @intCast(c);
+        /// Resolved source columns of one border column's taps; null = zero (.zero border).
+        const ColTaps = [cols]?usize;
+
+        fn colTaps(c: usize, src_cols: usize, border_mode: BorderMode) ColTaps {
+            var taps: ColTaps = undefined;
+            inline for (0..cols) |kx| {
+                taps[kx] = border.resolveIndex(@as(isize, @intCast(c)) + @as(isize, kx) - half_w, @intCast(src_cols), border_mode);
+            }
+            return taps;
+        }
+
+        /// One border-column pixel from pre-resolved row offsets and column taps.
+        fn convolveBorderPixel(comptime n: usize, src: Image(T), dsts: [n]Image(T), row_offsets: RowOffsets(true), col_taps: ColTaps, kernels: [n][size]Scalar, r: usize, c: usize) void {
             var results: [n]Scalar = @splat(0);
             inline for (0..rows) |ky| {
-                inline for (0..cols) |kx| {
-                    const iry = ir + @as(isize, ky) - half_h;
-                    const icx = ic + @as(isize, kx) - half_w;
-                    const pixel_val: Scalar = border.getPixel(T, src, iry, icx, border_mode);
-                    inline for (0..n) |i| {
-                        results[i] += pixel_val * kernels[i][ky * cols + kx];
+                if (row_offsets[ky]) |base| {
+                    inline for (0..cols) |kx| {
+                        if (col_taps[kx]) |sc| {
+                            const pixel_val = Pixels.promote(src.data[base + sc]);
+                            inline for (0..n) |i| {
+                                results[i] += pixel_val * kernels[i][ky * cols + kx];
+                            }
+                        }
                     }
                 }
             }
@@ -191,33 +203,34 @@ fn ConvolutionKernel(comptime T: type, comptime rows: usize, comptime cols: usiz
                 }
             }
 
+            // Border columns [0, low_end) and [high_start, cols) resolve the same taps on every
+            // row, so they are resolved once per call; table ordinal = low positions first.
+            const low_end = @min(half_w, src.cols);
+            const high_start = if (src.cols > 2 * half_w) src.cols - half_w else low_end;
+            var col_taps: [2 * half_w]ColTaps = undefined;
+            for (0..low_end) |c| col_taps[c] = colTaps(c, src.cols, border_mode);
+            for (high_start..src.cols) |c| col_taps[low_end + c - high_start] = colTaps(c, src.cols, border_mode);
+
             for (0..src.rows) |r| {
-                var c: usize = 0;
-                while (c < @min(half_w, src.cols)) : (c += 1) {
-                    convolvePixelWithBorder(n, src, dsts, r, c, kernels, border_mode);
+                const ir: isize = @intCast(r);
+                var offs: RowOffsets(true) = undefined;
+                inline for (0..rows) |ky| {
+                    const resolved = border.resolveIndex(ir + @as(isize, ky) - half_h, @intCast(src.rows), border_mode);
+                    offs[ky] = if (resolved) |sr| sr * src.stride else null;
                 }
 
-                const safe_end = src.cols -| half_w;
-                const row_in_band = r >= half_h and r + half_h < src.rows;
-                if (row_in_band) {
-                    var offs: RowOffsets(false) = undefined;
-                    inline for (0..rows) |ky| {
-                        offs[ky] = (r + ky - half_h) * src.stride;
-                    }
-                    convolveRowSpan(n, false, src, dsts, offs, kernels, &kernel_vecs, r, c, safe_end);
+                for (0..low_end) |c| {
+                    convolveBorderPixel(n, src, dsts, offs, col_taps[c], kernels, r, c);
+                }
+                if (r >= half_h and r + half_h < src.rows) {
+                    var in_band: RowOffsets(false) = undefined;
+                    inline for (0..rows) |ky| in_band[ky] = offs[ky].?;
+                    convolveRowSpan(n, false, src, dsts, in_band, kernels, &kernel_vecs, r, low_end, high_start);
                 } else {
-                    const ir: isize = @intCast(r);
-                    var offs: RowOffsets(true) = undefined;
-                    inline for (0..rows) |ky| {
-                        const resolved = border.resolveIndex(ir + @as(isize, ky) - half_h, @intCast(src.rows), border_mode);
-                        offs[ky] = if (resolved) |sr| sr * src.stride else null;
-                    }
-                    convolveRowSpan(n, true, src, dsts, offs, kernels, &kernel_vecs, r, c, safe_end);
+                    convolveRowSpan(n, true, src, dsts, offs, kernels, &kernel_vecs, r, low_end, high_start);
                 }
-
-                c = @max(c, safe_end);
-                while (c < src.cols) : (c += 1) {
-                    convolvePixelWithBorder(n, src, dsts, r, c, kernels, border_mode);
+                for (high_start..src.cols) |c| {
+                    convolveBorderPixel(n, src, dsts, offs, col_taps[low_end + c - high_start], kernels, r, c);
                 }
             }
         }
