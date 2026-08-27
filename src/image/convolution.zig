@@ -574,8 +574,15 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime AccumIntT: t
         /// pass is exact because divTrunc(256*S ± 32768, 65536) == divTrunc(S ± 128, 256).
         const dst_scale = if (DstT != u8) 1 else if (SrcT == u8) fixed_point_scale else fixed_point_scale_sq;
 
-        inline fn isNegligible(k: KernelT) bool {
-            return if (KernelT == f32) @abs(k) < 1e-10 else k == 0;
+        /// With `dense` the per-tap skip branch is compiled out: for kernels without
+        /// negligible taps (every gaussian) it measured 1.10-1.26x across the passes.
+        inline fn isNegligible(comptime dense: bool, k: KernelT) bool {
+            return !dense and (if (KernelT == f32) @abs(k) < 1e-10 else k == 0);
+        }
+
+        fn isDense(kernel: []const KernelT) bool {
+            for (kernel) |k| if (isNegligible(false, k)) return false;
+            return true;
         }
 
         /// Odd, mirror-symmetric kernels (every gaussian) can fold mirrored taps:
@@ -643,7 +650,7 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime AccumIntT: t
 
         /// One row of the horizontal pass into a caller-provided contiguous row buffer.
         /// Kept out of line: inlined into the fused driver it measured 4-8% slower.
-        noinline fn horizontalRow(src: Image(SrcT), dst_row: []DstT, r: usize, kernel: []const KernelT, table: BorderIndexTable, folded: bool) void {
+        noinline fn horizontalRow(comptime dense: bool, src: Image(SrcT), dst_row: []DstT, r: usize, kernel: []const KernelT, table: BorderIndexTable, folded: bool) void {
             const half = kernel.len / 2;
             const cols = src.cols;
             const src_offset = r * src.stride;
@@ -661,13 +668,13 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime AccumIntT: t
                         const base = src_offset + c - half;
                         var acc: @Vector(vec_len, AccumT) = @splat(0);
                         for (kernel[0..half], 0..) |k, i| {
-                            if (!isNegligible(k)) {
+                            if (!isNegligible(dense, k)) {
                                 const a = loadVec(src.data[base + i ..].ptr);
                                 const b = loadVec(src.data[base + (kernel.len - 1 - i) ..].ptr);
                                 acc += (a + b) * splatK(k);
                             }
                         }
-                        if (!isNegligible(kernel[half])) {
+                        if (!isNegligible(dense, kernel[half])) {
                             acc += loadVec(src.data[base + half ..].ptr) * splatK(kernel[half]);
                         }
                         storeVec(acc, dst_row[c..].ptr);
@@ -676,7 +683,7 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime AccumIntT: t
                     while (c + vec_len <= interior_end) : (c += vec_len) {
                         var acc: @Vector(vec_len, AccumT) = @splat(0);
                         for (kernel, 0..) |k, ki| {
-                            if (!isNegligible(k)) {
+                            if (!isNegligible(dense, k)) {
                                 acc += loadVec(src.data[src_offset + c + ki - half ..].ptr) * splatK(k);
                             }
                         }
@@ -688,7 +695,7 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime AccumIntT: t
                     var result: AccumT = 0;
                     const c0 = c - half;
                     for (kernel, 0..) |k, i| {
-                        if (!isNegligible(k)) {
+                        if (!isNegligible(dense, k)) {
                             result += promote(src.data[src_offset + c0 + i]) * promote(k);
                         }
                     }
@@ -707,9 +714,11 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime AccumIntT: t
             const table: BorderIndexTable = try .init(allocator, cols, kernel.len, border_mode);
             defer table.deinit(allocator);
             const folded = isSymmetric(kernel);
+            const dense = isDense(kernel);
 
             for (0..src.rows) |r| {
-                horizontalRow(src, dst.data[r * dst.stride ..][0..cols], r, kernel, table, folded);
+                const dst_row = dst.data[r * dst.stride ..][0..cols];
+                if (dense) horizontalRow(true, src, dst_row, r, kernel, table, folded) else horizontalRow(false, src, dst_row, r, kernel, table, folded);
             }
         }
 
@@ -730,7 +739,7 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime AccumIntT: t
                     for (bases, table.taps(table.ordinalOf(r))) |*b, idx| {
                         b.* = if (idx == BorderIndexTable.zero_sentinel) idx else idx * src.stride;
                     }
-                    verticalRowFromBases(true, src.data, bases, dst, r, kernel, false);
+                    verticalRowFromBases(true, false, src.data, bases, dst, r, kernel, false);
                 }
             }
         }
@@ -740,7 +749,7 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime AccumIntT: t
         /// kernel with explicit zero adds; interior rows skip negligible taps — both
         /// matching the standard vertical pass per pixel. Out of line for the same reason
         /// as `horizontalRow`.
-        noinline fn verticalRowFromBases(comptime border_row: bool, src_data: []const SrcT, bases: []const usize, dst: Image(DstT), r: usize, kernel: []const KernelT, folded: bool) void {
+        noinline fn verticalRowFromBases(comptime border_row: bool, comptime dense: bool, src_data: []const SrcT, bases: []const usize, dst: Image(DstT), r: usize, kernel: []const KernelT, folded: bool) void {
             const cols = dst.cols;
             const dst_offset = r * dst.stride;
             const half = kernel.len / 2;
@@ -751,13 +760,13 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime AccumIntT: t
                 var acc: @Vector(vec_len, AccumT) = @splat(0);
                 if (folded) {
                     for (kernel[0..half], 0..) |k, i| {
-                        if (!isNegligible(k)) {
+                        if (!isNegligible(dense, k)) {
                             const a = loadVec(src_data[bases[i] + c ..].ptr);
                             const b = loadVec(src_data[bases[kernel.len - 1 - i] + c ..].ptr);
                             acc += (a + b) * splatK(k);
                         }
                     }
-                    if (!isNegligible(kernel[half])) {
+                    if (!isNegligible(dense, kernel[half])) {
                         acc += loadVec(src_data[bases[half] + c ..].ptr) * splatK(kernel[half]);
                     }
                 } else {
@@ -768,7 +777,7 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime AccumIntT: t
                             else
                                 loadVec(src_data[base + c ..].ptr);
                             acc += vec * splatK(k);
-                        } else if (!isNegligible(k)) {
+                        } else if (!isNegligible(dense, k)) {
                             acc += loadVec(src_data[base + c ..].ptr) * splatK(k);
                         }
                     }
@@ -782,7 +791,7 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime AccumIntT: t
                     if (border_row) {
                         const pv: SrcT = if (base == BorderIndexTable.zero_sentinel) 0 else src_data[base + c];
                         result += promote(pv) * promote(k);
-                    } else if (!isNegligible(k)) {
+                    } else if (!isNegligible(dense, k)) {
                         result += promote(src_data[base + c]) * promote(k);
                     }
                 }
@@ -793,6 +802,14 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime AccumIntT: t
         /// Column-tiled 1D pass along rows (src -> dst); tiling keeps the working set cache-resident
         /// and, unlike per-row bases, lets LLVM hoist the tap offsets (row-major measured 0.9x on f32).
         fn vertical(src: Image(SrcT), dst: Image(DstT), allocator: Allocator, kernel: []const KernelT, border_mode: BorderMode) !void {
+            if (isDense(kernel)) {
+                try verticalImpl(true, src, dst, allocator, kernel, border_mode);
+            } else {
+                try verticalImpl(false, src, dst, allocator, kernel, border_mode);
+            }
+        }
+
+        fn verticalImpl(comptime dense: bool, src: Image(SrcT), dst: Image(DstT), allocator: Allocator, kernel: []const KernelT, border_mode: BorderMode) !void {
             const half = kernel.len / 2;
             const rows = src.rows;
             const cols = src.cols;
@@ -813,18 +830,18 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime AccumIntT: t
                             var acc: @Vector(vec_len, AccumT) = @splat(0);
                             if (folded) {
                                 for (kernel[0..half], 0..) |k, i| {
-                                    if (!isNegligible(k)) {
+                                    if (!isNegligible(dense, k)) {
                                         const a = loadVec(src.data[base + i * src.stride ..].ptr);
                                         const b = loadVec(src.data[base + (kernel.len - 1 - i) * src.stride ..].ptr);
                                         acc += (a + b) * splatK(k);
                                     }
                                 }
-                                if (!isNegligible(kernel[half])) {
+                                if (!isNegligible(dense, kernel[half])) {
                                     acc += loadVec(src.data[base + half * src.stride ..].ptr) * splatK(kernel[half]);
                                 }
                             } else {
                                 for (kernel, 0..) |k, ki| {
-                                    if (!isNegligible(k)) {
+                                    if (!isNegligible(dense, k)) {
                                         acc += loadVec(src.data[base + ki * src.stride ..].ptr) * splatK(k);
                                     }
                                 }
@@ -838,7 +855,7 @@ fn SeparablePass(comptime SrcT: type, comptime DstT: type, comptime AccumIntT: t
                             var result: AccumT = 0;
                             const r0 = r - half;
                             for (kernel, 0..) |k, i| {
-                                if (isNegligible(k)) continue;
+                                if (isNegligible(dense, k)) continue;
                                 result += promote(src.data[(r0 + i) * src.stride + c]) * promote(k);
                             }
                             dst.data[r * dst.stride + c] = store(result);
@@ -1003,6 +1020,8 @@ fn convolveSeparablePlaneFused(
 
     const h_folded = HPass.isSymmetric(kernel_x);
     const v_folded = VPass.isSymmetric(kernel_y);
+    const h_dense = HPass.isDense(kernel_x);
+    const v_dense = VPass.isDense(kernel_y);
 
     // Temp row `tr` always lives in ring slot `tr % klen_y`.
     const ring = try allocator.alloc(TempT, klen_y * cols);
@@ -1016,7 +1035,8 @@ fn convolveSeparablePlaneFused(
         // the initial window and bottom border rows the final one.
         const need = @min(rows - 1, @max(klen_y - 1, r + klen_y - 1 - half_y));
         while (produced <= need) : (produced += 1) {
-            HPass.horizontalRow(src_img, ring[(produced % klen_y) * cols ..][0..cols], produced, kernel_x, h_table, h_folded);
+            const temp_row = ring[(produced % klen_y) * cols ..][0..cols];
+            if (h_dense) HPass.horizontalRow(true, src_img, temp_row, produced, kernel_x, h_table, h_folded) else HPass.horizontalRow(false, src_img, temp_row, produced, kernel_x, h_table, h_folded);
         }
         if (r >= half_y and r + half_y < rows) {
             // Consecutive temp rows occupy consecutive ring slots, wrapping at most once.
@@ -1025,7 +1045,7 @@ fn convolveSeparablePlaneFused(
                 b.* = slot * cols;
                 slot = if (slot + 1 == klen_y) 0 else slot + 1;
             }
-            VPass.verticalRowFromBases(false, ring, bases, dst_img, r, kernel_y, v_folded);
+            if (v_dense) VPass.verticalRowFromBases(false, true, ring, bases, dst_img, r, kernel_y, v_folded) else VPass.verticalRowFromBases(false, false, ring, bases, dst_img, r, kernel_y, v_folded);
         } else {
             for (bases, v_table.taps(v_table.ordinalOf(r))) |*b, resolved| {
                 b.* = if (resolved == BorderIndexTable.zero_sentinel)
@@ -1033,7 +1053,7 @@ fn convolveSeparablePlaneFused(
                 else
                     (resolved % klen_y) * cols;
             }
-            VPass.verticalRowFromBases(true, ring, bases, dst_img, r, kernel_y, false);
+            VPass.verticalRowFromBases(true, false, ring, bases, dst_img, r, kernel_y, false);
         }
     }
 }
