@@ -11,6 +11,8 @@ pub fn build(b: *Build) void {
 
     const print_md5sums = b.option(bool, "print-md5sums", "Print MD5 checksums instead of testing them") orelse false;
     const debug_test_images = b.option(bool, "debug-test-images", "Save regression test renderings as PNGs") orelse false;
+    const gpu = b.option(bool, "gpu", "Build the SPIR-V compute kernels and the Vulkan device (default: on except for freestanding targets)") orelse
+        (target.result.os.tag != .freestanding);
 
     const zignal = b.addModule("zignal", .{
         .root_source_file = b.path("src/root.zig"),
@@ -21,7 +23,11 @@ pub fn build(b: *Build) void {
     build_options.addOption([]const u8, "version", b.fmt("{f}", .{version}));
     build_options.addOption(bool, "print_md5sums", print_md5sums);
     build_options.addOption(bool, "debug_test_images", debug_test_images);
+    build_options.addOption(bool, "gpu", gpu);
     zignal.addOptions("build_options", build_options);
+    // Kernels are cross-compiled to SPIR-V and embedded; `Device` reads them with `@embedFile`.
+    const gemm_kernel: ?*Build.Step.Compile = if (gpu) addSpirvKernel(b, "gemm") else null;
+    if (gemm_kernel) |kernel| zignal.addAnonymousImport("gemm.spv", .{ .root_source_file = kernel.getEmittedBin() });
 
     const lib = b.addLibrary(.{
         .name = "zignal",
@@ -75,9 +81,12 @@ pub fn build(b: *Build) void {
             .root_source_file = b.path("src/root.zig"),
             .target = target,
             .optimize = optimize,
+            // The Vulkan loader is opened with dlopen.
+            .link_libc = gpu,
         }),
     });
     lib_test.root_module.addOptions("build_options", build_options);
+    if (gemm_kernel) |kernel| lib_test.root_module.addAnonymousImport("gemm.spv", .{ .root_source_file = kernel.getEmittedBin() });
     test_step.dependOn(&b.addRunArtifact(lib_test).step);
 
     const fmt_step = b.step("fmt", "Check code formatting");
@@ -186,6 +195,27 @@ const Build = if (builtin.zig_version.order(min_zig_version) == .lt)
     , .{ builtin.zig_version, min_zig_version }))
 else
     std.Build;
+
+/// Compiles `src/gpu/kernels/<name>.zig` to a Vulkan 1.2 SPIR-V module.
+fn addSpirvKernel(b: *std.Build, name: []const u8) *std.Build.Step.Compile {
+    const kernel = b.addExecutable(.{
+        .name = name,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(b.fmt("src/gpu/kernels/{s}.zig", .{name})),
+            .target = b.resolveTargetQuery(.{
+                .cpu_arch = .spirv64,
+                .os_tag = .vulkan,
+                .cpu_model = .{ .explicit = &std.Target.spirv.cpu.vulkan_v1_2 },
+            }),
+            .optimize = .ReleaseFast,
+        }),
+        // SPIR-V is only supported by the self-hosted backend.
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    kernel.entry = .disabled;
+    return kernel;
+}
 
 /// Returns `MAJOR.MINOR.PATCH-dev` when `git describe` fails.
 fn resolveVersion(b: *std.Build) std.SemanticVersion {

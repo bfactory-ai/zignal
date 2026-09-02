@@ -98,6 +98,7 @@ pub const SMatrix = matrix.SMatrix;
 pub const Matrix = matrix.Matrix;
 pub const MatrixError = matrix.MatrixError;
 pub const Chain = matrix.Chain;
+pub const gpu = @import("gpu.zig");
 pub const meta = @import("meta.zig");
 
 const perlin_mod = @import("perlin.zig");
@@ -159,4 +160,5 @@ test {
     _ = @import("optimization.zig");
     _ = @import("qrcode.zig");
     _ = @import("meta.zig");
+    if (@import("build_options").gpu) _ = @import("gpu.zig");
 }
