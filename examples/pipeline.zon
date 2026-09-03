@@ -1,0 +1,20 @@
+// Example zignal pipeline recipe.
+//
+// Run it with:
+//   zignal pipeline examples/pipeline.zon
+//
+// Paths are resolved relative to the current working directory. Override the
+// input/output from the command line, e.g. to reuse this recipe on other images:
+//   zignal pipeline examples/pipeline.zon other.png --output out/
+//
+// Each step's fields mirror the matching CLI command's options (run e.g.
+// `zignal help blur` to see them); enum-valued options are enum literals.
+.{
+    .input = "assets/liza.jpg",
+    .output = "liza-pipeline.png",
+    .steps = .{
+        .{ .resize = .{ .width = 800, .filter = .lanczos } },
+        .{ .blur = .{ .type = .gaussian, .sigma = 1.5 } },
+        .{ .edges = .{ .filter = .canny, .low = 40, .high = 120 } },
+    },
+}
