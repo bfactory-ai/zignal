@@ -287,7 +287,7 @@ pub const Subsampling = enum {
 
 /// Restart interval (DRI) of the scan. Markers let a decoder resume at every segment, which
 /// `decodeInto` uses to decode segments in parallel; each costs a marker and a DC predictor
-/// reset (one row per interval is ~0.1 % of a 4K file and ~7 % slower to decode serially).
+/// reset (one row per interval is ~0.1 % of a 4K file and ~2 % more cycles to decode serially).
 pub const RestartInterval = union(enum) {
     none,
     /// Every `rows` MCU rows.
